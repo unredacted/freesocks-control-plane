@@ -34,7 +34,7 @@
 <div
   role="note"
   aria-labelledby="app-notice-title"
-  class="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-5 py-4 text-amber-700 dark:text-amber-300"
+  class="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-5 py-4 text-amber-800 dark:text-amber-200"
 >
   <TriangleAlert class="mt-0.5 size-5 shrink-0" aria-hidden="true" />
   <div class="min-w-0 space-y-2">
