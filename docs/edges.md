@@ -1199,7 +1199,7 @@ body's own format whose only entries are inert, named with what to do (`convex/l
   connect" (or "can't use this connection mode"), with a button to the supported apps. A mode
   switch in place clears it.
 - **Not done.** Old cores are not given a protocol they speak (VMess, Trojan): the apps are
-  unmaintained since 2023, and FCP has no VMess codec.
+  unmaintained since 2023, and FCP has no VMess codec. Rollback: § "Deploy notes".
 
 **The cache token** (`epochTokenFor`, `convex/edgeRender.ts`): on a bound place
 `<binding policyVersion>[:g<gateToken>]:<publicationEpoch>` (the epoch is -1 when the origin is
@@ -6523,6 +6523,12 @@ one deploy, no migration, nobody moves. An account gets its seat (its newest key
 the legacy walk until an operator spreads them. To roll back, run
 `edgeAdmin:clearSeatsForRollback` with no arguments (it pages through the accounts, then the
 origins, scheduling itself) before deploying the older build.
+
+**The app notice** (§ "Apps that get no connection") adds one optional field
+(`subscriptions.appNotice`) and one counted code (`app_notice`): one deploy, no migration, no
+setting. Legacy Clash apps get the notice from their next fetch; a body cached before the deploy
+answers until its 30 s cache runs out. To roll back, run `appNotices:clearForRollback` with no
+arguments (it pages through the keys, scheduling itself) before deploying the older build.
 
 **Replacing a blocked address without a spare** adds optional fields only
 (`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,

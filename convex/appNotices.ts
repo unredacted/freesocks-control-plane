@@ -107,3 +107,29 @@ export async function appNoticeContent(
   }
   return appNoticeBody(a.notice, said.lines, said.siteName, a.replaced);
 }
+
+/**
+ * The step before rolling back to a build without the app notice (docs/edges.md
+ * "Apps that get no connection"): drops `subscriptions.appNotice`, page by page,
+ * scheduling itself until done, so the older schema accepts every row. Members
+ * only lose the account page's hint.
+ */
+export const clearForRollback = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db
+      .query('subscriptions')
+      .paginate({ cursor: cursor ?? null, numItems: 200 });
+    let cleared = 0;
+    for (const s of page.page)
+      if (s.appNotice !== undefined) {
+        await ctx.db.patch(s._id, { appNotice: undefined });
+        cleared++;
+      }
+    if (!page.isDone)
+      await ctx.scheduler.runAfter(0, internal.appNotices.clearForRollback, {
+        cursor: page.continueCursor,
+      });
+    return { cleared, done: page.isDone };
+  },
+});

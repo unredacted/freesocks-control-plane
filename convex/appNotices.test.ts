@@ -317,6 +317,13 @@ describe('the record', () => {
     expect((await rowOf(t, subId)).appNotice).toBeUndefined();
   });
 
+  test('the rollback step clears every record, page by page', async () => {
+    const { t, subId } = await seedDirect({ appNotice: { family: 'clash', at: Date.now() } });
+    const out = await t.mutation(internal.appNotices.clearForRollback, {});
+    expect(out).toEqual({ cleared: 1, done: true });
+    expect((await rowOf(t, subId)).appNotice).toBeUndefined();
+  });
+
   test('a mode switch in place clears it; a server switch keeps it', async () => {
     const { t, subId } = await seedDirect({ appNotice: { family: 'singbox', at: Date.now() } });
     await t.mutation(internal.subscriptions.placementApplied, {
