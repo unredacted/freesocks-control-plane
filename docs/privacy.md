@@ -107,6 +107,16 @@ accidentally regress it).
   backend. It stores the app's User-Agent string next to the cached body,
   bounded to a few entries, and it is deleted with the subscription row — it
   is never exported to the audit log or any other table.
+- **An app that cannot connect leaves one mark on its key.** When an app
+  fetches a key's link and gets the app notice in place of a connection
+  (`docs/edges.md` § "Apps that get no connection"), the subscription row
+  records the kind of app (`clash`, `singbox` or `links`: the format it reads)
+  and the time (`subscriptions.appNotice`): never its User-Agent, version or
+  address. It is rewritten at most every 6 hours (once an hour when two kinds
+  of affected app share the key), shown only to the member on
+  their own account page for 7 days, cleared by a mode switch, and deleted
+  with the row. The refusal counter counts each notice by node and app family,
+  never by key.
 - **Public fleet telemetry is deliberately coarse.** The public `/api/v1/status`
   projection (the `/status` page) exposes per-location online bits and **load
   bands** (`quiet/busy/crowded`) only — never raw online-user counts, per-node

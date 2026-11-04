@@ -218,6 +218,13 @@
     "refreshMembership": "Already paid? Check for my membership",
     "memberActiveTitle": "Membership active",
     "memberActiveExpiry": "Active until {date}",
+    "appNotice": {
+      "oldTitle": "One of your apps is too old to connect",
+      "modeTitle": "One of your apps can't use this connection mode",
+      "oldBody": "An app that fetched your link in the last 7 days got a message in place of a connection. Install one of the supported apps and add your link to it. Your other apps are not affected.",
+      "modeBody": "An app that fetched your link in the last 7 days got a message in place of a connection. Install one of the supported apps, or pick another connection mode.",
+      "action": "See supported apps"
+    },
     "map": {
       "title": "Where your key lives",
       "network": "One of {count} FreeSocks locations",

@@ -641,6 +641,10 @@ export const placementApplied = internalMutation({
   handler: async (ctx, { subscriptionId, rotatePin }): Promise<string | null> => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub) return null;
+    // A new mode may be one the app can use: the app notice's record goes
+    // (an app that still cannot gets the notice, and the record, again).
+    if (rotatePin !== true && sub.appNotice)
+      await ctx.db.patch(subscriptionId, { appNotice: undefined });
     return invalidateDelivery(ctx, sub, { excludePin: rotatePin === true, refreshMirrors: true });
   },
 });

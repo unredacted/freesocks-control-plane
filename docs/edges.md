@@ -1145,7 +1145,8 @@ format's renderer could not rewrite the body for any other reason) or `node_unpr
 freedom-family key at a place no binding covers, while freedom modes are only served through
 edges: § "Freedom modes only through edges"). A 503 keeps the client's
 last configuration; an empty 200 would wipe it. Each one is counted per reason (§ Operations
-safety, attention `delivery_refusals`). The policy is judged AFTER the fetch against the node
+safety, attention `delivery_refusals`). One `no_entries` is answered otherwise: when the app
+itself is the reason, the app gets the app notice (below). The policy is judged AFTER the fetch against the node
 the body actually belongs to, so a first fetch without a stored pin and a pin that moved onto an
 origin node are both classified correctly. A place no origin covers and whose gate is open passes
 the body through. Either way, the last step renames the entries the backend named after a node
@@ -1156,6 +1157,57 @@ also asks every REALITY entry of a Clash / Mihomo / Stash body for the X25519MLK
 v26.9.8 or later requires (`finishMemberBody`, `convex/lib/realityKeyShares.ts`;
 docs/client-compatibility.md § "REALITY client versions"). A cached or stale body goes through
 both again when it is served.
+
+**Apps that get no connection (the app notice).** An app that cannot speak what the member's
+mode serves gets from the panel a body that reads as its format and holds no connection: the
+legacy Clash core (Clash for Windows, ClashX, the original Clash for Android, `clash`,
+`Clash/<ver>`) has no VLESS and gets the panel's CLASH template with no proxy, which it refuses to
+load (an empty select group), and sing-box has no XHTTP. Such an app used to fail silently. The
+subscription route now answers it **200 with the app notice**: a small valid config of the
+body's own format whose only entries are inert, named with what to do (`convex/lib/appNotice.ts`,
+`convex/appNotices.ts`):
+
+    ⚠ App too old for FreeSocks          (sing-box: ⚠ App can't use this connection mode)
+    Install FlClash or Mihomo Party
+    Help: your FreeSocks account page     (sing-box: Or switch mode on your FreeSocks account page)
+
+- **When.** The body decides, never the User-Agent alone: a body holding any entry is never
+  replaced (`carriesNoEntry`, the same test as `no_entries`). And an empty body gets the notice
+  only when the app is the reason (`appNoticeFor`): a Clash body for a legacy Clash User-Agent
+  (`^clash` but not the panel's Mihomo rule), or, at a covered place, a format that carries none
+  of the place's listeners while another format carries one (sing-box at an XHTTP-only node; a
+  node that also serves raw REALITY keeps the 503). Anything else stays as it was: a current
+  app given an empty body (a panel or fleet problem) still gets the 503 that keeps its last
+  configuration. Both places: in place of the `no_entries` refusal where an origin covers the
+  place, and in place of the empty body where none does. Only the app's own fetch
+  (`GET /api/v1/sub/<token>`) answers it; the sealed raw-config view never does.
+- **What.** Clash: `socks5` entries to `127.0.0.1` port 1 (a type the legacy core parses), one
+  select group named the bare site name (as every member body's group) holding them, `MATCH` to it, `mode: rule`. sing-box: `socks`
+  outbounds to the same, a selector that is `route.final`, the shipped template's tun and mixed
+  inbounds. Link lists: `vless://` links to the same with `security=none`, encoded as the list
+  they replace. Nothing listens there, so an app that runs the notice fails closed and nothing
+  leaves the device (proved with Mihomo in the compat suite). The apps named come from the
+  client catalog in the setup page's order: enabled, on the key's backend, never one marked
+  `xhttp: false` on an XHTTP mode, never a catalog name that reads as a legacy core (`Clash`);
+  on a device-limited plan the apps that honour the limit (`hwid`) first, as the setup page puts
+  them; current apps of the same format first for an old one, never one of the same format for a
+  mode the format cannot carry. The help line names the service (`subscription.siteName`), never a
+  domain. English only: an app's fetch carries no language.
+- **Answer.** `private, no-store`, never cached, never stamped as a delivery; the usual
+  `profile-title`, the panel's other headers and a validator as on any answer. Counted beside
+  the refusals as `app_notice` (`DELIVERY_NOTICE_CODES`; admin words "App too old: notice sent"),
+  at a place no origin covers too.
+- **The account page.** The key records the kind of app (`clash`, `singbox`, `links`) and when
+  (`subscriptions.appNotice`, docs/privacy.md), written only when there is none or it is 6 hours
+  old (`APP_NOTICE_RESTAMP_MS`), or for another kind of app once it is an hour old
+  (`APP_NOTICE_SWITCH_MS`, so two affected apps on one key never write once per poll), and only on
+  a live key that has not moved in place since the request read it. The account view shows it for 7 days
+  (`APP_NOTICE_WINDOW_MS`, `subscription.appNotice`), however the member's other apps fetched
+  meanwhile (one key may serve a working app and an old one): "One of your apps is too old to
+  connect" (or "can't use this connection mode"), with a button to the supported apps. A mode
+  switch in place clears it.
+- **Not done.** Old cores are not given a protocol they speak (VMess, Trojan): the apps are
+  unmaintained since 2023, and FCP has no VMess codec. Rollback: § "Deploy notes".
 
 **The cache token** (`epochTokenFor`, `convex/edgeRender.ts`): on a bound place
 `<binding policyVersion>[:g<gateToken>]:<publicationEpoch>` (the epoch is -1 when the origin is
@@ -2758,9 +2810,10 @@ count rather than waiting for it, so a burst of refusals (a gate closing across 
 slows the 503s on conflicting writes; the count lands a moment later. Attention
 `delivery_refusals` sums the last hour (`facts.byReason`, and `facts.topSources`: the three
 reason/node/family pairs with the most, which the row names), critical from 25 refusals the
-fleet could fix. `no_entries` (`APP_REFUSALS`) is counted and shown but never grades the item: no
-address would change it, so with nothing else it is `info`, and any other reason names the item
-first. A
+fleet could fix. `no_entries` and `app_notice` (`APP_REFUSALS`) are counted and shown but never
+grade the item: no address would change them, so with nothing else it is `info`, and any other
+reason names the item first. `app_notice` counts every app notice the route sent (§ "Apps that
+get no connection"), at a place no origin covers as well. A
 client family whose render rule is off now answers `family_disabled` (no longer
 `render_disabled`), and attention `family_rule_disabled` lists the families while any node is
 edge-required. A `rotation_stuck` item (critical) appears for a rotation running over an hour.
@@ -6600,6 +6653,16 @@ one deploy, no migration, nobody moves. An account gets its seat (its newest key
 the legacy walk until an operator spreads them. To roll back, run
 `edgeAdmin:clearSeatsForRollback` with no arguments (it pages through the accounts, then the
 origins, scheduling itself) before deploying the older build.
+
+**The app notice** (§ "Apps that get no connection") adds one optional field
+(`subscriptions.appNotice`) and one counted code (`app_notice`): one deploy, no migration, no
+setting. Legacy Clash apps get the notice from their next fetch; a body cached before the deploy
+answers until its 30 s cache runs out. To roll back, run `appNotices:clearForRollback` with no
+arguments before deploying the older build: in the transaction of its first page it turns record
+writes off (`appState` `appNotice:recordsOff`), so no record, one already scheduled included, can
+land behind it, then it pages through the keys, scheduling itself. Apps keep getting the notice
+meanwhile. Called off, `appNotices:resumeRecords` turns records back on; any later deploy of a
+build with the notice does it too (`seedCutover`).
 
 **Replacing a blocked address without a spare** adds optional fields only
 (`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,

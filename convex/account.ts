@@ -33,6 +33,7 @@ import {
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { currentOrActiveSub } from './subscriptions';
+import { appNoticeShown, type AppNoticeFamily } from './lib/appNotice';
 import {
   crossPanelMoveProven,
   groupHasOtherNode,
@@ -394,6 +395,12 @@ interface AccountView {
     location: { code: string; label: string } | null;
     /** "Switch server" would move this key right now (`switchServerAvailable`). */
     canSwitchServer: boolean;
+    /**
+     * An app that fetched this key's link got the app notice within the hint
+     * window (lib/appNotice.ts `appNoticeShown`): the kind of app and when
+     * (ISO). Null otherwise.
+     */
+    appNotice: { family: AppNoticeFamily; at: string } | null;
     devices: {
       hwid: string;
       platform?: string;
@@ -503,6 +510,11 @@ export const getAccountView = internalAction({
           })
         : null;
       const edgeRequired = delivery?.required === true;
+      // An app on this key got the app notice lately (lib/appNotice.ts).
+      const notice = appNoticeShown(sub.appNotice, Date.now());
+      const appNoticeHint = notice
+        ? { family: notice.family, at: new Date(notice.at).toISOString() }
+        : null;
       const withheld = edgeRequired || (await rawUrlWithheld(ctx, sub._id));
       subscription = {
         // The raw backend URL (fallback) + the opaque token; the SPA builds the
@@ -529,6 +541,7 @@ export const getAccountView = internalAction({
           ? { code: server.location, label: server.locationLabel ?? server.location }
           : null,
         canSwitchServer: await ctx.runQuery(internal.account.switchServerAvailable, { userId }),
+        appNotice: appNoticeHint,
         devices: live.devices.map((d) => ({
           hwid: d.hwid,
           platform: d.platform ?? undefined,

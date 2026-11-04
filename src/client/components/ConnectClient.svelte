@@ -164,8 +164,11 @@
   const stepNumber = $derived(new Intl.NumberFormat(getLocale()));
 </script>
 
-<section class="@container panel">
-  <h2 class="text-xl font-bold leading-tight">{t('setup.title')}</h2>
+<!-- `setup-apps`: where the account page's app-notice hint sends the member. -->
+<section id="setup-apps" class="@container panel scroll-mt-6">
+  <h2 class="text-xl font-bold leading-tight focus:outline-none" tabindex="-1" data-setup-title>
+    {t('setup.title')}
+  </h2>
   <p class="mt-1.5 text-[15px] text-muted-foreground">{t('setup.intro')}</p>
 
   <!-- Platform picker: one segmented row (the active platform inverted). -->

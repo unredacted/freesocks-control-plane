@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { MemberCurrentMode } from './connectionModes';
 import { UserStatus } from './common';
 import { SubscriptionMirror } from './subscription';
+import { APP_NOTICE_FAMILIES } from './appNotice';
 import { BackendId } from './admin';
 import { SWITCH_SERVER_REASONS } from './switchServerReasons';
 
@@ -111,6 +112,15 @@ export const AccountResponse = z.object({
        *  it last moved. Absent from an older server: fall back to the backend's
        *  capability. */
       canSwitchServer: z.boolean().optional(),
+      /** An app that fetched this key's link was sent the app notice lately
+       *  (a config whose only entries say the app can't connect): the kind of
+       *  app (the format it reads) and when. Null when none was within the
+       *  hint window; optional/defaulted for rolling-deploy compat. */
+      appNotice: z
+        .object({ family: z.enum(APP_NOTICE_FAMILIES), at: z.string().datetime() })
+        .nullable()
+        .optional()
+        .default(null),
       devices: z.array(
         z.object({
           hwid: z.string(),

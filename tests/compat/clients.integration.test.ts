@@ -381,13 +381,32 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
     await useTemplates(panel.api, 'fixture');
     await clearSubCache();
   });
-  test('the legacy Clash body routes by rule to the proxy group as the panel serves it', async () => {
+  test('a legacy Clash core gets the app notice: Mihomo loads it, and nothing passes', async () => {
     // Any other `clash…` User-Agent gets the panel's CLASH template. Legacy
-    // Clash has no VLESS, so the panel leaves this stack's one entry out and no
-    // engine can run the body; its routing is still the template's.
-    const body = await subscription('ClashForWindows/0.20.39');
-    expect((YAML.parse(body) as { mode?: unknown }).mode).toBe('rule');
+    // Clash has no VLESS, so the panel leaves this stack's one entry out and
+    // FCP answers the app notice instead (convex/lib/appNotice.ts): inert
+    // SOCKS5 entries named with the notice, one group every rule ends in.
+    const response = await t.fetch(`/api/v1/sub/${token}`, {
+      headers: { 'user-agent': 'ClashForWindows/0.20.39' },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    const body = await response.text();
+    const doc = YAML.parse(body) as {
+      mode?: unknown;
+      proxies: Array<{ name: string; type: string; server: string }>;
+    };
+    expect(doc.mode).toBe('rule');
+    expect(doc.proxies[0]?.name).toBe('⚠ App too old for FreeSocks');
+    expect(doc.proxies.every((p) => p.type === 'socks5' && p.server === '127.0.0.1')).toBe(true);
     expect(defaultRouteFaults(body, 'FreeSocks')).toEqual([]);
+    try {
+      // `mihomo -t` passes on it (startEngine checks first), and it fails closed.
+      await startEngine('mihomo', sandboxed('mihomo', body));
+      await expect(httpsProbe()).rejects.toThrow();
+    } finally {
+      stopEngine();
+    }
   });
   for (const client of clients.filter((c) => c.format === 'singbox' || c.format === 'mihomo')) {
     for (const ua of client.userAgents) {

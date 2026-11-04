@@ -452,6 +452,15 @@ export const DELIVERY_UNAVAILABLE_CODES = [
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
 
 /**
+ * Answers the subscription route counts beside its refusals: `app_notice`, the
+ * app got a notice config in place of a connection (its body held none and
+ * the app is the reason, convex/lib/appNotice.ts). Counted like `no_entries`,
+ * never what makes `delivery_refusals` critical.
+ */
+export const DELIVERY_NOTICE_CODES = ['app_notice'] as const;
+export type DeliveryNoticeCode = (typeof DELIVERY_NOTICE_CODES)[number];
+
+/**
  * Published-pool refusals and notices (`edge.<code>` on the wire): reserved
  * allocation (`pool_reserved`), a full pool, a rebalance with nothing to
  * unpublish, a pool raised at registration (`pool_raised`, a warning), the

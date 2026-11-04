@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { appNoticeFamilyValidator } from './lib/appNoticeFamilies';
 import { backendIdValidator } from './lib/backendIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
@@ -882,6 +883,12 @@ export default defineSchema({
     // that read an older revision writes none of them back
     // (subscriptions.ts `invalidateDelivery`).
     deliveryRev: v.optional(v.number()),
+    // When an app that fetched this key's link was last sent the app notice in
+    // place of a connection (lib/appNotice.ts), and the kind of app (the
+    // format it reads): never its User-Agent, version or address. Rewritten at
+    // most every few hours; the account page shows a hint while it is recent.
+    // A mode switch in place clears it.
+    appNotice: v.optional(v.object({ family: appNoticeFamilyValidator, at: v.number() })),
     state: subscriptionState,
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),

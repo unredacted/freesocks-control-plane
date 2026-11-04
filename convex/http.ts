@@ -13,6 +13,7 @@ import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
+import { appNoticeContent } from './appNotices';
 import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
 import { checkInfraUrl } from './lib/urlSafety';
 import { suggestionCountry } from './lib/memberCountry';
@@ -1185,12 +1186,13 @@ http.route({
         location,
         now: Date.now(),
       });
-      if (out.kind === 'refuse')
+      // (No app notice here: this view asks for none, so `notice` never comes back.)
+      if (out.kind !== 'serve')
         return errorJson(
           'delivery.unavailable',
           'This configuration is not available right now',
           503,
-          { reason: out.reason },
+          { reason: out.kind === 'refuse' ? out.reason : 'app_notice' },
         );
       // Not a delivery stamp, but the account was handed these addresses
       // (their first exposure, convex/edgeTrust.ts).
@@ -1423,8 +1425,26 @@ http.route({
       // covered place gets a rendered body that passed every check or a 503
       // (it keeps the client's last config; an empty 200 would wipe it), never
       // the origin body. Refusals are counted inside.
-      const out = await deliverBody(ctx, { sub: place, fetched, ua, location, now });
+      const out = await deliverBody(ctx, { sub: place, fetched, ua, location, now, notices: true });
       if (out.kind === 'refuse') return unavailableResponse(out.reason);
+      // The app got no connection because it cannot speak the mode: a small
+      // config of its own format whose only entries say so (lib/appNotice.ts).
+      // Never cached and never stamped as a delivery (it carries no edge); the
+      // key records that an app got it, for the account page's hint.
+      if (out.kind === 'notice') {
+        const content = await appNoticeContent(ctx, {
+          sub,
+          notice: out.notice,
+          replaced: fetched.content,
+          now,
+        });
+        return (
+          await subscriptionResponse(
+            { content, contentType: fetched.contentType ?? 'text/plain', headers: fetched.headers },
+            { hwid: true, hints, ifNoneMatch },
+          )
+        ).response;
+      }
       // Where the member was located for THIS body (its node may not be the
       // stored pin): what the entry's region and its cacheability follow.
       const at = out.location;
