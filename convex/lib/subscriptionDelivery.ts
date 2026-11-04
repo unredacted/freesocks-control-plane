@@ -26,8 +26,10 @@
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
+import { appNoticeFor, type AppNotice } from './appNotice';
 import type { CountryContext } from './edges/assignment';
 import { classifyClient } from './edges/clientFamilies';
+import type { ListenerProto } from './edges/protocols';
 import { normalizeAddress, sameAddress } from './edges/hosts';
 import { decodeBase64Loose } from './edges/render/base64';
 import { applyEdgeRender } from './edges/renderPipeline';
@@ -225,7 +227,17 @@ export type DeliveryOutcome =
       /** Where the member was located for this body (at `node`): what cacheability follows. */
       location: MemberLocation;
     }
-  | { kind: 'refuse'; reason: string };
+  | { kind: 'refuse'; reason: string }
+  | {
+      /**
+       * The body held no connection and the app is the reason
+       * (lib/appNotice.ts): the caller answers the notice, never caches it.
+       * Only with `notices` asked for; counted as `app_notice`.
+       */
+      kind: 'notice';
+      notice: AppNotice;
+      node: string | null;
+    };
 
 /** One served render's entries left out, and the origin to note them on. */
 export interface WithheldNote {
@@ -312,6 +324,10 @@ export function bodyMentionsAny(body: string, addresses: readonly string[]): boo
  * policy token is read before the decision and again after the render: one
  * re-render is allowed when it moved (or a front's proof lapsed meanwhile), a
  * second move refuses `policy_moved`.
+ *
+ * With `notices`, a body that holds no connection because of the app
+ * (lib/appNotice.ts `appNoticeFor`) comes back as `notice`, at a covered place
+ * (in place of the `no_entries` refusal) and at one no origin covers alike.
  */
 export async function deliverBody(
   ctx: ActionCtx,
@@ -322,6 +338,8 @@ export async function deliverBody(
     /** From `locateMember` (at the stored pin); re-read here when the body resolves elsewhere. */
     location: MemberLocation;
     now: number;
+    /** Answer an app that gets no connection with the app notice (the app's own fetch only). */
+    notices?: boolean;
   },
 ): Promise<DeliveryOutcome> {
   const { sub, fetched, now } = input;
@@ -347,6 +365,26 @@ export async function deliverBody(
       /* the counter is best effort */
     }
     return { kind: 'refuse', reason };
+  };
+  // The app notice, counted beside the refusals (and as they are) so the
+  // operator sees how many apps were told.
+  const noticeOf = async (
+    body: string,
+    listeners: readonly ListenerProto[] | null,
+  ): Promise<DeliveryOutcome | null> => {
+    if (!input.notices) return null;
+    const notice = appNoticeFor({ body, ua: input.ua, listeners });
+    if (!notice) return null;
+    try {
+      await ctx.scheduler.runAfter(0, internal.deliveryRefusals.record, {
+        reason: 'app_notice',
+        ...(node ? { node } : {}),
+        family,
+      });
+    } catch {
+      /* the counter is best effort */
+    }
+    return { kind: 'notice', notice, node };
   };
   // A backend placeholder (an expired or disabled key: every entry at a
   // placeholder host, no node named) carries nothing an origin serves and no
@@ -419,7 +457,18 @@ export async function deliverBody(
           where,
           edgeCountry: location.edgeCountry,
         });
-        if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
+        if (out.delivery.kind !== 'serve') {
+          // No entry at all because the app cannot speak what this place
+          // serves: told so, in place of the refusal.
+          const told =
+            out.delivery.reason === 'no_entries'
+              ? await noticeOf(
+                  body,
+                  rctx.matchers.map((m) => m.proto),
+                )
+              : null;
+          return told ?? refuse(out.delivery.reason);
+        }
         if (out.withheld?.length) passWithheld = { rctx, names: out.withheld };
         body = out.body;
         epoch = rctx.epoch;
@@ -503,6 +552,13 @@ export async function deliverBody(
       settled = after === before;
     }
     if (!settled) return refuse('policy_moved');
+  }
+  // A body handed out as the backend sent it (a place no origin covers) that
+  // holds no connection because the app is too old: told so too. A rendered
+  // body always holds an entry, and a placeholder holds the backend's own.
+  if (render === null && !passthrough) {
+    const told = await noticeOf(content, null);
+    if (told) return told;
   }
   // Member-facing names (docs/privacy.md): an entry the backend named after its
   // node and server name gets a neutral label; a Mihomo REALITY entry asks for

@@ -15,6 +15,7 @@ import type * as admins from "../admins.js";
 import type * as alerts from "../alerts.js";
 import type * as analytics from "../analytics.js";
 import type * as apiTokens from "../apiTokens.js";
+import type * as appNotices from "../appNotices.js";
 import type * as appSettings from "../appSettings.js";
 import type * as audit from "../audit.js";
 import type * as auth from "../auth.js";
@@ -221,6 +222,7 @@ declare const fullApi: ApiFromModules<{
   alerts: typeof alerts;
   analytics: typeof analytics;
   apiTokens: typeof apiTokens;
+  appNotices: typeof appNotices;
   appSettings: typeof appSettings;
   audit: typeof audit;
   auth: typeof auth;

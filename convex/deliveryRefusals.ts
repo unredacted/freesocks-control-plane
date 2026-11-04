@@ -1,7 +1,8 @@
 /**
  * Dark members, counted (docs/edges.md § "Operations safety"): every refusal
  * the subscription route answers under edge-required delivery (the 503 with
- * `x-fcp-delivery: <reason>`) bumps a counter per reason. The route is hot,
+ * `x-fcp-delivery: <reason>`) bumps a counter per reason, and so does every
+ * app notice it sends in place of a connection (`app_notice`). The route is hot,
  * so the counter is SHARDED: a refusal writes one of REFUSAL_SHARDS `appState`
  * rows (`edge:refusals:<n>`), picked at random, and concurrent refusals rarely
  * touch the same row. The route schedules the write instead of awaiting it, so
@@ -19,7 +20,10 @@ import { internalMutation } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
 import { isRenderClientFamily } from './lib/edgeConfig';
-import { DELIVERY_UNAVAILABLE_CODES } from '../src/shared/contracts/edgeCodes';
+import {
+  DELIVERY_NOTICE_CODES,
+  DELIVERY_UNAVAILABLE_CODES,
+} from '../src/shared/contracts/edgeCodes';
 
 export const REFUSAL_SHARDS = 8;
 const BUCKET_MS = 10 * 60_000;
@@ -29,12 +33,14 @@ export const REFUSAL_WINDOW_MS = 60 * 60_000;
 export const REFUSALS_CRITICAL_AT = 25;
 /**
  * Refusals no edge would change: the member's app got no connection from the
- * backend at all (`no_entries`, an app that cannot speak the node's protocol).
- * Counted and shown, but never what grades the attention item.
+ * backend at all (`no_entries`, an app that cannot speak the node's protocol),
+ * or got the app notice in its place (`app_notice`, lib/appNotice.ts; counted
+ * on every route that sends one, a place no origin covers included). Counted
+ * and shown, but never what grades the attention item.
  */
-export const APP_REFUSALS: ReadonlySet<string> = new Set(['no_entries']);
+export const APP_REFUSALS: ReadonlySet<string> = new Set(['no_entries', ...DELIVERY_NOTICE_CODES]);
 
-const KNOWN = new Set<string>(DELIVERY_UNAVAILABLE_CODES);
+const KNOWN = new Set<string>([...DELIVERY_UNAVAILABLE_CODES, ...DELIVERY_NOTICE_CODES]);
 const keyOf = (shard: number) => `edge:refusals:${shard}`;
 
 interface Bucket {

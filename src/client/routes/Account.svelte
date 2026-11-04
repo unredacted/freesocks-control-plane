@@ -7,6 +7,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import AppNoticeHint from '../components/AppNoticeHint.svelte';
   import UsagePanel from '../components/UsagePanel.svelte';
   import KeyLocationGlobe from '../components/KeyLocationGlobe.svelte';
   import SectionHead from '../components/SectionHead.svelte';
@@ -1082,6 +1083,12 @@
                     </div>
                   {/snippet}
                 </SubscriptionHero>
+                {#if data.subscription.appNotice}
+                  <!-- An app on this key got the app notice lately (too old, or
+                       its format can't carry this mode): say so right under
+                       the pass, and point at the supported apps. -->
+                  <AppNoticeHint notice={data.subscription.appNotice} />
+                {/if}
                 {#if !rawConfigFirst}
                   <!-- Right under the pass it fixes. Always rendered outside
                        rawConfig modes: mirror AVAILABILITY is member-visible state

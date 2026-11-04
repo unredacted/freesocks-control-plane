@@ -1194,7 +1194,13 @@ const COPY = {
     label: 'App gets no connection',
     explain:
       "The panel served this app no connection at all, because the app's format cannot carry the node's protocol. An old Clash app has no VLESS, and sing-box has no XHTTP. More addresses would not change it.",
-    fix: 'Members on such an app need one that supports the mode, such as a Mihomo (Clash Meta) app.',
+    fix: 'Members on such an app need one that supports the mode, such as a Mihomo (Clash Meta) app. Where FCP can tell the app is the reason, it sends the app a notice instead (App too old: notice sent).',
+  },
+  // Counted beside the refusals: the app got the notice config in place of a connection.
+  app_notice: {
+    label: 'App too old: notice sent',
+    explain:
+      "The panel served this app no connection, because the app cannot speak the mode (an old Clash app has no VLESS, and sing-box has no XHTTP). FCP answered with a small config whose only entries tell the member to install a current app, and the member's account page says so for a week. More addresses would not change it.",
   },
   // A preview's per-listener note: the family's format has no way to carry the listener.
   family_cannot_carry: {

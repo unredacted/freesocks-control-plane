@@ -385,9 +385,9 @@ const SHARE_LINK_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
  * legacy Clash core has no VLESS, so its body holds no proxy), not a fault of
  * the fleet: `no_entries`, never `empty_pool`. An entry that is there but
  * malformed (no address, a link that does not parse) is still an entry, left
- * to the renderer's own verdicts.
+ * to the renderer's own verdicts. The app notice reads it too (lib/appNotice.ts).
  */
-function carriesNoEntry(body: string, format: SubscriptionFormat): boolean {
+export function carriesNoEntry(body: string, format: SubscriptionFormat): boolean {
   try {
     if (format === 'clash-yaml') {
       const doc: unknown = YAML.parse(body);
