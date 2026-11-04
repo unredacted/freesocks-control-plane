@@ -92,7 +92,7 @@
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
-    "@inlang/paraglide-js": "2.29.3",
+    "@inlang/paraglide-js": "3.0.0",
     "@inlang/plugin-m-function-matcher": "2.4.1",
     "@inlang/plugin-message-format": "4.5.7",
     "@internationalized/date": "^3.12.4",
