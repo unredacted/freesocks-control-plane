@@ -21,8 +21,8 @@
   interface Props {
     open: boolean;
     reason: ReportIssueReason | null;
-    /** The connection labels the pass shows; empty = the question is not asked. */
-    connections?: Array<{ label: string; role: 'primary' | 'backup' }>;
+    /** The connection names the pass shows; empty = the question is not asked. */
+    connections?: Array<{ label: string; base?: string; role: 'primary' | 'backup' }>;
     /** The member's answer; null = not answered (the question is optional). */
     connection?: 'primary' | 'backup' | 'unsure' | null;
     telemetryContext: TelemetryContextResponse | undefined;
@@ -63,14 +63,15 @@
       : null,
   );
 
-  // One option per role (a role may carry one label per address family).
+  // One option per role, named after its address (a role carries one entry per
+  // form of its address: `· Domain`, `· IPv4`, `· IPv6` share one base name).
   const connectionOptions = $derived([
     ...(['primary', 'backup'] as const)
       .map((role) => ({
         role: role as 'primary' | 'backup' | 'unsure',
-        label: [...new Set(connections.filter((c) => c.role === role).map((c) => c.label))].join(
-          ' / ',
-        ),
+        label: [
+          ...new Set(connections.filter((c) => c.role === role).map((c) => c.base ?? c.label)),
+        ].join(' / '),
       }))
       .filter((o) => o.label !== ''),
   ]);

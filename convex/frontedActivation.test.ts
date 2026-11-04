@@ -54,6 +54,7 @@ import { markOf } from './edgeTrust';
 import { onSetupRunEnded } from './edgeSetupRuns';
 import { publicationAdmission } from './nodeActivation';
 import { signValue } from './lib/cookies';
+import { profileTitleValue } from './lib/subscriptionTitle';
 import { ActivationReview } from '../src/shared/contracts/servers';
 import {
   SetupRunAdmin,
@@ -775,8 +776,11 @@ describe('a fronted node goes from enrollment to members', () => {
     for (const ua of [LINKS_UA, SINGBOX_UA]) {
       const res = await fetchSub(t, ua);
       expect(res.status).toBe(200);
-      // A rendered body is titled with the site's name like every other one.
-      expect(res.headers.get('profile-title')).toBe('base64:RnJlZVNvY2tz');
+      // A rendered body is titled like every other one: the site's name and the
+      // member's connection mode (none stored here: the default, WebSocket).
+      expect(res.headers.get('profile-title')).toBe(
+        profileTitleValue('FreeSocks · Freedom WebSocket'),
+      );
       const body = await res.text();
       expect(body).toContain(address);
       expect(body).not.toContain(ORIGIN_V4);

@@ -124,7 +124,7 @@ export const context = internalQuery({
       maxEntries: 1,
       autoGroup: false,
       dropTemplateEntries: true,
-      primaryLabel: `FCP test ${relay.slug} ${listener.listenerKey}`,
+      fixedLabel: `FCP test ${relay.slug} ${listener.listenerKey}`,
     };
     const proto: ListenerProto = {
       protocol: listener.protocol,

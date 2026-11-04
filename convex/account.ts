@@ -613,6 +613,8 @@ interface NodeStatusView {
     /** `name` = a hostname-fronted connection (one entry, no address family). */
     connections: Array<{
       label: string;
+      /** The name without its form tag or spare number: one per address. */
+      base: string;
       role: 'primary' | 'backup';
       family: 'v4' | 'v6' | 'name';
     }>;

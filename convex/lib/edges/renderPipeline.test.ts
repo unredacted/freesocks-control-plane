@@ -242,13 +242,15 @@ describe('applyEdgeRender: listener-aware assignment', () => {
     const out = applyEdgeRender(rctx([edgeA, edgeS]), both, k, { now: NOW });
     expect(out.snapshot.primaryEdgeId).toBe('eS');
     const lines = out.body.split('\n');
-    const primary = lines.find((l) => l.endsWith('#FreeSocks'))!;
+    // Neither edge's location has a member-facing place: `via relay A`, `B` in body order.
+    const nameOf = (l: string) => decodeURIComponent(l.slice(l.indexOf('#') + 1));
+    const primary = lines.find((l) => nameOf(l) === 'via relay A')!;
     expect(
       primary.startsWith(
         'ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpleGFtcGxlLXBhc3N3b3Jk@203.0.113.20:8388',
       ),
     ).toBe(true);
-    const backup = lines.find((l) => l.endsWith('#FreeSocks%20(backup)'))!;
+    const backup = lines.find((l) => nameOf(l).startsWith('via relay B'))!;
     expect(backup.startsWith(`vless://${UUID}@203.0.113.10:443?`)).toBe(true);
     expect(backup).toContain('sni=cdn-a.example');
     expect(out.body).not.toContain(ORIGIN);

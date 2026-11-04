@@ -38,6 +38,8 @@ import { qualificationBinding, qualificationVerdict } from './lib/edges/frontChe
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
 import { previewSample, withUncarried } from './lib/edges/preview';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
+import { entryNamesOf, relabelMemberEntries } from './lib/memberEntryNames';
+import { entryNamingOf } from './subscriptions';
 import { effectiveRule, ruleForDelivery } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
 import { isTerminalPhase, progressPercent } from './lib/edges/rotation';
@@ -796,11 +798,22 @@ export async function renderPreviewFor(
         ...(country ? { where: { country, curated }, edgeCountry: steer ? country : null } : {}),
       },
     );
+    // What members receive: the rendered body through the member relabel (the
+    // backend's group named after the site), and the names their app lists
+    // (docs/edges.md "Names in apps").
+    const body =
+      out.delivery.kind === 'serve'
+        ? relabelMemberEntries(
+            out.body,
+            await entryNamingOf(ctx.db, origin.backendServerId ?? undefined),
+          ).content
+        : out.body;
     return {
       family: fam,
       format,
       input,
-      body: out.body,
+      body,
+      names: out.delivery.kind === 'serve' ? entryNamesOf(body) : { entries: [], groups: [] },
       applied: out.applied,
       reason: out.reason ?? null,
       emitted: out.emitted,

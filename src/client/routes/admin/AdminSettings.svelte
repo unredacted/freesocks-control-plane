@@ -554,9 +554,12 @@
           <CardDescription>
             The backend names each connection after its node and server name, and members (and
             anyone with a free account) would see those names in their app. When this is on, FCP
-            renames them to "service name · location" (the backend's location label up to its first
-            comma), with a short code when there are several. Edge connections keep their own
-            labels. The group the backend names after itself becomes "service name Select".
+            renames a direct connection to "🇨🇦 location · Direct" (the backend's location label up
+            to its first comma, the flag of the country the backend lists for its nodes), then
+            "Direct 2", "Direct 3" for further server names. Connections through an edge are always
+            named by FCP ("🇧🇷 via place", "🌐 via CDN 1"; each location's "Name in apps" sets the
+            place). The group the backend names after itself takes the service name, and the
+            subscription title reads "service name · connection mode".
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">

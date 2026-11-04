@@ -17,6 +17,7 @@
  * the same way.
  */
 import YAML from 'yaml';
+import { AUTO_GROUP_NAME } from '../../../../src/shared/entryNames';
 import { sameAddress } from '../hosts';
 import { codecFor, type ListenerProto } from '../protocols';
 import { cloneJson, pruneRefs, uniqueName } from './refs';
@@ -155,12 +156,10 @@ export function renderClash(input: RenderInput): RenderOutput {
   for (const g of groups) {
     if (!isObj(g) || typeof g.name !== 'string') continue;
     taken.add(g.name);
-    if (g.name === input.rule.autoGroupName && Array.isArray(g.proxies)) autoGroupIsGroup = true;
+    if (g.name === AUTO_GROUP_NAME && Array.isArray(g.proxies)) autoGroupIsGroup = true;
   }
 
-  const autoName = autoGroupIsGroup
-    ? input.rule.autoGroupName
-    : uniqueName(input.rule.autoGroupName, taken);
+  const autoName = autoGroupIsGroup ? AUTO_GROUP_NAME : uniqueName(AUTO_GROUP_NAME, taken);
   if (input.rule.autoGroup) taken.add(autoName);
 
   const emitted: Obj[] = [];

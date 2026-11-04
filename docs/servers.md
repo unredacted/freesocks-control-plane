@@ -354,24 +354,31 @@ separator is the server name the entry itself serves (a link's `sni`, sing-box
 (the fronted subscription route, the sealed configuration copy, every mirror upload) renames each
 entry that names a node (`lib/memberEntryNames.ts`):
 
-| Entries left | Name in the member's app                              |
-| ------------ | ----------------------------------------------------- |
-| One          | `<site name> · <place>`                               |
-| Several      | `<site name> · <place> · <code>`, one per server name |
+| Entries left | Name in the member's app                                      |
+| ------------ | ------------------------------------------------------------- |
+| One          | `<flag> <place> · Direct`                                     |
+| Several      | `<flag> <place> · Direct`, then `· Direct 2`, `· Direct 3`, … |
 
-- `<site name>` is `subscription.siteName` (default `FreeSocks`), `<place>` the backend's
-  member-facing location label up to its first comma (left out when unset), `<code>` four
-  characters derived from the server name alone. A code is the same on every refresh, under a
-  node rename, and whatever other entries come or go. Only while two server names in one body
-  share a code do both carry their six-character code instead (each still from its own name);
-  a name that is still not unique gets a ` (2)`.
+- The scheme is the one every connection mode uses (`docs/edges.md` § "Names in apps",
+  `src/shared/entryNames.ts`). `<place>` is the backend's member-facing location label up to its
+  first comma; `<flag>` the country every node of the backend reports in its node list
+  (`backendNodeInventory.countryCode`; none when they disagree or report a private-use code such
+  as `XX`). Either is left out when unknown; with neither, the site name leads
+  (`FreeSocks · Direct`), so no entry reads as an app's own no-proxy outbound.
+- The numbers follow the server names (the part of the remark after the node) in sorted order,
+  never the body's order: an entry keeps its number on every refresh and under a node rename
+  while the set of server names stays the same. A server name that comes or goes moves the
+  numbers of those sorted after it. The four- and six-character codes these numbers replaced
+  (2026-11-04) never moved, but read to members as noise. The same server name under two nodes
+  shares a number and the second gets a ` (2)`.
 - References follow the rename: sing-box selector/urltest members, `default`, `route.final`,
   rule `outbound`s and `detour`s; Clash proxy-group members and rule targets. Covered formats are
   link lists (base64-wrapped or not), sing-box JSON, Clash / Mihomo YAML and Xray JSON config
   lists; a body none of them reads is served as it is (like the pinner, the step never emits a
   broken config).
-- Entries that name no node keep their names: an edge's rendered entries (their labels are
-  `edge.render.*`, docs/edges.md), the backend's placeholders, groups.
+- Entries that name no node keep their names: an edge's rendered entries (named by the renderer
+  with the same scheme, docs/edges.md § "Names in apps"), the backend's placeholders, groups other
+  than the backend's own (which takes the bare site name, `docs/privacy.md` §5c).
 - `subscription.entryNames` (default on, Admin → Settings → "Names in members' apps") turns it
   off. Turning it off, or changing the site name, reaches a member at their next refresh past the
   content cache, and every mirror at its next sweep.

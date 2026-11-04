@@ -23,8 +23,8 @@ import {
 import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { entryNamingFrom, type EntryNaming } from './lib/memberEntryNames';
-import { profileTitleValue, resolveSubscriptionSiteName } from './lib/subscriptionTitle';
+import { entryNamingFrom, instanceCountry, type EntryNaming } from './lib/memberEntryNames';
+import { profileTitleValue, resolveSubscriptionTitle } from './lib/subscriptionTitle';
 import { resolveUpdateIntervalHours } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { storedCountry } from './lib/memberCountry';
@@ -764,33 +764,53 @@ export const deliveryContextForUser = internalQuery({
   },
 });
 
+// The inventory rows read for an instance's flag: one per node, a handful.
+const NODE_INVENTORY_SCAN = 200;
+
 /**
  * What the entry names of a member body served from this backend instance are
- * built from (lib/memberEntryNames.ts): the site name and the instance's
- * location label, or null when they are off or the backend's names are not
+ * built from (lib/memberEntryNames.ts): the site name, the instance's location
+ * label and its nodes' country (the flag: `instanceCountry` over the backend's
+ * node inventory), or null when they are off or the backend's names are not
  * panel remarks (a backend without node pinning). Two settings rows and one
- * instance row, all point reads.
+ * instance row (point reads), and the instance's inventory rows (one per node).
  */
+export async function entryNamingOf(
+  db: DatabaseReader,
+  backendServerId: Id<'backendServers'> | undefined,
+): Promise<EntryNaming | null> {
+  const server = backendServerId ? await db.get(backendServerId) : null;
+  if (server && !capabilitiesOf(server.backend).nodePinning) return null;
+  const settings: Record<string, unknown> = {};
+  for (const key of ['subscription.entryNames', 'subscription.siteName']) {
+    const row = await db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (!row) continue;
+    try {
+      settings[key] = JSON.parse(row.value);
+    } catch {
+      /* the default applies */
+    }
+  }
+  const nodes = server
+    ? await db
+        .query('backendNodeInventory')
+        .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
+        .take(NODE_INVENTORY_SCAN)
+    : [];
+  return entryNamingFrom(
+    settings,
+    server?.locationLabel,
+    instanceCountry(nodes.map((n) => n.countryCode)),
+  );
+}
+
 export const entryNamingFor = internalQuery({
   args: { backendServerId: v.optional(v.id('backendServers')) },
-  handler: async (ctx, { backendServerId }): Promise<EntryNaming | null> => {
-    const server = backendServerId ? await ctx.db.get(backendServerId) : null;
-    if (server && !capabilitiesOf(server.backend).nodePinning) return null;
-    const settings: Record<string, unknown> = {};
-    for (const key of ['subscription.entryNames', 'subscription.siteName']) {
-      const row = await ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', key))
-        .unique();
-      if (!row) continue;
-      try {
-        settings[key] = JSON.parse(row.value);
-      } catch {
-        /* the default applies */
-      }
-    }
-    return entryNamingFrom(settings, server?.locationLabel);
-  },
+  handler: (ctx, { backendServerId }): Promise<EntryNaming | null> =>
+    entryNamingOf(ctx.db, backendServerId),
 });
 
 /** Append one freshly-provisioned mirror (opt-in flow), idempotent per provider.
@@ -1289,20 +1309,23 @@ export const remapBackendUserId = internalMutation({
   },
 });
 
-/** The `profile-title` every subscription response carries: the service name
- *  (`subscription.siteName`), never the backend's own title. */
 /**
  * What the subscription route stamps on every answer, whatever path the body
- * took: FCP's `profile-title` and the refresh hint it sends with an
- * edge-rendered body (`edge.updateIntervalHours`). Two point reads.
+ * took: FCP's `profile-title` (the service name and the key's connection mode,
+ * never the backend's own title, lib/subscriptionTitle.ts) and the refresh hint
+ * it sends with an edge-rendered body (`edge.updateIntervalHours`).
  */
 export const responseHints = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<{ title: string; updateIntervalHours: number }> => {
-    const [siteName, updateIntervalHours] = await Promise.all([
-      resolveSubscriptionSiteName(ctx.db),
+  args: { subscriptionId: v.optional(v.id('subscriptions')) },
+  handler: async (
+    ctx,
+    { subscriptionId },
+  ): Promise<{ title: string; updateIntervalHours: number }> => {
+    const sub = subscriptionId ? await ctx.db.get(subscriptionId) : null;
+    const [title, updateIntervalHours] = await Promise.all([
+      resolveSubscriptionTitle(ctx.db, sub),
       resolveUpdateIntervalHours(ctx.db),
     ]);
-    return { title: profileTitleValue(siteName), updateIntervalHours };
+    return { title: profileTitleValue(title), updateIntervalHours };
   },
 });

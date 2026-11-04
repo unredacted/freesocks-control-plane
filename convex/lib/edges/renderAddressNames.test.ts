@@ -51,6 +51,7 @@ const edgeA: PublishedEdge = {
   addresses: { v4: '203.0.113.10', v6: '2001:db8::10' },
   addressName: NAME_A,
   serverNames: [{ sni: 'cdn-a.example', status: 'active' }],
+  memberPlace: { name: 'Example City', country: 'BR' },
 };
 const edgeB: PublishedEdge = {
   ...edgeA,
@@ -59,7 +60,18 @@ const edgeB: PublishedEdge = {
   provider: 'scaleway',
   addresses: { v4: '203.0.113.20' },
   addressName: undefined,
+  memberPlace: { name: 'Example Town', country: 'NZ' },
 };
+// What members read (src/shared/entryNames.ts): the primary in its three forms,
+// the backup (one form, no tag), and the backup's forms once it is named too.
+const PD = '🇧🇷 via Example City · Domain';
+const P4 = '🇧🇷 via Example City · IPv4';
+const P6 = '🇧🇷 via Example City · IPv6';
+const P = '🇧🇷 via Example City';
+const B = '🇳🇿 via Example Town';
+const BD = '🇳🇿 via Example Town · Domain';
+const B4 = '🇳🇿 via Example Town · IPv4';
+const B6 = '🇳🇿 via Example Town · IPv6';
 const assigned: { primary: AssignedEndpoint; backup: AssignedEndpoint } = {
   primary: { role: 'primary', edge: edgeA, sni: 'cdn-a.example', hostHeader: null },
   backup: { role: 'backup', edge: edgeB, sni: 'cdn-b.example', hostHeader: null },
@@ -116,16 +128,16 @@ describe('an address with a name', () => {
     const out = render(templateLink);
     expect(out.delivery).toEqual({ kind: 'serve' });
     expect(linesOf(out.body).map((l) => [l.label, l.host])).toEqual([
-      ['FreeSocks', NAME_A],
+      [PD, NAME_A],
       // The backup has no name: its IP, as before.
-      ['FreeSocks (backup)', '203.0.113.20'],
+      [B, '203.0.113.20'],
       // Where the name is blocked or answered falsely; an IPv4-only network needs this one.
-      ['FreeSocks (IPv4)', '203.0.113.10'],
+      [P4, '203.0.113.10'],
       // Where IPv4 is blocked and IPv6 works.
-      ['FreeSocks (IPv6)', '[2001:db8::10]'],
+      [P6, '[2001:db8::10]'],
     ]);
     // Every entry of the named address carries the listener's server name, never the name.
-    for (const l of linesOf(out.body).filter((x) => x.label !== 'FreeSocks (backup)'))
+    for (const l of linesOf(out.body).filter((x) => x.label !== B))
       expect(l.sni).toBe('cdn-a.example');
   });
 
@@ -136,9 +148,9 @@ describe('an address with a name', () => {
     });
     expect(out.delivery).toEqual({ kind: 'serve' });
     expect(linesOf(out.body).map((l) => [l.label, l.host])).toEqual([
-      ['FreeSocks', NAME_A],
-      ['FreeSocks (backup)', '203.0.113.20'],
-      ['FreeSocks (IPv4)', '203.0.113.10'],
+      [PD, NAME_A],
+      [B, '203.0.113.20'],
+      [P4, '203.0.113.10'],
     ]);
   });
 
@@ -150,32 +162,25 @@ describe('an address with a name', () => {
     };
     const both = { ...assigned, backup: { ...assigned.backup, edge: namedB } };
     expect(linesOf(render(templateLink, { assigned: both }).body).map((l) => l.label)).toEqual([
-      'FreeSocks',
-      'FreeSocks (backup)',
-      'FreeSocks (IPv4)',
-      'FreeSocks (IPv6)',
-      'FreeSocks (backup) (IPv4)',
-      'FreeSocks (backup) (IPv6)',
+      PD,
+      BD,
+      P4,
+      P6,
+      B4,
+      B6,
     ]);
     const backupFirst = { ...linksRule, order: 'backup-first' as const };
     expect(
       linesOf(render(templateLink, { assigned: both, rule: backupFirst }).body).map((l) => l.label),
-    ).toEqual([
-      'FreeSocks (backup)',
-      'FreeSocks',
-      'FreeSocks (backup) (IPv4)',
-      'FreeSocks (backup) (IPv6)',
-      'FreeSocks (IPv4)',
-      'FreeSocks (IPv6)',
-    ]);
+    ).toEqual([BD, PD, B4, B6, P4, P6]);
   });
 
   test('IPv6 off for the family: the name and the raw IPv4, no IPv6 entry', () => {
     const out = render(templateLink, { rule: { ...linksRule, ipv6Mode: 'off' } });
     expect(linesOf(out.body).map((l) => [l.label, l.host])).toEqual([
-      ['FreeSocks', NAME_A],
-      ['FreeSocks (backup)', '203.0.113.20'],
-      ['FreeSocks (IPv4)', '203.0.113.10'],
+      [PD, NAME_A],
+      [B, '203.0.113.20'],
+      [P4, '203.0.113.10'],
     ]);
     expect(out.body).not.toContain('2001:db8::10');
   });
@@ -190,22 +195,24 @@ describe('an address with a name', () => {
         render(templateLink, { assigned: withAlternates, rule: { ...linksRule, maxEntries } }).body,
       ).map((l) => l.label);
     // The member holds a further name; a link list never shows it (a look-alike of the first).
-    expect(labels(0)).toEqual([
-      'FreeSocks',
-      'FreeSocks (backup)',
-      'FreeSocks (IPv4)',
-      'FreeSocks (IPv6)',
-    ]);
-    expect(labels(3)).toEqual(['FreeSocks', 'FreeSocks (backup)', 'FreeSocks (IPv4)']);
-    expect(labels(2)).toEqual(['FreeSocks', 'FreeSocks (backup)']);
+    expect(labels(0)).toEqual([PD, B, P4, P6]);
+    expect(labels(3)).toEqual([PD, B, P4]);
+    // Only the name is left of the primary's forms: one form, no tag.
+    expect(labels(2)).toEqual([P, B]);
   });
 
-  test("an operator's own IPv4 suffix is kept; the default reads as a pair with IPv6", () => {
-    expect(EDGE_DEFAULTS.render.ipLabel).toBe('IPv4');
-    const own = sanitizeRelayConfig({ 'render.ipLabel': 'IP', 'render.enabled': true }).render;
-    const out = render(templateLink, { rule: effectiveRule(own, defaultClientRule('v2rayng')) });
-    expect(linesOf(out.body).map((l) => l.label)).toContain('FreeSocks (IP)');
-    expect(linesOf(out.body).map((l) => l.label)).not.toContain('FreeSocks (IPv4)');
+  test('the retired label settings change no name', () => {
+    // Stored rows of the retired keys, and a family rule still carrying its labels.
+    const old = sanitizeRelayConfig(
+      {
+        'render.ipLabel': 'IP',
+        'render.primaryLabel': 'Old',
+        'render.enabled': true,
+      } as Parameters<typeof sanitizeRelayConfig>[0],
+      { v2rayng: { ...defaultClientRule('v2rayng'), primaryLabel: 'Old', backupLabel: 'Spare' } },
+    ).render;
+    const out = render(templateLink, { rule: effectiveRule(old, old.clients.v2rayng) });
+    expect(linesOf(out.body).map((l) => l.label)).toEqual([PD, B, P4, P6]);
   });
 
   test('sing-box: the name first, the IPv6 entry as before, the IPv4 as a fallback in the group', () => {
@@ -213,16 +220,16 @@ describe('an address with a name', () => {
     expect(out.delivery).toEqual({ kind: 'serve' });
     const doc = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
     const emitted = doc.outbounds.filter(
-      (o) => o.type === 'vless' && String(o.tag).startsWith('FreeSocks'),
+      (o) => o.type === 'vless' && /(^|\s)via\s/.test(String(o.tag)),
     );
     expect(emitted.map((o) => [o.tag, o.server])).toEqual([
-      ['FreeSocks', NAME_A],
-      ['FreeSocks (IPv6)', '2001:db8::10'],
-      ['FreeSocks (backup)', '203.0.113.20'],
-      ['FreeSocks (IPv4)', '203.0.113.10'],
+      [PD, NAME_A],
+      [P6, '2001:db8::10'],
+      [B, '203.0.113.20'],
+      [P4, '203.0.113.10'],
     ]);
     // The server name is the listener's, never the address's name.
-    for (const o of emitted.filter((x) => x.tag !== 'FreeSocks (backup)'))
+    for (const o of emitted.filter((x) => x.tag !== B))
       expect((o.tls as { server_name: string }).server_name).toBe('cdn-a.example');
     const auto = doc.outbounds.find((o) => o.type === 'urltest') as { outbounds: string[] };
     expect(auto.outbounds).toEqual(emitted.map((o) => o.tag));
@@ -253,12 +260,12 @@ describe('an address with a name', () => {
     const doc = YAML.parse(out.body) as {
       proxies: Array<{ name: string; server: string; servername: string }>;
     };
-    const ours = doc.proxies.filter((p) => p.name.startsWith('FreeSocks'));
-    expect(ours.find((p) => p.name === 'FreeSocks')).toMatchObject({
+    const ours = doc.proxies.filter((p) => /(^|\s)via\s/.test(p.name));
+    expect(ours.find((p) => p.name === PD)).toMatchObject({
       server: NAME_A,
       servername: 'cdn-a.example',
     });
-    expect(ours.find((p) => p.name === 'FreeSocks (IPv4)')?.server).toBe('203.0.113.10');
+    expect(ours.find((p) => p.name === P4)?.server).toBe('203.0.113.10');
   });
 
   test('a single key keeps the IP: it has no room for a fallback', () => {
@@ -278,7 +285,7 @@ describe('an address with a name', () => {
     };
     const out = render(JSON.stringify(singbox), { rule: autoRule, assigned: withAlternates });
     const doc = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
-    const second = doc.outbounds.find((o) => o.tag === 'FreeSocks 2')!;
+    const second = doc.outbounds.find((o) => o.tag === `${PD} #2`)!;
     expect(second.server).toBe(NAME_A);
     const entries: RenderEndpoint[] = [
       { ...base('v4'), label: 'alt', variant: 1, address: NAME_A, family: 'name' },

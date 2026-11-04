@@ -1592,6 +1592,18 @@ export default defineSchema({
     // is handed an address here first, among those not blocked there. Absent =
     // no country in particular. Rollback: `edgeLocations:clearCountriesForRollback`.
     forCountries: v.optional(v.object({ codes: v.array(v.string()), updatedAt: v.number() })),
+    // Where members are told an address here is (docs/edges.md "Names in
+    // apps"): a place name and an ISO 3166-1 alpha-2 country an operator typed
+    // for members (`🇧🇷 via Example Town`), never the provider's region name
+    // (`label`). Absent = members read `via relay A`. Rollback:
+    // `edgeLocations:clearMemberPlacesForRollback`.
+    memberPlace: v.optional(
+      v.object({
+        name: v.optional(v.string()),
+        country: v.optional(v.string()),
+        updatedAt: v.number(),
+      }),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

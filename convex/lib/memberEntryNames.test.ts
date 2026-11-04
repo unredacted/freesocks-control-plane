@@ -9,9 +9,10 @@ import {
   backendGroupName,
   DEFAULT_SITE_NAME,
   ENTRY_NAME_SEP,
-  entryCode,
   entryKey,
+  entryNamesOf,
   entryNamingFrom,
+  instanceCountry,
   memberGroupName,
   memberPlace,
   memberSiteName,
@@ -30,8 +31,20 @@ const NODE_B = 'brisk-otter';
 const NAMES = ['www.decoy-a.example', 'cdn.decoy-b.example', 'static.decoy-c.example'];
 const ADDR_A = '192.0.2.10';
 const ADDR_B = '198.51.100.20';
-const NAMING: EntryNaming = { siteName: 'FreeSocks', place: 'Example City' };
-const BASE = `FreeSocks${ENTRY_NAME_SEP}Example City`;
+const NAMING: EntryNaming = { siteName: 'FreeSocks', place: 'Example City', country: 'CA' };
+const BASE = `🇨🇦 Example City${ENTRY_NAME_SEP}Direct`;
+/** The n-th direct name of NAMING's place (1 = `Direct`, then `Direct 2`, …). */
+const direct = (n: number) => (n === 1 ? BASE : `${BASE} ${n}`);
+/** The direct name each server name gets: its number in the sorted keys. */
+const directFor = (snis: readonly string[], sni: string) =>
+  direct(
+    snis
+      .map((n) => entryKey(n))
+      .sort()
+      .indexOf(entryKey(sni)) + 1,
+  );
+// What the edge renderer names an entry (src/shared/entryNames.ts): no node in it.
+const EDGE = '🇧🇷 via Example Town';
 
 function link(node: string, sni: string, address = ADDR_A): string {
   const remark = addressRemark(node, sni);
@@ -110,8 +123,10 @@ describe('relabelMemberEntries: every format', () => {
     expect(out.renamed).toBe(3);
     const labels = labelsBySni(out.content);
     expect(new Set(labels.values()).size).toBe(3);
-    for (const [sni, label] of labels)
-      expect(label).toBe(`${BASE}${ENTRY_NAME_SEP}${entryCode(remarkTag(sni))}`);
+    // Numbered in the sorted order of the server names (their remark tags here).
+    for (const [sni, label] of labels) expect(label).toBe(directFor(NAMES, sni));
+    expect([...labels.values()].sort()).toEqual([direct(1), direct(2), direct(3)]);
+    expect(remarkTag(NAMES[0])).toBe(entryKey(NAMES[0]));
     expectNeutral(out.content, labels.values());
     // Everything before the fragment (address, credential, server name) is untouched.
     const before = (s: string) => s.split('\n').map((l) => l.slice(0, l.indexOf('#')));
@@ -155,7 +170,7 @@ describe('relabelMemberEntries: every format', () => {
     for (const r of cfg.route.rules) expect(tags.has(r.outbound)).toBe(true);
     expect(tags.has(cfg.dns.servers[0].detour)).toBe(true);
     const vless = cfg.outbounds.filter((o) => o.type === 'vless').map((o) => o.tag);
-    expect(vless.every((t) => t.startsWith(`${BASE}${ENTRY_NAME_SEP}`))).toBe(true);
+    expect(vless.every((t) => t.startsWith(BASE))).toBe(true);
     // Groups and built-ins keep their names.
     expect([...tags]).toEqual(expect.arrayContaining(['proxy', 'auto', 'direct']));
     expectNeutral(out.content, vless);
@@ -216,15 +231,62 @@ describe('relabelMemberEntries: every format', () => {
 });
 
 describe('relabelMemberEntries: labels', () => {
-  test('one entry is the site name and place alone; no place leaves it out', () => {
+  test('one entry is the flag, the place and Direct; what is unknown is left out', () => {
     expect(labelsBySni(relabelMemberEntries(link(NODE_A, NAMES[0]), NAMING).content)).toEqual(
-      new Map([[NAMES[0], BASE]]),
+      new Map([[NAMES[0], '🇨🇦 Example City · Direct']]),
     );
-    const noPlace = relabelMemberEntries(link(NODE_A, NAMES[0]), {
-      siteName: 'FreeSocks',
-      place: null,
-    });
-    expect([...labelsBySni(noPlace.content).values()]).toEqual(['FreeSocks']);
+    const named = (naming: EntryNaming) => [
+      ...labelsBySni(relabelMemberEntries(link(NODE_A, NAMES[0]), naming).content).values(),
+    ];
+    // Neither a place nor a flag: the site name leads, never a bare "Direct"
+    // (Clash's DIRECT, sing-box's `direct`).
+    expect(named({ siteName: 'FreeSocks', place: null })).toEqual(['FreeSocks · Direct']);
+    expect(named({ siteName: 'FreeSocks', place: 'Example City' })).toEqual([
+      'Example City · Direct',
+    ]);
+    expect(named({ siteName: 'FreeSocks', place: null, country: 'CA' })).toEqual(['🇨🇦 · Direct']);
+    // A private-use code ("unknown" to many backends) draws no flag.
+    expect(named({ siteName: 'FreeSocks', place: 'Example City', country: 'XX' })).toEqual([
+      'Example City · Direct',
+    ]);
+    // No site name in any entry: it names the group alone.
+    expect(named(NAMING)[0]).not.toContain('FreeSocks');
+  });
+
+  test('n server names: Direct, Direct 2, Direct 3, the same in every format', () => {
+    const want = new Map(NAMES.map((n) => [n, directFor(NAMES, n)]));
+    const links = labelsBySni(
+      relabelMemberEntries(NAMES.map((n) => link(NODE_A, n)).join('\n'), NAMING).content,
+    );
+    expect(links).toEqual(want);
+    const sb = JSON.parse(
+      relabelMemberEntries(JSON.stringify(singbox(NODE_A)), NAMING).content,
+    ) as {
+      outbounds: Array<{ type: string; tag: string; tls?: { server_name: string } }>;
+    };
+    expect(
+      new Map(
+        sb.outbounds.filter((o) => o.type === 'vless').map((o) => [o.tls!.server_name, o.tag]),
+      ),
+    ).toEqual(want);
+    const cl = YAML.parse(relabelMemberEntries(clash(NODE_A), NAMING).content) as {
+      proxies: Array<{ name: string; servername: string }>;
+    };
+    expect(new Map(cl.proxies.map((p) => [p.servername, p.name]))).toEqual(want);
+    const xray = NAMES.map((n) => ({
+      remarks: addressRemark(NODE_A, n),
+      outbounds: [
+        {
+          tag: 'proxy',
+          protocol: 'vless',
+          streamSettings: { realitySettings: { serverName: n } },
+        },
+      ],
+    }));
+    const xr = JSON.parse(relabelMemberEntries(JSON.stringify(xray), NAMING).content) as Array<{
+      remarks: string;
+    }>;
+    expect(xr.map((c) => c.remarks)).toEqual(NAMES.map((n) => want.get(n)));
   });
 
   test('entries that name no node keep their names (edge labels, placeholders)', () => {
@@ -279,18 +341,29 @@ describe('relabelMemberEntries: stable across refreshes', () => {
     expect(labelsBySni(relabelMemberEntries(reversed, NAMING).content)).toEqual(first);
   });
 
-  test('another server name coming or going leaves the others alone', () => {
-    const more = [...NAMES, 'img.decoy-d.example'].map((n) => link(NODE_A, n)).join('\n');
-    const after = labelsBySni(relabelMemberEntries(more, NAMING).content);
+  test('a server name sorted after the others coming or going leaves them alone; one before moves them', () => {
+    const keys = NAMES.map((n) => entryKey(n)).sort();
+    const find = (ok: (key: string) => boolean) => {
+      for (let i = 0; ; i++)
+        if (ok(entryKey(`n${i}.decoy-d.example`))) return `n${i}.decoy-d.example`;
+    };
+    const late = find((k) => k > keys.at(-1)!);
+    const after = labelsBySni(
+      relabelMemberEntries([...NAMES, late].map((n) => link(NODE_A, n)).join('\n'), NAMING).content,
+    );
     for (const [sni, label] of first) expect(after.get(sni)).toBe(label);
-    const fewer = NAMES.slice(0, 2)
-      .map((n) => link(NODE_A, n))
-      .join('\n');
-    const less = labelsBySni(relabelMemberEntries(fewer, NAMING).content);
-    for (const [sni, label] of less) expect(label).toBe(first.get(sni));
+    expect(after.get(late)).toBe(direct(4));
+    // The tradeoff against the old fixed codes: a name sorted first moves the rest by one.
+    const early = find((k) => k < keys[0]);
+    const moved = labelsBySni(
+      relabelMemberEntries([early, ...NAMES].map((n) => link(NODE_A, n)).join('\n'), NAMING)
+        .content,
+    );
+    expect(moved.get(early)).toBe(direct(1));
+    for (const sni of NAMES) expect(moved.get(sni)).toBe(directFor([early, ...NAMES], sni));
   });
 
-  test('a node rename keeps every label (the code comes from the server name)', () => {
+  test('a node rename keeps every label (the number comes from the server name)', () => {
     // NAMES[2] is a tag under NODE_A, the full name under NODE_B.
     expect(addressRemark(NODE_A, NAMES[2])).not.toContain(NAMES[2]);
     expect(addressRemark(NODE_B, NAMES[2])).toContain(NAMES[2]);
@@ -312,33 +385,19 @@ describe('relabelMemberEntries: stable across refreshes', () => {
     expect(one.content).not.toContain(NODE_A);
   });
 
-  test('colliding codes: each collider carries its own long code, whoever it collides with', () => {
-    // Three keys sharing one short code (searched, not assumed).
-    const byCode = new Map<string, string[]>();
-    let trio: string[] | null = null;
-    for (let i = 0; !trio; i++) {
-      const key = `n${i}.decoy.example`;
-      const list = [...(byCode.get(entryCode(entryKey(key))) ?? []), key];
-      byCode.set(entryCode(entryKey(key)), list);
-      if (list.length === 3) trio = list;
-    }
-    const [a, b, c] = trio;
-    const entry = (k: string) => ({ name: addressRemark(NODE_A, k), entry: k });
-    const longLabel = (k: string) => `${BASE}${ENTRY_NAME_SEP}${entryCode(entryKey(k), 6)}`;
-    const withB = planEntryNames([entry(a), entry(b)], new Set(), NAMING);
-    const withC = planEntryNames([entry(c), entry(a)], new Set(), NAMING);
-    // The label of `a` comes from `a` alone: not from its position, nor from its partner.
-    expect(withB.get(entry(a).name)).toBe(longLabel(a));
-    expect(withC.get(entry(a).name)).toBe(longLabel(a));
-    expect(withB.get(entry(b).name)).toBe(longLabel(b));
-    expect(new Set(withB.values()).size).toBe(2);
-    // A new entry that collides with nobody leaves every label alone.
-    const more = planEntryNames(
-      [entry(a), entry(b), entry('img.decoy-d.example')],
+  test('the same server name under two nodes shares a number; the second takes (2)', () => {
+    const entry = (node: string, k: string) => ({ name: addressRemark(node, k), entry: k });
+    const plan = planEntryNames(
+      [entry(NODE_A, NAMES[0]), entry(NODE_B, NAMES[0]), entry(NODE_A, NAMES[1])],
       new Set(),
       NAMING,
     );
-    expect(more.get(entry(a).name)).toBe(longLabel(a));
+    const one = directFor(NAMES.slice(0, 2), NAMES[0]);
+    // Which of the two takes the suffix follows their old names (sorted): stable, not body order.
+    expect(
+      [plan.get(entry(NODE_A, NAMES[0]).name), plan.get(entry(NODE_B, NAMES[0]).name)].sort(),
+    ).toEqual([one, `${one} (2)`]);
+    expect(plan.get(entry(NODE_A, NAMES[1]).name)).toBe(directFor(NAMES.slice(0, 2), NAMES[1]));
   });
 });
 
@@ -400,10 +459,15 @@ describe('pinning, then relabelling', () => {
 
 describe('naming from settings', () => {
   test('defaults on, with the built-in site name', () => {
-    expect(entryNamingFrom({}, undefined)).toEqual({ siteName: DEFAULT_SITE_NAME, place: null });
-    expect(entryNamingFrom({ 'subscription.entryNames': 'yes' }, 'Example City')).toEqual({
+    expect(entryNamingFrom({}, undefined)).toEqual({
+      siteName: DEFAULT_SITE_NAME,
+      place: null,
+      country: null,
+    });
+    expect(entryNamingFrom({ 'subscription.entryNames': 'yes' }, 'Example City', 'ca')).toEqual({
       siteName: DEFAULT_SITE_NAME,
       place: 'Example City',
+      country: 'CA',
     });
     expect(entryNamingFrom({ 'subscription.entryNames': false }, 'Example City')).toBeNull();
   });
@@ -418,11 +482,18 @@ describe('naming from settings', () => {
     expect(memberPlace(' , EX')).toBeNull();
     expect(memberPlace(undefined)).toBeNull();
   });
+
+  test('the flag is the country every node of the instance reports, else none', () => {
+    expect(instanceCountry(['CA', 'ca', undefined])).toBe('CA');
+    expect(instanceCountry(['CA', 'NZ'])).toBeNull();
+    expect(instanceCountry(['XX', undefined, ''])).toBeNull();
+    expect(instanceCountry([])).toBeNull();
+  });
 });
 
 describe('relabelMemberEntries: the backend’s groups', () => {
   const TEMPLATE_GROUP = '→ Remnawave';
-  const SELECT = 'FreeSocks Select';
+  const SELECT = 'FreeSocks';
   type Obj = Record<string, unknown>;
 
   function vless(tag: string, sni: string, server = ADDR_A): Obj {
@@ -492,7 +563,7 @@ describe('relabelMemberEntries: the backend’s groups', () => {
     return known;
   }
 
-  test('sing-box from the backend’s template: the group is "<site> Select", every reference follows', () => {
+  test('sing-box from the backend’s template: the group is the site name, every reference follows', () => {
     const cfg = singboxFromTemplate(NAMES.map((n) => vless(addressRemark(NODE_A, n), n)));
     cfg.route = { ...cfg.route, final: TEMPLATE_GROUP };
     (cfg.route.rules as Obj[]).push({ domain_suffix: ['example.org'], outbound: TEMPLATE_GROUP });
@@ -507,7 +578,7 @@ describe('relabelMemberEntries: the backend’s groups', () => {
     for (const tag of tags) expect(tag).not.toMatch(/remnawave/i);
     expectNeutral(
       out.content,
-      [...tags].filter((t) => t.startsWith(`${BASE}${ENTRY_NAME_SEP}`)),
+      [...tags].filter((t) => t.startsWith(BASE)),
     );
   });
 
@@ -527,10 +598,10 @@ describe('relabelMemberEntries: the backend’s groups', () => {
   });
 
   test('an edge-only body (no entry names a node): the group alone is renamed, apart from the edge names', () => {
-    // What the edge renderer leaves: its entry under the default label, its
-    // url-test group, both inside the template group.
-    const edge = 'FreeSocks';
-    const auto = 'FreeSocks Auto';
+    // What the edge renderer leaves: its named entry, its url-test group, both
+    // inside the template group.
+    const edge = EDGE;
+    const auto = '⚡ Auto (fastest)';
     const doc = clashFromTemplate(
       [clashProxy(edge, NAMES[0], '203.0.113.5')],
       [{ name: auto, type: 'url-test', proxies: [edge] }],
@@ -558,10 +629,10 @@ describe('relabelMemberEntries: the backend’s groups', () => {
   });
 
   test('the site name is the operator’s', () => {
-    const doc = clashFromTemplate([clashProxy('FreeSocks', NAMES[0], '203.0.113.5')]);
+    const doc = clashFromTemplate([clashProxy(EDGE, NAMES[0], '203.0.113.5')]);
     const out = relabelMemberEntries(YAML.stringify(doc), { siteName: 'Example VPN', place: null });
     const next = YAML.parse(out.content) as { 'proxy-groups': Obj[] };
-    expect(next['proxy-groups'][0].name).toBe('Example VPN Select');
+    expect(next['proxy-groups'][0].name).toBe('Example VPN');
   });
 
   test('the new group name never takes a name the body uses (an edge label, an operator group)', () => {
@@ -611,9 +682,7 @@ describe('relabelMemberEntries: the backend’s groups', () => {
   });
 
   test('off, the backend’s group name passes with the rest of the body', () => {
-    const body = YAML.stringify(
-      clashFromTemplate([clashProxy('FreeSocks', NAMES[0], '203.0.113.5')]),
-    );
+    const body = YAML.stringify(clashFromTemplate([clashProxy(EDGE, NAMES[0], '203.0.113.5')]));
     expect(relabelMemberEntries(body, null)).toEqual({ content: body, renamed: 0 });
   });
 
@@ -635,7 +704,7 @@ describe('relabelMemberEntries: the backend’s groups', () => {
   test('planGroupNames: the template group first, then body order; each once; other groups skipped', () => {
     const plan = planGroupNames(
       ['proxy', 'Remnawave EU', TEMPLATE_GROUP, 'Remnawave EU'],
-      new Set(['proxy', 'Remnawave EU', TEMPLATE_GROUP, 'FreeSocks']),
+      new Set(['proxy', 'Remnawave EU', TEMPLATE_GROUP, EDGE]),
       NAMING,
     );
     expect([...plan]).toEqual([
@@ -684,9 +753,9 @@ describe('relabelling again, and values that are not names', () => {
         '→ Remnawave',
         NAMES.map((n) => vless(addressRemark(NODE_A, n), n)),
       ),
-      singboxBody('→ Remnawave', [vless('FreeSocks', NAMES[0])]),
+      singboxBody('→ Remnawave', [vless(EDGE, NAMES[0])]),
       clashBody(NAMES.map((n) => addressRemark(NODE_A, n))),
-      clashBody(['FreeSocks']),
+      clashBody([EDGE]),
     ];
     // A site name carrying the backend product's name must not add a suffix each time.
     for (const naming of [NAMING, { siteName: 'Remnawave VPN', place: null }]) {
@@ -705,7 +774,7 @@ describe('relabelling again, and values that are not names', () => {
   test('a group named like the template’s cache id renames the group, never the cache id or a path', () => {
     // A backend the template re-sync has not reached yet still names its cache
     // after the product: the same word as the group.
-    const body = JSON.parse(singboxBody('remnawave', [vless('FreeSocks', NAMES[0])])) as {
+    const body = JSON.parse(singboxBody('remnawave', [vless(EDGE, NAMES[0])])) as {
       experimental: { cache_file: Obj };
     };
     const oldCache = {
@@ -720,7 +789,27 @@ describe('relabelling again, and values that are not names', () => {
       outbounds: Obj[];
       experimental: { cache_file: Obj };
     };
-    expect(cfg.outbounds[0].tag).toBe('FreeSocks Select');
+    expect(cfg.outbounds[0].tag).toBe('FreeSocks');
     expect(cfg.experimental.cache_file).toEqual(oldCache);
+  });
+});
+
+describe('entryNamesOf (the admin preview)', () => {
+  test('lists entries and groups in body order, in every format', () => {
+    const naming: EntryNaming = { siteName: 'FreeSocks', place: 'Example City', country: 'CA' };
+    const links = relabelMemberEntries(link(NODE_A, NAMES[0]), naming).content;
+    expect(entryNamesOf(links)).toEqual({ entries: [BASE], groups: [] });
+    expect(entryNamesOf(encodeBase64(links))).toEqual({ entries: [BASE], groups: [] });
+    const sb = entryNamesOf(relabelMemberEntries(JSON.stringify(singbox(NODE_A)), naming).content);
+    expect(sb.groups).toEqual(['proxy', 'auto']);
+    expect(sb.entries).toHaveLength(3);
+    const cl = entryNamesOf(relabelMemberEntries(clash(NODE_A), naming).content);
+    expect(cl.groups).toEqual(['proxy', 'auto']);
+    expect(cl.entries.every((e) => e.startsWith(BASE))).toBe(true);
+    expect(entryNamesOf(JSON.stringify([{ remarks: EDGE }]))).toEqual({
+      entries: [EDGE],
+      groups: [],
+    });
+    expect(entryNamesOf('<html>')).toEqual({ entries: [], groups: [] });
   });
 });

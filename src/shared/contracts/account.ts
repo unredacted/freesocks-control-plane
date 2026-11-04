@@ -229,7 +229,10 @@ export const NodeStatusResponse = z.object({
           refreshSuggested: z.boolean(),
           connections: z.array(
             z.object({
+              // The name the member's app shows (src/shared/entryNames.ts).
               label: z.string(),
+              // The same without its form tag or spare number: one per address.
+              base: z.string().optional(),
               role: z.enum(['primary', 'backup']),
               // `name` = a hostname-fronted connection (no address family).
               family: z.enum(['v4', 'v6', 'name']),

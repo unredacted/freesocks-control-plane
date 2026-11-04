@@ -1,8 +1,9 @@
 /**
  * Origin endpoint rendering: turn the backend's subscription body (already pinned
  * to ONE node) into the subscriber's primary/backup connections for that
- * node's origin listeners. Pure: the caller resolves assignment + rules + labels
- * and hands them in; this module only transforms text and checks the result.
+ * node's origin listeners. Pure: the caller resolves assignment + rules and
+ * hands them in; this module names the entries (src/shared/entryNames.ts),
+ * transforms text and checks the result.
  *
  * Edge-required delivery (docs/edges.md): a body that comes back from here
  * with `applied:false`, with no emitted endpoint, or with ANY outgoing entry
@@ -13,6 +14,14 @@
  * out of the body instead (`withheld`), and the operator is told.
  */
 import YAML from 'yaml';
+import {
+  entryBase,
+  entryName,
+  memberPlaceOf,
+  placeLetter,
+  type EntryForm,
+  type EntryRoute,
+} from '../../../src/shared/entryNames';
 import {
   RENDER_CLIENT_FAMILIES,
   isRenderClientFamily,
@@ -26,12 +35,13 @@ import { sameAddress } from './hosts';
 import { clashAddresses, matchClash, renderClash } from './render/clash';
 import { decodeLinkList, linkAddresses, matchLinks, renderLinks } from './render/links';
 import { matchSingbox, renderSingbox, singboxAddresses } from './render/singbox';
-import type {
-  ListenerMatch,
-  RenderEndpoint,
-  RenderMatcher,
-  RenderOutput,
-  RenderRuleInput,
+import {
+  orderEndpoints,
+  type ListenerMatch,
+  type RenderEndpoint,
+  type RenderMatcher,
+  type RenderOutput,
+  type RenderRuleInput,
 } from './render/types';
 
 export type { ListenerMatch, RenderEndpoint, RenderMatcher, RenderOutput } from './render/types';
@@ -40,11 +50,11 @@ export interface EffectiveRule extends RenderRuleInput {
   enabled: boolean;
   includeBackup: boolean;
   ipv6Mode: 'off' | 'auto-group-only' | 'both';
-  primaryLabel: string;
-  backupLabel: string;
-  ipv6Label: string;
-  /** The suffix of a named address's raw IPv4 entry (`<label> (<ipLabel>)`). */
-  ipLabel: string;
+  /**
+   * Every entry gets this name instead of its member name (an operator's test
+   * link, convex/edgeTestLinks.ts: never a member body). Absent for members.
+   */
+  fixedLabel?: string;
   /** Server names per endpoint for a listener on the `hrw1` PRF (1 = one name, as ever). */
   namesPerEndpoint: number;
   backupNames: number;
@@ -55,16 +65,11 @@ export function effectiveRule(cfg: EdgeConfig['render'], rule: ClientRenderRule)
   return {
     enabled: cfg.enabled && rule.enabled,
     autoGroup: rule.autoGroup,
-    autoGroupName: rule.autoGroupName || cfg.autoGroupName,
     dropTemplateEntries: rule.dropTemplateEntries,
     maxEntries: rule.maxEntries,
     order: rule.order,
     includeBackup: rule.includeBackup,
     ipv6Mode: rule.ipv6Mode === 'inherit' ? cfg.ipv6Mode : rule.ipv6Mode,
-    primaryLabel: rule.primaryLabel || cfg.primaryLabel,
-    backupLabel: rule.backupLabel || cfg.backupLabel,
-    ipv6Label: cfg.ipv6Label,
-    ipLabel: cfg.ipLabel,
     namesPerEndpoint: cfg.namesPerEndpoint,
     backupNames: cfg.backupNames,
   };
@@ -73,7 +78,7 @@ export function effectiveRule(cfg: EdgeConfig['render'], rule: ClientRenderRule)
 /**
  * Delivery style: a subscription body (many entries, groups) or a single
  * access key (Outline: the body IS one key). Single-key delivery renders
- * exactly one entry, no backup, no auto group, and keeps the template's label.
+ * exactly one entry, no backup, no auto group, named like any other entry.
  */
 export type DeliveryStyle = 'subscription' | 'single-key';
 
@@ -232,9 +237,10 @@ export function renderEntriesChecked(
   const wantV6 = ruleCanEmitV6(rule, hasAutoGroup);
   const names = opts.names ?? true;
   const leaks = (addr: string) => isNodeAddress(addr, originAddress, nodeAddresses);
+  // Every entry is named once the body's entries are known (`nameEntries`).
+  const label = '';
   const push = (ep: AssignedEndpoint | null) => {
     if (!ep) return;
-    const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
     const base = {
       role: ep.role,
       edgeId: ep.edge.edgeId,
@@ -267,15 +273,13 @@ export function renderEntriesChecked(
       out.push({ ...base, label, address: named, family: 'name' });
       const ipv4: RenderEndpoint = {
         ...base,
-        label: `${label} (${rule.ipLabel})`,
+        label,
         address: v4,
         family: 'v4',
         fallback: true,
       };
       const ipv6: RenderEndpoint | null =
-        v6 && wantV6
-          ? { ...base, label: `${label} (${rule.ipv6Label})`, address: v6, family: 'v6' }
-          : null;
+        v6 && wantV6 ? { ...base, label, address: v6, family: 'v6' } : null;
       if (hasAutoGroup) {
         // The IPv6 entry ranks as without a name; the IPv4 is the fallback.
         if (ipv6) out.push(ipv6);
@@ -294,13 +298,7 @@ export function renderEntriesChecked(
     }
     if (ep.edge.addresses.v6 && wantV6) {
       if (leaks(ep.edge.addresses.v6)) leaked++;
-      else
-        out.push({
-          ...base,
-          label: ep.edge.addresses.v4 ? `${label} (${rule.ipv6Label})` : label,
-          address: ep.edge.addresses.v6,
-          family: 'v6',
-        });
+      else out.push({ ...base, label, address: ep.edge.addresses.v6, family: 'v6' });
     }
   };
   // A further server name is one more IPv4 entry for the same endpoint (the
@@ -310,7 +308,6 @@ export function renderEntriesChecked(
   const pushAlternates = (ep: AssignedEndpoint | null) => {
     if (!hasAutoGroup) return;
     if (!ep?.alternates || !ep.edge.addresses.v4 || leaks(ep.edge.addresses.v4)) return;
-    const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
     // A named address's further names dial the name too.
     // (the name also resolves to the IPv6: refused with it, as the first entry is)
     const named = addressNameOf(ep, names);
@@ -324,7 +321,7 @@ export function renderEntriesChecked(
         port: ep.edge.edgePort,
         sni: alt.sni,
         hostHeader: alt.hostHeader,
-        label: `${label} ${i + 2}`,
+        label,
         address: named ?? ep.edge.addresses.v4!,
         family: named ? 'name' : 'v4',
         variant: i + 1,
@@ -335,7 +332,92 @@ export function renderEntriesChecked(
   if (rule.includeBackup) push(assigned.backup);
   pushAlternates(assigned.primary);
   if (rule.includeBackup) pushAlternates(assigned.backup);
-  return { entries: out, leaked };
+  return { entries: nameEntries(out, assigned, rule), leaked };
+}
+
+/** The form an entry takes of its address: the name (`Domain`) or a raw IP; none for a CDN front. */
+function formOf(e: RenderEndpoint, route: EntryRoute): EntryForm | null {
+  if (route.kind === 'cdn') return null;
+  return e.family === 'v4' ? 'ipv4' : e.family === 'v6' ? 'ipv6' : 'domain';
+}
+
+/**
+ * Name every entry (src/shared/entryNames.ts), judged on what the body will
+ * hold: the entries in the order and under the cap the codecs apply
+ * (`orderEndpoints`). In that order, CDN fronts are numbered (`🌐 via CDN 1`,
+ * `2`), and two addresses of one place get letters (`via Example Town A`, `B`), as
+ * every address of a location with no member-facing name does (`via relay A`).
+ * An address the body holds in more than one form (its name, its raw IPv4, its
+ * raw IPv6) tags every form (`· Domain`, `· IPv4`, `· IPv6`); with one form it
+ * carries no tag. A further server name ends in `#2`, `#3`. The replays
+ * (`memberView`, report attribution) expand the same endpoints the same way,
+ * so they read the same names.
+ */
+function nameEntries(
+  entries: RenderEndpoint[],
+  assigned: { primary: AssignedEndpoint | null; backup: AssignedEndpoint | null },
+  rule: EffectiveRule,
+): RenderEndpoint[] {
+  const fixed = rule.fixedLabel;
+  if (fixed) return entries.map((e) => ({ ...e, label: fixed, base: fixed }));
+  const kept = orderEndpoints(entries, rule);
+  // Endpoints in body order; one the cap cut entirely comes last (never emitted).
+  const roles = [...new Set([...kept, ...entries].map((e) => e.role))];
+  const edgeOf = (role: RenderEndpoint['role']) =>
+    (role === 'primary' ? assigned.primary : assigned.backup)?.edge ?? null;
+  const placeKey = (name: string | null, country: string | null) =>
+    name ? `${name}|${country ?? ''}` : '';
+  // How many addresses of each place the body holds (a role the cap cut counts for none).
+  const places = new Map<string, number>();
+  for (const role of new Set(kept.map((e) => e.role))) {
+    const edge = edgeOf(role);
+    if (!edge || edgeHostname(edge)) continue;
+    const p = memberPlaceOf(edge.memberPlace?.name, edge.memberPlace?.country);
+    const key = placeKey(p.name, p.country);
+    places.set(key, (places.get(key) ?? 0) + 1);
+  }
+  const routes = new Map<RenderEndpoint['role'], EntryRoute>();
+  const letters = new Map<string, number>();
+  let cdn = 0;
+  for (const role of roles) {
+    const edge = edgeOf(role);
+    if (!edge) continue;
+    if (edgeHostname(edge)) {
+      routes.set(role, { kind: 'cdn', n: ++cdn });
+      continue;
+    }
+    const place = memberPlaceOf(edge.memberPlace?.name, edge.memberPlace?.country);
+    const key = placeKey(place.name, place.country);
+    let letter: string | null = null;
+    if (!place.name || (places.get(key) ?? 0) > 1) {
+      const i = letters.get(key) ?? 0;
+      letters.set(key, i + 1);
+      letter = placeLetter(i);
+    }
+    routes.set(role, { kind: 'relay', place, letter });
+  }
+  const forms = new Map<RenderEndpoint['role'], Set<EntryForm>>();
+  for (const e of kept) {
+    const route = routes.get(e.role);
+    const form = route ? formOf(e, route) : null;
+    if (form) forms.set(e.role, (forms.get(e.role) ?? new Set()).add(form));
+  }
+  return entries.map((e) => {
+    const route = routes.get(e.role) ?? {
+      kind: 'relay' as const,
+      place: { name: null, country: null },
+      letter: null,
+    };
+    const tagged = (forms.get(e.role)?.size ?? 0) > 1;
+    return {
+      ...e,
+      base: entryBase(route),
+      label: entryName(route, {
+        form: tagged ? formOf(e, route) : null,
+        ...(e.variant ? { spare: e.variant + 1 } : {}),
+      }),
+    };
+  });
 }
 
 /** Which listeners resolve in a body, per format (the eligibility pass). */

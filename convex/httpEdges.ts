@@ -709,6 +709,16 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       }),
     );
+  // Where members are told a location is (docs/edges.md "Names in apps").
+  if (a === 'providers' && b && c === 'locations' && d && e === 'member-place' && !parts[5])
+    return json(
+      await ctx.runMutation(internal.edgeLocations.setMemberPlace, {
+        id: id<'edgeLocations'>(d),
+        name: typeof body.name === 'string' ? body.name : null,
+        country: typeof body.country === 'string' ? body.country : null,
+        ...act,
+      }),
+    );
   // The countries a location is meant for (docs/edges.md "Locations meant for a
   // country"), and what saving them would move first (read only).
   if (a === 'providers' && b && c === 'locations' && d && e === 'countries') {

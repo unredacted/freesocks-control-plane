@@ -395,6 +395,17 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
         location: 'EXC',
         locationLabel: 'Example City, EX',
       });
+      // The backend lists both nodes in one country: the flag of their entries.
+      for (const [i, n] of NODES.entries())
+        await ctx.db.insert('backendNodeInventory', {
+          backendServerId: sub.backendServerId!,
+          nodeUuid: `node-${i}`,
+          name: n.node,
+          usersOnline: 0,
+          online: true,
+          lastStatsAt: Date.now(),
+          countryCode: 'CA',
+        });
     });
     return seeded;
   }
@@ -416,17 +427,16 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
     expect(lines.every((l) => new URL(l).hostname === node.address)).toBe(true);
     const names = lines.map((l) => decodeURIComponent(l.slice(l.indexOf('#') + 1)));
     expect(new Set(names).size).toBe(names.length);
-    for (const name of names) {
-      expect(name).toMatch(/^FreeSocks · Example City · [A-Z2-9]{4}$/);
-      for (const sni of SERVER_NAMES) expect(name).not.toContain(sni);
-    }
+    // One per server name, numbered: `🇨🇦 Example City · Direct`, `· Direct 2`.
+    expect([...names].sort()).toEqual(['🇨🇦 Example City · Direct', '🇨🇦 Example City · Direct 2']);
+    for (const name of names) for (const sni of SERVER_NAMES) expect(name).not.toContain(sni);
     for (const n of NODES) expect(lines.join('\n')).not.toContain(n.node);
     // A refresh (cache cleared) gives the same names.
     await t.run((ctx) => ctx.db.patch(subId, { subCache: undefined }));
     expect(await served(t)).toEqual(lines);
   });
 
-  test('the service name comes from subscription.siteName; turned off, the backend names pass', async () => {
+  test('the service name titles the subscription, never an entry; turned off, the backend names pass', async () => {
     const t = convexTest(schema, modules);
     const { subId } = await seedWithLocation(t);
     await t.run((ctx) =>
@@ -438,8 +448,11 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
     );
     const named = await served(t);
     expect(
-      named.every((l) => decodeURIComponent(l.split('#')[1]).startsWith('Example VPN · ')),
+      named.every((l) =>
+        decodeURIComponent(l.split('#')[1]).startsWith('🇨🇦 Example City · Direct'),
+      ),
     ).toBe(true);
+    expect(named.join('\n')).not.toContain('Example%20VPN');
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
         key: 'subscription.entryNames',
@@ -461,7 +474,7 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
  * named the subscription after the backend product. FCP names it itself, from
  * the service name (`subscription.siteName`), on every path a body can take.
  */
-describe('profile-title is the service name on every subscription response', () => {
+describe('profile-title is the service name and the connection mode on every subscription response', () => {
   const b64 = (name: string) =>
     `base64:${btoa(String.fromCharCode(...new TextEncoder().encode(name)))}`;
   beforeEach(() => {
@@ -482,8 +495,8 @@ describe('profile-title is the service name on every subscription response', () 
     const t = convexTest(schema, modules);
     await seedSub(t);
     const first = await get(t);
-    expect(first.headers.get('profile-title')).toBe(b64('FreeSocks'));
-    expect(b64('FreeSocks')).toBe('base64:RnJlZVNvY2tz');
+    // No mode stored: the default one (the built-in catalog's WebSocket).
+    expect(first.headers.get('profile-title')).toBe(b64('FreeSocks · Freedom WebSocket'));
 
     // A name with non-ASCII letters survives the header (that is what base64 is for).
     await t.run((ctx) =>
@@ -495,7 +508,21 @@ describe('profile-title is the service name on every subscription response', () 
     );
     const cached = await get(t);
     expect(fetchCalls).toBe(1); // a cache hit, still titled now
-    expect(cached.headers.get('profile-title')).toBe(b64('Свобода VPN'));
+    expect(cached.headers.get('profile-title')).toBe(b64('Свобода VPN · Freedom WebSocket'));
+  });
+
+  test("the member's own mode, by its English name; an admin label wins", async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedSub(t);
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'freedom-xhttp' }));
+    expect((await get(t)).headers.get('profile-title')).toBe(b64('FreeSocks · Freedom XHTTP'));
+    await t.run(async (ctx) => {
+      await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
+      await ctx.db.patch((await ctx.db.get(userId))!.currentSubscriptionId!, {
+        subCache: undefined,
+      });
+    });
+    expect((await get(t)).headers.get('profile-title')).toBe(b64('FreeSocks · Privacy REALITY'));
   });
 
   test('a stale body served while the backend is down carries it', async () => {
@@ -518,7 +545,7 @@ describe('profile-title is the service name on every subscription response', () 
     const res = await get(t);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('RAW-CONFIG-1');
-    expect(res.headers.get('profile-title')).toBe(b64('FreeSocks'));
+    expect(res.headers.get('profile-title')).toBe(b64('FreeSocks · Freedom WebSocket'));
   });
 
   test('an Outline key (no headers of its own) is titled too', async () => {
@@ -567,6 +594,7 @@ describe('profile-title is the service name on every subscription response', () 
     const res = await get(t);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('ss://key@192.0.2.9:443\n');
+    // Outline has no connection modes: the site name alone.
     expect(res.headers.get('profile-title')).toBe(b64('FreeSocks'));
   });
 });
@@ -693,16 +721,16 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
     return { text, doc };
   }
 
-  test('the group is "<site> Select" and every reference follows; off, it is the backend’s', async () => {
+  test('the group is the site name and every reference follows; off, it is the backend’s', async () => {
     const t = convexTest(schema, modules);
     const { subId } = await seedSub(t);
     const { text, doc } = await served(t);
     expect(text).not.toMatch(/remnawave/i);
     expect(text).not.toContain(NODE);
-    expect(doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks Select']);
+    expect(doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks']);
     expect(doc['proxy-groups'][0].proxies).toEqual(doc.proxies.map((p) => p.name));
-    expect(doc.rules).toEqual(['MATCH,FreeSocks Select']);
-    expect(defaultRouteFaults(text, 'FreeSocks Select')).toEqual([]);
+    expect(doc.rules).toEqual(['MATCH,FreeSocks']);
+    expect(defaultRouteFaults(text, 'FreeSocks')).toEqual([]);
 
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
@@ -712,7 +740,7 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
       });
       await ctx.db.patch(subId, { subCache: undefined });
     });
-    expect((await served(t)).doc.rules).toEqual(['MATCH,Example VPN Select']);
+    expect((await served(t)).doc.rules).toEqual(['MATCH,Example VPN']);
 
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
@@ -741,12 +769,14 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
         await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
       });
     await patchCache((e) => {
-      e.content = e.content.replaceAll('FreeSocks Select', '→ Remnawave');
+      e.content = e.content
+        .replace(/name: FreeSocks$/m, 'name: → Remnawave')
+        .replace(/MATCH,FreeSocks$/m, 'MATCH,→ Remnawave');
     });
     const hit = await served(t);
     expect(fetchCalls).toBe(1); // a cache hit
     expect(hit.text).not.toMatch(/remnawave/i);
-    expect(hit.doc.rules).toEqual(['MATCH,FreeSocks Select']);
+    expect(hit.doc.rules).toEqual(['MATCH,FreeSocks']);
     // The same body, aged past its TTL, served while the backend is down.
     await patchCache((e) => {
       e.at -= 24 * 3600_000;
@@ -759,7 +789,7 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
     );
     const stale = await served(t);
     expect(stale.text).not.toMatch(/remnawave/i);
-    expect(stale.doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks Select']);
+    expect(stale.doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks']);
   });
 });
 
