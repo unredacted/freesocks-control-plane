@@ -2598,7 +2598,9 @@ held for what the node's set lacks (§ Publication, reserved allocation) and no 
 automatic work may use lowers it, what selection would pick could only ever be a spare, so the
 fill is not started (`edgeRotations.upkeepFillRefusal`, read fresh before the start; selection
 refuses the same pick as `pool_reserved`, § "Provider sets"). The usual cause is a set location
-no address was tested in yet: its first address is made there by hand and tested.
+no address was tested in yet: its first address is made there by hand and tested. A missing
+location at its account's or its own live-edge cap, or out of today's allocations, holds the
+slot the same way (nothing is started that selection would refuse).
 
 **Retention** (separate daily crons, `convex/retention.ts`): `retention-edges` prunes
 `destroyed` edges after 30 days, `retention-edge-rotations` terminal rotations after 90, and the

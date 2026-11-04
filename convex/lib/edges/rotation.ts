@@ -286,7 +286,7 @@ export interface SetLocationCandidate extends AccountCandidate {
  * published, set order, fewest live edges. `onlyLowering`: an automatic fill
  * whose free slots are all held for what the set lacks, where a pick that
  * lowers nothing would only ever be a spare (`pool_reserved` when no trusted
- * pick lowers it, e.g. the missing location is not trusted yet).
+ * pick with room lowers it: the missing location is not trusted yet, or full).
  */
 export function pickLocation(
   candidates: readonly SetLocationCandidate[],
@@ -295,24 +295,24 @@ export function pickLocation(
   if (candidates.length === 0) return { ok: false, code: 'no_account_for_provider' };
   const trusted = candidates.filter((a) => opts.allowUnqualified || a.qualified);
   if (trusted.length === 0) return { ok: false, code: 'no_qualified_account' };
-  const fills = opts.onlyLowering ? trusted.filter((a) => a.lowersDeficit) : trusted;
-  if (fills.length === 0) return { ok: false, code: 'pool_reserved' };
-  const usable = fills
-    .filter(
-      (a) =>
-        a.liveEdges < a.maxLiveEdges &&
-        (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
-        (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
-    )
-    .sort(
-      (a, b) =>
-        Number(b.lowersDeficit) - Number(a.lowersDeficit) ||
-        Number(b.providerNew) - Number(a.providerNew) ||
-        Number(b.locationKeyNew) - Number(a.locationKeyNew) ||
-        a.setOrder - b.setOrder ||
-        a.liveEdges - b.liveEdges,
-    );
-  if (usable.length === 0) return { ok: false, code: 'accounts_exhausted' };
+  const withRoom = trusted.filter(
+    (a) =>
+      a.liveEdges < a.maxLiveEdges &&
+      (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
+      (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
+  );
+  // Room is judged first, so a full missing location holds the slot too
+  // (upkeep then starts nothing) instead of reading as exhausted accounts.
+  const usable = (opts.onlyLowering ? withRoom.filter((a) => a.lowersDeficit) : withRoom).sort(
+    (a, b) =>
+      Number(b.lowersDeficit) - Number(a.lowersDeficit) ||
+      Number(b.providerNew) - Number(a.providerNew) ||
+      Number(b.locationKeyNew) - Number(a.locationKeyNew) ||
+      a.setOrder - b.setOrder ||
+      a.liveEdges - b.liveEdges,
+  );
+  if (usable.length === 0)
+    return { ok: false, code: opts.onlyLowering ? 'pool_reserved' : 'accounts_exhausted' };
   return { ok: true, account: usable[0]! };
 }
 

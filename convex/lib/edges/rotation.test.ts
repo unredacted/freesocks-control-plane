@@ -478,6 +478,16 @@ describe('pickLocation', () => {
       { onlyLowering: true },
     );
     expect(trusted.ok && trusted.account.locationId).toBe('missing');
+    // A full missing location holds the slot too: nothing could take it.
+    expect(
+      pickLocation(
+        [
+          cand({ locationId: 'in-use' }),
+          cand({ locationId: 'missing', lowersDeficit: true, liveEdges: 10 }),
+        ],
+        { onlyLowering: true },
+      ),
+    ).toEqual({ ok: false, code: 'pool_reserved' });
   });
 });
 
