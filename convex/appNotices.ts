@@ -172,7 +172,11 @@ export const clearForRollback = internalMutation({
   },
 });
 
-/** Calls the rollback off: records are written again from the next notice. */
+/**
+ * Calls the rollback off: records are written again from the next notice. Every
+ * deploy of a build with the app notice runs it (`seed:seedCutover`), so going
+ * forward again after a rollback resumes them.
+ */
 export const resumeRecords = internalMutation({
   args: {},
   handler: async (ctx) => {

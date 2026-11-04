@@ -6661,7 +6661,8 @@ answers until its 30 s cache runs out. To roll back, run `appNotices:clearForRol
 arguments before deploying the older build: in the transaction of its first page it turns record
 writes off (`appState` `appNotice:recordsOff`), so no record, one already scheduled included, can
 land behind it, then it pages through the keys, scheduling itself. Apps keep getting the notice
-meanwhile. Called off, `appNotices:resumeRecords` turns records back on.
+meanwhile. Called off, `appNotices:resumeRecords` turns records back on; any later deploy of a
+build with the notice does it too (`seedCutover`).
 
 **Replacing a blocked address without a spare** adds optional fields only
 (`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,

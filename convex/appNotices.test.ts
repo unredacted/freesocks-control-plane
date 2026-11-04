@@ -331,7 +331,9 @@ describe('the record', () => {
     expect(await res.text()).toContain('⚠ App too old for FreeSocks');
     const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
     expect(scheduled.filter((s) => s.name.includes('appNotices:record'))).toHaveLength(0);
-    expect(await t.mutation(internal.appNotices.resumeRecords, {})).toEqual({ resumed: true });
+    // A deploy of this build again (its cutover seed) turns records back on.
+    await t.action(internal.seed.seedCutover, {});
+    expect(await t.mutation(internal.appNotices.resumeRecords, {})).toEqual({ resumed: false });
     await t.mutation(internal.appNotices.record, { subscriptionId: subId, family: 'clash' });
     expect((await rowOf(t, subId)).appNotice?.family).toBe('clash');
   });

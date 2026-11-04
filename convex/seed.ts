@@ -675,6 +675,9 @@ export const seedCutover = internalAction({
     // Suspicion records from the first deploy on (convex/edgeTrust.ts); an address
     // published before it never strikes anyone. A no-op once stored.
     await ctx.runMutation(internal.edgeTrust.ensureSince, {});
+    // A build with the app notice deployed again after `appNotices:clearForRollback`
+    // writes its records again (a no-op unless they were turned off).
+    await ctx.runMutation(internal.appNotices.resumeRecords, {});
     return {
       freeTierId,
       memberTierId,
