@@ -76,7 +76,9 @@ const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
  * in its set: the set changes only when a run goes live, so a re-protect that
  * failed leaves its new spare there, outside the set it never changed.
  * `missing` names what the set still lacks (one entry per missing address,
- * the deficit's targets), `pool` how many of its free slots that holds, and
+ * the deficit's targets; `trusted` false where automatic upkeep cannot add it
+ * until a first address there is tested), `pool` how many of its free slots
+ * that holds, and
  * `spares` whether each spare (or retiring address) would get a slot if put in
  * use now (`takesSlot`: false = it would stay a spare). Names are admin-only.
  */
@@ -214,7 +216,12 @@ export const view = internalQuery({
     const keyOf = new Map(state.listeners.map((l) => [l._id as string, l.listenerKey]));
     const placeOf = (locationId: string | null) => {
       const p = locationId ? pickRows.find((r) => r.location._id === locationId) : undefined;
-      return { label: p?.location.label ?? null, accountName: p?.account.name ?? null };
+      return {
+        label: p?.location.label ?? null,
+        accountName: p?.account.name ?? null,
+        // Automatic work provisions only in a trusted location (`pickLocation`).
+        trusted: p ? p.location.qualified : true,
+      };
     };
     const missing = state.targets.map((t) => ({
       listenerKey: t.listenerKey,

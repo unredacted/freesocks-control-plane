@@ -3132,6 +3132,8 @@ export const ProviderSetView = z.object({
   /**
    * What the set still lacks, one entry per missing address (`deficit` entries):
    * a transport, and the location of the set it is wanted in (null: any location).
+   * `trusted` false: no address there was tested yet, so automatic upkeep adds
+   * none there; its first one is made and tested by hand.
    */
   missing: z
     .array(
@@ -3140,6 +3142,7 @@ export const ProviderSetView = z.object({
         locationId: z.string().nullable(),
         label: z.string().nullable(),
         accountName: z.string().nullable(),
+        trusted: z.boolean().optional(),
       }),
     )
     .default([]),

@@ -674,7 +674,8 @@ finish), the Rotations tab words the outcome "Standby: Slot held", and the refus
 `edge.publish_held` (`{relaySlug, edgeId, code, rotationId}`), so the node page's Recent
 activity reads "Address kept as a spare". Where the slot is held is exposed before anything
 runs: `GET relays/{id}/providers` carries `missing` (the deficit's targets: a transport and the
-location of the set it is wanted in, named), `pool` (`wanted`, `inUse`, `free`, `held` =
+location of the set it is wanted in, named, and `trusted`: false where no address was tested
+yet, so automatic upkeep adds none there), `pool` (`wanted`, `inUse`, `free`, `held` =
 `min(free, deficit)`) and `spares` (per spare or retiring address, `takesSlot`: whether a
 publish would get a slot now, the same `allocatePoolIndex` every publish path applies,
 `takesSlot` in `lib/edges/setState.ts`); a provision dry run answers `wouldSelect.takesSlot` for
@@ -682,7 +683,10 @@ the address it would create, and a publish dry run of a standby the pool would r
 `pool_reserved` (or `pool_full`). The `pool_below_desired` attention item offers its publish
 (`action: publish`) only for a standby that passes the gate AND gets a slot; when every such
 standby would stay a standby it names the first one with code `pool_reserved` and `action:
-open_relay` instead of a call that ends as a spare.
+open_relay` instead of a call that ends as a spare. With no spare at all and every free slot held
+for set locations no address was tested in yet, it says `location_untrusted` with `action:
+open_relay` instead of a provision: one would buy in another location, an address that could
+only be a spare (§ "Provider sets").
 At the cap no expansion is possible: attention raises `pool_rebalance` and the operator calls
 `POST relays/{id}/rebalance`, which sends ONE **removable** edge back to standby, highest index
 first: published, not its listener's template edge, and its removal does not increase the
@@ -2156,7 +2160,8 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   its addresses; what members miss; the addresses still missing, with their locations, added by
   automatic upkeep only while `edge.enabled` and `edge.autoProvisionToDesired` are on for an
   enabled node no setup owns (`upkeepAddsMissing`; otherwise "Nothing adds it on its own: add a
-  spare address there, or remove the location"); Add a location, with the regions an account
+  spare address there, or remove the location") and only in a trusted location (else "add a
+  spare address in ... and test it", § "Provider sets"); Add a location, with the regions an account
   reaches, and Remove, § "Provider sets"; Replace and Add a spare take a "Where" choice),
   "Recent activity" (the
   timeline through `plainAuditActionLabel`), and More: add
@@ -2580,7 +2585,20 @@ or a provision FOR THAT LISTENER (`listenerId` in the start), then the origin-wi
 provision on an origin failed, upkeep provisions there again only an hour later
 (`EDGE_PLUMBING.autoProvisionBackoffMs`): each attempt pays for what it builds before the
 failing step, so a cause that persists (a quota, a provider fault) is not paid for on every
-tick. A manual start is never held.
+tick. The hold reads the origin's latest AUTOMATIC provision: a manual run since (a spare
+added by hand, a publish) does not lift it, since it says nothing about the cause. A manual
+start is never held.
+
+**Upkeep buys only what the pool takes.** Filling a free slot (the listener-aware provision,
+the origin-wide fill, a lane's) buys nothing while a spare that would take the slot waits:
+on its test (`publishStandby` answers `awaitingVerification`; attention `spare_untested`) or,
+with `edge.autoPublishStandby` off, on the operator's publish (a judging-only call answers
+`ready`). Nor does it buy an address that could not take the slot: when every free slot is
+held for what the node's set lacks (§ Publication, reserved allocation) and no location
+automatic work may use lowers it, what selection would pick could only ever be a spare, so the
+fill is not started (`edgeRotations.upkeepFillRefusal`, read fresh before the start; selection
+refuses the same pick as `pool_reserved`, § "Provider sets"). The usual cause is a set location
+no address was tested in yet: its first address is made there by hand and tested.
 
 **Retention** (separate daily crons, `convex/retention.ts`): `retention-edges` prunes
 `destroyed` edges after 30 days, `retention-edge-rotations` terminal rotations after 90, and the
@@ -5229,7 +5247,11 @@ before its addresses are published (`edge.pick_switch_late` after). Go-live reco
 **Selection with a set**: the set's usable picks, minus cooling ones and ones that just refused
 a create for this node for automatic work (§ "A location that refused a create"), ranked
 by what they add for the listener: lowers the deficit, a provider not yet published for it, a
-location not yet published for it, set order, fewest live edges (`pickLocation`). A set pick
+location not yet published for it, set order, fewest live edges (`pickLocation`). Automatic
+work picks only trusted locations, and an automatic fill (upkeep's provision meant to go in
+use) whose free slots are all held for the deficit takes only a pick that lowers it: anything
+else would be bought to stay a spare, so it is refused (`pool_reserved`) and upkeep does not
+start it (§ "Reconcile cron"). A set pick
 counts as the operator's choice, so automatic work on that node may use its L7 picks
 (`edge.l7.autoSelect` still governs origins without a set). Spares: a replace prefers a tested
 spare away from the target's provider, then its location, then any (`pickStandby`); upkeep
@@ -5278,7 +5300,13 @@ provisioning); otherwise the reason is reported (`single_key`, `backup_disabled`
 **Editing a set** (`POST relays/{id}/providers`, the node page's card): adding a location to a
 live enrolled node starts an `add` re-protect run (new addresses in the added location, tested,
 reviewed when the location is a new shape, rehearsed against the whole future pool, committed);
-elsewhere the set is saved and the operator adds a spare there and puts it in use. A load
+elsewhere the set is saved and the operator adds a spare there and puts it in use. The pool
+grows to hold a slot for it (`ensureCapacity`). Automatic upkeep fills that slot only from a
+trusted location: in one no address was tested in yet it buys nothing, anywhere (it would buy in
+another location, an address that could only be a spare), and the card says so ("Automatic
+upkeep adds none in a location until an address there is tested: add a spare address in ...
+and test it"; the view's `missing[].trusted`). Once that spare is tested it takes the held slot,
+put in use by upkeep (`edge.autoPublishStandby`) or by hand. A load
 balancer is refused for a WebSocket node (`edge.l4_not_for_websocket`, § Layers). Removing one
 is refused unless the SURVIVORS (published, active, addressed edges outside the removed pick
 whose verification is current) still serve every transport and meet the requirement the

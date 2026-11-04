@@ -215,19 +215,29 @@ export const retryDestroy = internalMutation({
  * started — through `startRotation`, so every start guard (quarantine, one run
  * per origin, the global concurrency cap, publishability) applies and the run
  * is audited like an operator's. Gated by `edge.enabled` in the cron.
+ *
+ * `publish: false` (`edge.autoPublishStandby` off: spares go in use by hand)
+ * only judges: `ready` names a spare that would go in use now. Either way the
+ * cron buys no new address while a spare is ready or awaits its test.
  */
 export const publishStandby = internalMutation({
-  args: { relayId: v.id('relays'), candidates: v.array(v.id('edges')) },
+  args: {
+    relayId: v.id('relays'),
+    candidates: v.array(v.id('edges')),
+    publish: v.optional(v.boolean()),
+  },
   handler: async (
     ctx,
-    { relayId, candidates },
+    { relayId, candidates, publish },
   ): Promise<{
     published: boolean;
     rotationId: Id<'edgeRotations'> | null;
     /** A spare exists that only the operator's endpoint confirmation keeps out of the pool. */
     awaitingVerification: boolean;
+    /** Judging only: a spare would go in use now, were spares put in use automatically. */
+    ready: boolean;
   }> => {
-    const none = { published: false, rotationId: null, awaitingVerification: false };
+    const none = { published: false, rotationId: null, awaitingVerification: false, ready: false };
     const origin = await ctx.db.get(relayId);
     if (!origin || origin.deleting) return none;
     try {
@@ -274,6 +284,8 @@ export const publishStandby = internalMutation({
       // stays a spare; one of the node's running activation is its candidate.
       const approval = await publicationApproval(ctx, origin, edge);
       if (approval.kind === 'refused') continue;
+      if (publish === false)
+        return { published: false, rotationId: null, awaitingVerification, ready: true };
       const listener = await ctx.db.get(edge.listenerId);
       const becomesTemplate =
         origin.hostMode === 'fcp' &&
@@ -287,11 +299,11 @@ export const publishStandby = internalMutation({
             trigger: 'reconcile',
             toEdgeId: edgeId,
           });
-          return { published: false, rotationId, awaitingVerification };
+          return { published: false, rotationId, awaitingVerification, ready: false };
         } catch (err) {
           // Concurrency cap / a guard the pre-check missed: try again next tick.
           if (err instanceof ConvexError)
-            return { published: false, rotationId: null, awaitingVerification };
+            return { published: false, rotationId: null, awaitingVerification, ready: false };
           throw err;
         }
       }
@@ -319,9 +331,9 @@ export const publishStandby = internalMutation({
         payload: { relaySlug: origin.slug, edgeId, poolIndex: idx, epoch },
       });
       await scheduleMirrorRefresh(ctx);
-      return { published: true, rotationId: null, awaitingVerification };
+      return { published: true, rotationId: null, awaitingVerification, ready: false };
     }
-    return { published: false, rotationId: null, awaitingVerification };
+    return { published: false, rotationId: null, awaitingVerification, ready: false };
   },
 });
 

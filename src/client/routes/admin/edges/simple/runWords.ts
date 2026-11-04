@@ -640,7 +640,8 @@ export function runPickLines(
  * changes only when a run goes live, so the spare of a re-protect that failed
  * sits there), then what members miss. What is still missing names its
  * locations, and says who adds it: automatic upkeep only when `upkeepAdds`
- * (`upkeepAddsMissing`), else nothing on its own, with the two ways on.
+ * (`upkeepAddsMissing`) and the location is trusted (else a spare made there
+ * by hand and tested), else nothing on its own, with the two ways on.
  */
 export function providerPickWords(
   view: Pick<
@@ -701,14 +702,26 @@ export function providerPickWords(
     );
   if (view.hasSet && view.deficit > 0) {
     const places = [...new Set((view.missing ?? []).map((m) => m.label).filter((l) => !!l))];
+    // Where no address was tested yet, upkeep buys nothing (it would buy in
+    // another location, an address that could only be a spare).
+    const untrusted = [
+      ...new Set(
+        (view.missing ?? [])
+          .filter((m) => m.trusted === false)
+          .map((m) => m.label)
+          .filter((l) => !!l),
+      ),
+    ];
     const what = `${plural(view.deficit, 'address is', 'addresses are')} still missing${places.length > 0 ? ` (${places.join(', ')})` : ''}`;
     const it = view.deficit === 1 ? 'it' : 'them';
     notes.push(
-      opts.upkeepAdds
-        ? `${what}; automatic upkeep adds ${it}.`
-        : places.length > 0
-          ? `${what}. Nothing adds ${it} on its own: add a spare address there, or remove ${places.length === 1 ? 'the location' : 'those locations'}.`
-          : `${what}. Nothing adds ${it} on its own: add a spare address.`,
+      opts.upkeepAdds && untrusted.length > 0
+        ? `${what}. Automatic upkeep adds none in a location until an address there is tested: add a spare address in ${untrusted.join(', ')} and test it.`
+        : opts.upkeepAdds
+          ? `${what}; automatic upkeep adds ${it}.`
+          : places.length > 0
+            ? `${what}. Nothing adds ${it} on its own: add a spare address there, or remove ${places.length === 1 ? 'the location' : 'those locations'}.`
+            : `${what}. Nothing adds ${it} on its own: add a spare address.`,
     );
   }
   return { picks, outside, notes };

@@ -165,7 +165,7 @@ describe('the pool against the set: what a free slot is held for', () => {
     const view = (await t.query(internal.edgeProviderSets.view, { relayId: fx.relayId }))!;
     expect(view.deficit).toBe(1);
     expect(view.missing).toEqual([
-      { listenerKey: 'a', locationId: b._id, label: b.label, accountName: 'acct-b' },
+      { listenerKey: 'a', locationId: b._id, label: b.label, accountName: 'acct-b', trusted: true },
     ]);
     expect(view.pool).toEqual({ wanted: 2, inUse: 1, free: 1, held: 1 });
     expect(view.spares).toEqual(

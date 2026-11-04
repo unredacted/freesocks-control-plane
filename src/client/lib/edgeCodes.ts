@@ -1383,6 +1383,12 @@ const COPY = {
       'The free pool slots are held for what this origin still lacks: a listener with no published edge, or a location of its provider set with nothing published. An edge that fills none of them stays a standby.',
     fix: 'Replace a published edge with it, publish an edge where one is missing, or remove that location from the provider set.',
   },
+  location_untrusted: {
+    label: 'Missing location not trusted yet',
+    explain:
+      'The free pool slots are held for a location of the node where no address was tested yet. Automatic upkeep adds none there, and an address anywhere else would stay a spare.',
+    fix: 'Add a spare address in that location and test it: it then goes in use.',
+  },
   pool_raised: {
     label: 'Pool size raised',
     explain:

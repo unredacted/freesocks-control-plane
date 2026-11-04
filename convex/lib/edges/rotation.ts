@@ -283,16 +283,21 @@ export interface SetLocationCandidate extends AccountCandidate {
  * Selection with a set: the trusted, usable picks (any pick when the request
  * allows an untrusted location), ranked by what they add: lowers the deficit,
  * a provider not yet published for the listener, a location not yet
- * published, set order, fewest live edges.
+ * published, set order, fewest live edges. `onlyLowering`: an automatic fill
+ * whose free slots are all held for what the set lacks, where a pick that
+ * lowers nothing would only ever be a spare (`pool_reserved` when no trusted
+ * pick lowers it, e.g. the missing location is not trusted yet).
  */
 export function pickLocation(
   candidates: readonly SetLocationCandidate[],
-  opts: { allowUnqualified?: boolean } = {},
+  opts: { allowUnqualified?: boolean; onlyLowering?: boolean } = {},
 ): { ok: true; account: SetLocationCandidate } | { ok: false; code: AccountPickFailure } {
   if (candidates.length === 0) return { ok: false, code: 'no_account_for_provider' };
   const trusted = candidates.filter((a) => opts.allowUnqualified || a.qualified);
   if (trusted.length === 0) return { ok: false, code: 'no_qualified_account' };
-  const usable = trusted
+  const fills = opts.onlyLowering ? trusted.filter((a) => a.lowersDeficit) : trusted;
+  if (fills.length === 0) return { ok: false, code: 'pool_reserved' };
+  const usable = fills
     .filter(
       (a) =>
         a.liveEdges < a.maxLiveEdges &&
@@ -394,7 +399,9 @@ export type AccountPickFailure =
   /** Every pick of the node's set that could carry it cools (D6). */
   | 'set_picks_cooling'
   /** What would be picked is a location whose provider just refused a create for this node. */
-  | 'locations_refused';
+  | 'locations_refused'
+  /** An automatic fill: the free slots are held for a location no trusted pick lowers. */
+  | 'pool_reserved';
 
 /**
  * A trusted location of the provider whose account has capacity + budget (and
