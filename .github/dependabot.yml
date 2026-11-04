@@ -108,10 +108,10 @@ updates:
   #    integration test starts asserting a contract production does not have.
   #    The provider speaks both the 2.x (uuid) and 3.x (numeric id) contracts
   #    since 2026-09-01, so majors flow again — but a bump here is only as good
-  #    as `bun run test:integration:remnawave` against the new tag (opt-in, not
-  #    in CI): run it before merging. Lesson: the 2.8.0->3.3.2 bump of
-  #    2026-08-25 broke the harness silently (APP_SECRET) and nobody noticed
-  #    for a week.
+  #    as `bun run test:integration:remnawave` against the new tag, which the
+  #    client-compatibility workflow's first job now runs on every PR. Lesson:
+  #    the 2.8.0->3.3.2 bump of 2026-08-25 broke the harness silently
+  #    (APP_SECRET) and nobody noticed for a week, when it was opt-in.
   #
   # Ignored: `xtls/xray-core` in docker-compose.compat.yml. The front check is
   # proved against the Xray inside the remnawave/node image the nodes run, so
@@ -121,6 +121,19 @@ updates:
   # Xray blocks private targets in `freedom` unless a `finalRules` entry
   # allows them (docker/compat/frontcheck-xray.json). The REALITY key share
   # test's second pin (a release from v26.9.8 on) moves by hand too.
+  #
+  # Held: `remnawave/node` at 3.4.3, the last image with Xray-core v26.7.28
+  # (3.4.4 bundles v26.10.31). From Xray v26.9.8 on, a REALITY server refuses a
+  # Client Hello without the X25519MLKEM768 key share, which sing-box (and every
+  # app on it) never sends: a node image past the hold locks every sing-box
+  # member out of REALITY (docs/client-compatibility.md § "REALITY client
+  # versions"). The image is pinned only in the test compose files, all covered
+  # by this entry; the real nodes' pin is the node role's. Before moving it,
+  # read a candidate's Xray with
+  # `docker run --rm --entrypoint xray remnawave/node:<version> version`; CI's
+  # node-image-xray job (scripts/compat/node-image-xray.sh) fails any pin past
+  # v26.7.28. Lift this only once sing-box sends the key share, and then move
+  # the compat Xray pins above with it.
   #
   # `patterns: ['*']` with NO `update-types` filter, deliberately. A filter looks
   # like a way to keep majors out, but it silently drops DIGEST-ONLY updates
@@ -139,6 +152,10 @@ updates:
       default-days: 1
     ignore:
       - dependency-name: xtls/xray-core
+      # The REALITY hold above: nothing past 3.4.3 until sing-box sends
+      # X25519MLKEM768.
+      - dependency-name: remnawave/node
+        versions: ['>= 3.4.4']
 
   # --- Dockerfile base images (stack-images) --------------------------------
   # docker/{web,deploy,backup}.Dockerfile and docker/edge-client-check/ (FCP's
