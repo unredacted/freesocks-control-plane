@@ -1587,6 +1587,11 @@ export default defineSchema({
     // location on a transport's network may front it (`carries`).
     networkId: v.optional(v.id('edgeNetworks')),
     networkSource: v.optional(v.union(v.literal('operator'), v.literal('address'))),
+    // The countries an operator meant this place for (docs/edges.md "Locations
+    // meant for a country"): listed codes only. A member steered by one of them
+    // is handed an address here first, among those not blocked there. Absent =
+    // no country in particular. Rollback: `edgeLocations:clearCountriesForRollback`.
+    forCountries: v.optional(v.object({ codes: v.array(v.string()), updatedAt: v.number() })),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

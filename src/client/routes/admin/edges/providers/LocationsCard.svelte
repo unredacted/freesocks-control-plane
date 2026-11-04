@@ -56,6 +56,9 @@
   import QualifyDialog from './QualifyDialog.svelte';
   import { locationTrustWords, networkSourceWords, sharedCertificateWords } from './accountWords';
   import { invalidateSni, networksQuery, setLocationNetwork } from '../../../../lib/sniApi';
+  import { countryName } from '@client/lib/countries';
+  import MeantForDialog from './MeantForDialog.svelte';
+  import { meantForLine } from './meantForWords';
 
   interface Props {
     account: EdgeProviderAccountAdmin;
@@ -141,6 +144,9 @@
   }));
 
   let adding = $state(false);
+  // The countries a location is meant for (docs/edges.md "Locations meant for a country").
+  let meantFor = $state<EdgeLocationAdmin | null>(null);
+  let meantOpen = $state(false);
   let trusting = $state<EdgeLocationAdmin | null>(null);
   let trustOpen = $state(false);
   let removing = $state<EdgeLocationAdmin | null>(null);
@@ -282,6 +288,7 @@
               <p class="text-xs">{costWords(l.pricing.cost)}.</p>
             {/if}
             {#if l.costNote}<p class="text-xs">{l.costNote}</p>{/if}
+            <p class="text-xs">{meantForLine(l.meantFor, (c) => countryName(c, 'en'))}</p>
             {#if !zones}
               <label class="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
                 <span>Network</span>
@@ -319,6 +326,17 @@
               }}
             >
               {l.qualified ? 'Remove trust' : 'Trust override'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              class="h-11 sm:h-8"
+              onclick={() => {
+                meantFor = l;
+                meantOpen = true;
+              }}
+            >
+              Countries
             </Button>
             {#if zones}
               <Button
@@ -424,6 +442,8 @@
 </Dialog.Root>
 
 <PlanDialog bind:open={planOpen} {account} location={planFor} {sizeKey} />
+
+<MeantForDialog bind:open={meantOpen} {account} location={meantFor} />
 
 <QualifyDialog
   bind:open={trustOpen}

@@ -195,6 +195,8 @@ export const EdgeLocationAdmin = z.object({
   qualifiedTemplateHash: z.string().nullable(),
   qualification: TrustRecord,
   autoQualifyHold: z.boolean().default(false),
+  /** The listed countries this place is meant for (docs/edges.md "Locations meant for a country"). */
+  meantFor: z.array(z.string()).default([]),
   defaultTemplateId: z.string().nullable(),
   /** The location's own values of the template's regional fields (a flavor). */
   regionalParams: z.record(z.string(), z.string()).default({}),
@@ -274,6 +276,47 @@ export const EdgeLocationUpdateRequest = z.object({
   makeDefault: z.boolean().optional(),
 });
 export type EdgeLocationUpdateRequest = z.infer<typeof EdgeLocationUpdateRequest>;
+
+/**
+ * POST …/providers/{id}/locations/{locationId}/countries: the countries a
+ * location is meant for (listed codes, at most 8; empty clears it).
+ */
+export const EdgeLocationCountriesRequest = z.object({ codes: z.array(z.string()).max(8) });
+export type EdgeLocationCountriesRequest = z.infer<typeof EdgeLocationCountriesRequest>;
+export const EdgeLocationCountriesResponse = z.object({
+  ok: z.literal(true),
+  changed: z.boolean(),
+  codes: z.array(z.string()),
+  /** Nodes with an address in use there: their members' order moves at their next refresh. */
+  nodes: z.number(),
+});
+export type EdgeLocationCountriesResponse = z.infer<typeof EdgeLocationCountriesResponse>;
+
+/**
+ * POST …/countries/estimate: what saving those codes would move, before it is
+ * saved. Per country added or removed, per node with an address in use there,
+ * how many sampled members steered by that country get a different first
+ * address. Empty while steering is off (nothing moves then).
+ */
+export const EdgeLocationCountriesEstimate = z.object({
+  valid: z.boolean(),
+  code: z.enum(['meant_for_unlisted', 'meant_for_too_many']).nullable(),
+  steering: z.boolean(),
+  countries: z.array(
+    z.object({
+      country: z.string(),
+      nodes: z.array(
+        z.object({
+          relaySlug: z.string(),
+          label: z.string().nullable(),
+          sampled: z.number(),
+          moved: z.number(),
+        }),
+      ),
+    }),
+  ),
+});
+export type EdgeLocationCountriesEstimate = z.infer<typeof EdgeLocationCountriesEstimate>;
 
 export const EdgeProviderAccountAdmin = z.object({
   id: z.string(),
@@ -1781,8 +1824,36 @@ export const CountryViewHanded = z.object({
   onBlockedFirst: z.number(),
   /** Members holding a server name blocked there, on either address. */
   onBlockedName: z.number(),
+  /** Members whose first address is at a location meant for this country (steered only). */
+  onMeantFirst: z.number().default(0),
 });
 export type CountryViewHanded = z.infer<typeof CountryViewHanded>;
+
+/**
+ * A location meant for this country (docs/edges.md "Locations meant for a
+ * country"): its grade and mark there, whether it counts as blocked there, and
+ * its addresses in use per node.
+ */
+export const CountryViewMeantFor = z.object({
+  locationId: z.string(),
+  accountId: z.string(),
+  label: z.string(),
+  provider: z.string(),
+  grade: z.string().nullable(),
+  mark: z.enum(['proven', 'blocked']).nullable(),
+  blocked: z.boolean(),
+  nodes: z.array(
+    z.object({
+      relaySlug: z.string(),
+      label: z.string().nullable(),
+      /** Addresses in use there. */
+      published: z.number(),
+      /** Of those, blocked from this country. */
+      blocked: z.number(),
+    }),
+  ),
+});
+export type CountryViewMeantFor = z.infer<typeof CountryViewMeantFor>;
 
 export const CountryViewListener = z.object({
   listenerId: z.string(),
@@ -1877,6 +1948,11 @@ export const CountryViewSummaryResponse = z.object({
       totals: CountryViewTotals,
       /** The worst share of members there on an address blocked there (null: nothing rendered). */
       worstOnBlocked: z.number().nullable(),
+      /** Locations meant for it, and how many of them are blocked there. */
+      meantFor: z.object({ locations: z.number(), blocked: z.number() }).default({
+        locations: 0,
+        blocked: 0,
+      }),
     }),
   ),
   /** Each probe source in use: working, failing, Globalping's cap (`GET probes/sources`). */
@@ -1896,6 +1972,8 @@ export const CountryViewResponse = z.object({
   curated: z.boolean(),
   totals: CountryViewTotals,
   origins: z.array(CountryViewOrigin),
+  /** The locations meant for this country. */
+  meantFor: z.array(CountryViewMeantFor).default([]),
   sources: z.array(ProbeSourceHealth).default([]),
 });
 export type CountryViewResponse = z.infer<typeof CountryViewResponse>;
@@ -2240,6 +2318,12 @@ export const EdgeRenderPreviewResponse = z.object({
   /** The tier each endpoint came from there: 0 works there, 1 not known, 2 blocked there. */
   primaryTier: z.number().nullable().optional(),
   backupTier: z.number().nullable().optional(),
+  /**
+   * Why each endpoint was picked there beyond its tier (null: no country, or no
+   * such endpoint): `meantFor`, its location is meant for that country.
+   */
+  primaryWhy: z.object({ meantFor: z.boolean() }).nullable().optional(),
+  backupWhy: z.object({ meantFor: z.boolean() }).nullable().optional(),
 });
 export type EdgeRenderPreviewResponse = z.infer<typeof EdgeRenderPreviewResponse>;
 

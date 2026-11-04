@@ -116,6 +116,14 @@ export interface PublishedEdge {
   provenIn?: string[];
   blockedIn?: string[];
   /**
+   * The countries the operator meant the edge's LOCATION for
+   * (`edgeLocations.forCountries`, docs/edges.md "Locations meant for a
+   * country"). Read only when the assignment is given an `edgeCountry`: a
+   * member there ranks these edges first among those not blocked there.
+   * Absent = meant for no country in particular.
+   */
+  meantFor?: string[];
+  /**
    * `trusted`: handed only to trusted members (lib/edges/lanes.ts); absent =
    * open. Read only when the assignment is given a `memberLane`.
    */
@@ -306,6 +314,12 @@ export interface Assignment {
    */
   primaryTier?: EdgeTier;
   backupTier?: EdgeTier;
+  /**
+   * With an `edgeCountry`: the endpoint's location is meant for that country
+   * (`PublishedEdge.meantFor`). Absent when it is not, and without one.
+   */
+  primaryMeantFor?: true;
+  backupMeantFor?: true;
 }
 
 /** 0 = proven in the country, 1 = nothing known, 2 = blocked there. */
@@ -586,7 +600,10 @@ function assignableFor(
  * moves only when a tier changes and the modulus spread holds inside a tier;
  * the backup prefers, in order: not blocked, another provider, the better
  * tier, another location, the walk order, and is left out when every
- * candidate is blocked there while the primary is not.
+ * candidate is blocked there while the primary is not. Inside "not blocked
+ * there", an edge whose location is meant for the member's country
+ * (`meantFor`) comes before the tier, for the primary and, after another
+ * provider, for the backup.
  */
 export function assignEndpoints(
   subscriberKey: string,
@@ -686,6 +703,11 @@ function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
  * node with lanes): inside "not blocked there", trusted addresses (0) before
  * open ones (1), then the tier; the backup prefers the trusted lane before
  * another provider. Without it every edge ranks 0 and nothing changes.
+ *
+ * Meant for (`meantFor`, only with an `edgeCountry`): inside "not blocked
+ * there" and the lane, an edge whose location is meant for the member's
+ * country (0) before one that is not (1), then the tier. With no such edge
+ * every edge ranks 1 and nothing changes, the exclusivity floor included.
  */
 function assignByTier(
   subscriberKey: string,
@@ -699,7 +721,16 @@ function assignByTier(
     pool,
     opts.where,
   );
-  const proven = pool.filter((e, i) => assignable[i] && ownTier(e) === 0).length;
+  const country = opts.edgeCountry ?? null;
+  const meant = pool.map((e) => (country && (e.meantFor ?? []).includes(country) ? 0 : 1));
+  // The preference acts only when an edge it would put first is there to take.
+  const meantActive = pool.some((e, i) => assignable[i] && ownTier(e) !== 2 && meant[i] === 0);
+  // While it acts, the floor counts the proven edges it puts first (across lanes,
+  // as the floor always has): three proven edges elsewhere must not make one
+  // proven meant-for edge exclusive. While it does not, the count is today's.
+  const proven = pool.filter(
+    (e, i) => assignable[i] && ownTier(e) === 0 && (!meantActive || meant[i] === 0),
+  ).length;
   // Fewer proven edges than the exclusivity floor: proven and not-known share tier 1.
   const exclusive = proven >= Math.max(1, opts.minProvenForExclusive ?? 1);
   const tierOf = (e: PublishedEdge): EdgeTier => {
@@ -708,9 +739,11 @@ function assignByTier(
   };
   const tiers = pool.map(tierOf);
   const lanes = pool.map((e) => rule.laneRank?.(e) ?? 0);
-  // Not blocked there first; inside that, the lane, then the tier. With every
-  // lane 0 this orders exactly as the tier does.
-  const rank = (i: number) => (tiers[i] === 2 ? 4 + 2 * lanes[i]! : 2 * lanes[i]! + tiers[i]!);
+  // Not blocked there first; inside that, the lane, then meant for, then the
+  // tier. With every lane 0 and every edge equally meant this orders exactly as
+  // the tier does.
+  const rank = (i: number) =>
+    tiers[i] === 2 ? 8 + lanes[i]! : 4 * lanes[i]! + 2 * meant[i]! + tiers[i]!;
   let best: number | null = null;
   for (let i = 0; i < pool.length; i++)
     if (assignable[i] && (best === null || rank(i) < best)) best = rank(i);
@@ -737,6 +770,8 @@ function assignByTier(
           tiers[i] === 2 ? 1 : 0,
           lanes[i]!,
           distinct && e.provider === primaryEdge.provider ? 1 : 0,
+          // Meant for counts only among the edges not blocked there.
+          tiers[i] === 2 ? 1 : meant[i]!,
           tiers[i]!,
           distinct && !differentLocation(e, primaryEdge) ? 1 : 0,
           step,
@@ -754,10 +789,13 @@ function assignByTier(
       backupEdge = null;
   }
   const out = endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
+  const meantHere = (e: PublishedEdge) => !!country && (e.meantFor ?? []).includes(country);
   return {
     ...out,
     ...(out.primary ? { primaryTier } : {}),
     ...(out.backup ? { backupTier: ownTier(out.backup.edge) } : {}),
+    ...(out.primary && meantHere(out.primary.edge) ? { primaryMeantFor: true as const } : {}),
+    ...(out.backup && meantHere(out.backup.edge) ? { backupMeantFor: true as const } : {}),
   };
 }
 

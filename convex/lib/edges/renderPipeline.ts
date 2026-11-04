@@ -82,6 +82,12 @@ export interface RenderSnapshot {
 export interface PipelineResult extends RenderResult {
   snapshot: RenderSnapshot;
   /**
+   * With an `edgeCountry`: whether each endpoint's location is meant for that
+   * country (docs/edges.md "Locations meant for a country"). For the preview
+   * only: never part of the snapshot a subscription keeps.
+   */
+  meantFor?: { primary: boolean; backup: boolean };
+  /**
    * When this body stops being servable: the earliest proof expiry among the
    * L7 fronts it hands out (primary and backup), null when it holds none. A
    * cached copy is never served past it (docs/edges.md "Asking whether a
@@ -184,6 +190,14 @@ export function applyEdgeRender(
       ...(assigned.primaryTier !== undefined ? { primaryTier: assigned.primaryTier } : {}),
       ...(assigned.backupTier !== undefined ? { backupTier: assigned.backupTier } : {}),
     },
+    ...(opts.edgeCountry
+      ? {
+          meantFor: {
+            primary: assigned.primaryMeantFor === true,
+            backup: assigned.backupMeantFor === true,
+          },
+        }
+      : {}),
     validUntil: renderValidUntil([assigned.primary?.edge, assigned.backup?.edge]),
   };
 }

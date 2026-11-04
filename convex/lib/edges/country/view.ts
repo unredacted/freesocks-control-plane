@@ -33,6 +33,7 @@ import type {
 } from '../../../../src/shared/contracts/edgeCodes';
 import { TARGET_ADDS_FLAG_MS, type HandshakeTiming, type PairCounts } from '../sni/realHost';
 import type { SourceCoverage } from './coverage';
+import { firstEndpointOf, firstMeantFor } from '../meantFor';
 
 export type ViewState = 'proven' | 'blocked' | 'unknown';
 
@@ -332,6 +333,8 @@ export interface ViewSettings {
     canEmitV6: boolean;
     namesPerEndpoint: number;
     backupNames: number;
+    /** The rule hands out the backup first (`order: 'backup-first'`, backup on). */
+    backupFirst?: boolean;
   };
   preferDistinctProviders: boolean;
   minProvenForExclusive: number;
@@ -479,6 +482,8 @@ export interface Handed {
   onBlockedFirst: number;
   /** Members holding a server name blocked there, on either address. */
   onBlockedName: number;
+  /** Members whose first address is at a location meant for this country (steered only). */
+  onMeantFirst: number;
 }
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -521,6 +526,7 @@ export function handedOn(
     onBlockedAddress: 0,
     onBlockedFirst: 0,
     onBlockedName: 0,
+    onMeantFirst: 0,
   };
   if (!s.render) return { ...base, reason: 'render_off' };
   if (!origin.enabled) return { ...base, reason: 'origin_disabled' };
@@ -537,6 +543,7 @@ export function handedOn(
   let onBlockedAddress = 0;
   let onBlockedFirst = 0;
   let onBlockedName = 0;
+  let onMeantFirst = 0;
   const namesOf = (e: Assignment['primary']) =>
     e ? [e.sni, ...(e.alternates ?? []).map((x) => x.sni)].filter((x): x is string => !!x) : [];
   for (let i = 0; i < n; i++) {
@@ -559,8 +566,11 @@ export function handedOn(
     }
     bump(primary, a.primary.edge.edgeId);
     if (a.backup) bump(backup, a.backup.edge.edgeId);
-    const firstBlocked = blockedEdges.has(a.primary.edge.edgeId);
+    // The address handed out first: the backup where the rule puts it first.
+    const first = firstEndpointOf(a, s.rule.backupFirst === true)!;
+    const firstBlocked = blockedEdges.has(first.edge.edgeId);
     if (firstBlocked) onBlockedFirst++;
+    if (firstMeantFor(a, s.rule.backupFirst === true)) onMeantFirst++;
     if (firstBlocked || (a.backup && blockedEdges.has(a.backup.edge.edgeId))) onBlockedAddress++;
     const held = namesOf(a.primary);
     for (const name of new Set(held)) bump(names, name);
@@ -577,6 +587,7 @@ export function handedOn(
     onBlockedAddress: round3(onBlockedAddress / n),
     onBlockedFirst: round3(onBlockedFirst / n),
     onBlockedName: round3(onBlockedName / n),
+    onMeantFirst: round3(onMeantFirst / n),
   };
 }
 

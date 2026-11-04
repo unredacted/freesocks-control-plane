@@ -74,6 +74,8 @@ import {
   type EdgeLocationCreateRequest,
   type EdgeLocationUpdateRequest,
   EdgeOkResponse,
+  EdgeLocationCountriesEstimate,
+  EdgeLocationCountriesResponse,
   EdgeSimulationEndedResponse,
   EdgeSimulationStartedResponse,
   EdgeSimulationsView,
@@ -493,6 +495,23 @@ export const updateProviderLocation = (
     `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}`,
     patch,
     EdgeOkResponse,
+  );
+/**
+ * The countries a location is meant for (docs/edges.md "Locations meant for a
+ * country"): listed codes, an empty list clears it.
+ */
+export const setLocationCountries = (accountId: string, locationId: string, codes: string[]) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/countries`,
+    { codes },
+    EdgeLocationCountriesResponse,
+  );
+/** What saving those countries would move first (synthetic seats; nothing is written). */
+export const estimateLocationCountries = (accountId: string, locationId: string, codes: string[]) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/countries/estimate`,
+    { codes },
+    EdgeLocationCountriesEstimate,
   );
 export const deleteProviderLocation = (accountId: string, locationId: string) =>
   apiClient.delete(

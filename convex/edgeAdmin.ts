@@ -812,6 +812,11 @@ export async function renderPreviewFor(
       steered: !!country && steer,
       primaryTier: out.snapshot.primaryTier ?? null,
       backupTier: out.snapshot.backupTier ?? null,
+      // Why each was picked there, beyond its tier (docs/edges.md "Locations meant for a country").
+      primaryWhy:
+        out.meantFor && out.snapshot.primaryEdgeId ? { meantFor: out.meantFor.primary } : null,
+      backupWhy:
+        out.meantFor && out.snapshot.backupEdgeId ? { meantFor: out.meantFor.backup } : null,
     };
   }
 }

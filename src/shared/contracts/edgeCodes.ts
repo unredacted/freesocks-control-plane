@@ -350,6 +350,9 @@ export const ATTENTION_KINDS = [
   // An active address that a watched allowlist held and no longer holds (docs/edges.md
   // "Edge addresses against allowlists"), until a person says they saw it.
   'list_address_left',
+  // A location meant for a country (docs/edges.md "Locations meant for a country") is
+  // blocked there: members there are handed other addresses until another is picked.
+  'meant_for_blocked',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

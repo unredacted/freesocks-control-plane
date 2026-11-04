@@ -197,6 +197,15 @@ export async function publishedEdgesOf(
   const now = Date.now();
   // Names for addresses (edgeNames.ts): read only while the switch is on.
   const namesOn = await namesEnabledOf(ctx.db);
+  // The countries each location is meant for, one read per location of the pool.
+  const meantByLocation = new Map<string, string[]>();
+  const meantForOf = async (edge: Doc<'edges'>): Promise<string[]> => {
+    if (!edge.locationId) return [];
+    const id = edge.locationId as string;
+    if (!meantByLocation.has(id))
+      meantByLocation.set(id, (await ctx.db.get(edge.locationId))?.forCountries?.codes ?? []);
+    return meantByLocation.get(id)!;
+  };
   for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
     const edgeId = origin.publishedEdgeIds[i];
     if (!edgeId || !selected(edgeId as string)) continue;
@@ -222,7 +231,17 @@ export async function publishedEdgesOf(
     if (!listener) continue; // no listener at all: nothing to render from
     const name =
       namesOn && (edge.layer ?? 'l4') === 'l4' ? await servingNameOf(ctx.db, edge._id) : null;
-    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now, name?.fqdn));
+    published.push(
+      toPublishedEdge(
+        edge,
+        listener,
+        edge.poolIndex ?? i,
+        eligible,
+        now,
+        name?.fqdn,
+        await meantForOf(edge),
+      ),
+    );
   }
   return { published, matchers };
 }
@@ -240,6 +259,8 @@ export function toPublishedEdge(
   now = Date.now(),
   /** The address's name in use (an L4 edge, names on); the test link keeps the IPs. */
   addressName?: string,
+  /** The countries its location is meant for (`edgeLocations.forCountries`). */
+  meantFor: readonly string[] = [],
 ): PublishedEdge {
   // The effective per-country state (edgeCountry.ts), entries past their
   // `until` already dropped: only an assignment given an `edgeCountry` reads it.
@@ -284,6 +305,7 @@ export function toPublishedEdge(
     ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
     ...(provenIn.length > 0 ? { provenIn } : {}),
     ...(blockedIn.length > 0 ? { blockedIn } : {}),
+    ...(meantFor.length > 0 ? { meantFor: [...meantFor] } : {}),
     ...(edge.lane === 'trusted' ? { lane: 'trusted' as const } : {}),
     ...((edge.layer ?? 'l4') === 'l7' && edge.frontQualification?.ok
       ? { proofExpiresAt: edge.frontQualification.expiresAt }

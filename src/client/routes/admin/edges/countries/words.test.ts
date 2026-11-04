@@ -66,6 +66,7 @@ const handed = (over: Partial<CountryViewHanded> = {}): CountryViewHanded => ({
   onBlockedAddress: 1,
   onBlockedFirst: 0.5,
   onBlockedName: 0,
+  onMeantFirst: 0,
   ...over,
 });
 
@@ -588,5 +589,44 @@ describe('country view words', () => {
         lastEvidenceAt: null,
       }),
     ).toBe('amber');
+  });
+});
+
+describe('locations meant for a country', () => {
+  const loc = (over: Partial<Parameters<typeof W.meantForWords>[0]> = {}) => ({
+    locationId: 'l1',
+    accountId: 'a1',
+    label: 'Place',
+    provider: 'upcloud',
+    grade: null,
+    mark: null,
+    blocked: false,
+    nodes: [],
+    ...over,
+  });
+  it('says its state here and its addresses per node', () => {
+    expect(W.meantForWords(loc())).toEqual({
+      state: 'Not known here yet.',
+      detail: 'No node has an address in use there yet.',
+    });
+    expect(
+      W.meantForWords(
+        loc({
+          blocked: true,
+          grade: 'blocked',
+          nodes: [{ relaySlug: 'node-a', label: null, published: 2, blocked: 2 }],
+        }),
+      ),
+    ).toEqual({
+      state:
+        'Blocked here: members here get other addresses. Its addresses are graded blocked here.',
+      detail: 'node-a: 2 addresses in use, 2 blocked here.',
+    });
+    expect(W.meantForWords(loc({ mark: 'proven' })).state).toBe('Works here. Marked working here.');
+  });
+  it('the handed line names the share that starts on such a location, steered only', () => {
+    const steered = W.handedWords(handed({ steered: true, onMeantFirst: 0.75 }));
+    expect(steered).toContain('75% of members here start on a location meant for this country.');
+    expect(W.handedWords(handed({ onMeantFirst: 0.75 })).join(' ')).not.toMatch(/meant for/);
   });
 });

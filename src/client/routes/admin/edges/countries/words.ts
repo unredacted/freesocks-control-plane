@@ -22,6 +22,7 @@ import type {
   CountryViewCoverage,
   CountryViewHanded,
   CountryViewListener,
+  CountryViewMeantFor,
   CountryViewName,
   CountryViewSwitches,
   CountryViewTotals,
@@ -395,7 +396,44 @@ export function handedWords(m: CountryViewHanded): string[] {
   );
   if (m.onBlockedName > 0)
     out.push(`${percent(m.onBlockedName)} of members here hold a server name blocked here.`);
+  if (m.steered && m.onMeantFirst > 0)
+    out.push(
+      `${percent(m.onMeantFirst)} of members here start on a location meant for this country.`,
+    );
   return out;
+}
+
+/**
+ * One location meant for this country (docs/edges.md "Locations meant for a
+ * country"): its state here and its addresses in use, per node.
+ */
+export function meantForWords(l: CountryViewMeantFor): { state: string; detail: string } {
+  const inUse = l.nodes.reduce((n, x) => n + x.published, 0);
+  const state = l.blocked
+    ? 'Blocked here: members here get other addresses.'
+    : l.grade === 'proven' || l.mark === 'proven'
+      ? 'Works here.'
+      : 'Not known here yet.';
+  const why =
+    l.mark === 'blocked'
+      ? ' Marked blocked here.'
+      : l.mark === 'proven'
+        ? ' Marked working here.'
+        : l.grade === 'blocked'
+          ? ' Its addresses are graded blocked here.'
+          : '';
+  const detail =
+    inUse === 0
+      ? 'No node has an address in use there yet.'
+      : l.nodes
+          .map(
+            (n) =>
+              `${n.label ?? n.relaySlug}: ${plural(n.published, 'address', 'addresses')} in use${
+                n.blocked > 0 ? `, ${n.blocked} blocked here` : ''
+              }`,
+          )
+          .join('; ') + '.';
+  return { state: `${state}${why}`, detail };
 }
 
 /** Said once per country page: who the "handed" lines describe. */

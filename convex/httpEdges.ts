@@ -129,6 +129,15 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
   // Which country lists hold some names or addresses: a read over stored versions.
   if (parts.length === 2 && parts[0] === 'lists' && parts[1] === 'lookup') return true;
+  // What saving a location's countries would move: synthetic seats, nothing written.
+  if (
+    parts.length === 6 &&
+    parts[0] === 'providers' &&
+    parts[2] === 'locations' &&
+    parts[4] === 'countries' &&
+    parts[5] === 'estimate'
+  )
+    return true;
   return (
     parts.length === 2 &&
     ((parts[0] === 'render' && parts[1] === 'preview') ||
@@ -700,6 +709,29 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       }),
     );
+  // The countries a location is meant for (docs/edges.md "Locations meant for a
+  // country"), and what saving them would move first (read only).
+  if (a === 'providers' && b && c === 'locations' && d && e === 'countries') {
+    const codes = Array.isArray(body.codes)
+      ? body.codes.filter((x): x is string => typeof x === 'string').slice(0, 64)
+      : null;
+    if (!codes) return errorJson('validation', 'codes must be a list of country codes', 400);
+    if (parts[5] === 'estimate' && !parts[6])
+      return json(
+        await ctx.runQuery(internal.edgeLocations.forCountriesEstimate, {
+          id: id<'edgeLocations'>(d),
+          codes,
+        }),
+      );
+    if (!parts[5])
+      return json(
+        await ctx.runMutation(internal.edgeLocations.setForCountries, {
+          id: id<'edgeLocations'>(d),
+          codes,
+          ...act,
+        }),
+      );
+  }
   if (a === 'sni') {
     if (b === 'families' && !c)
       return json(

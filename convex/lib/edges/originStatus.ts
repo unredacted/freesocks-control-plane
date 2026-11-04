@@ -76,6 +76,7 @@ export const ATTENTION_RANK = [
   'billable_idle',
   'account_spend_cap',
   'location_refused',
+  'meant_for_blocked',
   'sni_family_thin',
   'health_stale',
   'pool_rebalance',
