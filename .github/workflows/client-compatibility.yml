@@ -103,6 +103,18 @@ jobs:
       # carry the per-run client id.
       - run: bun run test:integration:reality-keyshare
 
+  node-image-xray:
+    # The REALITY hold (.github/dependabot.yml): every remnawave/node image the
+    # compose files pin must bundle Xray-core v26.7.28 or older, because from
+    # v26.9.8 on a REALITY server refuses sing-box. Reads each image's own
+    # `xray version`, so a hand bump fails here with the reason.
+    name: Node images' Xray vs the REALITY hold
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/compat/node-image-xray.sh
+
   client-check:
     # FCP's own client check (docs/edges.md § "FCP's own client check"): the
     # edge-client-check service as the stack builds it, through real Xray-cores
