@@ -1182,18 +1182,20 @@ body's own format whose only entries are inert, named with what to do (`convex/l
   they replace. Nothing listens there, so an app that runs the notice fails closed and nothing
   leaves the device (proved with Mihomo in the compat suite). The apps named come from the
   client catalog in the setup page's order: enabled, on the key's backend, never one marked
-  `xhttp: false` on an XHTTP mode, never a catalog name that reads as a legacy core (`Clash`),
-  current apps of the same format first for an old one, never one of the same format for a mode
-  the format cannot carry. The help line names the service (`subscription.siteName`), never a
+  `xhttp: false` on an XHTTP mode, never a catalog name that reads as a legacy core (`Clash`);
+  on a device-limited plan the apps that honour the limit (`hwid`) first, as the setup page puts
+  them; current apps of the same format first for an old one, never one of the same format for a
+  mode the format cannot carry. The help line names the service (`subscription.siteName`), never a
   domain. English only: an app's fetch carries no language.
 - **Answer.** `private, no-store`, never cached, never stamped as a delivery; the usual
   `profile-title`, the panel's other headers and a validator as on any answer. Counted beside
   the refusals as `app_notice` (`DELIVERY_NOTICE_CODES`; admin words "App too old: notice sent"),
   at a place no origin covers too.
 - **The account page.** The key records the kind of app (`clash`, `singbox`, `links`) and when
-  (`subscriptions.appNotice`, docs/privacy.md), written only when there is none, the kind
-  changed, or it is 6 hours old (`APP_NOTICE_RESTAMP_MS`), and only on a live key that has not
-  moved in place since the request read it. The account view shows it for 7 days
+  (`subscriptions.appNotice`, docs/privacy.md), written only when there is none or it is 6 hours
+  old (`APP_NOTICE_RESTAMP_MS`), or for another kind of app once it is an hour old
+  (`APP_NOTICE_SWITCH_MS`, so two affected apps on one key never write once per poll), and only on
+  a live key that has not moved in place since the request read it. The account view shows it for 7 days
   (`APP_NOTICE_WINDOW_MS`, `subscription.appNotice`), however the member's other apps fetched
   meanwhile (one key may serve a working app and an old one): "One of your apps is too old to
   connect" (or "can't use this connection mode"), with a button to the supported apps. A mode
@@ -6528,7 +6530,10 @@ origins, scheduling itself) before deploying the older build.
 (`subscriptions.appNotice`) and one counted code (`app_notice`): one deploy, no migration, no
 setting. Legacy Clash apps get the notice from their next fetch; a body cached before the deploy
 answers until its 30 s cache runs out. To roll back, run `appNotices:clearForRollback` with no
-arguments (it pages through the keys, scheduling itself) before deploying the older build.
+arguments before deploying the older build: in the transaction of its first page it turns record
+writes off (`appState` `appNotice:recordsOff`), so no record, one already scheduled included, can
+land behind it, then it pages through the keys, scheduling itself. Apps keep getting the notice
+meanwhile. Called off, `appNotices:resumeRecords` turns records back on.
 
 **Replacing a blocked address without a spare** adds optional fields only
 (`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,

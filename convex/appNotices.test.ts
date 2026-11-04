@@ -317,11 +317,46 @@ describe('the record', () => {
     expect((await rowOf(t, subId)).appNotice).toBeUndefined();
   });
 
-  test('the rollback step clears every record, page by page', async () => {
+  test('the rollback step turns records off first, so none lands behind it; resume undoes it', async () => {
     const { t, subId } = await seedDirect({ appNotice: { family: 'clash', at: Date.now() } });
     const out = await t.mutation(internal.appNotices.clearForRollback, {});
     expect(out).toEqual({ cleared: 1, done: true });
     expect((await rowOf(t, subId)).appNotice).toBeUndefined();
+    // A record scheduled before the step (or after it) writes nothing...
+    await t.mutation(internal.appNotices.record, { subscriptionId: subId, family: 'clash' });
+    expect((await rowOf(t, subId)).appNotice).toBeUndefined();
+    // ...and the route schedules none, while the app still gets its notice.
+    const res = await get(t, LEGACY_UA);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('⚠ App too old for FreeSocks');
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.filter((s) => s.name.includes('appNotices:record'))).toHaveLength(0);
+    expect(await t.mutation(internal.appNotices.resumeRecords, {})).toEqual({ resumed: true });
+    await t.mutation(internal.appNotices.record, { subscriptionId: subId, family: 'clash' });
+    expect((await rowOf(t, subId)).appNotice?.family).toBe('clash');
+  });
+
+  test('a device-limited plan is pointed at apps that honour the limit', async () => {
+    const { t, subId, userId } = await seedDirect();
+    await t.run(async (ctx) => {
+      const user = (await ctx.db.get(userId))!;
+      await ctx.db.patch(user.tierId, { hwidEnabled: true });
+      await upsertSettingRow(ctx, 'devices.enforcementEnabled', 'true');
+    });
+    const said = await t.query(internal.appNotices.words, {
+      subscriptionId: subId,
+      family: 'clash',
+      why: 'old_app',
+    });
+    expect(said.lines[1]).toBe('Install Karing or Throne');
+    // Enforcement off: the plan is not device-limited, the usual apps.
+    await t.run((ctx) => upsertSettingRow(ctx, 'devices.enforcementEnabled', 'false'));
+    const plain = await t.query(internal.appNotices.words, {
+      subscriptionId: subId,
+      family: 'clash',
+      why: 'old_app',
+    });
+    expect(plain.lines[1]).toBe('Install FlClash or Mihomo Party');
   });
 
   test('a mode switch in place clears it; a server switch keeps it', async () => {

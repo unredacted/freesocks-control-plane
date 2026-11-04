@@ -112,7 +112,8 @@ accidentally regress it).
   (`docs/edges.md` § "Apps that get no connection"), the subscription row
   records the kind of app (`clash`, `singbox` or `links`: the format it reads)
   and the time (`subscriptions.appNotice`): never its User-Agent, version or
-  address. It is rewritten at most every 6 hours, shown only to the member on
+  address. It is rewritten at most every 6 hours (once an hour when two kinds
+  of affected app share the key), shown only to the member on
   their own account page for 7 days, cleared by a mode switch, and deleted
   with the row. The refusal counter counts each notice by node and app family,
   never by key.

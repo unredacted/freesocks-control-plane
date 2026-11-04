@@ -17,6 +17,7 @@ import { decodeBase64Loose, encodeBase64 } from './edges/render/base64';
 import { parseProxyUri } from './edges/render/uri';
 import {
   APP_NOTICE_RESTAMP_MS,
+  APP_NOTICE_SWITCH_MS,
   APP_NOTICE_WINDOW_MS,
   appNoticeBody,
   appNoticeDue,
@@ -181,6 +182,26 @@ describe('the apps it names', () => {
     expect(named).not.toContain('sing-box');
   });
 
+  test('on a device-limited plan, apps that honour the limit come first', () => {
+    expect(
+      noticeApps(DEFAULT_CLIENTS, {
+        backend: 'remnawave',
+        xhttpMode: false,
+        deviceLimited: true,
+        notice: OLD,
+      }),
+    ).toEqual(['Karing', 'Throne']);
+    // sing-box on XHTTP: Karing reads sing-box too, so Throne, then the rest.
+    expect(
+      noticeApps(DEFAULT_CLIENTS, {
+        backend: 'remnawave',
+        xhttpMode: true,
+        deviceLimited: true,
+        notice: SINGBOX_MODE,
+      }),
+    ).toEqual(['Throne', 'Hiddify']);
+  });
+
   test('only enabled apps on the key backend, at most two', () => {
     const one: CatalogClient[] = DEFAULT_CLIENTS.map((c) => ({
       ...c,
@@ -291,7 +312,7 @@ describe('the notice bodies', () => {
 describe('the record: write throttle and hint window', () => {
   const now = 10 * APP_NOTICE_WINDOW_MS;
 
-  test('written when there is none, when the kind of app changes, or once it is a few hours old', () => {
+  test('written when there is none, or once it is a few hours old', () => {
     expect(appNoticeDue(null, 'clash', now)).toBe(true);
     expect(appNoticeDue({ family: 'clash', at: now - 60_000 }, 'clash', now)).toBe(false);
     expect(
@@ -300,7 +321,15 @@ describe('the record: write throttle and hint window', () => {
     expect(appNoticeDue({ family: 'clash', at: now - APP_NOTICE_RESTAMP_MS }, 'clash', now)).toBe(
       true,
     );
-    expect(appNoticeDue({ family: 'singbox', at: now - 60_000 }, 'clash', now)).toBe(true);
+    // Another kind of app replaces a record only once it is an hour old: two
+    // affected apps polling one key never write once per poll.
+    expect(appNoticeDue({ family: 'singbox', at: now - 60_000 }, 'clash', now)).toBe(false);
+    expect(
+      appNoticeDue({ family: 'singbox', at: now - APP_NOTICE_SWITCH_MS + 1 }, 'clash', now),
+    ).toBe(false);
+    expect(appNoticeDue({ family: 'singbox', at: now - APP_NOTICE_SWITCH_MS }, 'clash', now)).toBe(
+      true,
+    );
   });
 
   test('shown for 7 days after the last notice, then not', () => {

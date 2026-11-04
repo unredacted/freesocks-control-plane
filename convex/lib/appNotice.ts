@@ -133,13 +133,15 @@ export const NOTICE_APPS_MAX = 2;
  * The apps the notice names, from the client catalog in the setup page's
  * order (open source, then easier, then priority): enabled, on the key's
  * backend, never one marked unable to use an XHTTP mode while the member is
- * on one, never one that reads as a legacy core. An old app is pointed at a
- * current app of its own kind first (it imports the same link); an app whose
+ * on one, never one that reads as a legacy core. On a device-limited plan,
+ * apps that honour the device limit (`hwid`) come first, as the setup page
+ * puts them: another app may not connect there. Then an old app is pointed at
+ * a current app of its own kind (it imports the same link); an app whose
  * format cannot carry the mode is never pointed at another of that format.
  */
 export function noticeApps(
   clients: readonly CatalogClient[],
-  opts: { backend: string; xhttpMode: boolean; notice: AppNotice },
+  opts: { backend: string; xhttpMode: boolean; deviceLimited?: boolean; notice: AppNotice },
 ): string[] {
   const format = FORMAT_OF_FAMILY[opts.notice.family];
   const usable = publicClients([...clients]).filter(
@@ -149,13 +151,14 @@ export function noticeApps(
       !LEGACY_APP_NAMES.has(squash(c.name)) &&
       !(opts.notice.why === 'mode' && formatOfApp(c.name) === format),
   );
-  const ranked =
-    opts.notice.why === 'old_app'
-      ? [
-          ...usable.filter((c) => formatOfApp(c.name) === format),
-          ...usable.filter((c) => formatOfApp(c.name) !== format),
-        ]
-      : usable;
+  const rank = (c: (typeof usable)[number]) =>
+    (opts.deviceLimited && !c.hwid ? 2 : 0) +
+    (opts.notice.why === 'old_app' && formatOfApp(c.name) !== format ? 1 : 0);
+  // A stable sort: the catalog order holds within each rank.
+  const ranked = usable
+    .map((c, i) => ({ c, i, r: rank(c) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.c);
   return ranked.slice(0, NOTICE_APPS_MAX).map((c) => c.name);
 }
 
@@ -262,6 +265,12 @@ export function appNoticeBody(
 
 /** How long a recorded notice stands before it is written again (the write throttle). */
 export const APP_NOTICE_RESTAMP_MS = 6 * 60 * 60_000;
+/**
+ * How long a record stands before another kind of app replaces it: two
+ * affected apps of different kinds polling one key write at most this often,
+ * never once per poll.
+ */
+export const APP_NOTICE_SWITCH_MS = 60 * 60_000;
 /** How long the account page shows the hint after the last notice. */
 export const APP_NOTICE_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
@@ -271,16 +280,19 @@ export interface StoredAppNotice {
 }
 
 /**
- * Whether serving this notice writes the key's record: only when there is
- * none, it names another kind of app, or it is older than the throttle. A
- * notice served every poll writes a few times a day at most.
+ * Whether serving this notice writes the key's record: when there is none,
+ * when it is older than the throttle, or when it names another kind of app
+ * and is older than `APP_NOTICE_SWITCH_MS`. A notice served every poll writes
+ * a few times a day at most, and two kinds of app on one key once an hour.
  */
 export function appNoticeDue(
   stored: StoredAppNotice | null | undefined,
   family: AppNoticeFamily,
   now: number,
 ): boolean {
-  return !stored || stored.family !== family || now - stored.at >= APP_NOTICE_RESTAMP_MS;
+  if (!stored) return true;
+  const age = now - stored.at;
+  return age >= APP_NOTICE_RESTAMP_MS || (stored.family !== family && age >= APP_NOTICE_SWITCH_MS);
 }
 
 /**
