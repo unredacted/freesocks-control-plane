@@ -1227,13 +1227,14 @@ Domain` (the address's name, § "Names for load balancer addresses"), `· IPv4` 
   `#2`, `#3` on the form it dials: `· Domain #2` for a named address, `· IPv4 #2` beside raw IPs,
   `#2` alone for an address with one form.
 - **Direct.** A direct entry is `<flag> <place> · Direct`, then `Direct 2`, `Direct 3` for further
-  server names, numbered in the sorted order of the server names (`docs/servers.md` § "A direct
-  node's addresses"). The place is the backend instance's location label (its first comma
-  segment); the flag is the country every node of the instance reports in the backend's node list
-  (`backendNodeInventory.countryCode`; none when they disagree, report a code that is not an
-  assigned ISO 3166-1 country such as `XX`, or number more than the 200 rows the lookup reads).
-  A location's member-facing country must be an assigned code too (`src/shared/countryCodes.ts`). With neither, the site name leads (`FreeSocks · Direct`): a bare "Direct" would read
-  as an app's own no-proxy outbound.
+  server names, numbered in the order the panel lists them (its Host order), so an app shows them
+  top to bottom (`docs/servers.md` § "A direct node's addresses"). The place is the backend
+  instance's location label (its first comma segment); the flag is the country every node of the
+  instance reports in the backend's node list (`backendNodeInventory.countryCode`; none when they
+  disagree, report a code that is not an assigned ISO 3166-1 country such as `XX`, or number more
+  than the 200 rows the lookup reads). With neither a place nor a flag, the site name leads
+  (`FreeSocks · Direct`): a bare "Direct" would read as an app's own no-proxy outbound. A
+  location's member-facing country must be an assigned code too (`src/shared/countryCodes.ts`).
 - **Groups.** The url-test group the renderer adds is `⚡ Auto (fastest)`; the backend's selector
   group takes the bare site name (`subscription.siteName`, `FreeSocks`). No entry carries the site
   name.
@@ -6467,7 +6468,9 @@ deploy, no migration, no env change. Members' apps show the new names at their n
 the content cache (minutes), every mirror at its next sweep; the subscription title and every
 ETag change, so apps that send `If-None-Match` fetch the body once. Until an operator gives a
 location a name, its addresses read `via relay A`: set "Name in apps" on every location in use
-first, or right after. `edgeRender:retireEntryLabels` (no arguments) removes the retired settings'
+first, or right after. Direct entries are numbered in the panel's Host order, so a panel that
+shuffles its Hosts on each fetch (Remnawave's subscription setting "randomize hosts") moves the
+numbers on every fetch: check that it is off. `edgeRender:retireEntryLabels` (no arguments) removes the retired settings'
 stored rows and prints their values; it is optional (nothing reads them). To roll back, run
 `edgeLocations:clearMemberPlacesForRollback` (no arguments) right before deploying the older build
 (its schema has no `memberPlace`), and put back any labels `retireEntryLabels` removed if they

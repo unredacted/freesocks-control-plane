@@ -21,13 +21,13 @@
  * country the backend reports for the instance's nodes (`entryNamingFor`).
  * Either is left out when unknown, and with neither the site name leads
  * (`FreeSocks · Direct`, never a bare "Direct" an app could read as its own
- * no-proxy outbound). The numbers follow the server names (the
- * part of the remark after the node, `entryKey`) in sorted order, never the
- * order of the body: an entry keeps its number across refreshes while the set
- * of server names stays the same, whichever way the backend orders them. A
- * server name that comes or goes can move the numbers of those sorted after it
- * (the four- and six-character codes these numbers replaced never moved, but
- * read to members as noise). Entries that name no node (an edge's rendered
+ * no-proxy outbound). The numbers follow the order the backend lists its
+ * entries in (the panel's Host order), so an app shows Direct, Direct 2,
+ * Direct 3 top to bottom: the same body is named the same on every refresh, and
+ * a server name that comes or goes renumbers the entries after it (as does a
+ * panel that shuffles its Hosts on each fetch). The four- and six-character
+ * codes these numbers replaced never moved, but read to members as noise.
+ * Entries that name no node (an edge's rendered
  * entry, already named by the renderer; a group; the backend's placeholder; an
  * operator's own Host remark) are left alone.
  *
@@ -144,8 +144,9 @@ function placeOf(naming: EntryNaming): MemberPlace {
 }
 
 /**
- * What an entry's number follows: the part of its remark after the node. An
- * FCP address remark carries the server name, or the server name's tag when
+ * Which server name an entry carries: the part of its remark after the node,
+ * one number per server name. An FCP address remark carries the server name,
+ * or the server name's tag when
  * the whole would not fit (`addressRemark`); a server name is reduced to that
  * same tag, so the key does not depend on the node name's length (a rename).
  * Tags and role suffixes (`reality`, `ws-6a536a`) never contain a dot.
@@ -153,8 +154,6 @@ function placeOf(naming: EntryNaming): MemberPlace {
 export function entryKey(remarkRest: string): string {
   return remarkRest.includes('.') ? remarkTag(remarkRest) : remarkRest.toLowerCase();
 }
-
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** A node-named entry: its current name and the rest of its remark after the node. */
 export interface NamedEntry {
@@ -164,11 +163,11 @@ export interface NamedEntry {
 
 /**
  * The new name of every node-named entry, by its old name: `<place> · Direct`
- * for the first server name in sorted order (`entryKey`), `Direct 2`, `Direct
- * 3` for the next ones. `taken` holds every other name the body defines
- * (groups, edge entries, built-ins), which no new name may equal. The order of
- * `entries` does not matter; the same server name under two nodes (one key,
- * two old names) shares a number and the second gets `uniqueName`'s ` (2)`.
+ * for the first server name in the order of `entries` (the body's order),
+ * `Direct 2`, `Direct 3` for the next ones. `taken` holds every other name the
+ * body defines (groups, edge entries, built-ins), which no new name may equal.
+ * The same server name under two nodes (one key, `entryKey`, two old names)
+ * shares a number and the later one gets `uniqueName`'s ` (2)`.
  */
 export function planEntryNames(
   entries: readonly NamedEntry[],
@@ -178,16 +177,15 @@ export function planEntryNames(
   const place = placeOf(naming);
   const byName = new Map<string, string>();
   for (const e of entries) if (!byName.has(e.name)) byName.set(e.name, entryKey(e.entry));
-  const keys = [...new Set(byName.values())].sort(cmp);
-  const rows = [...byName]
-    .map(([name, key]) => ({ name, key, n: keys.indexOf(key) + 1 }))
-    .sort((a, b) => a.n - b.n || cmp(a.name, b.name));
+  // Server names in the order they first appear.
+  const keys = [...new Set(byName.values())];
   const used = new Set(taken);
   const plan = new Map<string, string>();
-  for (const r of rows) {
-    const label = uniqueName(entryName({ kind: 'direct', place, n: r.n }), used);
+  for (const [name, key] of byName) {
+    const n = keys.indexOf(key) + 1;
+    const label = uniqueName(entryName({ kind: 'direct', place, n }), used);
     used.add(label);
-    plan.set(r.name, label);
+    plan.set(name, label);
   }
   return plan;
 }

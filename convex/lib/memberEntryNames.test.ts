@@ -35,14 +35,8 @@ const NAMING: EntryNaming = { siteName: 'FreeSocks', place: 'Example City', coun
 const BASE = `🇨🇦 Example City${ENTRY_NAME_SEP}Direct`;
 /** The n-th direct name of NAMING's place (1 = `Direct`, then `Direct 2`, …). */
 const direct = (n: number) => (n === 1 ? BASE : `${BASE} ${n}`);
-/** The direct name each server name gets: its number in the sorted keys. */
-const directFor = (snis: readonly string[], sni: string) =>
-  direct(
-    snis
-      .map((n) => entryKey(n))
-      .sort()
-      .indexOf(entryKey(sni)) + 1,
-  );
+/** The direct name each server name gets: its place in the body (the panel's order). */
+const directFor = (snis: readonly string[], sni: string) => direct(snis.indexOf(sni) + 1);
 // What the edge renderer names an entry (src/shared/entryNames.ts): no node in it.
 const EDGE = '🇧🇷 via Example Town';
 
@@ -123,9 +117,9 @@ describe('relabelMemberEntries: every format', () => {
     expect(out.renamed).toBe(3);
     const labels = labelsBySni(out.content);
     expect(new Set(labels.values()).size).toBe(3);
-    // Numbered in the sorted order of the server names (their remark tags here).
+    // Numbered in the body's order (the panel's): Direct, Direct 2, Direct 3 top to bottom.
+    expect([...labels.values()]).toEqual([direct(1), direct(2), direct(3)]);
     for (const [sni, label] of labels) expect(label).toBe(directFor(NAMES, sni));
-    expect([...labels.values()].sort()).toEqual([direct(1), direct(2), direct(3)]);
     expect(remarkTag(NAMES[0])).toBe(entryKey(NAMES[0]));
     expectNeutral(out.content, labels.values());
     // Everything before the fragment (address, credential, server name) is untouched.
@@ -334,33 +328,41 @@ describe('relabelMemberEntries: stable across refreshes', () => {
     expect(labelsBySni(relabelMemberEntries(body, NAMING).content)).toEqual(first);
   });
 
-  test('order does not matter', () => {
-    const reversed = NAMES.map((n) => link(NODE_A, n))
-      .reverse()
-      .join('\n');
-    expect(labelsBySni(relabelMemberEntries(reversed, NAMING).content)).toEqual(first);
+  test('the numbers follow the body: the panel’s order, top to bottom', () => {
+    const reversed = [...NAMES].reverse();
+    const out = labelsBySni(
+      relabelMemberEntries(reversed.map((n) => link(NODE_A, n)).join('\n'), NAMING).content,
+    );
+    expect([...out.values()]).toEqual([direct(1), direct(2), direct(3)]);
+    for (const sni of NAMES) expect(out.get(sni)).toBe(directFor(reversed, sni));
   });
 
-  test('a server name sorted after the others coming or going leaves them alone; one before moves them', () => {
-    const keys = NAMES.map((n) => entryKey(n)).sort();
-    const find = (ok: (key: string) => boolean) => {
-      for (let i = 0; ; i++)
-        if (ok(entryKey(`n${i}.decoy-d.example`))) return `n${i}.decoy-d.example`;
-    };
-    const late = find((k) => k > keys.at(-1)!);
+  test('a server name added at the end leaves the others alone; one in front renumbers them', () => {
+    const extra = 'img.decoy-d.example';
     const after = labelsBySni(
-      relabelMemberEntries([...NAMES, late].map((n) => link(NODE_A, n)).join('\n'), NAMING).content,
-    );
-    for (const [sni, label] of first) expect(after.get(sni)).toBe(label);
-    expect(after.get(late)).toBe(direct(4));
-    // The tradeoff against the old fixed codes: a name sorted first moves the rest by one.
-    const early = find((k) => k < keys[0]);
-    const moved = labelsBySni(
-      relabelMemberEntries([early, ...NAMES].map((n) => link(NODE_A, n)).join('\n'), NAMING)
+      relabelMemberEntries([...NAMES, extra].map((n) => link(NODE_A, n)).join('\n'), NAMING)
         .content,
     );
-    expect(moved.get(early)).toBe(direct(1));
-    for (const sni of NAMES) expect(moved.get(sni)).toBe(directFor([early, ...NAMES], sni));
+    for (const [sni, label] of first) expect(after.get(sni)).toBe(label);
+    expect(after.get(extra)).toBe(direct(4));
+    // The tradeoff against the old fixed codes: an entry in front moves every number after it.
+    const moved = labelsBySni(
+      relabelMemberEntries([extra, ...NAMES].map((n) => link(NODE_A, n)).join('\n'), NAMING)
+        .content,
+    );
+    expect(moved.get(extra)).toBe(direct(1));
+    for (const sni of NAMES) expect(moved.get(sni)).toBe(directFor([extra, ...NAMES], sni));
+    // And one that goes renumbers the ones after it.
+    const fewer = labelsBySni(
+      relabelMemberEntries(
+        NAMES.slice(1)
+          .map((n) => link(NODE_A, n))
+          .join('\n'),
+        NAMING,
+      ).content,
+    );
+    expect(fewer.get(NAMES[1])).toBe(direct(1));
+    expect(fewer.get(NAMES[2])).toBe(direct(2));
   });
 
   test('a node rename keeps every label (the number comes from the server name)', () => {
@@ -371,33 +373,36 @@ describe('relabelMemberEntries: stable across refreshes', () => {
     expect(labelsBySni(relabelMemberEntries(renamed, NAMING).content)).toEqual(first);
   });
 
-  test('a long server name (remark carries its tag) still gets a stable label', () => {
+  test('a long server name (remark carries its tag) is numbered by its place like any other', () => {
     const long = `${'a'.repeat(40)}.decoy.example`;
     const one = relabelMemberEntries(
       [link(NODE_A, long), link(NODE_A, NAMES[0])].join('\n'),
       NAMING,
     );
-    const two = relabelMemberEntries(
-      [link(NODE_A, NAMES[0]), link(NODE_A, long)].join('\n'),
-      NAMING,
+    expect(labelsBySni(one.content)).toEqual(
+      new Map([
+        [long, direct(1)],
+        [NAMES[0], direct(2)],
+      ]),
     );
-    expect(labelsBySni(one.content)).toEqual(labelsBySni(two.content));
     expect(one.content).not.toContain(NODE_A);
+    // The same body again: the same names.
+    expect(
+      relabelMemberEntries([link(NODE_A, long), link(NODE_A, NAMES[0])].join('\n'), NAMING),
+    ).toEqual(one);
   });
 
-  test('the same server name under two nodes shares a number; the second takes (2)', () => {
+  test('the same server name under two nodes shares a number; the later takes (2)', () => {
     const entry = (node: string, k: string) => ({ name: addressRemark(node, k), entry: k });
     const plan = planEntryNames(
       [entry(NODE_A, NAMES[0]), entry(NODE_B, NAMES[0]), entry(NODE_A, NAMES[1])],
       new Set(),
       NAMING,
     );
-    const one = directFor(NAMES.slice(0, 2), NAMES[0]);
-    // Which of the two takes the suffix follows their old names (sorted): stable, not body order.
-    expect(
-      [plan.get(entry(NODE_A, NAMES[0]).name), plan.get(entry(NODE_B, NAMES[0]).name)].sort(),
-    ).toEqual([one, `${one} (2)`]);
-    expect(plan.get(entry(NODE_A, NAMES[1]).name)).toBe(directFor(NAMES.slice(0, 2), NAMES[1]));
+    // In body order: the first takes the number, the later one ` (2)`.
+    expect(plan.get(entry(NODE_A, NAMES[0]).name)).toBe(direct(1));
+    expect(plan.get(entry(NODE_B, NAMES[0]).name)).toBe(`${direct(1)} (2)`);
+    expect(plan.get(entry(NODE_A, NAMES[1]).name)).toBe(direct(2));
   });
 });
 

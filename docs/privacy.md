@@ -321,7 +321,7 @@ included, so what it names is part of the posture.
   server names (`convex/lib/memberEntryNames.ts`, `docs/servers.md` § "A direct node's
   addresses"). `<place>` is the backend's member-facing location label, which the location
   picker already shows, and the flag the country the backend lists for its nodes; the number
-  follows the server names, which the entries carry anyway, so a name tells a member nothing
+  is the entry's place in the panel's list, which the body shows anyway, so a name tells a member nothing
   the entry itself does not. Edge entries are named by the same scheme (`🇧🇷 via Example Town`,
   `🌐 via CDN 1`, `docs/edges.md` § "Names in apps"): a location's place name is one an
   operator typed for members, never the provider's region name, and a CDN front is never

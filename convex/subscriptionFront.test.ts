@@ -428,8 +428,9 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
     expect(lines.every((l) => new URL(l).hostname === node.address)).toBe(true);
     const names = lines.map((l) => decodeURIComponent(l.slice(l.indexOf('#') + 1)));
     expect(new Set(names).size).toBe(names.length);
-    // One per server name, numbered: `🇨🇦 Example City · Direct`, `· Direct 2`.
-    expect([...names].sort()).toEqual(['🇨🇦 Example City · Direct', '🇨🇦 Example City · Direct 2']);
+    // One per server name, numbered in the panel's order: `🇨🇦 Example City · Direct`, `· Direct 2`.
+    expect(names).toEqual(['🇨🇦 Example City · Direct', '🇨🇦 Example City · Direct 2']);
+    expect(lines.map((l) => new URL(l).searchParams.get('sni'))).toEqual(SERVER_NAMES);
     for (const name of names) for (const sni of SERVER_NAMES) expect(name).not.toContain(sni);
     for (const n of NODES) expect(lines.join('\n')).not.toContain(n.node);
     // A refresh (cache cleared) gives the same names.

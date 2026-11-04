@@ -362,15 +362,16 @@ entry that names a node (`lib/memberEntryNames.ts`):
 - The scheme is the one every connection mode uses (`docs/edges.md` § "Names in apps",
   `src/shared/entryNames.ts`). `<place>` is the backend's member-facing location label up to its
   first comma; `<flag>` the country every node of the backend reports in its node list
-  (`backendNodeInventory.countryCode`; none when they disagree or report a private-use code such
-  as `XX`). Either is left out when unknown; with neither, the site name leads
+  (`backendNodeInventory.countryCode`; none when they disagree or report a code that is not an
+  assigned ISO 3166-1 country, such as the panel's unset `XX`). Either is left out when unknown; with neither, the site name leads
   (`FreeSocks · Direct`), so no entry reads as an app's own no-proxy outbound.
-- The numbers follow the server names (the part of the remark after the node) in sorted order,
-  never the body's order: an entry keeps its number on every refresh and under a node rename
-  while the set of server names stays the same. A server name that comes or goes moves the
-  numbers of those sorted after it. The four- and six-character codes these numbers replaced
-  (2026-11-04) never moved, but read to members as noise. The same server name under two nodes
-  shares a number and the second gets a ` (2)`.
+- The numbers follow the order the panel lists the entries in (its Host order; owner's choice,
+  2026-11-04), so an app shows `Direct`, `Direct 2`, `Direct 3` top to bottom. The same body gets
+  the same names on every refresh and under a node rename. A server name that comes or goes
+  renumbers the entries after it, and a panel that shuffles its Hosts on each fetch (Remnawave's
+  subscription setting "randomize hosts") moves the numbers on every fetch: keep it off. The four-
+  and six-character codes these numbers replaced never moved, but read to members as noise. The
+  same server name under two nodes shares a number and the later one gets a ` (2)`.
 - References follow the rename: sing-box selector/urltest members, `default`, `route.final`,
   rule `outbound`s and `detour`s; Clash proxy-group members and rule targets. Covered formats are
   link lists (base64-wrapped or not), sing-box JSON, Clash / Mihomo YAML and Xray JSON config
