@@ -15,6 +15,7 @@ import {
   CLIENT_CHECK_UNCHECKED_CODES,
   CLIENT_CHECK_VERDICTS,
   COUNTRY_GROUP_GRADES,
+  COUNTRY_LIST_MARK_STATES,
   COUNTRY_ROUND_RESULTS,
   COUNTRY_STATE_FROM,
   COUNTRY_TRACK_STATES,
@@ -1699,6 +1700,20 @@ export const CountryViewAddress = z.object({
   }),
   /** Shares (0..1) of the sampled members there holding it as primary / backup. */
   handed: z.object({ primary: z.number(), backup: z.number() }),
+  /**
+   * What this country's watched allowlists say about its addresses (docs/edges.md
+   * "Edge addresses against allowlists"): `at` is since when it is listed, or when it left.
+   */
+  lists: z
+    .array(
+      z.object({
+        label: z.string(),
+        family: z.enum(['v4', 'v6']),
+        state: z.enum(COUNTRY_LIST_MARK_STATES),
+        at: z.number().nullable(),
+      }),
+    )
+    .default([]),
 });
 export type CountryViewAddress = z.infer<typeof CountryViewAddress>;
 
@@ -2661,7 +2676,8 @@ export const AttentionItem = z.object({
    * for use, no setup run's), answer (the provider's redacted words during that run) ·
    * `block_suspected` score, hintLevel, countries[], heldBack (FCP would replace it but for a
    * hold: the operator alert) · `edge_unreachable` countries[] ·
-   * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider.
+   * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider ·
+   * `list_address_left` list (its label), country, addressFamily (v4|v6).
    */
   facts: z.record(z.string(), z.unknown()).default({}),
   action: AttentionAction,

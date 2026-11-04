@@ -4096,6 +4096,9 @@ export default defineSchema({
     // Whether it was fresh when the daily sweep last looked: a change moves the
     // list-facts generation, since freshness passes with time alone.
     factsFresh: v.optional(v.boolean()),
+    // An allowlist whose ranges FCP checks every edge address against
+    // (docs/edges.md "Edge addresses against allowlists"). Off by default.
+    watchEdges: v.optional(v.boolean()),
     activeVersionId: v.optional(v.id('countryListVersions')),
     // A version waiting for a person to use it or throw it away.
     heldVersionId: v.optional(v.id('countryListVersions')),
@@ -4250,6 +4253,34 @@ export default defineSchema({
   })
     .index('by_list_feed', ['listId', 'feedKey'])
     .index('by_state_updated', ['state', 'updatedAt']),
+
+  // What one watched allowlist says about one address of one active edge
+  // (docs/edges.md "Edge addresses against allowlists"): one row per (edge,
+  // list, family). `versionId` is the version it was checked against; a row
+  // whose version is not the list's active one, or whose address is not the
+  // edge's address now, is not checked yet. A new address starts the row over:
+  // the dates belong to the address they were seen with.
+  countryListEdgeMarks: defineTable({
+    edgeId: v.id('edges'),
+    listId: v.id('countryLists'),
+    family: v.union(v.literal('v4'), v.literal('v6')),
+    address: v.string(),
+    versionId: v.id('countryListVersions'),
+    listed: v.boolean(),
+    // The first and the last check that found it listed (under this address).
+    firstListedAt: v.optional(v.number()),
+    lastListedAt: v.optional(v.number()),
+    // The check that found it gone after it was listed (cleared when listed again).
+    leftAt: v.optional(v.number()),
+    checkedAt: v.number(),
+    // "Seen it": hides the attention item until it is listed again and leaves again.
+    seenAt: v.optional(v.number()),
+  })
+    .index('by_list_edge', ['listId', 'edgeId', 'family'])
+    .index('by_edge', ['edgeId'])
+    .index('by_version', ['versionId'])
+    // Only marks that left (`leftAt` is cleared when listed again): what attention reads.
+    .index('by_left', ['leftAt']),
 
   // --- Bootstrap contract v2 (docs/servers.md "Setting up a backend", "Node lifecycle") ---
   //

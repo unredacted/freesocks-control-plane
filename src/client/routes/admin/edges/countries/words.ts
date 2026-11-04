@@ -13,6 +13,8 @@
  *   handedWords                      what a member there is handed on one transport
  *   switchNotes                      what is off, and what that leaves the view without
  *   coverageNote / coverageLines     which outside probes answer from there, and why one went quiet
+ *   addressListsLine / namesOnListsLine   what the watched allowlists say about the addresses, and
+ *                                    how many of a transport's names the lists hold
  *   countryLabel / percent           display helpers
  */
 import type {
@@ -26,6 +28,7 @@ import type {
   ProbeSourceHealth,
 } from '@shared/contracts/edges';
 import type {
+  CountryListMarkState,
   CountryTrackState,
   CountryViewAddressBasis,
   CountryViewHandedReason,
@@ -321,6 +324,41 @@ export function listsLine(n: CountryViewName): string | null {
       ? 'A block list for here holds this name, so it may be blocked here. Mark it on its family page.'
       : 'A block list for here holds this name.';
   return 'A list of what works here holds this name. That is about the name only, not the address.';
+}
+
+/** One watched allowlist about one address (docs/edges.md "Edge addresses against allowlists"). */
+export const LIST_MARK_WORDS: Record<CountryListMarkState, string> = {
+  listed: 'on the list',
+  left: 'left the list',
+  not_listed: 'not on the list',
+  checking: 'not checked yet against the list',
+};
+
+/**
+ * What this country's watched allowlists say about an address, or null when
+ * none watches it. The family is said only when the row shows both.
+ */
+export function addressListsLine(a: CountryViewAddress, now: number): string | null {
+  if (a.lists.length === 0) return null;
+  const parts = a.lists.map((m) => {
+    const when = m.state === 'left' && m.at !== null ? ` ${relativeTime(m.at, now)}` : '';
+    const family = a.v6 ? ` (${m.family === 'v6' ? 'IPv6' : 'IPv4'})` : '';
+    return `${LIST_MARK_WORDS[m.state]} ${m.label}${when}${family}`;
+  });
+  const line = parts.join('; ');
+  return `${line.charAt(0).toUpperCase()}${line.slice(1)}.`;
+}
+
+/**
+ * How many of a transport's active server names a list of what works here
+ * holds, once a list for here says anything about its names or addresses.
+ */
+export function namesOnListsLine(l: CountryViewListener): string | null {
+  const active = l.names.filter((n) => n.status === 'active');
+  if (active.length === 0) return null;
+  if (!l.addresses.some((a) => a.lists.length > 0) && !active.some((n) => n.lists)) return null;
+  const held = active.filter((n) => n.lists?.allow).length;
+  return `${held} of ${active.length} server ${active.length === 1 ? 'name is' : 'names are'} on a list of what works here. Where only listed addresses and names get through, only those work.`;
 }
 
 const HANDED_REASON_WORDS: Record<CountryViewHandedReason, string> = {

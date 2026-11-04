@@ -22,6 +22,16 @@ vi.mock('@client/lib/edgesApi', async (importOriginal) => ({
   renewEdgeName: vi.fn(),
 }));
 
+// What the watched lists say about the address: none watch it here.
+vi.mock('@client/lib/countryListsApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@client/lib/countryListsApi')>()),
+  edgeListMarksQuery: () => ({
+    isPending: false,
+    isError: false,
+    data: { enabled: false, lists: [] },
+  }),
+}));
+
 const loaded = <T>(data: T) => ({
   isPending: false,
   isError: false,

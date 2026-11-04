@@ -15,6 +15,7 @@ import {
   CountryListPartAdded,
   CountryListsResponse,
   CountryListUploadStarted,
+  EdgeListMarks,
   splitUploadParts,
   type CountryListCreate,
   type CountryListPatch,
@@ -48,6 +49,10 @@ export const feedCountryListAgain = (id: string) =>
   apiClient.post(`${BASE}/${enc(id)}/feeds/again`, {}, CountryListFeedsSet);
 export const lookupCountryLists = (entries: string[]) =>
   apiClient.post(`${BASE}/lookup`, { entries }, CountryListLookup);
+export const fetchEdgeListMarks = (edgeId: string) =>
+  apiClient.get(`${BASE}/marks?edge=${enc(edgeId)}`, EdgeListMarks);
+export const markEdgeAddressSeen = (listId: string, markId: string, leftAt: number) =>
+  apiClient.post(`${BASE}/${enc(listId)}/marks/${enc(markId)}/seen`, { leftAt }, CountryListOk);
 
 /**
  * Paste a list: start an upload, send its parts in order (each fits one
@@ -73,6 +78,7 @@ export const countryListKeys = {
   all: ROOT,
   lists: (country?: string) => [...ROOT, 'lists', country ?? ''] as const,
   list: (id: string) => [...ROOT, 'list', id] as const,
+  marks: (edgeId: string) => [...ROOT, 'marks', edgeId] as const,
 };
 
 export function invalidateCountryLists(qc: QueryClient): void {
@@ -94,4 +100,13 @@ export const countryListQuery = (id: () => string) =>
     queryFn: () => fetchCountryList(id()),
     refetchInterval: (q: { state: { data?: CountryListDetail } }) =>
       q.state.data?.list.busy ? 3_000 : 60_000,
+  }));
+
+/** What the watched allowlists say about one edge's addresses (the edge sheet). */
+export const edgeListMarksQuery = (edgeId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: countryListKeys.marks(edgeId() ?? ''),
+    queryFn: () => fetchEdgeListMarks(edgeId()!),
+    enabled: !!edgeId(),
+    refetchInterval: 60_000,
   }));

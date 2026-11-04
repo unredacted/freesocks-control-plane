@@ -41,6 +41,8 @@ import {
   type NewestAnswers,
 } from './lib/edges/country/coverage';
 import { enabledSources } from './probes';
+import { marksByEdge } from './countryListEdges';
+import { evidenceLists, storedFactsOf, type StoredFact } from './lib/edges/lists/facts';
 import {
   actedState,
   buildCountryView,
@@ -181,6 +183,32 @@ async function load(db: Db): Promise<Loaded> {
   return { origins, names };
 }
 
+/**
+ * One country's page only: what its watched allowlists say about each address
+ * (docs/edges.md "Edge addresses against allowlists"). The summary of every
+ * country does not need it, and the read grows with the lists watched.
+ */
+async function attachListMarks(db: Db, loaded: Loaded, country: string, now: number) {
+  const listMarks = await marksByEdge(
+    db,
+    loaded.origins.flatMap((o) => o.edges.map((e) => e.doc)),
+    country,
+    now,
+  );
+  for (const o of loaded.origins)
+    for (const e of o.edges) {
+      const rows = listMarks.get(e.doc._id);
+      if (rows)
+        e.base.lists = rows.map(({ label, country, family, state, at }) => ({
+          label,
+          country,
+          family,
+          state,
+          at,
+        }));
+    }
+}
+
 const keyOf = (ref: string, country: string) => `${ref}|${country}`;
 
 /**
@@ -197,6 +225,11 @@ interface Prefetched {
   families: Map<string, Doc<'sniFamilies'> | null>;
   nameMarks: Map<string, Doc<'sniNameCountry'>>;
   vantage: Map<string, Doc<'sniVantageEvidence'>>;
+  /**
+   * What the lists say about a name no family holds (no `sniNames` row, so no
+   * stored `onLists`): looked up here, so it is never counted as not listed.
+   */
+  unmanagedLists: Map<string, StoredFact[]>;
   /** Each outside source's newest answer per country, over every address shown (coverage.ts). */
   answers: NewestAnswers;
   /** The same per address, by `<kind>:<ref>` (`edge:<id>`, `relay:<id>` for an origin itself). */
@@ -237,6 +270,7 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
     families: new Map(),
     nameMarks: new Map(),
     vantage: new Map(),
+    unmanagedLists: new Map(),
     answers: new Map(),
     answersByTarget: new Map(),
   };
@@ -287,6 +321,10 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
       .collect())
       p.vantage.set(keyOf(name, e.country), e);
   }
+  const unmanaged = [...loaded.names].filter((name) => !p.names.get(name));
+  const lists = unmanaged.length > 0 ? await evidenceLists(db, Date.now()) : [];
+  if (lists.length > 0)
+    for (const name of unmanaged) p.unmanagedLists.set(name, await storedFactsOf(db, lists, name));
   return p;
 }
 
@@ -432,7 +470,10 @@ function nameFactsFor(
     // The one rule (lib/edges/sni/vantage.ts): the checks, else a block list holding the name.
     const blocks = listBlocks(n?.onLists, country);
     const s = ev || blocks ? resolveSuggestion(probe, { blocks }) : null;
-    const here = (n?.onLists ?? []).filter((f) => f.cc === country);
+    // A name no family holds has no stored facts: they were looked up in `prefetch`.
+    const here = (n ? (n.onLists ?? []) : (pre.unmanagedLists.get(name) ?? [])).filter(
+      (f) => f.cc === country,
+    );
     const weight = reports?.weights.get(name);
     out.set(name, {
       family: n ? (pre.families.get(n.familyId)?.slug ?? null) : null,
@@ -685,6 +726,7 @@ export const country = internalQuery({
     const code = a.country.trim().toUpperCase();
     const st = await settingsOf(ctx.db);
     const loaded = await load(ctx.db);
+    await attachListMarks(ctx.db, loaded, code, now);
     const pre = await prefetch(ctx.db, loaded);
     const reports = await reportsFor(ctx.db, pre, code, st, now);
     const { origins, totals } = viewOf(loaded, pre, st, code, now, reports);

@@ -277,5 +277,7 @@ export const tick = internalAction({
           // Busy (an operator's fetch got there first): the next pass takes it.
         }
       }
+      // New edges and new addresses since the last pass get checked against the watched lists.
+      await ctx.runMutation(internal.countryListEdges.kick, {});
     }),
 });
