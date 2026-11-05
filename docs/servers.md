@@ -743,9 +743,13 @@ node (`reality_key_changed`). A record that was not current stays as it is. The 
 keeps the address its edges dial: an L4-fronted node has no address of its own to read (no Host
 dials it, and the row may hold a private management address), so the origin's address becomes
 the node's (its public IPv4, or `originAddressOverride` for anything else); a protection made
-again later plans from it, never from the management address. Such a node is adopted with
-"Its edge was made outside FCP" off: its edges are FCP's, so after a maintenance its approval
-waits for a protection run's tested standbys like an enrolled node's.
+again later plans from it, never from the management address. What "Its edge was made outside
+FCP" (`externallyFronted`) decides for such a node is how it reopens after a maintenance (or a
+drift) closed it. Off, as for an enrolled node, the approval waits for an open protection run's
+tested standbys: a fresh protection is refused (`edge.node_already_bound`), so that is **Protect
+again**, which buys a fresh address on every listener members are served through, tests it, and
+drains the old one. On, the approval needs no standbys: Approve reopens it on the addresses it
+has (a key change still sends each of them back to its test).
 
 A node is not adopted while the profile carries a change made on the backend outside FCP that
 nobody has seen (`servers.foreign_profile_edit`): its first reconcile would close it as drift.
