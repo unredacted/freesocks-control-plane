@@ -29,12 +29,21 @@
 /** Picks per set: a node is protected by at most this many locations. */
 export const MAX_PROVIDER_PICKS = 6;
 
+/** Addresses per transport one pick may ask for (`relays.providerSet[].want`). */
+export const MAX_PICK_WANT = 8;
+
 export interface SetPick {
   locationId: string;
   /** The provider id (the company): the diversity group. */
   provider: string;
   /** `<provider>:<placeKey>`: the group when every carrier is one provider. */
   locationKey: string;
+  /**
+   * Addresses per transport here (docs/edges.md "Addresses per location"): this
+   * many published addresses of EACH listener the pick carries. Absent = the
+   * rule without it: at least one published address of any listener.
+   */
+  want?: number;
 }
 
 export interface SetListener {
@@ -76,6 +85,11 @@ export interface Requirement {
   reduced: Array<{ listenerKey: string; reason: 'one_group' }>;
   coolingOnly: string[];
   uncarried: string[];
+  /**
+   * Picks with an address count (`SetPick.want`), not cooling: how many each of
+   * the listeners it carries needs there. Empty without counts.
+   */
+  wants: Array<{ locationId: string; want: number; listenerKeys: string[] }>;
 }
 
 export interface Target {
@@ -84,6 +98,15 @@ export interface Target {
   locationId: string | null;
   /** True when it covers a listener's need (published before the pick-only ones). */
   coversListener: boolean;
+  /** One more address a pick's count asks for (after the rest of the cover). */
+  count?: true;
+}
+
+/** A stored count as the requirement takes it: 1..`MAX_PICK_WANT`, else none. */
+export function pickWant(want: unknown): number | undefined {
+  return typeof want === 'number' && Number.isInteger(want) && want >= 1 && want <= MAX_PICK_WANT
+    ? want
+    : undefined;
 }
 
 export function groupOf(
@@ -114,6 +137,7 @@ export function requirementOf(
       reduced: [],
       coolingOnly: [],
       uncarried: [],
+      wants: [],
     };
   }
   const out: ListenerRequirement[] = [];
@@ -144,6 +168,16 @@ export function requirementOf(
       uncarried: all.length === 0,
     });
   }
+  // A count is skipped while its pick cools, as every other need there is.
+  const wants: Requirement['wants'] = [];
+  for (const p of picks) {
+    const want = pickWant(p.want);
+    if (want === undefined || cooling.has(p.locationId)) continue;
+    const listenerKeys = out
+      .filter((l) => [...l.groups.values()].some((ps) => ps.includes(p.locationId)))
+      .map((l) => l.listenerKey);
+    if (listenerKeys.length > 0) wants.push({ locationId: p.locationId, want, listenerKeys });
+  }
   return {
     hasSet: true,
     listeners: out,
@@ -151,6 +185,7 @@ export function requirementOf(
     reduced,
     coolingOnly: out.filter((l) => l.coolingOnly).map((l) => l.listenerKey),
     uncarried: out.filter((l) => l.uncarried).map((l) => l.listenerKey),
+    wants,
   };
 }
 
@@ -161,7 +196,10 @@ export function requirementOf(
  * maximum b-matching, found as a max flow: listener demand -> (listener, group)
  * with capacity one -> pick -> sink with capacity one). Each remaining unit then
  * gets one more pair. Instances are tiny (at most 8 listeners x 6 picks).
- * Targets that cover a listener come first.
+ * Targets that cover a listener come first. Then, for a pick with a count
+ * (`Requirement.wants`), one more target for each address of a listener it
+ * still lacks there beyond what is published and what the cover already puts
+ * there: without counts the targets are exactly the ones before.
  */
 export function coverTargets(req: Requirement, published: readonly PublishedRef[]): Target[] {
   const listenerTargets: Target[] = [];
@@ -233,12 +271,61 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
     pickTaken.add(p);
     pickTargets.push({ listenerKey: l.listenerKey, locationId: p, coversListener: false });
   }
-  return [...listenerTargets, ...pickTargets];
+  const countTargets: Target[] = [];
+  for (const w of req.wants)
+    for (const listenerKey of w.listenerKeys) {
+      const here = (t: { listenerKey: string; locationId: string | null }) =>
+        t.listenerKey === listenerKey && t.locationId === w.locationId;
+      const have =
+        published.filter(here).length +
+        listenerTargets.filter(here).length +
+        pickTargets.filter(here).length;
+      for (let k = have; k < w.want; k++)
+        countTargets.push({
+          listenerKey,
+          locationId: w.locationId,
+          coversListener: false,
+          count: true,
+        });
+    }
+  return [...listenerTargets, ...pickTargets, ...countTargets];
 }
 
 /** How many targets the requirement still asks for (cooling-only shortfalls excluded). */
 export function coverageDeficit(req: Requirement, published: readonly PublishedRef[]): number {
   return coverTargets(req, published).length;
+}
+
+/** The targets only a pick's address count asks for (`Target.count`). */
+export function countDeficit(req: Requirement, published: readonly PublishedRef[]): number {
+  if (req.wants.length === 0) return 0;
+  return coverTargets(req, published).filter((t) => t.count).length;
+}
+
+/**
+ * Whether removing published edge `index` keeps every pick's address count met
+ * (lane cleanup: an open address above target leaves only when no count needs
+ * it): its location still holds as many of its transport as the count asks
+ * for. Always true without counts.
+ */
+export function keepsCounts(
+  req: Requirement,
+  published: readonly PublishedRef[],
+  index: number,
+): boolean {
+  const e = published[index];
+  if (!e || !e.locationId) return true;
+  const w = req.wants.find(
+    (x) => x.locationId === e.locationId && x.listenerKeys.includes(e.listenerKey),
+  );
+  if (!w) return true;
+  // The addresses of its transport at its location, counted as they are: a
+  // removal's gap may show up in the cover as another kind of target (the only
+  // address of a pick with a count of one), so the count deficit cannot tell.
+  const here = published.filter(
+    (p) => p.listenerKey === e.listenerKey && p.locationId === e.locationId,
+  ).length;
+  return here - 1 >= w.want;
 }
 
 /**

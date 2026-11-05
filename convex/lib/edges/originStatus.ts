@@ -77,6 +77,7 @@ export const ATTENTION_RANK = [
   'account_spend_cap',
   'location_refused',
   'meant_for_blocked',
+  'location_short',
   'sni_family_thin',
   'health_stale',
   'pool_rebalance',

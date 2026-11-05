@@ -490,6 +490,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.relay.rebalanced': ['relaySlug', 'edgeId', 'poolIndex', 'epoch'],
   // A node's provider set edited by hand: counts only (never location names).
   'edge.relay.providers_changed': ['relaySlug', 'added', 'removed', 'drained', 'picks', 'run'],
+  'edge.relay.pick_want': ['relaySlug', 'placeKey', 'want', 'adds'],
   // The automation switch: the one boolean it was set to.
   'edge.automation.set': ['on'],
   // Freedom modes only through edges (freedomDelivery.setEdgesOnly): what it was set to,

@@ -2804,7 +2804,9 @@ export const AttentionItem = z.object({
    * `block_suspected` score, hintLevel, countries[], heldBack (FCP would replace it but for a
    * hold: the operator alert) · `edge_unreachable` countries[] ·
    * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider ·
-   * `list_address_left` list (its label), country, addressFamily (v4|v6).
+   * `list_address_left` list (its label), country, addressFamily (v4|v6) ·
+   * `location_short` name (the account), location, wanted (its count), inUse (the fewest
+   * in use of a transport there), count (transports short).
    */
   facts: z.record(z.string(), z.unknown()).default({}),
   action: AttentionAction,
@@ -3145,6 +3147,13 @@ export const ProviderSetView = z.object({
       addedAt: iso,
       /** The provider options its addresses are built with (null: from before options). */
       options: z.record(z.string(), z.unknown()).nullable().default(null),
+      /**
+       * Addresses per transport asked for here (docs/edges.md "Addresses per
+       * location"); null: at least one address of any transport.
+       */
+      want: z.number().nullable().default(null),
+      /** The node's transports this location carries (what a count counts). */
+      carries: z.array(z.string()).default([]),
     }),
   ),
   /**
@@ -3230,6 +3239,33 @@ export const ProviderSetView = z.object({
 });
 export type ProviderSetView = z.infer<typeof ProviderSetView>;
 
+/**
+ * `POST relays/{id}/providers/{locationId}/want/preview {want}`: what one
+ * pick's count adds before it is saved. `adds` new addresses in use (per
+ * transport it carries, beyond what is published and asked for already),
+ * `each` the monthly price of one there (null: not known), `fits` how many of
+ * them the account's monthly cap still allows (`adds` without a cap), `total`
+ * the addresses the whole set then asks for, `tooLarge` past what one node
+ * publishes (saving is refused `edge.set_too_large`).
+ */
+export const PickWantPreview = z.object({
+  want: z.number().nullable(),
+  carries: z.array(z.string()),
+  adds: z.number(),
+  fits: z.number(),
+  each: EdgeCostView.nullable(),
+  total: z.number(),
+  tooLarge: z.boolean(),
+});
+export type PickWantPreview = z.infer<typeof PickWantPreview>;
+
+export const PickWantResponse = z.object({
+  ok: z.literal(true),
+  changed: z.boolean(),
+  want: z.number().nullable(),
+  adds: z.number(),
+});
+export type PickWantResponse = z.infer<typeof PickWantResponse>;
 /** `POST relays/{id}/providers {add?, remove?}`. */
 export const ProviderSetChangeResponse = z.object({
   ok: z.literal(true),

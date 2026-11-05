@@ -27,6 +27,7 @@ import { allocatePoolIndex, freeSlotCount } from './pool';
 import {
   coverTargets,
   coverageDeficit,
+  pickWant,
   requirementOf,
   type PublishedRef,
   type Requirement,
@@ -149,6 +150,7 @@ export async function setPicksOf(
         locationId: location._id as string,
         provider: account.provider,
         locationKey: locationKeyOf(account.provider, location.placeKey),
+        ...(pickWant(p.want) !== undefined ? { want: pickWant(p.want) } : {}),
       },
       location,
       account,

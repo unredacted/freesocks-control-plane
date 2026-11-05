@@ -390,8 +390,15 @@ export const autoProvisionBackingOff = internalQuery({
  * pick could only ever be a spare (docs/edges.md § "Provider sets").
  */
 export const upkeepFillRefusal = internalQuery({
-  args: { relayId: v.id('relays'), listenerId: v.optional(v.id('relayListeners')) },
-  handler: async (ctx, { relayId, listenerId }): Promise<'pool_reserved' | null> => {
+  args: {
+    relayId: v.id('relays'),
+    listenerId: v.optional(v.id('relayListeners')),
+    onlyLocationId: v.optional(v.id('edgeLocations')),
+  },
+  handler: async (
+    ctx,
+    { relayId, listenerId, onlyLocationId },
+  ): Promise<'pool_reserved' | null> => {
     const origin = await ctx.db.get(relayId);
     if (!origin?.providerSet) return null;
     const sel = await selectionContext(
@@ -401,6 +408,7 @@ export const upkeepFillRefusal = internalQuery({
         trigger: 'reconcile',
         publishOnDone: true,
         ...(listenerId ? { listenerId } : {}),
+        ...(onlyLocationId ? { onlyLocationId } : {}),
       },
       origin,
       null,
@@ -715,6 +723,12 @@ const startArgs = {
   allowUnqualified: v.optional(v.boolean()),
   /** An explicit provision's location (its account when `requestedAccountId` is absent); a replace's for an L7 front. */
   requestedLocationId: v.optional(v.id('edgeLocations')),
+  /**
+   * Upkeep filling one pick's address count (step 5W): selection picks among
+   * the node's set as always (cooling, refused, trusted, cap) but only this
+   * location. Unlike `requestedLocationId` it is no explicit request.
+   */
+  onlyLocationId: v.optional(v.id('edgeLocations')),
   /** A replace's explicit spare (L4): that tested spare of the same listener, or nothing. */
   requestedSpareEdgeId: v.optional(v.id('edges')),
   /**
@@ -750,6 +764,7 @@ export interface StartRotationArgs {
   requestedTemplateId?: Id<'edgeTemplates'>;
   allowUnqualified?: boolean;
   requestedLocationId?: Id<'edgeLocations'>;
+  onlyLocationId?: Id<'edgeLocations'>;
   requestedSpareEdgeId?: Id<'edges'>;
   requestedOptions?: unknown;
   reason?: string;
@@ -1371,6 +1386,7 @@ export async function startRotation(
     allowUnqualified: a.kind === 'provision' && a.allowUnqualified ? true : undefined,
     requestedLocationId:
       a.kind === 'provision' || a.kind === 'replace' ? a.requestedLocationId : undefined,
+    onlyLocationId: a.kind === 'provision' ? a.onlyLocationId : undefined,
     requestedSpareEdgeId: a.kind === 'replace' ? a.requestedSpareEdgeId : undefined,
     requestedOptions,
     affectedCountries: a.affectedCountries?.slice(0, 20),
@@ -3169,6 +3185,8 @@ export interface SelectionRequest {
   allowUnqualified?: boolean;
   /** An explicit location (the operator's pick); its account is implied. */
   requestedLocationId?: Id<'edgeLocations'>;
+  /** Upkeep filling one pick's count: the set's selection, at this location only. */
+  onlyLocationId?: Id<'edgeLocations'>;
   /** A replace's explicit spare: that one or nothing. */
   requestedSpareEdgeId?: Id<'edges'>;
   /** Started by a guided setup run (the operator chose its account). */
@@ -3821,6 +3839,7 @@ export async function selectionContext(
     for (const c of among) {
       const at = c.locationId ? order.indexOf(c.locationId) : -1;
       if (at < 0) continue;
+      if (rotation.onlyLocationId && c.locationId !== (rotation.onlyLocationId as string)) continue;
       // A provider-scoped profile binds the slot to that network, set or not.
       if (listener.providerScope?.provider && c.provider !== listener.providerScope.provider)
         continue;
