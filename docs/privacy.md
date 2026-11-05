@@ -41,8 +41,9 @@ accidentally regress it).
 - **Where a member connects from** (`convex/lib/memberCountry.ts`, `convex/memberCountry.ts`).
   The country is used to pick what works there: the server names a key uses
   (`docs/edges.md` § Names for the member's country), the order its addresses come in
-  (`docs/edges.md` § Delivery by country, § Latency over the whole path) and the connection
-  mode the account page suggests. The rules:
+  (`docs/edges.md` § Delivery by country, § Latency over the whole path), the connection
+  mode the account page suggests and, for a member who chose a country themselves, where a new
+  key is placed (`docs/edges.md` § Exit location by country). The rules:
   - **Freedom-family keys only.** A key of any other mode (the privacy family, a backend
     without connection modes, a key whose family cannot be told) has no country at all: no
     reading, nothing stored, nothing country-dependent in what it receives. The family is
@@ -106,6 +107,16 @@ accidentally regress it).
     `GET /api/v1/admin/member-country/{id}`) are HPKE-sealed and refuse plaintext, so it never
     crosses the CDN in the clear; a caller that cannot seal is refused. The admin view answers a
     signed-in admin's passkey session only, never an API token, even one that seals.
+  - **Where a new key is placed** (`delivery.country.exits`, off until an admin maps a
+    country): a new freedom-family key of a member on Automatic whose OWN answer is a mapped
+    country goes to that country's exit location when it can. Never the guess, never the
+    opt-out. The country is stored nowhere new, but the placement encodes it coarsely: the
+    backend that holds the key, and that backend's own user record, imply the region the
+    operator mapped the answer to. That stays after the member changes or clears the answer,
+    until the key moves, the same as if the member had picked that location themselves. FCP
+    never moves a key by itself: the account page offers a one-time move (sealed, like the
+    answer), and its audit row (`subscription.move_location`) records neither the country nor
+    the location.
   - **Shown** to the member ("We think you're connecting from Iran. Change", or their own
     answer) and to admins per member (Admin -> Users -> Live details: country, choice or guess,
     first and last seen, the last delivery).

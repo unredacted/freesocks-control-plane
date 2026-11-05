@@ -4849,6 +4849,41 @@ walk order`. Meant for still wins for its own countries, and a blocked address s
   (every figure, every kept sample, the passes' mark and the switch's key; it pages until
   `done`).
 
+### Exit location by country
+
+Where a member's key is placed, by the country they chose (`convex/lib/countryExits.ts`,
+`convex/countryExits.ts`). Members in a country are usually better off on a node near it, but
+FCP only places keys: it never moves one by itself, since moving a key across backends
+re-issues it.
+
+- **The setting.** `delivery.country.exits` (Admin -> Settings, "Where members connect from",
+  "Exit location for each country"): per listed country, up to three location codes of the
+  member catalog, in order. Empty by default, which changes nothing.
+- **Who it applies to.** A NEW key (regenerate, a mode or backend switch, the re-issue leg of
+  a server switch) of a FREEDOM-family mode, for a member on Automatic (no location pick of
+  their own), whose OWN answer to "Where are you connecting from?" on the key being replaced
+  is a mapped country, with ordering by country on (`delivery.country.steer`). Never the
+  guess: a placement chosen by a guess would outlive the guess on the backend, and a
+  regenerate carries only the answer anyway. The opt-out, no answer, a location pick of their
+  own, a privacy-family mode and the first key at sign-up (no answer yet) are placed as before.
+- **The narrowing.** Soft, like a member's location pick (`resolvePlacementTarget`
+  `exitLocations`): the first code with an eligible backend (active, under its key cap) and
+  one of the mode's groups there wins; none of them leaves today's least-loaded choice. A
+  member's own location pick always wins over it.
+- **The account page.** On Automatic, with a mapped answer and the key elsewhere, the region
+  card says "From Iran, <location> is usually faster" and offers "Move my key there"
+  (`POST account/move-to-exit`, sealed like the answer). The move re-issues the key once at
+  the first exit location that is in the catalog and online, carrying the link, the answer and
+  the mirrors like a server switch (same rate limits); the member stays on Automatic. Nothing
+  moves when that location cannot take the key now. Its audit row
+  (`subscription.move_location`) has no payload: never the country, never the location.
+- **The country view** says where new keys on Automatic of members who chose the country go.
+  It counts no member.
+- **Privacy.** The placement encodes the answer coarsely (docs/privacy.md, "Where a member
+  connects from").
+- **Rollback.** Before deploying a build without it: `countryExits:clearForRollback` (deletes
+  the setting). Keys already placed stay where they are; new keys go least-loaded again.
+
 ### The country view
 
 One place that answers "from this country, which of my addresses and server names work right

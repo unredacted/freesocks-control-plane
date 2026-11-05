@@ -2056,6 +2056,11 @@ export const CountryViewResponse = z.object({
   origins: z.array(CountryViewOrigin),
   /** The locations meant for this country. */
   meantFor: z.array(CountryViewMeantFor).default([]),
+  /**
+   * Exit location by country (`delivery.country.exits`): where new keys on
+   * Automatic of members who chose this country go, in order. No member counts.
+   */
+  exits: z.array(z.object({ code: z.string(), label: z.string() })).default([]),
   sources: z.array(ProbeSourceHealth).default([]),
 });
 export type CountryViewResponse = z.infer<typeof CountryViewResponse>;

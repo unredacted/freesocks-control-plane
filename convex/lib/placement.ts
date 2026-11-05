@@ -49,6 +49,12 @@ export interface PlacementResolver {
     modeSlug: string | null,
     opts: {
       location?: string | null;
+      /**
+       * A member on Automatic whose own country choice has exit locations
+       * (lib/countryExits.ts): codes tried in order, softly, only when
+       * `location` is unset.
+       */
+      exitLocations?: readonly string[];
       onlyServerId?: string | null;
       excludePlacement?: string | null;
       rand?: () => number;

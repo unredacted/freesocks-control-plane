@@ -12,6 +12,7 @@
    * Props: code: string (ISO 3166-1 alpha-2, upper case)
    * All wording lives in ./words.ts (pure, unit-tested).
    */
+  import { exitSentence } from '../../../../lib/countryExits';
   import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import Link from '@client/components/Link.svelte';
@@ -157,6 +158,12 @@
           {/each}
         </ul>
       {/if}
+      <p class="text-muted-foreground">
+        {exitSentence(
+          v.exits.map((e) => e.label),
+          v.switches.steering,
+        )}
+      </p>
     </CardContent>
   </Card>
 

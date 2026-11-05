@@ -1642,9 +1642,21 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    return json(await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }));
+    return json(await regionView(ctx, member.userId));
   }),
 });
+
+/**
+ * The sealed region view, with the one-time exit suggestion (docs/edges.md
+ * "Exit location by country"): the label of the exit location of the member's
+ * own country choice while their key is elsewhere. Only ever sealed, like the
+ * choice it follows from.
+ */
+async function regionView(ctx: ActionCtx, userId: Id<'users'>) {
+  const view = await ctx.runQuery(internal.memberCountry.memberView, { userId });
+  const offer = await ctx.runQuery(internal.countryExits.memberExit, { userId });
+  return { ...view, exit: offer ? { label: offer.label } : null };
+}
 
 http.route({
   path: '/api/v1/account/connection-region',
@@ -1701,7 +1713,7 @@ http.route({
           });
         throw err;
       }
-      return json(await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }));
+      return json(await regionView(ctx, member.userId));
     } catch (err) {
       // Only the mutation's own refusal is the member's mistake; anything else
       // (a write conflict, a fault) is the server's and is reported as such.
@@ -1821,6 +1833,31 @@ http.route({
       });
       // switchServer answers ok:false only where the key stayed put (nowhere
       // else to go, unsupported, mode unavailable, placement still resolving).
+      if (!result.ok) await releaseIssuanceUnits(ctx, member.userId, 'account.switch-server');
+      return sagaResult(result);
+    });
+  }),
+});
+
+// The account page's one-time move to the exit location of the member's own
+// country choice (docs/edges.md "Exit location by country"). The server picks
+// the location itself; the key moves like a server switch (same rate limits,
+// sealed because the response carries a subscription URL), and the member
+// stays on Automatic.
+http.route({
+  path: '/api/v1/account/move-to-exit',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ confirm?: boolean }>(req);
+    if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
+    return withIssuanceSaga(ctx, member.userId, 'account.switch-server', async (requestId) => {
+      const result = await ctx.runAction(internal.account.moveToCountryExit, {
+        userId: member.userId,
+        requestId,
+      });
+      // ok:false only where the key stayed put (nothing offered, or not now).
       if (!result.ok) await releaseIssuanceUnits(ctx, member.userId, 'account.switch-server');
       return sagaResult(result);
     });

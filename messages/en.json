@@ -785,7 +785,7 @@
   },
   "region": {
     "title": "Where are you connecting from?",
-    "help": "Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses, the addresses it connects to first and the connection mode we suggest. It is kept with your key, deleted with it, and never shared.",
+    "help": "Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses, the addresses it connects to first, the connection mode we suggest and, if you pick a country, the server location of a new key. It is kept with your key, deleted with it, and never shared.",
     "helpDetect": "On Automatic we keep the country you connect from, guessed from your connection, and forget it {days} days after we last see you there.",
     "automatic": "Automatic",
     "elsewhere": "Opt-out: do not use my location",
@@ -795,7 +795,13 @@
     "change": "Change",
     "saved": "Saved. Refresh your app to pick up the change.",
     "failed": "That did not save. Try again.",
-    "tooOften": "You can change your country a few times a day. Try again tomorrow."
+    "tooOften": "You can change your country a few times a day. Try again tomorrow.",
+    "exitFaster": "From {country}, {location} is usually faster than where your key is now.",
+    "exitMove": "Move my key there",
+    "exitConfirm": "Your key moves there once. Your link stays the same, so there is nothing to import again, and you stay on Automatic.",
+    "exitMoveNow": "Move it",
+    "exitMoved": "Your key moved. Refresh your app to pick up the change.",
+    "exitFailed": "Your key did not move. Try again later."
   },
   "delivery": {
     "title": "Connection mode",
