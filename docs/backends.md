@@ -560,9 +560,11 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   switch-mode.
 - **Public status page:** the same healthcheck signals feed `GET /api/v1/status`
   (the `/status` page) — per-location online + coarse load bands
-  (`convex/lib/loadBands.ts`: maxKeys utilization when every instance of a
-  location is capped, else users-per-online-node against admin-tunable
-  `status.loadBusyAt`/`status.loadCrowdedAt` thresholds), plus operator-published
+  (`convex/lib/loadBands.ts`: the CPU load of the location's online nodes, their
+  5-minute load averages over their cores as `/api/nodes` reports them
+  (`system.stats.loadAvg`, `system.info.cpus`, cached per node in
+  `backendNodeInventory`): Busy from 70%, Crowded from 90%, no band when no node
+  reports it), plus operator-published
   incidents and the censorship-availability matrix (Admin → Status). Bands only,
   never raw counts — see `docs/privacy.md`.
 

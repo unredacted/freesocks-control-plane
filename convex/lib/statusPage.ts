@@ -5,25 +5,19 @@
  * user count, or per-node number (the privacy posture, matching the GB-only
  * donation projection).
  *
- * Three inputs, all already collected: backendServers (healthcheck cron +
- * fleetStats + keyCount/maxKeys), remnawaveNodeStats (the placement-load
- * cache), and the operator-published `statusIncidents` table. The censorship
- * availability matrix + load thresholds live in the `appSettings` `status.*`
- * namespace (deliberately NOT in SETTINGS_DEFAULTS — typed validation here,
- * fail-safe resolve), edited from Admin → Status.
+ * Three inputs, all already collected: backendServers (healthcheck cron),
+ * backendNodeInventory (per-node CPU load, for the load bands), and the
+ * operator-published `statusIncidents` table. The censorship availability
+ * matrix lives in the `appSettings` `status.*` namespace (deliberately NOT in
+ * SETTINGS_DEFAULTS — typed validation here, fail-safe resolve), edited from
+ * Admin → Status.
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
 import { collectLocationCapableServers } from './locations';
 import { byFamilyThenOrder, resolveModeCatalog } from './connectionModes';
 import { resolveCensoredCountries } from './censoredCountries';
-import {
-  computeLocationLoad,
-  HEALTH_FRESH_MS,
-  LOAD_THRESHOLD_DEFAULTS,
-  type LoadBand,
-  type LoadThresholds,
-} from './loadBands';
+import { computeLocationLoad, HEALTH_FRESH_MS, type LoadBand } from './loadBands';
 
 export type { LoadBand };
 
@@ -72,10 +66,11 @@ export interface PublicStatusPage {
 // Settings namespace (`status.*`)
 // ---------------------------------------------------------------------------
 
+// `status.loadBusyAt` / `status.loadCrowdedAt` (users-per-node thresholds)
+// are retired: the bands come from CPU load now (lib/loadBands). Old rows are
+// ignored.
 export const STATUS_KEYS = {
   censorship: 'status.censorship',
-  loadBusyAt: 'status.loadBusyAt',
-  loadCrowdedAt: 'status.loadCrowdedAt',
 } as const;
 
 const MAX_CENSORSHIP_ROWS = 40;
@@ -93,16 +88,6 @@ async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
   } catch {
     return undefined;
   }
-}
-
-function sanitizeThreshold(raw: unknown, fallback: number): number {
-  return typeof raw === 'number' &&
-    Number.isFinite(raw) &&
-    Number.isInteger(raw) &&
-    raw >= 1 &&
-    raw <= 100_000
-    ? raw
-    : fallback;
 }
 
 /** Coerce an operator-supplied censorship matrix: unknown countries/modes/cell
@@ -145,7 +130,7 @@ export function sanitizeCensorshipRows(
     .slice(0, MAX_CENSORSHIP_ROWS);
 }
 
-export interface StatusPageConfig extends LoadThresholds {
+export interface StatusPageConfig {
   censorshipRows: CensorshipRow[];
 }
 
@@ -156,19 +141,8 @@ export async function resolveValidModeIds(db: DatabaseReader): Promise<Set<strin
 
 /** Resolve the `status.*` namespace, fail-safe. */
 export async function resolveStatusConfig(db: DatabaseReader): Promise<StatusPageConfig> {
-  const busyAt = sanitizeThreshold(
-    await readSetting(db, STATUS_KEYS.loadBusyAt),
-    LOAD_THRESHOLD_DEFAULTS.busyAt,
-  );
-  const crowdedRaw = sanitizeThreshold(
-    await readSetting(db, STATUS_KEYS.loadCrowdedAt),
-    LOAD_THRESHOLD_DEFAULTS.crowdedAt,
-  );
   const validModeIds = await resolveValidModeIds(db);
   return {
-    busyAt,
-    // Invariant: crowded >= busy (a mis-ordered pair would invert the bands).
-    crowdedAt: Math.max(crowdedRaw, busyAt),
     censorshipRows: sanitizeCensorshipRows(
       await readSetting(db, STATUS_KEYS.censorship),
       validModeIds,
@@ -187,8 +161,7 @@ export async function resolveStatusConfig(db: DatabaseReader): Promise<StatusPag
  */
 export async function resolveStatusLocations(db: DatabaseReader): Promise<StatusLocation[]> {
   const servers = await collectLocationCapableServers(db);
-  const statsRows = await db.query('remnawaveNodeStats').collect();
-  const cfg = await resolveStatusConfig(db);
+  const nodeRows = await db.query('backendNodeInventory').collect();
   const now = Date.now();
 
   const byCode = new Map<string, typeof servers>();
@@ -213,10 +186,8 @@ export async function resolveStatusLocations(db: DatabaseReader): Promise<Status
       // (fleetStats.nodesOnline/Total) stay internal, same privacy posture as
       // the raw user counts.
       load: computeLocationLoad(
-        instances,
-        statsRows,
+        nodeRows,
         new Set(instances.map((s) => s._id)),
-        cfg,
         now,
         HEALTH_FRESH_MS,
       ),
@@ -234,15 +205,11 @@ export async function resolveLocationLoad(
   const servers = await collectLocationCapableServers(db);
   const instances = servers.filter((s) => s.location === code);
   if (instances.length === 0) return null;
-  const statsRows = await db.query('remnawaveNodeStats').collect();
-  const cfg = await resolveStatusConfig(db);
-  const now = Date.now();
+  const nodeRows = await db.query('backendNodeInventory').collect();
   return computeLocationLoad(
-    instances,
-    statsRows,
+    nodeRows,
     new Set(instances.map((s) => s._id)),
-    cfg,
-    now,
+    Date.now(),
     HEALTH_FRESH_MS,
   );
 }

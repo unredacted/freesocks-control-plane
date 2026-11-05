@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**166 of 773 strings are missing** (the app currently shows English for
+**171 of 777 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -191,7 +191,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | ورود با کلید عبور ناموفق بود |
 | `passkey.notNow` | Not now | فعلاً نه |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(9 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(10 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -250,6 +250,7 @@ review.
 | `account.refreshFailedTitle` | Could not refresh membership | به‌روزرسانی عضویت ناموفق بود |
 | `account.graceTitle` | Your account is in a grace period | حساب شما در مهلت ارفاقی است |
 | `account.graceBody` | Your membership has lapsed, so this account will be limited soon. Renew - donate or redeem a membership code below - to keep your plan. | عضویت شما به پایان رسیده و این حساب به‌زودی محدود می‌شود. برای حفظ پلن خود تمدید کنید - کمک مالی کنید یا کد عضویت را در پایین وارد کنید. |
+| `account.graceRenewBody` | Your membership has lapsed, so this account will be limited soon. Renew to keep your plan. | ⚠️ **MISSING** |
 | `account.disabledTitle` | Your account is currently disabled | حساب شما در حال حاضر غیرفعال است |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | ساخت کلید جدید و تغییرات در این حساب متوقف شده است. برای فعال‌سازی دوباره، کد عضویت را در پایین وارد کنید یا با پشتیبانی تماس بگیرید و شناسهٔ پشتیبانی خود را اعلام کنید. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | اگر شماره حساب ۳۲ رقمی شما لو رفته باشد، آن را تغییر دهید. شماره قبلی فوراً از کار می‌افتد. |
@@ -530,13 +531,17 @@ review.
 | `footer.socialBluesky` | FreeSocks on Bluesky | فری‌ساکس در بلوسکای |
 | `footer.support` | Support | پشتیبانی |
 
-## `renew` — Expiring/expired membership callouts and renewal prompts.
+## `renew` — Expiring/expired membership callouts and renewal prompts. *(4 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `renew.expiringTitle` | Your membership is expiring soon | عضویت شما به‌زودی منقضی می‌شود |
 | `renew.expiredTitle` | Your membership has expired | عضویت شما منقضی شده است |
 | `renew.body` | FreeSocks is community-funded - donations keep it running. To renew your membership, donate or contact us for a membership code. | فری‌ساکس با کمک‌های مردمی اداره می‌شود. برای تمدید عضویت، کمک مالی کنید یا برای دریافت کد عضویت با ما تماس بگیرید. |
+| `renew.renewBody` | Renew now to keep your membership. | ⚠️ **MISSING** |
+| `renew.renewBodyDonation` | Renew now to keep your membership. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
+| `renew.expiredRenewBody` | Renew to get your membership back. | ⚠️ **MISSING** |
+| `renew.expiredRenewBodyDonation` | Renew to get your membership back. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
 | `renew.donate` | Donate | کمک مالی |
 | `renew.contact` | Contact us | تماس با ما |
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | اکنون در طرح رایگان هستید. برای بازگرداندن عضویت خود، از پایین تمدید کنید. |
@@ -923,7 +928,6 @@ review.
 | `status.loadQuiet` | Quiet | خلوت |
 | `status.loadBusy` | Busy | شلوغ |
 | `status.loadCrowded` | Crowded | بسیار شلوغ |
-| `status.loadUnknown` | Load unknown | بار نامشخص |
 | `status.matrixTitle` | Availability in censored regions | دسترسی‌پذیری در مناطق سانسورشده |
 | `status.matrixBody` | How well each connection mode works from specific countries, based on reports we receive. "Partial" means some networks or times of day block it. | هر حالت اتصال از کشورهای مشخص چقدر خوب کار می‌کند، بر اساس گزارش‌هایی که دریافت می‌کنیم. «جزئی» یعنی برخی شبکه‌ها یا برخی ساعت‌های روز آن را مسدود می‌کنند. |
 | `status.matrixAvailable` | Available | در دسترس |

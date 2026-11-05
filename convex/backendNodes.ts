@@ -3,7 +3,8 @@
  * instance, refreshed by the backend-healthcheck cron through the provider's
  * optional `getNodeInventory`. The origin block detector reads a node's live
  * users-online here; the per-PLACEMENT cache (remnawaveNodeStats) cannot
- * isolate one node behind a shared origin mode group. Stats only, no secrets.
+ * isolate one node behind a shared origin mode group. The public load bands
+ * read the nodes' CPU load here too (lib/loadBands). Stats only, no secrets.
  */
 import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
@@ -31,6 +32,8 @@ export const markNodeInventory = internalMutation({
         address: v.optional(v.string()),
         port: v.optional(v.number()),
         countryCode: v.optional(v.string()),
+        cpuLoad5: v.optional(v.number()),
+        cpuCores: v.optional(v.number()),
       }),
     ),
   },
@@ -54,6 +57,9 @@ export const markNodeInventory = internalMutation({
         address: n.address,
         port: n.port,
         countryCode: n.countryCode,
+        // Absent = this cycle had no CPU report: the patch clears an old one.
+        cpuLoad5: n.cpuLoad5,
+        cpuCores: n.cpuCores,
       };
       const prev = byUuid.get(n.nodeUuid);
       if (prev) await ctx.db.patch(prev._id, row);

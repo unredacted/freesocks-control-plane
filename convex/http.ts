@@ -3728,7 +3728,7 @@ http.route({
   }),
 });
 
-// --- admin: status page (incidents + censorship matrix + load thresholds) ---
+// --- admin: status page (incidents + censorship matrix) ---
 
 http.route({
   path: '/api/v1/admin/status/page',
@@ -3745,17 +3745,11 @@ http.route({
   handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
     if (!admin) return ADMIN_UNAUTH();
-    const body = await readJson<{
-      rows?: unknown;
-      busyAt?: number;
-      crowdedAt?: number;
-    }>(req);
+    const body = await readJson<{ rows?: unknown }>(req);
     try {
       return json(
         await ctx.runMutation(internal.statusPage.setPageConfig, {
           rows: body.rows,
-          busyAt: body.busyAt,
-          crowdedAt: body.crowdedAt,
           actorAdminId: admin.adminUserId,
         }),
       );

@@ -3158,6 +3158,10 @@ export default defineSchema({
     address: v.optional(v.string()),
     port: v.optional(v.number()),
     countryCode: v.optional(v.string()),
+    // The node's 5-minute CPU load average + core count (absent when it does
+    // not report them): the public load bands, lib/loadBands.
+    cpuLoad5: v.optional(v.number()),
+    cpuCores: v.optional(v.number()),
   })
     .index('by_server_name', ['backendServerId', 'name'])
     .index('by_server', ['backendServerId']),

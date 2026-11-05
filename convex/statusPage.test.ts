@@ -15,13 +15,8 @@ import {
   resolveStatusLocations,
   sanitizeCensorshipRows,
   validateIncidentInput,
-  STATUS_KEYS,
 } from './lib/statusPage';
-import {
-  bandFromUsersPerNode,
-  bandFromUtilization,
-  LOAD_THRESHOLD_DEFAULTS,
-} from './lib/loadBands';
+import { bandFromCpu } from './lib/loadBands';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -67,40 +62,33 @@ async function seedServer(
   );
 }
 
-async function seedNodeStats(
+async function seedNode(
   t: ReturnType<typeof convexTest>,
   backendServerId: Id<'backendServers'>,
-  o: { usersOnline: number; online?: boolean; nodeCount?: number; ageMs?: number },
+  o: { cpuLoad5?: number; cpuCores?: number; online?: boolean; ageMs?: number },
 ): Promise<void> {
   await t.run((ctx) =>
-    ctx.db.insert('remnawaveNodeStats', {
+    ctx.db.insert('backendNodeInventory', {
       backendServerId,
-      placement: crypto.randomUUID(),
-      usersOnline: o.usersOnline,
+      nodeUuid: crypto.randomUUID(),
+      name: 'node',
+      usersOnline: 0,
       online: o.online ?? true,
-      nodeCount: o.nodeCount ?? 1,
       lastStatsAt: Date.now() - (o.ageMs ?? 0),
-      updatedAt: Date.now(),
+      cpuLoad5: o.cpuLoad5,
+      cpuCores: o.cpuCores,
     }),
   );
 }
 
 describe('load band math', () => {
-  test('users-per-node bands against thresholds', () => {
-    const th = LOAD_THRESHOLD_DEFAULTS; // 50/150
-    expect(bandFromUsersPerNode(0, th)).toBe('quiet');
-    expect(bandFromUsersPerNode(49.9, th)).toBe('quiet');
-    expect(bandFromUsersPerNode(50, th)).toBe('busy');
-    expect(bandFromUsersPerNode(149.9, th)).toBe('busy');
-    expect(bandFromUsersPerNode(150, th)).toBe('crowded');
-  });
-
-  test('utilization bands at 0.6/0.85', () => {
-    expect(bandFromUtilization(0)).toBe('quiet');
-    expect(bandFromUtilization(0.59)).toBe('quiet');
-    expect(bandFromUtilization(0.6)).toBe('busy');
-    expect(bandFromUtilization(0.84)).toBe('busy');
-    expect(bandFromUtilization(0.85)).toBe('crowded');
+  test('CPU bands at 70% / 90%', () => {
+    expect(bandFromCpu(0)).toBe('quiet');
+    expect(bandFromCpu(0.69)).toBe('quiet');
+    expect(bandFromCpu(0.7)).toBe('busy');
+    expect(bandFromCpu(0.89)).toBe('busy');
+    expect(bandFromCpu(0.9)).toBe('crowded');
+    expect(bandFromCpu(1.4)).toBe('crowded'); // load above the core count
   });
 });
 
@@ -129,69 +117,65 @@ describe('resolveStatusLocations', () => {
     expect('nodesTotal' in mci).toBe(false);
   });
 
-  test('load: key-capacity utilization wins when every instance is capped', async () => {
-    const t = convexTest(schema, modules);
-    // 80/100 = 0.8 → busy, even though the (stale) stats row would say quiet.
-    await seedServer(t, { slug: 'mci', location: 'MCI', keyCount: 80, maxKeys: 100 });
-    const locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
-    expect(locations[0]!.load).toBe('busy');
-  });
-
-  test('load: users-per-node fallback aggregates fresh stats across instances', async () => {
+  test('load: CPU load over cores, summed across the nodes of every instance', async () => {
     const t = convexTest(schema, modules);
     const a = await seedServer(t, { slug: 'mci-1', location: 'MCI' });
     const b = await seedServer(t, { slug: 'mci-2', location: 'MCI' });
-    // (100 users / 2 nodes) + (200 / 2) = 300 users over 4 nodes = 75/node → busy (>= 50).
-    await seedNodeStats(t, a, { usersOnline: 100, nodeCount: 2 });
-    await seedNodeStats(t, b, { usersOnline: 200, nodeCount: 2 });
-    const locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
+    // (3.6 + 0.4 + 2.0) load over (4 + 4 + 2) cores = 0.6 → quiet, though one
+    // node alone is at 90%.
+    await seedNode(t, a, { cpuLoad5: 3.6, cpuCores: 4 });
+    await seedNode(t, a, { cpuLoad5: 0.4, cpuCores: 4 });
+    await seedNode(t, b, { cpuLoad5: 2.0, cpuCores: 2 });
+    let locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
+    expect(locations[0]!.load).toBe('quiet');
+    // One more busy node tips the whole location over 70%: 9.6 / 12 = 0.8.
+    await seedNode(t, b, { cpuLoad5: 3.6, cpuCores: 2 });
+    locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
     expect(locations[0]!.load).toBe('busy');
   });
 
-  test('load: stale or all-offline stats read unknown, never quiet', async () => {
+  test('load: crowded from 90%, and a key cap is not load', async () => {
+    const t = convexTest(schema, modules);
+    // A full key cap used to read crowded; only the CPU decides now.
+    const a = await seedServer(t, { slug: 'mci', location: 'MCI', keyCount: 99, maxKeys: 100 });
+    await seedNode(t, a, { cpuLoad5: 1, cpuCores: 4 });
+    let locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
+    expect(locations[0]!.load).toBe('quiet');
+    await seedNode(t, a, { cpuLoad5: 6.6, cpuCores: 4 }); // 7.6 / 8 = 0.95
+    locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
+    expect(locations[0]!.load).toBe('crowded');
+  });
+
+  test('load: stale, offline or unreported nodes read unknown, never quiet', async () => {
     const t = convexTest(schema, modules);
     const a = await seedServer(t, { slug: 'mci', location: 'MCI' });
-    await seedNodeStats(t, a, { usersOnline: 1, nodeCount: 1, ageMs: 60 * 60_000 }); // stale
-    await seedNodeStats(t, a, { usersOnline: 1, nodeCount: 1, online: false }); // offline
+    await seedNode(t, a, { cpuLoad5: 0.1, cpuCores: 4, ageMs: 60 * 60_000 }); // stale
+    await seedNode(t, a, { cpuLoad5: 0.1, cpuCores: 4, online: false }); // offline
+    await seedNode(t, a, {}); // connected, no CPU report
     const locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
     expect(locations[0]!.load).toBe('unknown');
   });
 
-  test('load thresholds are admin-tunable via status.*', async () => {
+  test('load: the retired users-per-node threshold rows are ignored', async () => {
     const t = convexTest(schema, modules);
     const a = await seedServer(t, { slug: 'mci', location: 'MCI' });
-    await seedNodeStats(t, a, { usersOnline: 60, nodeCount: 1 }); // 60/node
+    await seedNode(t, a, { cpuLoad5: 0.2, cpuCores: 4 });
     await t.run((ctx) =>
-      ctx.db.insert('appSettings', { key: STATUS_KEYS.loadBusyAt, value: '100', updatedAt: 0 }),
+      ctx.db.insert('appSettings', { key: 'status.loadBusyAt', value: '1', updatedAt: 0 }),
     );
     const locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
-    expect(locations[0]!.load).toBe('quiet'); // 60 < 100 with the raised bar
+    expect(locations[0]!.load).toBe('quiet');
   });
 });
 
-describe('setPageConfig threshold validation', () => {
-  test('rejects crowdedAt <= busyAt against the EFFECTIVE pair', async () => {
+describe('setPageConfig', () => {
+  test('refuses an empty write and no longer takes thresholds', async () => {
     const t = convexTest(schema, modules);
-    // Defaults are 50/150; a write that collapses the gap is refused.
-    await expect(t.mutation(internal.statusPage.setPageConfig, { busyAt: 200 })).rejects.toThrow(
-      /crowdedAt must be greater than busyAt/,
+    await expect(t.mutation(internal.statusPage.setPageConfig, {})).rejects.toThrow(
+      /no recognized status-page fields/,
     );
-    await expect(
-      t.mutation(internal.statusPage.setPageConfig, { busyAt: 150, crowdedAt: 150 }),
-    ).rejects.toThrow(/crowdedAt must be greater than busyAt/);
-    // A valid pair persists (and audits).
-    const out = await t.mutation(internal.statusPage.setPageConfig, {
-      busyAt: 80,
-      crowdedAt: 200,
-    });
-    expect(out.busyAt).toBe(80);
-    expect(out.crowdedAt).toBe(200);
-    // And a single-sided write validates against the STORED other side.
-    await expect(t.mutation(internal.statusPage.setPageConfig, { crowdedAt: 80 })).rejects.toThrow(
-      /crowdedAt must be greater than busyAt/,
-    );
-    const out2 = await t.mutation(internal.statusPage.setPageConfig, { crowdedAt: 120 });
-    expect(out2.crowdedAt).toBe(120);
+    const out = await t.mutation(internal.statusPage.setPageConfig, { rows: [] });
+    expect(out).toEqual({ rows: [], countries: expect.any(Array) });
   });
 });
 

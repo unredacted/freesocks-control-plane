@@ -422,13 +422,13 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   lib) in the account impact backend (`MemberImpact.svelte`) and a home-page impact section.
 - **Public network-status page** (`/status` + `GET /api/v1/status`, `convex/statusPage.ts` +
   `convex/lib/statusPage.ts` + `convex/lib/loadBands.ts`): per-location online bits +
-  **coarse load bands** (`quiet/busy/crowded` — never raw user counts, the same
-  privacy posture as GB-only donations), an operator-curated **censorship-availability
-  matrix** (country × connection-mode, `status.censorship` + load thresholds in the
-  `status.*` namespace), and **operator-published incidents** (`statusIncidents` table,
+  **coarse load bands** (`quiet/busy/crowded` from the nodes' CPU load — never raw
+  numbers, the same privacy posture as GB-only donations), an operator-curated
+  **censorship-availability matrix** (country × connection-mode, `status.censorship`
+  in the `status.*` namespace), and **operator-published incidents** (`statusIncidents` table,
   location-scoped, public for 30 days post-resolution). All data reuses the existing
-  healthcheck cron signals (`lastHealthOkAt`, `fleetStats`, `remnawaveNodeStats`,
-  `keyCount`/`maxKeys`); nothing new is probed. Public + per-IP rate-limited
+  healthcheck cron signals (`lastHealthOkAt`, `fleetStats`, the per-node CPU load in
+  `backendNodeInventory`); nothing new is probed. Public + per-IP rate-limited
   (`status.fetch` policy). The member surfaces link in: the site header and footer
   link to `/status`, and the Access Pass shows the key's **node label + load band** and
   deep-links to `/status#loc-<code>` (`account.getNodeStatus` gained `load`); the

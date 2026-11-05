@@ -38,8 +38,9 @@
   /**
    * Admin Status page: the operator-facing half of the public /status page.
    * Publish + resolve incidents, curate the censorship-availability matrix
-   * (country × connection mode), and tune the load-band thresholds. Writes go
-   * to the `status.*` namespace; nothing here needs a redeploy. English-only
+   * (country × connection mode). Load bands come from the nodes' CPU load and
+   * need no setting. Writes go to the `status.*` namespace; nothing here needs
+   * a redeploy. English-only
    * (admin CMS convention).
    */
   const page = adminStatusPageQuery();
@@ -161,7 +162,7 @@
     onError: (e) => toast.error(apiErrorMessage(e)),
   }));
 
-  // --- censorship matrix + thresholds ----------------------------------------
+  // --- censorship matrix ------------------------------------------------------
 
   type MatrixDraftRow = {
     countryCode: string;
@@ -169,7 +170,6 @@
     cells: Record<string, CensorshipCell | ''>;
   };
   let matrixDraft = $state<MatrixDraftRow[] | null>(null);
-  let thresholds = $state<{ busyAt: string; crowdedAt: string } | null>(null);
 
   // One row per country on the censored-country list, in its order (the server
   // keeps the stored rows of countries that left the list).
@@ -217,24 +217,6 @@
     onError: (e) => toast.error(apiErrorMessage(e)),
   }));
 
-  const saveThresholds = createMutation(() => ({
-    mutationFn: () =>
-      apiClient.patch(
-        '/api/v1/admin/status/page',
-        {
-          busyAt: Number(thresholds?.busyAt ?? 0),
-          crowdedAt: Number(thresholds?.crowdedAt ?? 0),
-        },
-        AdminStatusPageConfig,
-      ),
-    onSuccess: () => {
-      toast.success('Load thresholds saved');
-      thresholds = null;
-      invalidate();
-    },
-    onError: (e) => toast.error(apiErrorMessage(e)),
-  }));
-
   function fmt(ms: number): string {
     return new Date(ms).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
   }
@@ -252,7 +234,7 @@
       <h1 class="text-2xl font-bold">Status page</h1>
       <p class="text-sm text-muted-foreground">
         The operator half of the public <code>/status</code> page: publish incidents, curate the censorship-availability
-        matrix, and tune load-band thresholds. Changes go live immediately.
+        matrix. Changes go live immediately.
       </p>
     </div>
 
@@ -481,65 +463,16 @@
       </CardContent>
     </Card>
 
-    <!-- Load thresholds -->
+    <!-- Load bands: derived, nothing to set. -->
     <Card>
       <CardHeader>
         <CardTitle>Load bands</CardTitle>
         <CardDescription>
-          Users-per-online-node cutoffs for the "busy" / "crowded" bands, used where instances have
-          no maxKeys capacity cap. Current: {page.data?.busyAt ?? '…'} / {page.data?.crowdedAt ??
-            '…'}.
+          Each location's band is its servers' CPU load: the 5-minute load average of its online
+          nodes divided by their cores. Quiet below 70%, Busy from 70%, Crowded from 90%. A location
+          whose nodes report no CPU load shows no band.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <form
-          class="flex flex-wrap items-end gap-3"
-          onsubmit={(e) => {
-            e.preventDefault();
-            saveThresholds.mutate();
-          }}
-        >
-          <div class="space-y-1.5">
-            <Label for="th-busy">Busy at</Label>
-            <Input
-              id="th-busy"
-              type="number"
-              min="1"
-              max="100000"
-              value={thresholds?.busyAt ?? String(page.data?.busyAt ?? '')}
-              oninput={(e) =>
-                (thresholds = {
-                  busyAt: e.currentTarget.value,
-                  crowdedAt: thresholds?.crowdedAt ?? String(page.data?.crowdedAt ?? ''),
-                })}
-              class="w-28"
-            />
-          </div>
-          <div class="space-y-1.5">
-            <Label for="th-crowded">Crowded at</Label>
-            <Input
-              id="th-crowded"
-              type="number"
-              min="1"
-              max="100000"
-              value={thresholds?.crowdedAt ?? String(page.data?.crowdedAt ?? '')}
-              oninput={(e) =>
-                (thresholds = {
-                  busyAt: thresholds?.busyAt ?? String(page.data?.busyAt ?? ''),
-                  crowdedAt: e.currentTarget.value,
-                })}
-              class="w-28"
-            />
-          </div>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={thresholds === null || saveThresholds.isPending}
-          >
-            Save thresholds
-          </Button>
-        </form>
-      </CardContent>
     </Card>
   </div>
 </AdminLayout>

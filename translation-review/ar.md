@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**166 of 773 strings are missing** (the app currently shows English for
+**171 of 777 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -191,7 +191,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | فشل تسجيل الدخول بمفتاح المرور |
 | `passkey.notNow` | Not now | ليس الآن |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(9 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(10 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -250,6 +250,7 @@ review.
 | `account.refreshFailedTitle` | Could not refresh membership | تعذّر تحديث العضوية |
 | `account.graceTitle` | Your account is in a grace period | حسابك في فترة سماح |
 | `account.graceBody` | Your membership has lapsed, so this account will be limited soon. Renew - donate or redeem a membership code below - to keep your plan. | انتهت عضويتك، وسيُقيَّد هذا الحساب قريبًا. جدّد - تبرّع أو استخدم رمز عضوية بالأسفل - للحفاظ على خطتك. |
+| `account.graceRenewBody` | Your membership has lapsed, so this account will be limited soon. Renew to keep your plan. | ⚠️ **MISSING** |
 | `account.disabledTitle` | Your account is currently disabled | حسابك معطّل حاليًا |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | المفاتيح الجديدة والتغييرات متوقفة على هذا الحساب. استخدم رمز عضوية بالأسفل لإعادة تفعيله، أو تواصل مع الدعم وشارك معرّف الدعم الخاص بك. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | استبدل رقم حسابك المكون من 32 رقماً إذا كان قد تم تسريبه. سيتوقف الرقم القديم عن العمل فوراً. |
@@ -530,13 +531,17 @@ review.
 | `footer.socialBluesky` | FreeSocks on Bluesky | FreeSocks على Bluesky |
 | `footer.support` | Support | الدعم |
 
-## `renew` — Expiring/expired membership callouts and renewal prompts.
+## `renew` — Expiring/expired membership callouts and renewal prompts. *(4 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `renew.expiringTitle` | Your membership is expiring soon | عضويتك على وشك الانتهاء |
 | `renew.expiredTitle` | Your membership has expired | انتهت عضويتك |
 | `renew.body` | FreeSocks is community-funded - donations keep it running. To renew your membership, donate or contact us for a membership code. | FreeSocks مموّل من المجتمع - التبرعات تبقيه يعمل. لتجديد عضويتك، تبرّع أو تواصل معنا للحصول على رمز عضوية. |
+| `renew.renewBody` | Renew now to keep your membership. | ⚠️ **MISSING** |
+| `renew.renewBodyDonation` | Renew now to keep your membership. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
+| `renew.expiredRenewBody` | Renew to get your membership back. | ⚠️ **MISSING** |
+| `renew.expiredRenewBodyDonation` | Renew to get your membership back. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
 | `renew.donate` | Donate | تبرّع |
 | `renew.contact` | Contact us | تواصل معنا |
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | أنت الآن على الباقة المجانية. جدِّد من الأسفل لاستعادة عضويتك. |
@@ -923,7 +928,6 @@ review.
 | `status.loadQuiet` | Quiet | هادئ |
 | `status.loadBusy` | Busy | مزدحم |
 | `status.loadCrowded` | Crowded | مزدحم جدًا |
-| `status.loadUnknown` | Load unknown | الازدحام غير معروف |
 | `status.matrixTitle` | Availability in censored regions | التوفر في المناطق الخاضعة للرقابة |
 | `status.matrixBody` | How well each connection mode works from specific countries, based on reports we receive. "Partial" means some networks or times of day block it. | مدى جودة عمل كل وضع اتصال من بلدان محددة، استنادًا إلى البلاغات التي تصلنا. "جزئي" يعني أن بعض الشبكات أو أوقات اليوم تحجبه. |
 | `status.matrixAvailable` | Available | متاح |
