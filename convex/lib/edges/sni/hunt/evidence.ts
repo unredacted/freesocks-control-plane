@@ -30,6 +30,9 @@ export interface HuntPlace {
   city?: string;
 }
 
+/** Probes one timing measurement asks for (what it costs at Globalping). */
+export const TIMING_PROBES = 2;
+
 /** A place as stored on a measurement: `CC` or `CC/City`. */
 export const placeKey = (p: HuntPlace) => (p.city ? `${p.country}/${p.city}` : p.country);
 
@@ -46,7 +49,9 @@ export function timingRequest(
     type: 'http' as const,
     target: t.address,
     inProgressUpdates: false,
-    locations: [{ country: place.country, ...(place.city ? { city: place.city } : {}), limit: 2 }],
+    locations: [
+      { country: place.country, ...(place.city ? { city: place.city } : {}), limit: TIMING_PROBES },
+    ],
     measurementOptions: {
       protocol: 'HTTPS' as const,
       port: t.port,

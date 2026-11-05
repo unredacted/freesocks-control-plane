@@ -57,8 +57,11 @@ import {
   GLOBALPING_USER_AGENT,
   globalpingTestsOf,
   globalpingFits,
+  recordingClient,
   type GlobalpingLike,
+  type TimedReading,
 } from './lib/edges/probes/globalping';
+import { saveGlobalpingReadings } from './lib/edges/probes/globalpingNote';
 import {
   globalpingNameRequest,
   isNoProbesError,
@@ -645,8 +648,10 @@ export const evidence = internalAction({
       measure: boolean;
     }> = [];
     let timed = 0;
+    // What Globalping says about the allowance is kept for the Probes page.
+    const readings: TimedReading[] = [];
     if (work.timing.length > 0) {
-      const client = deps.globalping(work.token);
+      const client = recordingClient(deps.globalping(work.token), readings, deps.now);
       let stop = false;
       for (const t of work.timing) {
         const req = timingRequest({ address: t.address, port: t.port, host: t.host }, t.place);
@@ -685,6 +690,7 @@ export const evidence = internalAction({
         if (main) timed++;
       }
     }
+    await saveGlobalpingReadings(ctx, readings);
     let read = 0;
     if (work.ooni.length > 0 && until(OONI_START_UNTIL_MS) <= 0) {
       for (const o of work.ooni) release.push({ id: o.id, calls: [], measure: o.measure });
@@ -772,7 +778,8 @@ export const countryBatch = internalAction({
       });
       return { measured: 0, gate: c.gate };
     }
-    const client = deps.globalping(c.token);
+    const readings: TimedReading[] = [];
+    const client = recordingClient(deps.globalping(c.token), readings, deps.now);
     const created: Array<{ row: (typeof c.rows)[number]; mid: string }> = [];
     let first: string | null = null;
     for (const [i, row] of c.rows.entries()) {
@@ -831,6 +838,7 @@ export const countryBatch = internalAction({
     }
     for (const { row } of pending.values())
       settle.push({ id: row.id, status: 'failed', results: [], error: 'timeout' });
+    await saveGlobalpingReadings(ctx, readings);
     await ctx.runMutation(internal.sniHunt.recordCountryBatch, {
       batch: a.batch,
       rows: settle,

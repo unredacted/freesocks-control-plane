@@ -608,7 +608,7 @@ export const PROBE_FIELDS: Field[] = [
     label: 'Globalping tests per hour',
     unit: 'tests per hour',
     helper:
-      'Vantage points asked of Globalping per hour. A round that would pass it runs without Globalping.',
+      "Every Globalping test FCP asks per hour: probe rounds, checks of names from inside countries and name timing. The name checks keep their share; a probe round that would pass the rest runs without Globalping. Past Globalping's free tests (500 an hour with a token) each test costs a credit.",
   },
 ];
 

@@ -25,6 +25,8 @@
  *   gradeWords(cell, now)        one location in one country: label, tone, age, mark, conflict
  *   sourceWords(health, now)     one probe source: working, failing or capped, and why
  *   capHoldsBack(health), capClause(cap)   Globalping's hourly cap left it out of rounds, and how
+ *   probePart(cap)               what the probe rounds may use of it (less the name checks' share)
+ *   accountWords(cap, now)       what Globalping itself last said: free tests, credits, spending
  */
 import type {
   FleetStatus,
@@ -516,9 +518,21 @@ export interface SourceWords {
   label: string;
   tone: Tone;
   detail: string;
+  /** Globalping only: what Globalping itself last said about the allowance (`accountWords`). */
+  account?: string;
 }
 
 type GlobalpingCap = NonNullable<ProbeSourceHealth['cap']>;
+
+/** What the probe rounds may use of the hourly cap: the cap less the name checks' share. */
+export function probePart(c: Pick<GlobalpingCap, 'perHour' | 'reserved'>): number {
+  return Math.max(0, c.perHour - Math.max(0, c.reserved ?? 0));
+}
+
+/** ` (500 an hour, less 48 kept for name checks)`, or nothing without a share. */
+function shareNote(c: GlobalpingCap): string {
+  return c.reserved > 0 ? ` (${c.perHour} an hour, less ${c.reserved} kept for name checks)` : '';
+}
 
 /**
  * Globalping's hourly cap holds it back: it left Globalping out of a round in
@@ -526,14 +540,17 @@ type GlobalpingCap = NonNullable<ProbeSourceHealth['cap']>;
  */
 export function capHoldsBack(h: Pick<ProbeSourceHealth, 'cap'>): boolean {
   const c = h.cap;
-  return !!c && (c.skipped > 0 || c.used + c.perRun > c.perHour);
+  return !!c && (c.skipped > 0 || c.used + c.perRun > probePart(c));
 }
 
 /** How the cap holds Globalping back, in one sentence (the Probes page). */
 function capSentence(c: GlobalpingCap): string {
-  if (c.perHour < c.perRun)
-    return `Its hourly cap (${c.perHour} tests) is smaller than one run (${c.perRun} tests), so it never runs.`;
-  const use = `${c.used} of the ${c.perHour} tests allowed an hour were used in the last hour, and a run asks ${c.perRun}`;
+  const part = probePart(c);
+  if (part < c.perRun)
+    return c.reserved > 0
+      ? `What its hourly cap leaves the probes (${part} tests: ${c.perHour} less ${c.reserved} kept for name checks) is smaller than one run (${c.perRun} tests), so it never runs.`
+      : `Its hourly cap (${c.perHour} tests) is smaller than one run (${c.perRun} tests), so it never runs.`;
+  const use = `${c.used} of the ${part} tests the probes may use an hour${shareNote(c)} were used in the last hour, and a run asks ${c.perRun}`;
   return c.skipped > 0
     ? `${c.skipped} of the ${c.rounds} rounds in the last hour ran without it: ${use}.`
     : `The next round runs without it: ${use}.`;
@@ -541,18 +558,67 @@ function capSentence(c: GlobalpingCap): string {
 
 /** The same, as a clause for "Globalping last answered ..., and ..." (the Countries pages). */
 export function capClause(c: GlobalpingCap): string {
-  if (c.perHour < c.perRun) return 'its hourly cap is smaller than one run, so it never runs';
+  const part = probePart(c);
+  if (part < c.perRun) return 'its hourly cap is smaller than one run, so it never runs';
   return c.skipped > 0
     ? `its hourly cap left it out of ${c.skipped} of the ${c.rounds} rounds in the last hour`
-    : `its hourly cap leaves no room for another run (${c.used} of ${c.perHour} tests used in the last hour, ${c.perRun} a run)`;
+    : `its hourly cap leaves no room for another run (${c.used} of ${part} tests used in the last hour, ${c.perRun} a run)`;
+}
+
+const fmt = (n: number) => n.toLocaleString('en-US');
+
+/**
+ * What Globalping itself last said about the allowance, in words: the free
+ * tests left in its hour window, the credits left and what FCP spent of them.
+ * Null before Globalping has answered once.
+ */
+export function accountWords(c: GlobalpingCap | null | undefined, now: number): string | null {
+  const a = c?.account;
+  if (!a) return null;
+  const parts: string[] = [];
+  const reset = a.resetAt ? `; its hour resets ${relativeTime(a.resetAt, now)}` : '';
+  parts.push(`${fmt(a.remaining)} of ${fmt(a.limit)} free tests left${reset}.`);
+  if (a.credits !== null) {
+    let spent = '';
+    if (a.spentToday > 0 || a.spentYesterday > 0) {
+      spent = ` FCP spent ${fmt(a.spentToday)} since 00:00 UTC`;
+      if (a.spentYesterday > 0) spent += ` and ${fmt(a.spentYesterday)} the day before`;
+      if (a.runwayDays !== null)
+        spent += `: at that pace they last about ${fmt(a.runwayDays)} ${a.runwayDays === 1 ? 'day' : 'days'}`;
+      spent += '.';
+    }
+    // A create within the free tests carries no balance: the one shown may be
+    // older than the window above, so it says when Globalping last gave it.
+    const asOf =
+      a.creditsAt && Date.parse(a.at) - Date.parse(a.creditsAt) > 60_000
+        ? ` as of ${relativeTime(a.creditsAt, now)}`
+        : '';
+    parts.push(`${fmt(a.credits)} credits left${asOf}.${spent}`);
+    if (a.remaining === 0 && a.credits === 0)
+      parts.push('Globalping refuses new tests until its hour resets.');
+  } else if (a.type === 'ip') {
+    parts.push('No token is set, so there are no credits: past the free tests Globalping refuses.');
+  }
+  return `Globalping's own count, ${relativeTime(a.at, now)}: ${parts.join(' ')}`;
 }
 
 /** One probe source: working, failing (with its last failure in words), capped, or idle. */
 export function sourceWords(h: ProbeSourceHealth, now: number): SourceWords {
   const counted = `${h.withEvidence} of ${h.runs} recent ${h.runs === 1 ? 'run' : 'runs'} brought evidence.`;
   const capUse = h.cap
-    ? ` Its hourly cap: ${h.cap.used} of ${h.cap.perHour} tests used in the last hour, ${h.cap.perRun} a run.`
+    ? ` Its hourly cap: ${h.cap.used} of ${probePart(h.cap)} tests used in the last hour${shareNote(h.cap)}, ${h.cap.perRun} a run.`
     : '';
+  const account = accountWords(h.cap, now);
+  const words = sourceWordsOnly(h, now, counted, capUse);
+  return account ? { ...words, account } : words;
+}
+
+function sourceWordsOnly(
+  h: ProbeSourceHealth,
+  now: number,
+  counted: string,
+  capUse: string,
+): SourceWords {
   const last = h.lastError ? probeFailureWords(h.lastError) : null;
   if (h.failing)
     return {
@@ -566,9 +632,11 @@ export function sourceWords(h: ProbeSourceHealth, now: number): SourceWords {
   if (h.cap && capHoldsBack(h))
     return {
       label:
-        h.cap.perHour < h.cap.perRun ? 'Hourly cap below one run' : 'Held back by its hourly cap',
+        probePart(h.cap) < h.cap.perRun
+          ? 'Hourly cap below one run'
+          : 'Held back by its hourly cap',
       tone: 'warning',
-      detail: `${capSentence(h.cap)} The countries only it reaches go quiet until it runs again. Raise "Globalping tests per hour" (within what your Globalping account allows) or lower "Vantage points per country".${h.runs > 0 ? ` ${counted}` : ''}`,
+      detail: `${capSentence(h.cap)} The countries only it reaches go quiet until it runs again. Raise "Globalping tests per hour" (past Globalping's free tests each test costs a credit) or lower "Vantage points per country".${h.runs > 0 ? ` ${counted}` : ''}`,
     };
   if (h.runs === 0)
     return { label: 'No runs yet', tone: 'muted', detail: `Nothing has run yet.${capUse}` };

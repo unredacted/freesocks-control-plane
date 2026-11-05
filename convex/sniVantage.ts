@@ -48,6 +48,7 @@ import {
 import type { VantageSource } from './lib/edges/probes/nameCheck';
 import { readRealHost } from './lib/edges/sni/realHost';
 import { ownAddresses } from './lib/edges/sni/ownAddresses';
+import { resolveGlobalpingShare } from './lib/edges/probes/globalpingShare';
 import { admitHuntBatch, huntProbesThisHour } from './sniHunt';
 import {
   measurementsPerName,
@@ -348,6 +349,24 @@ async function spentThisHour(db: Db, now: number, budget: number): Promise<numbe
   return own + (await huntProbesThisHour(db, now, budget));
 }
 
+/**
+ * The usable sources and the hourly budget once `probe.globalpingTestsPerHour`
+ * has had its say: a cap below the name checks' share shrinks the budget, and
+ * one that leaves them no Globalping test runs the batches without Globalping
+ * (the other sources keep the whole budget).
+ */
+async function sourcesUnderCap(
+  db: Db,
+  cfg: SniVantageConfig,
+): Promise<{ sources: VantageSource[]; budget: number }> {
+  const usable = usableSources(cfg, await resolveEdgeSecrets(db));
+  if (!usable.includes('globalping')) return { sources: usable, budget: cfg.hourlyBudget };
+  const share = await resolveGlobalpingShare(db);
+  if (share.vantageWithoutGlobalping)
+    return { sources: usable.filter((s) => s !== 'globalping'), budget: cfg.hourlyBudget };
+  return { sources: usable, budget: share.vantageBudget };
+}
+
 // --- starting a batch -------------------------------------------------------------------------------
 
 interface BatchPlan {
@@ -547,9 +566,11 @@ export const tick = internalMutation({
     if (!(await admitted(ctx.db))) return idle('maintenance');
     const countries = vantageCountries(cfg, sni.curatedCountries);
     if (countries.length === 0) return idle('no_country');
-    const sources = usableSources(cfg, await resolveEdgeSecrets(ctx.db));
+    // Within `probe.globalpingTestsPerHour`: the cap may shrink the budget,
+    // or leave Globalping out of the batches altogether (globalpingShare.ts).
+    const { sources, budget } = await sourcesUnderCap(ctx.db, cfg);
     if (sources.length === 0) return idle('no_source');
-    const remaining = cfg.hourlyBudget - (await spentThisHour(ctx.db, now, cfg.hourlyBudget));
+    const remaining = budget - (await spentThisHour(ctx.db, now, budget));
     if (remaining <= 0) return idle('budget');
     // One scan for the whole tick: the countries share its budget (the
     // rotating order gives each its turn first) and its lookups.
@@ -1164,7 +1185,7 @@ export const requestNow = internalMutation({
       refuse('edge.sni.vantage_off', 'Checks from inside countries are switched off');
     if (!vantageCountries(cfg, sni.curatedCountries).includes(country))
       refuse('edge.sni.vantage_country', 'That country is not opted in to checks');
-    const sources = usableSources(cfg, await resolveEdgeSecrets(ctx.db));
+    const { sources, budget } = await sourcesUnderCap(ctx.db, cfg);
     if (sources.length === 0)
       refuse('edge.sni.vantage_no_source', 'No measurement source is usable');
     if (a.names.length === 0 || a.names.length > MANUAL_MAX_NAMES)
@@ -1240,7 +1261,7 @@ export const requestNow = internalMutation({
       (s, p) => s + p.names.length * sources.length * measurementsPerName(cfg),
       0,
     );
-    if (cost > cfg.hourlyBudget - (await spentThisHour(ctx.db, now, cfg.hourlyBudget)))
+    if (cost > budget - (await spentThisHour(ctx.db, now, budget)))
       refuse('edge.sni.vantage_budget', 'The hourly budget for checks is spent; try again later');
     let measurements = 0;
     for (const plan of plans.values())

@@ -17,7 +17,13 @@ import Globalping from 'globalping';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { GLOBALPING_USER_AGENT, type GlobalpingLike } from './lib/edges/probes/globalping';
+import {
+  GLOBALPING_USER_AGENT,
+  recordingClient,
+  type GlobalpingLike,
+  type TimedReading,
+} from './lib/edges/probes/globalping';
+import { saveGlobalpingReadings } from './lib/edges/probes/globalpingNote';
 import { RIPE_ATLAS_BASE } from './lib/edges/probes/ripeatlas';
 import { resolvePublic } from './lib/edges/probes/internal';
 import { addressFamily } from './lib/edges/ip';
@@ -153,8 +159,10 @@ async function runGlobalping(
   rows: readonly Row[],
   c: { country: string; perCountryLimit: number; preferEyeball: boolean; spacingMs: number },
   token: string,
+  /** Collects what Globalping says about the allowance (saved by the caller). */
+  readings: TimedReading[] = [],
 ): Promise<Settled> {
-  const client = globalpingFactory(token);
+  const client = recordingClient(globalpingFactory(token), readings);
   const out: Settled = { done: [], failed: [] };
   const created: Array<{ row: Row; id: string }> = [];
   let first: string | null = null;
@@ -316,17 +324,19 @@ export const executeBatch = internalAction({
       else skipped.push({ id: r.id, error: site.error });
     }
     let settled: Settled;
+    const readings: TimedReading[] = [];
     try {
       settled =
         dial.length === 0
           ? { done: [], failed: [] }
           : source === 'globalping'
-            ? await runGlobalping(dial, c, c.secrets.globalpingToken)
+            ? await runGlobalping(dial, c, c.secrets.globalpingToken, readings)
             : await runAtlas(dial, c, c.secrets.ripeAtlasKey);
     } catch {
       // Service text is never stored: the run failed, that is all.
       settled = { done: [], failed: dial.map((r) => ({ id: r.id, error: 'source_error' })) };
     }
+    await saveGlobalpingReadings(ctx, readings);
     const realOf = new Map(dial.filter((r) => r.realAddress).map((r) => [r.id, r.realAddress!]));
     const withReal = <T extends { id: Id<'sniVantageProbes'> }>(x: T) =>
       realOf.has(x.id) ? { ...x, realAddress: realOf.get(x.id)! } : x;

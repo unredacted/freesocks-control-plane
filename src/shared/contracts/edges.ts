@@ -1448,6 +1448,32 @@ export const ProbeMatrixTarget = z.object({
 });
 export type ProbeMatrixTarget = z.infer<typeof ProbeMatrixTarget>;
 /**
+ * Globalping's own answer about FCP's allowance, as last read from its
+ * `/v1/limits` answer or a create's headers (lib/edges/probes/globalpingAccount.ts).
+ */
+export const GlobalpingAccountView = z.object({
+  /** When Globalping last answered. */
+  at: z.string(),
+  /** `user` with a token, `ip` without one; null when not told. */
+  type: z.enum(['user', 'ip']).nullable(),
+  /** Free tests in Globalping's hour window. */
+  limit: z.number(),
+  /** Free tests left now (the whole allowance once the window has reset). */
+  remaining: z.number(),
+  /** When the open window resets; null when none is open. */
+  resetAt: isoN,
+  /** Credits left; null when Globalping did not say (no token, or never asked). */
+  credits: z.number().nullable(),
+  creditsAt: isoN,
+  /** Credits FCP's requests spent since 00:00 UTC, and on the last full UTC day. */
+  spentToday: z.number(),
+  spentYesterday: z.number(),
+  /** Whole days the credits last at the last full day's pace; null when it spent none. */
+  runwayDays: z.number().nullable(),
+});
+export type GlobalpingAccountView = z.infer<typeof GlobalpingAccountView>;
+
+/**
  * Whether one enabled probe source is bringing back evidence (lib/edges/country/sourceHealth.ts):
  * a failing source makes every country it alone covers read "not known".
  */
@@ -1466,18 +1492,23 @@ export const ProbeSourceHealth = z.object({
   lastError: z.string().nullable(),
   failing: z.boolean(),
   /**
-   * Globalping only: its hourly cap (`probe.globalpingTestsPerHour`) against
-   * the probes asked in the last hour, what one run of an edge asks, and the
-   * last hour's cron rounds with how many ran without Globalping. A round
-   * that would pass the cap runs without it (no failed run).
+   * Globalping only: its hourly cap (`probe.globalpingTestsPerHour`, every
+   * Globalping test FCP asks in an hour) against the probes asked in the last
+   * hour, the name checks' share of it (`reserved`: the probe rounds may use
+   * `perHour - reserved`), what one run of an edge asks, and the last hour's
+   * cron rounds with how many ran without Globalping. A round that would pass
+   * the probes' part runs without it (no failed run). `account` is what
+   * Globalping itself last said about the allowance (null before any answer).
    */
   cap: z
     .object({
       used: z.number(),
       perHour: z.number(),
+      reserved: z.number().default(0),
       perRun: z.number(),
       rounds: z.number().default(0),
       skipped: z.number().default(0),
+      account: GlobalpingAccountView.nullable().default(null),
     })
     .nullable()
     .default(null),

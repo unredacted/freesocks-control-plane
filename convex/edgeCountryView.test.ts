@@ -389,13 +389,16 @@ describe('the country view', () => {
     ]);
     // Not asked: "check edges" is off for it.
     expect(by.MM!.asked).toBe(false);
-    // The sources' health rides along: Globalping's cap (2 checked countries x 3 vantages a run).
+    // The sources' health rides along: Globalping's cap (2 checked countries x 3 vantages a
+    // run), less the share kept for the checks of names from inside (12 an hour x 3 vantages).
     expect(summary.sources.find((s) => s.source === 'globalping')!.cap).toEqual({
       used: 398,
       perHour: 400,
+      reserved: 36,
       perRun: 6,
       rounds: 2,
       skipped: 1,
+      account: null,
     });
     const ru = CountryViewResponse.parse(await get('countries/RU'));
     expect(ru.probes).toEqual(by.RU);

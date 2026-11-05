@@ -3416,7 +3416,10 @@ volunteers' home connections. These rules are built in, not settings:
   tick starts at most **one** batch (one address, one country, `batchNames` names, default 3),
   within `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one
   name, one source, at most `perCountryLimit` vantages, default 3; real-site checks of candidate
-  names count too, and only get what deployed names leave, § Finding names). Calls to one service inside a
+  names count too, and only get what deployed names leave, § Finding names). Through Globalping
+  that is at most `hourlyBudget` x `perCountryLimit` tests an hour, kept out of what the probe
+  rounds may use of `edge.probe.globalpingTestsPerHour` (§ "Probe sources and verdicts",
+  **Budget and failing sources**). Calls to one service inside a
   batch are spaced like the address-level probes (1.5 s apart, `EDGE_PLUMBING.probeSourceSpacingMs`).
 - **Opt-in per country.** Nothing runs until the switch is on **and** a country on the
   censored-country list has "Check names from inside" on (Settings, Censored countries). Turning
@@ -4436,22 +4439,43 @@ with `delivery.country.steer` on (next section).
   `standbyRecheckHours` (12), and a spare blocked in fewer checked countries is published
   first. A test block (§ Simulating a block) stays detector-only: the replacement's own round is
   real.
-- **Budget and failing sources.** `edge.probe.globalpingTestsPerHour` (default 400) counts the
-  vantage points asked of Globalping (`probeRuns.tests`: countries x vantages, plus one per
-  control); a round that would pass it runs without Globalping, and the executor asks
-  Globalping's `GET /v1/limits` first and does not start a measurement that would not fit
-  (`globalping_limit`). A failed run keeps a short class (`probeRuns.error`: `auth`,
+- **Budget and failing sources.** `edge.probe.globalpingTestsPerHour` (default 400) is every
+  Globalping test FCP asks in an hour. The checks of names from inside a country (§ "Checks from
+  inside a country", candidates' real-site checks included) and the hunt's timing keep their
+  share of it, so a busy probe hour never takes the tests the name checks are allowed: when they
+  are on, the Globalping rows `edge.sni.vantage.hourlyBudget` allows times `perCountryLimit`
+  (with RIPE Atlas usable too, a batch puts one row per source on each name, so Globalping gets
+  its part of each batch; with finding names on, the candidates' Globalping-only checks may fill
+  the whole budget), plus `edge.sni.hunt.timingPerHour` x 2
+  (lib/edges/probes/globalpingShare.ts, `namesShare`). A cap below that share shrinks the name
+  checks to fit, the checks first and the timing with what is left; a cap that leaves them no
+  Globalping test runs their batches without it (RIPE Atlas, if usable, keeps the whole budget),
+  so the setting bounds every Globalping test FCP asks. The probe rounds count the vantage points they
+  ask (`probeRuns.tests`: countries x vantages, plus one per control) against the rest; a round
+  that would pass it runs without Globalping, and the executor asks Globalping's
+  `GET /v1/limits` first and does not start a measurement that would not fit
+  (`globalping_limit`). Globalping's own allowance is a separate number: with a token, 500 free
+  tests in an hour window that opens with the first test, then one credit per test (credits are
+  spent without asking until they run out; then it answers 429). Every Globalping call FCP makes
+  (the limits preflight and each create's `X-RateLimit-*` / `X-Credits-*` headers, refused
+  creates included) is folded into one `appState` row, `probe:globalping:account`
+  (`probes.noteGlobalping`; lib/edges/probes/globalpingAccount.ts): free tests left and when the
+  window resets, credits left, and the credits FCP spent per UTC day (`X-Credits-Consumed`, eight
+  days kept). It carries no target, name or address. Setting the cap to the free 500 means no
+  credit is spent; anything above spends at most the difference each hour. A failed run keeps a short class (`probeRuns.error`: `auth`,
   `rate_limited`, `timeout`, `service_error`, `no_route`, ...). A source whose newest three
   settled runs brought back nothing (of its newest 50; `no_route` runs are left out: the source
   works, FCP's host just lacks the family), with nothing working for six hours, raises attention
   `probe_source_failing` (warning) and shows on `GET probes/sources` and `GET probes/matrix`
   (`sources`). A round that runs without Globalping because of the cap leaves no failed run, so
-  Globalping's health also carries `cap {used, perHour, perRun, rounds, skipped}` (the tests
-  asked in the last hour, the setting, what one run of an edge asks, the last hour's cron rounds
-  and how many ran without Globalping: the cron asks every enabled source, so a cron round with
-  runs of the others and none of Globalping is one the cap left it out of, whatever the round's
-  size in families and ports); the Probes page reads "Held back by its hourly cap" when a round
-  went without it or no further run fits, and "Hourly cap below one run" when none ever can. Each summary keeps only rows newer than two probe intervals, so a country
+  Globalping's health also carries `cap {used, perHour, reserved, perRun, rounds, skipped,
+account}` (the tests the probe rounds asked in the last hour, the setting, the name checks'
+  share, what one run of an edge asks, the last hour's cron rounds and how many ran without
+  Globalping: the cron asks every enabled source, so a cron round with runs of the others and none
+  of Globalping is one the cap left it out of, whatever the round's size in families and ports;
+  and Globalping's own count, with the credits' runway at the last full day's pace); the Probes
+  page reads "Held back by its hourly cap" when a round went without it or no further run fits,
+  and "Hourly cap below one run" when none ever can, and shows Globalping's own count under it. Each summary keeps only rows newer than two probe intervals, so a country
   that only Globalping reaches (check-host has no node in several censored countries) drops out
   of every summary while the cap holds Globalping back for longer than that.
 - **Admin API.** `GET countries` (checked and control countries, grades, every edge's tracks
