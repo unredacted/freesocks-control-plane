@@ -517,12 +517,25 @@ async function keptAddressesOf(
         .collect(),
     )
   ).filter((l) => !l.retired && l.deployed && l.enabled);
-  // What members are not served before a commit: every activation's candidates.
+  // What members are not served before a commit: every activation's candidates,
+  // except an address a run of the node committed. The finish of a maintenance
+  // cleared the committed set the gate subtracts, so an older run superseded
+  // before a retry that committed the same address would otherwise make it a
+  // candidate again.
   const gate = await nodeGateFor(ctx, intent.backendServerId, intent.name);
+  const committedBefore = new Set<string>();
+  for (const r of await ctx.db
+    .query('panelActivationRuns')
+    .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+    .collect())
+    if (r.state === 'committed')
+      for (const id of [...(r.delivery?.edgeIds ?? []), ...r.resources.edgeIds])
+        committedBefore.add(id as string);
   const now = Date.now();
   const byListener = new Map<string, { current: Id<'edges'>[]; keyOnly: boolean }>();
   for (const id of relay.publishedEdgeIds) {
-    if (!id || isCandidateEdge(gate, id as string)) continue;
+    if (!id || (isCandidateEdge(gate, id as string) && !committedBefore.has(id as string)))
+      continue;
     const e = await ctx.db.get(id);
     if (!e || e.publication !== 'published' || e.status !== 'active') continue;
     const l = listeners.find((x) => x._id === e.listenerId);

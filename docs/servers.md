@@ -1009,7 +1009,10 @@ mirror). FCP never starts a run by itself.
   current, exactly as the member render reads it: an L4 confirmation for the listener's revision,
   the edge's configuration and the node's REALITY authentication revision (docs/edges.md
   "Publication"); an L7 front's proof. Those addresses are the approval's standbys
-  (`standbys_verified` is recorded, the review card lists them and says nothing new is bought);
+  (`standbys_verified` is recorded, the review card lists them and says nothing new is bought;
+  the review's `display.atOnce` is `kept`, `external` for an adopted node whose edge FCP does not
+  run, and the Servers node page shows the approval card for either while no protection is open,
+  in place of "Protect again");
   an address on the same transport whose check went stale stays published and is not served
   until it is tried again, as on a live node. Nothing publishes, so no run waits at publish: the
   approval commits in its own transaction through `promoteCandidate`, or is refused with nothing
@@ -1018,7 +1021,10 @@ mirror). FCP never starts a run by itself.
   needs every address tried again, on the node in Edges, or Protect again) and `:retest`
   otherwise (an address or its transport changed since its test). With no published address, an
   origin that is not bound, or a live node, it stays `servers.standbys_missing`: Protect again is
-  the way back. The audit row of the approval carries `kept`, the number of addresses reused.
+  the way back. The audit row of the approval carries `kept`, the number of addresses reused. An
+  address a run of the node committed counts as served even when an older run, superseded before
+  a retry that committed it, still lists it among its candidates (the finish of the maintenance
+  cleared the committed set the gate subtracts).
 - **Candidate Hosts on a live node.** A direct node's body reaches members as the backend serves
   it, so an address a candidate would enable cannot be kept out of it; a fronted listener without
   a committed template edge would get a new Host or a moved Host pointer. Either needs the gate

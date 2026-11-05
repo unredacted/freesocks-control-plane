@@ -1771,6 +1771,19 @@ describe('after a maintenance, Approve takes the node live on the addresses it h
     expect((await reviewOf(t, live.intentId)).blockers).toContain('servers.standbys_missing');
     await t.run((c) => c.db.patch(binding._id, { state: binding.state }));
 
+    // An older run superseded before a retry that committed the same address still
+    // lists it: the address was committed, so it is reused all the same.
+    const committed = await activationRun(t, live.actId);
+    const olderId = await t.run((c) => {
+      const { _id, _creationTime, ...row } = committed;
+      void _id;
+      void _creationTime;
+      return c.db.insert('panelActivationRuns', { ...row, state: 'superseded' });
+    });
+    expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([live.e1]);
+    expect((await reviewOf(t, live.intentId)).blockers).toEqual([]);
+    await t.run((c) => c.db.delete(olderId));
+
     // An address that is a candidate of an activation never reached members: not reused.
     await t.run((c) =>
       c.db.patch(live.actId, {
