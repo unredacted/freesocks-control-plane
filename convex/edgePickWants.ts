@@ -27,6 +27,7 @@ import { MAX_PICK_WANT, pickWant } from './lib/edges/providerSet';
 import { carries, coolingOf, setStateOf, type SetState } from './lib/edges/setState';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { hasPublishableAddress } from './lib/edges/ip';
+import { audienceForPublish } from './edgeAudiences';
 import { capRefusal, costAdmin, edgeCostAt, sizeAt, spendOf } from './edgePlans';
 import { atCap } from './lib/edges/pricing';
 
@@ -117,14 +118,32 @@ export async function countGapsOf(
         listenerKey: l.listenerKey,
         want,
         inUse,
-        spares: standbys
-          .filter((e) => e.listenerId === l._id && e.locationId === p.locationId)
-          .map((e) => e._id),
+        spares: await sparesTakingAudience(
+          db,
+          standbys.filter((e) => e.listenerId === l._id && e.locationId === p.locationId),
+          !!only,
+        ),
         cause,
       });
     }
   }
   return gaps;
+}
+
+/**
+ * The spares that could fill a count: at an only location, only one that can
+ * still take its audience (a spare made before the switch never will, and must
+ * not hold a fresh one back).
+ */
+async function sparesTakingAudience(
+  db: DatabaseReader,
+  spares: readonly Doc<'edges'>[],
+  onlyHere: boolean,
+): Promise<Id<'edges'>[]> {
+  const out: Id<'edges'>[] = [];
+  for (const e of spares)
+    if (!onlyHere || !('refused' in (await audienceForPublish(db, e)))) out.push(e._id);
+  return out;
 }
 
 /** Whether one more address at this location would pass the account's monthly cap. */

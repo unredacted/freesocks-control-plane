@@ -2412,6 +2412,10 @@ export default defineSchema({
     // then on. Absent = everyone. Cleared for good when its location stops being
     // only. Rollback: `edgeAudiences:retireAudiencesForRollback`.
     audience: v.optional(v.array(v.string())),
+    // Set with `audience` (and cleared with it): what the `by_contained` index
+    // finds, so the rollback reaches every contained address however many
+    // edges the fleet holds.
+    contained: v.optional(v.literal(true)),
     // The first time this (trusted) address was judged blocked (convex/edgeTrust.ts
     // `noteBlocked`): claimed once, so repeated detector passes, a manual mark and
     // a country round strike its fresh holders once. `evidenceAt`: when the block's
@@ -2429,6 +2433,7 @@ export default defineSchema({
     .index('by_status', ['status', 'statusChangedAt'])
     .index('by_account_status', ['accountId', 'status'])
     .index('by_location_status', ['locationId', 'status'])
+    .index('by_contained', ['contained', 'status'])
     .index('by_name', ['name']),
 
   // A name for a load balancer address (lib/edges/addressNames.ts, docs/edges.md

@@ -1669,6 +1669,7 @@ http.route({
     // that country's own addresses (docs/edges.md "Addresses only for some
     // countries"). Clearing it, the opt-out and the same country again are free.
     const next = region ? region.trim().toUpperCase() : null;
+    let counted = false;
     if (next && next !== 'ZZ') {
       const before = await ctx.runQuery(internal.memberCountry.memberView, {
         userId: member.userId,
@@ -1685,10 +1686,21 @@ http.route({
             429,
             { retryAfterMs: day.retryAfterMs },
           );
+        counted = true;
       }
     }
     try {
-      await ctx.runMutation(internal.memberCountry.setChoice, { userId: member.userId, region });
+      try {
+        await ctx.runMutation(internal.memberCountry.setChoice, { userId: member.userId, region });
+      } catch (err) {
+        // Only a change that lands counts against the day's allowance.
+        if (counted)
+          await ctx.runMutation(internal.rateLimits.release, {
+            policyKey: 'account.country.day',
+            subject: member.userId,
+          });
+        throw err;
+      }
       return json(await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }));
     } catch (err) {
       // Only the mutation's own refusal is the member's mistake; anything else

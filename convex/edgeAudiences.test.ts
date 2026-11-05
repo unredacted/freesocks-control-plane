@@ -297,3 +297,49 @@ describe('rollback', () => {
     await w.t.mutation(internal.edgeLocations.clearCountriesForRollback, {});
   });
 });
+
+describe('review fixes', () => {
+  test('a contained address published again stays contained: never a first address', async () => {
+    const w = await world({ onlyA: true });
+    const spare = await freshSpareAtA(w, '198.51.100.30');
+    await publish(w, spare);
+    // Back to a spare, and the address for everyone leaves too: none is in use.
+    await w.t.mutation(internal.relays.unpublishEdge, {
+      relayId: w.relayId,
+      edgeId: spare,
+      keepActive: true,
+    });
+    await w.t.mutation(internal.relays.unpublishEdge, { relayId: w.relayId, edgeId: w.everyone });
+    await expect(publish(w, spare)).rejects.toThrow(/first one/);
+    expect((await edgeOf(w, spare)).audience).toEqual(['IR']);
+  });
+
+  test('a node on the legacy walk never gets a contained address', async () => {
+    const w = await world({ onlyA: true });
+    await w.t.run((c) => c.db.patch(w.relayId, { edgePick: undefined }));
+    const spare = await freshSpareAtA(w, '198.51.100.31');
+    await expect(publish(w, spare)).rejects.toThrow();
+    expect((await edgeOf(w, spare)).publication).toBe('unpublished');
+  });
+
+  test("a spare made before the switch does not hold back a count's purchase", async () => {
+    const w = await world();
+    await freshSpareAtA(w, '198.51.100.32');
+    await new Promise((r) => setTimeout(r, 5));
+    await w.t.mutation(internal.edgeAudiences.setOnly, { id: w.a._id, only: true });
+    await w.t.run((c) =>
+      c.db.patch(w.relayId, {
+        providerSet: [
+          { locationId: w.a._id, addedAt: 1, want: 1 },
+          { locationId: w.b._id, addedAt: 1 },
+        ],
+      }),
+    );
+    expect(
+      await w.t.query(internal.edgePickWants.nextCountGap, { relayId: w.relayId }),
+    ).toMatchObject({
+      spares: [],
+      mayProvision: true,
+    });
+  });
+});

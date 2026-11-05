@@ -655,7 +655,11 @@ export const clearSeatsForRollback = internalMutation({
       );
       return { cleared, done: false };
     }
-    for (const r of await ctx.db.query('relays').collect())
+    // Checked again where the walks change: containment may have begun since the first page.
+    const relays = await ctx.db.query('relays').collect();
+    for (const r of relays)
+      if (await holdsContainment(ctx.db, r)) throw new ConvexError(AUDIENCE_NEEDS_SPREAD);
+    for (const r of relays)
       if (r.edgePick !== undefined) {
         await ctx.db.patch(r._id, { edgePick: undefined });
         cleared++;

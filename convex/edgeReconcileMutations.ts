@@ -293,11 +293,11 @@ export const publishStandby = internalMutation({
       const listener = await ctx.db.get(edge.listenerId);
       // A contained address is never a transport's first one: the backend's
       // Host (and every raw body) would carry it to everyone.
-      if (audience.patch.audience && !listener?.templateEdgeId) continue;
+      if (audience.contained && !listener?.templateEdgeId) continue;
       if (publish === false)
         return { published: false, rotationId: null, awaitingVerification, ready: true };
       const becomesTemplate =
-        !audience.patch.audience &&
+        !audience.contained &&
         origin.hostMode === 'fcp' &&
         (!listener?.templateEdgeId || listener.templateEdgeId === edge._id);
       if (becomesTemplate) {
@@ -323,7 +323,7 @@ export const publishStandby = internalMutation({
         publication: 'published',
         poolIndex: idx,
         ...(await laneForPublish(ctx.db, origin, edge, null, {
-          contained: !!audience.patch.audience,
+          contained: audience.contained,
         })),
         ...audience.patch,
         publishedAt: now,

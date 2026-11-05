@@ -1956,14 +1956,14 @@ export const publishEdge = internalMutation({
         message:
           'This location is only for some countries, and this address cannot be: one made before the switch, published before or adopted is never put in use here',
       });
-    if (audience.patch.audience && !listener?.templateEdgeId)
+    if (audience.contained && !listener?.templateEdgeId)
       throw new ConvexError({
         code: 'edge.audience_first_address',
         message:
           'An address only for some countries is never a transport’s first one: put an address for everyone in use first',
       });
     const becomesTemplate =
-      !audience.patch.audience &&
+      !audience.contained &&
       origin.hostMode === 'fcp' &&
       (!listener?.templateEdgeId ||
         origin.publishedEdgeIds.findIndex((e) => e === listener.templateEdgeId) > idx);
@@ -1979,7 +1979,7 @@ export const publishEdge = internalMutation({
       publication: 'published',
       poolIndex: idx,
       ...(await laneForPublish(ctx.db, origin, edge, null, {
-        contained: !!audience.patch.audience,
+        contained: audience.contained,
       })),
       ...audience.patch,
       publishedAt: now,

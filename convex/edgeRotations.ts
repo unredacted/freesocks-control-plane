@@ -2407,7 +2407,8 @@ export const applyPublish = internalMutation({
       await scheduleStep(ctx, rotationId, 0);
       return { ok: true as const, poolIndex: null, needsHostFlip: false };
     }
-    const contained = !!audience.patch.audience;
+    // Contained now or before (republished): never the template either way.
+    const contained = audience.contained;
     // Nor is it ever a transport's first address (the backend's Host and every
     // raw body follow that one): with none in use for everyone it stays a spare.
     if (contained && !(await ctx.db.get(to.listenerId))?.templateEdgeId) {

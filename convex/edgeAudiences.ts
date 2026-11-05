@@ -24,7 +24,7 @@ import { resolveMemberCountryConfig } from './memberCountry';
 import { listenersOf } from './relayListeners';
 import { carries, setPicksOf } from './lib/edges/setState';
 import { websocketNodeOf } from './lib/edges/websocketNode';
-import { ACCOUNT_EDGE_SCAN_LIMIT, EDGE_LIVE_STATUSES } from './lib/edges/pool';
+import { ACCOUNT_EDGE_SCAN_LIMIT } from './lib/edges/pool';
 import { bumpEpochAndRefresh, scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { edgeMs, resolveEdgeConfig } from './lib/edgeConfig';
 import { unpublishFromPool } from './relays';
@@ -42,12 +42,13 @@ export async function audienceForPublish(
   edge: Edge,
   replacing?: Edge | null,
 ): Promise<
-  | { patch: { audience?: string[] } }
-  | { refused: 'audience_tainted' | 'audience_replaces_everyone' }
+  | { patch: { audience?: string[]; contained?: true }; contained: boolean }
+  | { refused: 'audience_tainted' | 'audience_replaces_everyone' | 'audience_needs_spread' }
 > {
-  if (edge.audience?.length) return { patch: {} };
+  // Published before as a contained address: it stays one (and stays its countries').
+  if (edge.audience?.length) return { patch: {}, contained: true };
   const location = edge.locationId ? await db.get(edge.locationId) : null;
-  if (!onlyCodesOf(location?.forCountries)) return { patch: {} };
+  if (!onlyCodesOf(location?.forCountries)) return { patch: {}, contained: false };
   if (edge.publishedAt !== undefined) return { refused: 'audience_tainted' };
   const at = audienceAtPublish({
     edge,
@@ -56,7 +57,11 @@ export async function audienceForPublish(
     replacing: replacing ? { audience: replacing.audience } : null,
   });
   if (at.kind === 'refused') return { refused: at.reason };
-  return { patch: at.kind === 'contained' ? { audience: at.audience } : {} };
+  if (at.kind === 'everyone') return { patch: {}, contained: false };
+  // A contained seat on a modulus pool would move every member when it is added.
+  if ((await db.get(edge.relayId))?.edgePick !== 'hrw1')
+    return { refused: 'audience_needs_spread' };
+  return { patch: { audience: at.audience, contained: true }, contained: true };
 }
 
 /** The nodes with a pick at this location (their provider set names it). */
@@ -177,7 +182,7 @@ export const setOnly = internalMutation({
         .withIndex('by_location_status', (q) => q.eq('locationId', location._id))
         .take(ACCOUNT_EDGE_SCAN_LIMIT)) {
         if (!e.audience?.length) continue;
-        await ctx.db.patch(e._id, { audience: undefined, updatedAt: now });
+        await ctx.db.patch(e._id, { audience: undefined, contained: undefined, updatedAt: now });
         widened++;
       }
       nodes = await bumpOriginsAt(ctx, location._id);
@@ -227,11 +232,11 @@ export async function holdsContainment(db: DatabaseReader, relay: Doc<'relays'>)
     const l = await db.get(p.locationId);
     if (l?.forCountries?.only) return true;
   }
-  const edges = await db
+  const contained = await db
     .query('edges')
-    .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id))
-    .take(ACCOUNT_EDGE_SCAN_LIMIT);
-  return edges.some((e) => e.status !== 'destroyed' && !!e.audience?.length);
+    .withIndex('by_contained', (q) => q.eq('contained', true))
+    .collect();
+  return contained.some((e) => e.relayId === relay._id && e.status !== 'destroyed');
 }
 
 export const AUDIENCE_NEEDS_SPREAD = {
@@ -242,16 +247,13 @@ export const AUDIENCE_NEEDS_SPREAD = {
 
 // --- rollback --------------------------------------------------------------------------------
 
-/** Every contained address that is not destroyed yet (any live status). */
+/** Every contained address that is not destroyed yet (the `by_contained` index: contained rows only). */
 async function containedEdges(db: DatabaseReader): Promise<Edge[]> {
-  const out: Edge[] = [];
-  for (const status of EDGE_LIVE_STATUSES)
-    for (const e of await db
-      .query('edges')
-      .withIndex('by_status', (q) => q.eq('status', status))
-      .take(ACCOUNT_EDGE_SCAN_LIMIT))
-      if (e.audience?.length) out.push(e);
-  return out;
+  const rows = await db
+    .query('edges')
+    .withIndex('by_contained', (q) => q.eq('contained', true))
+    .collect();
+  return rows.filter((e) => e.status !== 'destroyed');
 }
 
 /**
@@ -296,7 +298,7 @@ export const retireAudiencesForRollback = internalMutation({
       const origin = nodes.get(e.relayId) ?? null;
       if (e.publication === 'published' && e.status === 'active') {
         if (a.widen) {
-          await ctx.db.patch(e._id, { audience: undefined, updatedAt: now });
+          await ctx.db.patch(e._id, { audience: undefined, contained: undefined, updatedAt: now });
           if (origin) await bumpEpochAndRefresh(ctx, (await ctx.db.get(origin._id))!);
           widened++;
         } else if (origin) {
@@ -347,15 +349,14 @@ export const clearAudiencesForRollback = internalMutation({
         code: 'edge.audience_rollback_pending',
         message: `${left.length} contained address(es) are not destroyed yet: wait for their drain, then run this again`,
       });
-    let cleared = 0;
-    for (const e of await ctx.db
+    // Destroyed contained rows, a page at a time (each cleared row leaves the index).
+    const page = await ctx.db
       .query('edges')
-      .withIndex('by_status', (q) => q.eq('status', 'destroyed'))
-      .take(5000))
-      if (e.audience?.length) {
-        await ctx.db.patch(e._id, { audience: undefined });
-        cleared++;
-      }
-    return { cleared, done: cleared < 5000 };
+      .withIndex('by_contained', (q) => q.eq('contained', true).eq('status', 'destroyed'))
+      .take(500);
+    for (const e of page) await ctx.db.patch(e._id, { audience: undefined, contained: undefined });
+    if (page.length === 500)
+      await ctx.scheduler.runAfter(0, internal.edgeAudiences.clearAudiencesForRollback, {});
+    return { cleared: page.length, done: page.length < 500 };
   },
 });
