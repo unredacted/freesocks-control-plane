@@ -1767,6 +1767,11 @@ export default defineSchema({
           locationId: v.id('edgeLocations'),
           addedAt: v.number(),
           options: v.optional(v.string()),
+          // Addresses per transport here (docs/edges.md "Addresses per
+          // location"): 1..8 published addresses of each transport the pick
+          // carries. Absent = at least one address of any transport. Rollback:
+          // `edgePickWants:clearPickWantsForRollback`.
+          want: v.optional(v.number()),
         }),
       ),
     ),
@@ -2522,6 +2527,9 @@ export default defineSchema({
     // The location an explicit provision asks for (its account is
     // `requestedAccountId`); a setup run's terminal hook matches its target on it.
     requestedLocationId: v.optional(v.id('edgeLocations')),
+    // Upkeep filling one pick's address count (edgePickWants.ts): the set's
+    // usual selection, at this location only.
+    onlyLocationId: v.optional(v.id('edgeLocations')),
     // A replace's explicit spare (the operator named it).
     requestedSpareEdgeId: v.optional(v.id('edges')),
     // Options for the one edge this run builds (JSON), instead of its pick's:

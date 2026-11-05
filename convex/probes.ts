@@ -65,6 +65,15 @@ import {
 } from './lib/edges/probes/types';
 import { checkhostTakes } from './lib/edges/probes/checkhost';
 import { assertAdmission } from './lib/edges/maintenance';
+import {
+  GLOBALPING_ACCOUNT_KEY,
+  accountView,
+  mergeReading,
+  probeShare,
+  type GlobalpingAccount,
+} from './lib/edges/probes/globalpingAccount';
+import { resolveGlobalpingShare } from './lib/edges/probes/globalpingShare';
+import { readStateJson, writeStateJson } from './lib/appStateJson';
 import { shapeProtocolFor } from './lib/edges/verifyRung';
 import { hostSniOf } from './relayListeners';
 import { refreshPartialRung } from './edgeVerification';
@@ -76,6 +85,8 @@ const MAX_SWEEP_ROUNDS = 20;
 const RUN_TIMEOUT_MS = 10 * MIN;
 /** Distinct failing networks kept per rollup row (the agreement rule needs a handful). */
 const MAX_FAIL_NETWORKS = 16;
+/** Readings one action may hand `noteGlobalping` (an action makes a few dozen calls at most). */
+const MAX_READINGS = 200;
 
 export const PROBE_TARGET_KINDS = ['edge', 'relay', 'custom'] as const;
 export type ProbeTargetKind = (typeof PROBE_TARGET_KINDS)[number];
@@ -607,15 +618,25 @@ async function roundsWithoutGlobalping(
   };
 }
 
+/** The name checks' share of `probe.globalpingTestsPerHour` (lib/edges/probes/globalpingShare.ts). */
+export async function globalpingNamesShare(db: QueryCtx['db']): Promise<number> {
+  return (await resolveGlobalpingShare(db)).reserved;
+}
+
 /**
- * A round whose Globalping runs would pass `probe.globalpingTestsPerHour`
- * runs without Globalping (the other sources still measure). `spent` is the
- * hour's tests so far; the plan comes back adjusted, with what it now spends.
+ * A round whose Globalping runs would pass what the probe rounds may use of
+ * `probe.globalpingTestsPerHour` (`allowed`: the cap less the name checks'
+ * share) runs without Globalping (the other sources still measure). `spent`
+ * is the hour's tests so far; the plan comes back adjusted, with what it now spends.
  */
-function fitGlobalpingTests(plan: TargetPlan, spent: number): { plan: TargetPlan; tests: number } {
+function fitGlobalpingTests(
+  plan: TargetPlan,
+  spent: number,
+  allowed: number,
+): { plan: TargetPlan; tests: number } {
   if (!plan.sources.includes('globalping')) return { plan, tests: 0 };
   const tests = plan.testsPerRun * plan.runsPerSource;
-  if (spent + tests <= plan.cfg.probe.globalpingTestsPerHour) return { plan, tests };
+  if (spent + tests <= allowed) return { plan, tests };
   const sources = plan.sources.filter((s) => s !== 'globalping');
   return {
     plan: {
@@ -734,10 +755,13 @@ export async function requestProbesFor(
 ): Promise<{ runIds: Id<'probeRuns'>[]; runsPerSource: number }> {
   const now = Date.now();
   const planned = await planTarget(ctx, target, sources);
-  const { plan } = fitGlobalpingTests(
-    planned,
-    await globalpingTestsThisHour(ctx.db, now, planned.cfg.probe.hourlyBudget),
-  );
+  const { plan } = planned.sources.includes('globalping')
+    ? fitGlobalpingTests(
+        planned,
+        await globalpingTestsThisHour(ctx.db, now, planned.cfg.probe.hourlyBudget),
+        probeShare(planned.cfg.probe.globalpingTestsPerHour, await globalpingNamesShare(ctx.db)),
+      )
+    : { plan: planned };
   if (plan.sources.length === 0) throw budgetExhausted();
   if (plan.cost > (await remainingBudget(ctx.db, plan.cfg, now))) throw budgetExhausted();
   const runIds = await insertPlanned(ctx, plan, trigger, opts);
@@ -830,10 +854,14 @@ export const requestMany = internalMutation({
     // Resolve everything first: the batch's total decides the stagger spacing.
     // A target whose Globalping runs no longer fit the tests budget goes without them.
     let tests = await globalpingTestsThisHour(ctx.db, now, cfg.probe.hourlyBudget);
+    const allowed = probeShare(
+      cfg.probe.globalpingTestsPerHour,
+      await globalpingNamesShare(ctx.db),
+    );
     const plans: TargetPlan[] = [];
     for (const t of unique) {
       try {
-        const fit = fitGlobalpingTests(await planTarget(ctx, t, sources), tests);
+        const fit = fitGlobalpingTests(await planTarget(ctx, t, sources), tests, allowed);
         if (fit.plan.sources.length === 0) {
           skipped.push(`${targetKeyOf(t)}: probe.budget_exhausted`);
           continue;
@@ -1353,11 +1381,14 @@ export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promis
   const controls = cfg.country.enabled
     ? controlCountriesOf(cfg, (await resolveCensoredCountries(db)).codes).length
     : 0;
+  const account = await readStateJson<GlobalpingAccount>(db, GLOBALPING_ACCOUNT_KEY);
   const cap: GlobalpingCap = {
     used: await globalpingTestsThisHour(db, now, cfg.probe.hourlyBudget),
     perHour: cfg.probe.globalpingTestsPerHour,
+    reserved: await globalpingNamesShare(db),
     perRun: globalpingTestsPerRun(cfg, controls),
     ...(await roundsWithoutGlobalping(db, sources, now, cfg.probe.hourlyBudget)),
+    ...(account ? { account: accountView(account, now) } : {}),
   };
   return health.map((h) => (h.source === 'globalping' ? { ...h, cap } : h));
 }
@@ -1365,8 +1396,59 @@ export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promis
 const isoOrNull = (n: number | null) => (n === null ? null : new Date(n).toISOString());
 
 export function mapSourceHealthAdmin(h: SourceHealth) {
-  return { ...h, lastOkAt: isoOrNull(h.lastOkAt), lastFailAt: isoOrNull(h.lastFailAt) };
+  const a = h.cap?.account;
+  return {
+    ...h,
+    lastOkAt: isoOrNull(h.lastOkAt),
+    lastFailAt: isoOrNull(h.lastFailAt),
+    ...(h.cap
+      ? {
+          cap: {
+            ...h.cap,
+            account: a
+              ? {
+                  ...a,
+                  at: new Date(a.at).toISOString(),
+                  resetAt: isoOrNull(a.resetAt),
+                  creditsAt: isoOrNull(a.creditsAt),
+                }
+              : null,
+          },
+        }
+      : {}),
+  };
 }
+
+/**
+ * What Globalping said about FCP's allowance (a `/v1/limits` preflight or a
+ * create's headers), folded into its `appState` row
+ * (lib/edges/probes/globalpingAccount.ts). Called by every action that talks
+ * to Globalping; a failed write never fails the measurement.
+ */
+export const noteGlobalping = internalMutation({
+  args: {
+    readings: v.array(
+      v.object({
+        at: v.number(),
+        reading: v.object({
+          type: v.optional(v.union(v.literal('user'), v.literal('ip'))),
+          limit: v.number(),
+          remaining: v.number(),
+          resetSec: v.number(),
+          credits: v.optional(v.number()),
+          creditsConsumed: v.optional(v.number()),
+        }),
+      }),
+    ),
+  },
+  handler: async (ctx, { readings }) => {
+    if (readings.length === 0) return null;
+    let state = await readStateJson<GlobalpingAccount>(ctx.db, GLOBALPING_ACCOUNT_KEY);
+    for (const r of readings.slice(-MAX_READINGS)) state = mergeReading(state, r.reading, r.at);
+    await writeStateJson(ctx.db, GLOBALPING_ACCOUNT_KEY, state);
+    return null;
+  },
+});
 
 export const sourceHealthView = internalQuery({
   args: {},

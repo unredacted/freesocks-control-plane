@@ -44,6 +44,7 @@ import {
 } from './lib/sniConfig';
 import { EDGE_PLUMBING, resolveEdgeConfig, resolveEdgeSecrets } from './lib/edgeConfig';
 import { ownAddresses } from './lib/edges/sni/ownAddresses';
+import { resolveGlobalpingShare } from './lib/edges/probes/globalpingShare';
 import { normalizeAddress } from './lib/edges/hosts';
 import { isPublicIpLiteral } from './lib/edges/ip';
 import {
@@ -1414,7 +1415,12 @@ export const claimEvidence = internalMutation({
       .query('sniCandidates')
       .withIndex('by_measure', (q) => q.gt('measureAt', 0))
       .take(50);
-    let left = cfg.timingPerHour - (await callsThisHour(ctx.db, 'timing', now, cfg.timingPerHour));
+    // Within `probe.globalpingTestsPerHour` (lib/edges/probes/globalpingShare.ts).
+    const perHour = Math.min(
+      cfg.timingPerHour,
+      (await resolveGlobalpingShare(ctx.db)).timingPerHour,
+    );
+    let left = perHour - (await callsThisHour(ctx.db, 'timing', now, perHour));
     const own = new Set(await ownAddresses(ctx.db, []));
     const dialable = (ip: string | undefined): ip is string =>
       !!ip && isPublicIpLiteral(ip) && !own.has(normalizeAddress(ip));

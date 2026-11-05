@@ -51,6 +51,7 @@ import type * as edgeLanes from "../edgeLanes.js";
 import type * as edgeLatency from "../edgeLatency.js";
 import type * as edgeLocations from "../edgeLocations.js";
 import type * as edgeMaintenance from "../edgeMaintenance.js";
+import type * as edgePickWants from "../edgePickWants.js";
 import type * as edgeNameOps from "../edgeNameOps.js";
 import type * as edgeNames from "../edgeNames.js";
 import type * as edgeNetworks from "../edgeNetworks.js";
@@ -259,6 +260,7 @@ declare const fullApi: ApiFromModules<{
   edgeLatency: typeof edgeLatency;
   edgeLocations: typeof edgeLocations;
   edgeMaintenance: typeof edgeMaintenance;
+  edgePickWants: typeof edgePickWants;
   edgeNameOps: typeof edgeNameOps;
   edgeNames: typeof edgeNames;
   edgeNetworks: typeof edgeNetworks;

@@ -275,6 +275,18 @@ describe('a batch', () => {
     expect((await two.t.mutation(internal.sniVantage.tick, {})).reason).toBe('budget');
   });
 
+  test("Globalping's hourly cap bounds the checks too: a small cap trims them, none leaves Globalping out", async () => {
+    const gp = fakeGlobalping(() => 'ok');
+    __setVantageGlobalpingFactory(() => gp.client);
+    // 6 tests an hour at 3 vantages a measurement: two measurements.
+    const capped = await seed({ settings: { 'edge.probe.globalpingTestsPerHour': 6 } });
+    expect(await tickAndDrain(capped.t)).toMatchObject({ started: 1, measurements: 2 });
+    expect((await capped.t.mutation(internal.sniVantage.tick, {})).reason).toBe('budget');
+    // None: Globalping is the only source here, so nothing runs at all.
+    const none = await seed({ settings: { 'edge.probe.globalpingTestsPerHour': 0 } });
+    expect((await none.t.mutation(internal.sniVantage.tick, {})).reason).toBe('no_source');
+  });
+
   test('a name that left the listener before its turn is not dialled', async () => {
     const gp = fakeGlobalping(() => 'ok');
     __setVantageGlobalpingFactory(() => gp.client);

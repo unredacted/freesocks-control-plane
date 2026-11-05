@@ -515,7 +515,11 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       );
       const standbysOf = (listenerId: string) =>
         standbys.filter((e) => (e.listenerId as string) === listenerId);
-      const provision = async (listenerId: string | null, publishOnDone: boolean) => {
+      const provision = async (
+        listenerId: string | null,
+        publishOnDone: boolean,
+        onlyLocationId?: Id<'edgeLocations'>,
+      ) => {
         // An automatic provision that just failed is not started again every
         // tick (each attempt pays for what it built before the failing step).
         if (
@@ -533,6 +537,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           (await ctx.runQuery(internal.edgeRotations.upkeepFillRefusal, {
             relayId: origin._id,
             ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
+            ...(onlyLocationId ? { onlyLocationId } : {}),
           }))
         )
           return;
@@ -542,6 +547,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           trigger: 'reconcile',
           publishOnDone,
           ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
+          ...(onlyLocationId ? { onlyLocationId } : {}),
         });
         report.started++;
         starts++;
@@ -623,6 +629,39 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         }
         if (cfg.autoProvisionToDesired) {
           await provision(lanes.listenerId, true);
+          continue;
+        }
+      }
+      // 5W. Addresses per location (convex/edgePickWants.ts), lanes on or off: a
+      // pick whose count a transport is short of gets a spare of it there, else
+      // a provision for it at that location only (selection keeps every rule:
+      // cooling, a refused location, trust, the account's cap; nothing is
+      // bought where one of them holds it back, or with no free slot for it).
+      if (uncovered.length === 0 && origin.providerSet?.some((p) => p.want !== undefined)) {
+        const gap = await ctx.runQuery(internal.edgePickWants.nextCountGap, {
+          relayId: origin._id,
+        });
+        if (gap && gap.spares.length > 0) {
+          const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
+            relayId: origin._id,
+            candidates: gap.spares,
+            publish: cfg.autoPublishStandby,
+          });
+          if (res.published) {
+            report.published++;
+            continue;
+          }
+          if (res.rotationId) {
+            report.started++;
+            starts++;
+            continue;
+          }
+          if (res.awaitingVerification || res.ready) continue;
+        }
+        // A free slot is what it needs: at the cap part of the deficit may be
+        // blocked while one more address still fits.
+        if (gap?.mayProvision && cfg.autoProvisionToDesired && free > 0) {
+          await provision(gap.listenerId, true, gap.locationId);
           continue;
         }
       }

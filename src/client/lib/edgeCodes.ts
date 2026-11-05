@@ -1034,6 +1034,12 @@ const COPY = {
       'This location is meant for a country, but it is blocked from there: a mark on it, its grade, or every address of it in use there. Members in that country are handed other addresses until it works again.',
     fix: 'Pick another location for that country on the account page, or mark this one if the checks are wrong.',
   },
+  location_short: {
+    label: 'Location short of addresses',
+    explain:
+      'A location of this node is set to hold a number of addresses of each transport, and it holds fewer. Automatic upkeep publishes a spare there first, then buys one there, unless something below holds it back.',
+    fix: 'Clear what holds it back, add a spare address there, or lower the count on the node page.',
+  },
   location_refused: {
     label: 'A location refused an address',
     explain:

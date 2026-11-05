@@ -41,6 +41,8 @@ import {
   scheduleMirrorRefresh,
 } from './lib/edges/relayGuards';
 import { listenersOf } from './relayListeners';
+import { countDeficit, keepsCounts } from './lib/edges/providerSet';
+import { setStateOf } from './lib/edges/setState';
 import { suspectedOf } from './edgeTrust';
 import { refreshTemplateEdges, todayKey } from './relays';
 
@@ -330,9 +332,24 @@ export const reconcileLanes = internalMutation({
       published.map((e) => ({ listenerId: e.listenerId as string, lane: e.lane })),
       targets,
     );
-    const desired = Math.min(MAX_DESIRED_PUBLISHED, Math.max(1, laneDesired(book, targets)));
+    // Addresses per location (lib/edges/providerSet.ts `wants`): the pool also
+    // holds what the counts still ask for, and cleanup keeps what they need.
+    // Without counts both are exactly what they were.
+    const set = origin.providerSet?.some((p) => p.want !== undefined)
+      ? await setStateOf(ctx.db, origin)
+      : null;
+    const counted = set ? countDeficit(set.requirement, set.published) : 0;
+    const desired = Math.min(
+      MAX_DESIRED_PUBLISHED,
+      Math.max(1, laneDesired(book, targets) + counted),
+    );
     if (desired !== origin.desiredPublished)
       await ctx.db.patch(relayId, { desiredPublished: desired, updatedAt: Date.now() });
+    const removable = (edgeId: string): boolean => {
+      if (!set) return true;
+      const i = set.published.findIndex((p) => (p.edgeId as string) === edgeId);
+      return i < 0 || keepsCounts(set.requirement, set.published, i);
+    };
     const templates = new Set(
       listeners.map((l) => l.templateEdgeId as string | undefined).filter((x): x is string => !!x),
     );
@@ -346,6 +363,7 @@ export const reconcileLanes = internalMutation({
           publishedAt: e.publishedAt,
         })),
         templates,
+        removable,
       );
       if (retire) {
         await retireOpen(ctx, (await ctx.db.get(relayId))!, retire.edgeId as Id<'edges'>);

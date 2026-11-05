@@ -275,6 +275,10 @@ export function attentionFactsLine(item: AttentionItem): string {
   const published = num('published');
   const desired = num('desired');
   if (published !== null && desired !== null) out.push(`${published} of ${desired} published`);
+  // Addresses per location: the fewest in use of a transport there, of the count.
+  const wanted = num('wanted');
+  const inUse = num('inUse');
+  if (wanted !== null && inUse !== null) out.push(`${inUse} of ${wanted} in use`);
   const standbys = num('standbys');
   if (standbys !== null && standbys > 0)
     out.push(`${standbys} ${standbys === 1 ? 'standby' : 'standbys'} ready`);

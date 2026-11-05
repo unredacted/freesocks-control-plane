@@ -681,7 +681,12 @@ export const NodeIntentView = z.object({
   updatedAt: z.string(),
 });
 export type NodeIntentView = z.infer<typeof NodeIntentView>;
-export const AdoptNodeResult = z.object({ intentId: z.string(), addresses: z.number() });
+/** `carried`: tested edge addresses whose confirmations the adoption kept (a node Edges protect). */
+export const AdoptNodeResult = z.object({
+  intentId: z.string(),
+  addresses: z.number(),
+  carried: z.number().default(0),
+});
 
 /** A shared change's hold on nodes FCP does not manage (released by an admin). */
 export const MaintenanceHoldView = z.object({

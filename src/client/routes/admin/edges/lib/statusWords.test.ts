@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import type { EdgeCountryRow, OriginStatus } from '../../../../../shared/contracts/edges';
+import type {
+  EdgeCountryRow,
+  OriginStatus,
+  ProbeSourceHealth,
+} from '../../../../../shared/contracts/edges';
 import {
   ATTENTION_KINDS,
   COUNTRY_GROUP_GRADES,
@@ -12,8 +16,10 @@ import {
   SETUP_RUN_NEEDS,
 } from '../../../../../shared/contracts/edgeCodes';
 import {
+  accountWords,
   capClause,
   capHoldsBack,
+  probePart,
   COUNTRY_REASON_WORDS,
   GROUP_GRADE_WORDS,
   PROBE_FAILURE_WORDS,
@@ -550,13 +556,7 @@ describe('sourceWords', () => {
     lastFailAt: at(2 * H),
     lastError: 'timeout',
     failing: false,
-    cap: null as {
-      used: number;
-      perHour: number;
-      perRun: number;
-      rounds: number;
-      skipped: number;
-    } | null,
+    cap: null as ProbeSourceHealth['cap'],
     ...over,
   });
   test('working, working with failures, failing, idle', () => {
@@ -574,7 +574,16 @@ describe('sourceWords', () => {
 
   test("Globalping's hourly cap: its use shown, and when it held Globalping back", () => {
     const cap = (used: number, over = {}) => ({
-      cap: { used, perHour: 400, perRun: 21, rounds: 8, skipped: 0, ...over },
+      cap: {
+        used,
+        perHour: 400,
+        reserved: 0,
+        perRun: 21,
+        rounds: 8,
+        skipped: 0,
+        account: null,
+        ...over,
+      },
     });
     const working = sourceWords(h(cap(120)), NOW);
     expect(working).toMatchObject({ label: 'Working', tone: 'success' });
@@ -602,6 +611,96 @@ describe('sourceWords', () => {
     for (const w of [full, skipped, never]) expect(w.detail).not.toMatch(/—/);
     // Failing outranks the cap: no evidence at all is the bigger problem.
     expect(sourceWords(h({ ...cap(390), failing: true, streak: 3 }), NOW).tone).toBe('danger');
+  });
+
+  test("the name checks' share comes off what the probe rounds may use", () => {
+    const cap = (used: number, over = {}) => ({
+      cap: {
+        used,
+        perHour: 500,
+        reserved: 48,
+        perRun: 21,
+        rounds: 8,
+        skipped: 0,
+        account: null,
+        ...over,
+      },
+    });
+    expect(probePart(cap(0).cap)).toBe(452);
+    const working = sourceWords(h(cap(120)), NOW);
+    expect(working.detail).toContain(
+      'Its hourly cap: 120 of 452 tests used in the last hour (500 an hour, less 48 kept for name checks), 21 a run.',
+    );
+    expect(capHoldsBack(h(cap(431)))).toBe(false);
+    expect(capHoldsBack(h(cap(432)))).toBe(true);
+    expect(sourceWords(h(cap(440)), NOW).detail).toContain(
+      'The next round runs without it: 440 of the 452 tests the probes may use an hour (500 an hour, less 48 kept for name checks)',
+    );
+    const never = sourceWords(h(cap(0, { perHour: 60 })), NOW);
+    expect(never.label).toBe('Hourly cap below one run');
+    expect(never.detail).toContain(
+      'What its hourly cap leaves the probes (12 tests: 60 less 48 kept for name checks) is smaller than one run (21 tests)',
+    );
+    expect(capClause(cap(0, { perHour: 60 }).cap)).toBe(
+      'its hourly cap is smaller than one run, so it never runs',
+    );
+  });
+
+  test("Globalping's own count: free tests, credits and what they last at that pace", () => {
+    const account = (over = {}) => ({
+      at: at(5 * 60_000),
+      type: 'user' as const,
+      limit: 500,
+      remaining: 146,
+      resetAt: new Date(NOW + 23 * 60_000).toISOString(),
+      credits: 59812,
+      creditsAt: at(5 * 60_000),
+      spentToday: 412,
+      spentYesterday: 3050,
+      runwayDays: 19,
+      ...over,
+    });
+    const capWith = (a: ReturnType<typeof account> | null) => ({
+      used: 120,
+      perHour: 600,
+      reserved: 48,
+      perRun: 21,
+      rounds: 8,
+      skipped: 0,
+      account: a,
+    });
+    expect(accountWords(capWith(account()), NOW)).toBe(
+      "Globalping's own count, 5 min ago: 146 of 500 free tests left; its hour resets in 23 min. 59,812 credits left. FCP spent 412 since 00:00 UTC and 3,050 the day before: at that pace they last about 19 days.",
+    );
+    expect(sourceWords(h({ cap: capWith(account()) }), NOW).account).toContain('59,812 credits');
+    expect(sourceWords(h({ cap: capWith(null) }), NOW).account).toBeUndefined();
+    expect(accountWords(null, NOW)).toBeNull();
+    // Nothing spent, no window open.
+    expect(
+      accountWords(
+        capWith(
+          account({
+            resetAt: null,
+            remaining: 500,
+            spentToday: 0,
+            spentYesterday: 0,
+            runwayDays: null,
+          }),
+        ),
+        NOW,
+      ),
+    ).toBe("Globalping's own count, 5 min ago: 500 of 500 free tests left. 59,812 credits left.");
+    expect(
+      accountWords(capWith(account({ remaining: 0, credits: 0, runwayDays: 0 })), NOW),
+    ).toContain('Globalping refuses new tests until its hour resets.');
+    // A balance older than the window it is shown with says when it was given.
+    expect(accountWords(capWith(account({ creditsAt: at(3 * H) })), NOW)).toContain(
+      '59,812 credits left as of 3 h ago.',
+    );
+    expect(
+      accountWords(capWith(account({ type: 'ip', limit: 250, credits: null })), NOW),
+    ).toContain('No token is set, so there are no credits');
+    for (const w of [accountWords(capWith(account()), NOW)!]) expect(w).not.toMatch(/—/);
   });
 });
 

@@ -43,7 +43,11 @@ import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { sameAddress } from './lib/edges/hosts';
-import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
+import {
+  needsEndpointVerification,
+  verificationBinding,
+  verificationCurrent,
+} from './lib/edges/verification';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
 import { currentNodeName, formerNamesByName, runningRenameOf } from './lib/backend/nodeAliases';
@@ -515,45 +519,46 @@ const NO_COUNTRY = 'XX';
 const MAX_ADOPT_ADDRESSES = 64;
 
 /**
- * How many L4 addresses members are handed now, of an origin Edges built for
- * this node while FCP did not manage it, are confirmed now and would not be
- * once it is enrolled. Such a confirmation carries no REALITY authentication
- * component (the node had no intent); enrolling it with `authRevision` adds
- * one, so the render gate would withhold each of those addresses from members
- * until it is tested again (docs/edges.md, "An L4 edge needs the operator's
- * own confirmation"). An address members are not handed (a spare, one on a
- * switched-off origin or listener) only needs its test before it is used.
+ * Carry an origin's L4 confirmations over its node's adoption (docs/servers.md
+ * "Adopting a backend"). An address Edges built for the node while FCP did not
+ * manage it was confirmed with no REALITY authentication component (the node
+ * had no intent); enrolling it with `authRevision` adds one, so each record
+ * would stop counting and the render gate would withhold the address from
+ * members until it was tested again. Adoption changes nothing on the node:
+ * its key, its transport and its edges are what they were when each address
+ * was tested. So every record that is current now is bound to the auth
+ * revision the node is adopted with, keeping who confirmed it, how and when.
+ * From then on a key change stales it, as for any enrolled node. A record that
+ * is not current now is left as it is (it needed its test before, and still
+ * does). Returns how many were carried.
  */
-async function testedAddressesAdoptionStales(
-  db: QueryCtx['db'],
-  sid: Id<'backendServers'>,
-  nodeName: string,
+async function carryConfirmations(
+  db: MutationCtx['db'],
+  relay: Doc<'relays'> | null,
   authRevision: string | undefined,
+  now: number,
 ): Promise<number> {
-  if (!authRevision) return 0;
-  const relay = await db
-    .query('relays')
-    .withIndex('by_node', (q) => q.eq('backendServerId', sid).eq('nodeName', nodeName))
-    .unique();
-  if (!relay || !relay.enabled) return 0;
-  const edges = await db
+  if (!relay || !authRevision) return 0;
+  let carried = 0;
+  for (const edge of await db
     .query('edges')
-    .withIndex('by_relay_publication', (q) =>
-      q.eq('relayId', relay._id).eq('publication', 'published'),
-    )
-    .collect();
-  let stale = 0;
-  for (const edge of edges) {
-    if (edge.status !== 'active' || !needsEndpointVerification(edge)) continue;
+    .withIndex('by_relay_publication', (q) => q.eq('relayId', relay._id))
+    .collect()) {
+    const rec = edge.verification;
+    if (edge.status === 'destroyed' || !needsEndpointVerification(edge)) continue;
+    if (!rec || rec.rung !== 'verified') continue;
     const listener = await db.get(edge.listenerId);
-    if (!listener || listener.retired || !listener.deployed || !listener.enabled) continue;
-    if (
-      verificationCurrent(edge, { ...listener, authRevision: null }) &&
-      !verificationCurrent(edge, { ...listener, authRevision })
-    )
-      stale++;
+    if (!listener || listener.retired) continue;
+    if (!verificationCurrent(edge, { ...listener, authRevision: null })) continue;
+    const binding = verificationBinding(edge, { ...listener, authRevision });
+    if (!binding) continue;
+    await db.patch(edge._id, {
+      verification: { ...rec, configHash: binding.configHash, authRevision },
+      updatedAt: now,
+    });
+    carried++;
   }
-  return stale;
+  return carried;
 }
 
 /**
@@ -571,6 +576,9 @@ async function testedAddressesAdoptionStales(
  * `originHostname` is the name its CDN fronts dial (its Caddy's certificate
  * name): edges FCP builds for it later dial the same name. It is taken here
  * because a settings change could never be applied to an adopted machine.
+ * A node Edges already protect keeps the address its edges dial and its
+ * tested addresses (`carryConfirmations`). Never while a change made on the
+ * backend outside FCP is unseen: the first reconcile would close the node.
  * The role is never run for an adopted machine. Its row keeps its port and
  * every transport it serves, and its addresses keep their remarks: a
  * reconcile never narrows it, nor adds or removes an address by FCP's remark
@@ -689,18 +697,24 @@ export const adoptNode = internalMutation({
         'servers.adopt_addresses_missing',
         'No address turned on on its transport carries this node’s name or address. Name its addresses',
       );
+    // A change made on the backend outside FCP is flagged: the adopted node's
+    // first reconcile would close it as drift (`servers.foreign_profile_edit`),
+    // taking it from its members. Seen first, it starts from what is there.
+    if (profile?.foreignEditAt)
+      refuse(
+        'servers.foreign_profile_edit',
+        'The profile was changed on the backend outside FCP. Press Seen it on Servers, then adopt',
+      );
     const inbound = profile?.inbounds.find((i) => i.inboundUuid === t.uuid);
     const configRevision = `${profile?.changeToken ?? ''}:${t.uuid}`;
     const authRevision = inbound?.realityAuth?.digest ?? undefined;
-    // Members of a node Edges already protect hold its tested addresses: an
-    // adoption that would take them away until a new test is not "nothing
-    // changes for them".
-    const stale = await testedAddressesAdoptionStales(ctx.db, sid, node.name, authRevision);
-    if (stale > 0)
-      refuse(
-        'servers.adopt_edges_retest',
-        `Edges protect this node. Adopting it would keep its ${stale} tested address${stale === 1 ? '' : 'es'} from members until each is tested again`,
-      );
+    // An origin Edges already built for this node (docs/edges.md "Protecting
+    // a node FCP does not manage"): what its edges dial and what its members
+    // hold stay as they are.
+    const relay = await ctx.db
+      .query('relays')
+      .withIndex('by_node', (q) => q.eq('backendServerId', sid).eq('nodeName', node.name))
+      .unique();
     const now = Date.now();
     const settings = defaultSettings(setup!, a.mode);
     if (isWs(mode.shape)) settings.originHostnameSource = 'explicit';
@@ -711,8 +725,18 @@ export const adoptNode = internalMutation({
     // only how the backend reaches it (often a private one). A Host that dials
     // a name (or an IPv6 address) is the origin edges dial once Edges protects
     // the node, never the management address.
-    const v4 = addresses.map((h) => h.address).find((x) => IPV4.test(x));
+    let v4 = addresses.map((h) => h.address).find((x) => IPV4.test(x));
     if (!v4 && addresses[0]) settings.originAddressOverride = addresses[0].address;
+    // A node Edges protect with no address of its own to read (an L4-fronted
+    // one): its origin is the address its edges forward to, often given by the
+    // operator while the row holds a private one. Taken as the node's own, so a
+    // protection made again later (once this one is removed) plans from that
+    // address, never from the management one.
+    if (relay && !isWs(mode.shape) && !v4 && !settings.originAddressOverride) {
+      if (IPV4.test(relay.originAddress)) v4 = relay.originAddress;
+      else if (!sameAddress(relay.originAddress, node.address ?? ''))
+        settings.originAddressOverride = relay.originAddress;
+    }
     const observed: Intent['observed'] = {
       management: { address: node.address ?? '', port: node.port ?? 2222 },
       publicIps: v4 ? { v4 } : {},
@@ -773,6 +797,8 @@ export const adoptNode = internalMutation({
       registeredAt: now,
       updatedAt: now,
     });
+    // Its tested addresses keep serving its members (`carryConfirmations`).
+    const carried = await carryConfirmations(ctx.db, relay, authRevision, now);
     await bumpGateVersion(ctx, sid);
     const server = await ctx.db.get(sid);
     await writeAuditLog(ctx, {
@@ -787,9 +813,10 @@ export const adoptNode = internalMutation({
         mode: a.mode,
         addresses: addresses.length,
         originName: !!originHostname,
+        carried,
       },
     });
-    return { intentId: id, addresses: addresses.length };
+    return { intentId: id, addresses: addresses.length, carried };
   },
 });
 

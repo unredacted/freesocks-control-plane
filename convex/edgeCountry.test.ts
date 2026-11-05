@@ -42,7 +42,12 @@ type Outcome = 'ok' | 'fail' | 'silent';
 /** Globalping answering each asked location with `limit` vantages on distinct networks. */
 function fakeGlobalping(
   outcome: (country: string) => Outcome,
-  opts: { create?: 'ok' | 429; remaining?: number } = {},
+  opts: {
+    create?: 'ok' | 429;
+    remaining?: number;
+    /** Globalping's own answers: limits with a token, and a create's headers. */
+    account?: { limits: Record<string, unknown>; headers: Record<string, string> };
+  } = {},
 ): GlobalpingLike & { requests: Array<{ locations: Array<{ country: string; limit: number }> }> } {
   const requests: Array<{ locations: Array<{ country: string; limit: number }> }> = [];
   return {
@@ -50,7 +55,13 @@ function fakeGlobalping(
     async createMeasurement(req) {
       if (opts.create === 429) return { ok: false, response: new Response(null, { status: 429 }) };
       requests.push(req as (typeof requests)[number]);
-      return { ok: true, data: { id: `m-${requests.length}` } };
+      return {
+        ok: true,
+        data: { id: `m-${requests.length}` },
+        ...(opts.account
+          ? { response: new Response(null, { status: 202, headers: opts.account.headers }) }
+          : {}),
+      };
     },
     async getMeasurement(id) {
       const req = requests[Number(id.slice(2)) - 1]!;
@@ -72,6 +83,13 @@ function fakeGlobalping(
       });
       return { ok: true, data: { id, status: 'finished', results } };
     },
+    ...(opts.account
+      ? {
+          async getLimits() {
+            return { ok: true, data: opts.account!.limits };
+          },
+        }
+      : {}),
     ...(opts.remaining !== undefined
       ? {
           async getLimits() {
@@ -392,8 +410,95 @@ describe('edgeCountry: a source that errors is no evidence', () => {
     const cap = health.sources.find((s) => s.source === 'globalping')!.cap!;
     const asked = runs.find((r) => r.source === 'globalping')!.tests;
     expect(asked).toBeGreaterThan(0);
-    expect(cap).toMatchObject({ perHour: 10, used: asked });
+    expect(cap).toMatchObject({ perHour: 10, used: asked, reserved: 0, account: null });
     expect(cap.used + cap.perRun).toBeGreaterThan(cap.perHour);
+  });
+
+  test('the name checks keep their share of the tests budget: a round that would take it runs without Globalping', async () => {
+    const gp = fakeGlobalping(() => 'ok');
+    __setGlobalpingFactory(() => gp);
+    // One run asks 8 tests (IR and RU x 3, plus the two controls). The cap of
+    // 40 would take it, but checks of names from inside IR keep 12 x 3 = 36.
+    const { t, edgeId } = await seed({
+      extra: {
+        'edge.probe.globalpingTestsPerHour': '40',
+        'edge.sni.enabled': 'true',
+        'edge.sni.vantage.enabled': 'true',
+        [CENSORED_COUNTRIES_KEY]: JSON.stringify([
+          { code: 'IR', checkEdges: true, checkNamesInside: true },
+          { code: 'RU', checkEdges: true, checkNamesInside: false },
+        ]),
+      },
+    });
+    await round(t, edgeId);
+    expect(gp.requests).toHaveLength(0);
+    const runs = await t.query(internal.probes.listRuns, { target: { kind: 'edge', ref: edgeId } });
+    expect(runs.map((r) => r.source)).toEqual(['internal']);
+    const health = await t.query(internal.probes.sourceHealthView, {});
+    const cap = health.sources.find((s) => s.source === 'globalping')!.cap!;
+    expect(cap).toMatchObject({ perHour: 40, reserved: 36, perRun: 8, used: 0 });
+    // The hunt's timing joins the share (6 an hour, 2 vantages each); with the
+    // cap raised past both, the round takes Globalping again.
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.sni.hunt.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.globalpingTestsPerHour', '56');
+    });
+    expect(
+      (await t.query(internal.probes.sourceHealthView, {})).sources.find(
+        (s) => s.source === 'globalping',
+      )!.cap,
+    ).toMatchObject({ perHour: 56, reserved: 48 });
+    await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'manual',
+    });
+    await drainRuns(t);
+    expect(gp.requests).toHaveLength(1);
+  });
+
+  test("Globalping's own answers about the allowance reach the Probes view", async () => {
+    const gp = fakeGlobalping(() => 'ok', {
+      account: {
+        limits: {
+          rateLimit: {
+            measurements: { create: { type: 'user', limit: 500, remaining: 0, reset: 900 } },
+          },
+          credits: { remaining: 60000 },
+        },
+        headers: {
+          'x-ratelimit-limit': '500',
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-reset': '890',
+          'x-credits-consumed': '8',
+          'x-credits-remaining': '59992',
+        },
+      },
+    });
+    __setGlobalpingFactory(() => gp);
+    const { t, edgeId } = await seed();
+    await round(t, edgeId);
+    expect(gp.requests).toHaveLength(1);
+    const health = await t.query(internal.probes.sourceHealthView, {});
+    const account = health.sources.find((s) => s.source === 'globalping')!.cap!.account!;
+    expect(account).toMatchObject({
+      type: 'user',
+      limit: 500,
+      remaining: 0,
+      credits: 59992,
+      spentToday: 8,
+      spentYesterday: 0,
+      runwayDays: null,
+    });
+    expect(typeof account.at).toBe('string');
+    expect(typeof account.resetAt).toBe('string');
+    // Nothing about a target is kept with it: only Globalping's numbers.
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'probe:globalping:account'))
+        .unique(),
+    );
+    expect(row!.value).not.toContain(EDGE);
   });
 });
 

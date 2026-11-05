@@ -67,6 +67,8 @@
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
   import { providerLabel } from '../lib/format';
   import { providerPickWords } from './runWords';
+  import PickWantDialog from './PickWantDialog.svelte';
+  import { wantLine } from './pickWantWords';
 
   interface Props {
     relay: { id: string; slug: string };
@@ -89,6 +91,9 @@
   const view = $derived(setQ.data ?? null);
   const words = $derived(view ? providerPickWords(view, { nameOf, upkeepAdds }) : null);
 
+  /** The pick whose address count is being changed (the count dialog). */
+  let wantFor = $state<ProviderSetView['picks'][number] | null>(null);
+  let wantOpen = $state(false);
   let adding = $state(false);
   let chosen = $state<string[]>([]);
   /** The account a new location is being made in (the dialog's "New location"). */
@@ -238,6 +243,20 @@
                   {/if}
                 </p>
                 <p class="text-muted-foreground text-xs">{line?.counts}</p>
+                {#if frontsNode(p.provider, websocketNode) && p.carries.length > 0}
+                  <p class="text-muted-foreground text-xs">
+                    {wantLine(p.want, p.carries, nameOf)}
+                    <button
+                      type="button"
+                      class="text-primary min-h-11 underline-offset-2 hover:underline disabled:opacity-50 sm:min-h-0"
+                      disabled={busy}
+                      onclick={() => {
+                        wantFor = p;
+                        wantOpen = true;
+                      }}>Change</button
+                    >
+                  </p>
+                {/if}
                 {#if line?.cooling}<p class="text-xs">{line.cooling}</p>{/if}
                 {#if line?.refused}<p class="text-xs">{line.refused}</p>{/if}
                 {#if o && frontsNode(p.provider, websocketNode)}
@@ -460,6 +479,14 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
+
+<PickWantDialog
+  bind:open={wantOpen}
+  relayId={relay.id}
+  relaySlug={relay.slug}
+  pick={wantFor}
+  {nameOf}
+/>
 
 <ConfirmDialog
   bind:open={confirmOptions}

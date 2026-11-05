@@ -726,8 +726,10 @@ confirmation echoes keeps its shape; every builder and checker resolves it the s
 enrolled node's L4 endpoints to "needs a test" (no client has proven the new key through them;
 attention `retest_needed` with code `reality_key_changed`, the Try it card and the approval card
 say so). Unmanaged nodes, whole-server, manual and Outline origins carry no auth component and
-behave as before (so adopting an unmanaged node whose addresses were confirmed that way is
-refused, `servers.adopt_edges_retest`: docs/servers.md § "Adopting a backend"); L7 proofs and the probe `partial` rung are not bound to it. Refusal code
+behave as before. Adopting an unmanaged node carries each of its origin's confirmations that is
+current then over to the auth revision it is adopted with (docs/servers.md § "Adopting a
+backend"): nothing on the node changed, so what was tested is what members still reach. L7
+proofs and the probe `partial` rung are not bound to it. Refusal code
 `edge.unverified_endpoint`. The record proves nothing by itself:
 `verificationCurrent` compares revision and hash, so a listener revision bump or a
 re-addressing returns the endpoint to "needs a test" (attention `retest_needed`) without
@@ -3416,7 +3418,10 @@ volunteers' home connections. These rules are built in, not settings:
   tick starts at most **one** batch (one address, one country, `batchNames` names, default 3),
   within `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one
   name, one source, at most `perCountryLimit` vantages, default 3; real-site checks of candidate
-  names count too, and only get what deployed names leave, § Finding names). Calls to one service inside a
+  names count too, and only get what deployed names leave, § Finding names). Through Globalping
+  that is at most `hourlyBudget` x `perCountryLimit` tests an hour, kept out of what the probe
+  rounds may use of `edge.probe.globalpingTestsPerHour` (§ "Probe sources and verdicts",
+  **Budget and failing sources**). Calls to one service inside a
   batch are spaced like the address-level probes (1.5 s apart, `EDGE_PLUMBING.probeSourceSpacingMs`).
 - **Opt-in per country.** Nothing runs until the switch is on **and** a country on the
   censored-country list has "Check names from inside" on (Settings, Censored countries). Turning
@@ -4436,22 +4441,43 @@ with `delivery.country.steer` on (next section).
   `standbyRecheckHours` (12), and a spare blocked in fewer checked countries is published
   first. A test block (§ Simulating a block) stays detector-only: the replacement's own round is
   real.
-- **Budget and failing sources.** `edge.probe.globalpingTestsPerHour` (default 400) counts the
-  vantage points asked of Globalping (`probeRuns.tests`: countries x vantages, plus one per
-  control); a round that would pass it runs without Globalping, and the executor asks
-  Globalping's `GET /v1/limits` first and does not start a measurement that would not fit
-  (`globalping_limit`). A failed run keeps a short class (`probeRuns.error`: `auth`,
+- **Budget and failing sources.** `edge.probe.globalpingTestsPerHour` (default 400) is every
+  Globalping test FCP asks in an hour. The checks of names from inside a country (§ "Checks from
+  inside a country", candidates' real-site checks included) and the hunt's timing keep their
+  share of it, so a busy probe hour never takes the tests the name checks are allowed: when they
+  are on, the Globalping rows `edge.sni.vantage.hourlyBudget` allows times `perCountryLimit`
+  (with RIPE Atlas usable too, a batch puts one row per source on each name, so Globalping gets
+  its part of each batch; with finding names on, the candidates' Globalping-only checks may fill
+  the whole budget), plus `edge.sni.hunt.timingPerHour` x 2
+  (lib/edges/probes/globalpingShare.ts, `namesShare`). A cap below that share shrinks the name
+  checks to fit, the checks first and the timing with what is left; a cap that leaves them no
+  Globalping test runs their batches without it (RIPE Atlas, if usable, keeps the whole budget),
+  so the setting bounds every Globalping test FCP asks. The probe rounds count the vantage points they
+  ask (`probeRuns.tests`: countries x vantages, plus one per control) against the rest; a round
+  that would pass it runs without Globalping, and the executor asks Globalping's
+  `GET /v1/limits` first and does not start a measurement that would not fit
+  (`globalping_limit`). Globalping's own allowance is a separate number: with a token, 500 free
+  tests in an hour window that opens with the first test, then one credit per test (credits are
+  spent without asking until they run out; then it answers 429). Every Globalping call FCP makes
+  (the limits preflight and each create's `X-RateLimit-*` / `X-Credits-*` headers, refused
+  creates included) is folded into one `appState` row, `probe:globalping:account`
+  (`probes.noteGlobalping`; lib/edges/probes/globalpingAccount.ts): free tests left and when the
+  window resets, credits left, and the credits FCP spent per UTC day (`X-Credits-Consumed`, eight
+  days kept). It carries no target, name or address. Setting the cap to the free 500 means no
+  credit is spent; anything above spends at most the difference each hour. A failed run keeps a short class (`probeRuns.error`: `auth`,
   `rate_limited`, `timeout`, `service_error`, `no_route`, ...). A source whose newest three
   settled runs brought back nothing (of its newest 50; `no_route` runs are left out: the source
   works, FCP's host just lacks the family), with nothing working for six hours, raises attention
   `probe_source_failing` (warning) and shows on `GET probes/sources` and `GET probes/matrix`
   (`sources`). A round that runs without Globalping because of the cap leaves no failed run, so
-  Globalping's health also carries `cap {used, perHour, perRun, rounds, skipped}` (the tests
-  asked in the last hour, the setting, what one run of an edge asks, the last hour's cron rounds
-  and how many ran without Globalping: the cron asks every enabled source, so a cron round with
-  runs of the others and none of Globalping is one the cap left it out of, whatever the round's
-  size in families and ports); the Probes page reads "Held back by its hourly cap" when a round
-  went without it or no further run fits, and "Hourly cap below one run" when none ever can. Each summary keeps only rows newer than two probe intervals, so a country
+  Globalping's health also carries `cap {used, perHour, reserved, perRun, rounds, skipped,
+account}` (the tests the probe rounds asked in the last hour, the setting, the name checks'
+  share, what one run of an edge asks, the last hour's cron rounds and how many ran without
+  Globalping: the cron asks every enabled source, so a cron round with runs of the others and none
+  of Globalping is one the cap left it out of, whatever the round's size in families and ports;
+  and Globalping's own count, with the credits' runway at the last full day's pace); the Probes
+  page reads "Held back by its hourly cap" when a round went without it or no further run fits,
+  and "Hourly cap below one run" when none ever can, and shows Globalping's own count under it. Each summary keeps only rows newer than two probe intervals, so a country
   that only Globalping reaches (check-host has no node in several censored countries) drops out
   of every summary while the cap holds Globalping back for longer than that.
 - **Admin API.** `GET countries` (checked and control countries, grades, every edge's tracks
@@ -5466,7 +5492,9 @@ publishes only spares inside the set and outside a cooling pick, a gap-filling o
 operator may name the spare (`rotate`/`burn {spareEdgeId}`, that one or nothing), a location
 for a new CDN front (`rotate`/`burn {locationId}`) or for a spare (`provision {locationId,
 listenerId, publish: false}`; an untrusted location only for an unpublished spare, its first
-tested address trusts it); `preflight` says what Automatic would use.
+tested address trusts it); `preflight` says what Automatic would use, and waives trust for the
+same request only (`kind: provision`, a named `locationId`, `publish: false`, a manual
+trigger), so the node page's "Add a spare address" in that location is not refused.
 
 **Cooling.** When a detector burn finalizes, the burned address's pick cools on that origin for
 the origin's cooldown (`relays.cooling`). No automatic path allocates, provisions or publishes
@@ -5521,6 +5549,47 @@ remaining picks make (`edge.set_would_uncover`); then its addresses drain, its s
 cancelled, and `desiredPublished` keeps room for the survivors plus what the set still lacks.
 The card's **Add a location** also offers the regions a load balancer account reaches that are
 no location yet (§ "Provider accounts and locations", "Picking a region").
+
+**Addresses per location** (`convex/edgePickWants.ts`; `relays.providerSet[].want`). A pick may
+ask for a COUNT: this many published addresses (1 to 8) of EACH transport the location carries
+for the node. Without one a pick asks, as before, for at least one address of any transport, so
+"1" and "none" differ: 1 asks for one of each transport.
+
+- **The requirement** (`requirementOf` `wants`, `coverTargets`): basic coverage and diversity
+  are unchanged. After the cover, a pick with a count gets one more target for each address of
+  a transport it still lacks there, beyond what is published and what the cover already puts
+  there (`Target.count`); a cooling pick asks for none while it cools. A set without counts gets
+  exactly the targets it got before. Admission, sizing, rebalance (`removableUnder`) and the
+  floor of "Published edges wanted" (`edge.pool_below_coverage`) read the deficit, so they follow.
+- **Sizing.** `ensurePoolCapacity` holds the deficit as before. With lanes on, the lanes'
+  size is their own need plus what the counts still ask for (`countDeficit`), so the two never
+  fight over a count.
+- **Filling it** (the reconcile's step 5W, after the lanes' step, lanes on or off): the first
+  transport of a counted pick short of its count gets a spare of it there put in use, else a
+  provision for it at that location only (`edgeRotations.start {onlyLocationId}`: the set's
+  usual selection, limited to that location, so cooling, a refused location, trust and the
+  account's cap still apply). Nothing is bought where the pick cools, the location refused a
+  create for this node, no address there was tested yet, or one more would pass the account's
+  monthly cap, nor while the pool has no room left (`blocked`). It needs
+  `edge.autoProvisionToDesired` to buy; one start per pass, as every step.
+- **Retirement keeps the counts.** Lane cleanup (`openToRetire`) takes only an address whose
+  removal keeps every count where it is (`keepsCounts`); rebalance only a removable one.
+  Lowering a count retires nothing: the pool never shrinks by itself.
+- **Saving** (`POST relays/{id}/providers/{locationId}/want {want}`, null clears it): refused
+  while a setup run, a rotation or a restore owns the node, and when the set would then ask for
+  more addresses in use than one node publishes (`edge.set_too_large`). Audited
+  `edge.relay.pick_want`. Before saving, `…/want/preview` (read only) says how many addresses it
+  adds, what one there costs a month, and how many of them fit under the account's monthly
+  cap (a warning, not a refusal: the operator may raise the cap). The node's card shows each
+  pick's count with **Change**. A count is kept when a run goes live (`providerSetAfter`);
+  setup and re-protect runs build the cover without counts, upkeep fills them afterwards.
+- **Attention** `location_short` (warning, per node and location): the fewest addresses in use
+  of a transport there, of the count, and what holds new ones back, as the code that already
+  says it: `pick_cooling`, `locations_refused`, `location_untrusted`,
+  `account_spend_cap_reached`; none while upkeep can fill it.
+- **Rollback.** Before deploying a build without counts, run
+  `edgePickWants:clearPickWantsForRollback`: every count goes, the addresses they made stay
+  published (rebalance frees what is no longer needed).
 
 **Addresses outside the set.** The set changes only when a run goes live (`providerSetAfter`),
 so a re-protect that fails leaves the set as it was, and a spare it made in a location the set

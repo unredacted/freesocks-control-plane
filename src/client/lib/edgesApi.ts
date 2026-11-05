@@ -128,6 +128,8 @@ import {
   SetupPlanResponse,
   ProviderSetView,
   ProviderSetChangeResponse,
+  PickWantPreview,
+  PickWantResponse,
   SetupRunAdmin,
   SetupRunCancelResponse,
   SetupRunContinueRequest,
@@ -427,6 +429,20 @@ export const setRelayLanes = (relayId: string, lanes: { open: number; trusted: n
 /** The node's provider set: its picks, what they hold, what could be added. */
 export const fetchProviderSet = (relayId: string) =>
   apiClient.get(`${BASE}/relays/${enc(relayId)}/providers`, ProviderSetView);
+/** What one pick's address count would add and cost (read only). */
+export const previewPickWant = (relayId: string, locationId: string, want: number | null) =>
+  apiClient.post(
+    `${BASE}/relays/${enc(relayId)}/providers/${enc(locationId)}/want/preview`,
+    { want },
+    PickWantPreview,
+  );
+/** Save one pick's address count (null: at least one of any transport). */
+export const setPickWant = (relayId: string, locationId: string, want: number | null) =>
+  apiClient.post(
+    `${BASE}/relays/${enc(relayId)}/providers/${enc(locationId)}/want`,
+    { want },
+    PickWantResponse,
+  );
 /** Add or remove picks (an add on a live enrolled node starts a run). */
 export const changeProviderSet = (relayId: string, body: { add?: string[]; remove?: string[] }) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/providers`, body, ProviderSetChangeResponse);
