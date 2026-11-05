@@ -315,8 +315,8 @@ review.
 | `hero.nodeUnknown` | Node status unknown | Статус узла неизвестен |
 | `hero.nodeStatusLink` | Network status | Состояние сети |
 | `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
-| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
-| `hero.relayBackupHint` | If your app lists {primary} and {backup} separately and {primary} stops working, pick {backup}. | ⚠️ **MISSING** |
+| `hero.relayEntry` | Your app lists it as “{name}”. | ⚠️ **MISSING** |
+| `hero.relayEntries` | Your app lists “{primary}” and “{backup}”. If one stops working, pick the other. | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | Сервер вашей конфигурации работает и отвечает. Если подключиться всё равно не удаётся, скорее всего, ваша сеть или провайдер его фильтрует - попробуйте другой режим подключения или другую локацию. |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | Сервер вашей конфигурации сейчас не в сети. Проблема на нашей стороне, а не в вашей сети. Попробуйте снова через несколько минут или создайте новую конфигурацию (можно в другой локации). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | Вы использовали весь свой трафик за этот период. Он автоматически обнуляется, или вы можете приобрести более дорогой тарифный план. |

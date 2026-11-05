@@ -315,8 +315,8 @@ review.
 | `hero.nodeUnknown` | Node status unknown | 节点状态未知 |
 | `hero.nodeStatusLink` | Network status | 网络状态 |
 | `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
-| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
-| `hero.relayBackupHint` | If your app lists {primary} and {backup} separately and {primary} stops working, pick {backup}. | ⚠️ **MISSING** |
+| `hero.relayEntry` | Your app lists it as “{name}”. | ⚠️ **MISSING** |
+| `hero.relayEntries` | Your app lists “{primary}” and “{backup}”. If one stops working, pick the other. | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | 你配置背后的服务器运行正常。如果仍无法连接，很可能是你的网络或运营商在拦截--试试其他连接模式或位置。 |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | 你配置背后的服务器当前离线。这是我们这边的问题，不是你的网络。请几分钟后重试，或创建一个新配置（可选择其他位置）。 |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | 您本周期的数据流量已用完。流量将自动重置，或者您可以升级以获得更多流量。 |

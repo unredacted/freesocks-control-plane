@@ -316,8 +316,8 @@ review.
 | `hero.nodeUnknown` | Node status unknown | وضعیت گره نامشخص است |
 | `hero.nodeStatusLink` | Network status | وضعیت شبکه |
 | `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
-| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
-| `hero.relayBackupHint` | If your app lists {primary} and {backup} separately and {primary} stops working, pick {backup}. | ⚠️ **MISSING** |
+| `hero.relayEntry` | Your app lists it as “{name}”. | ⚠️ **MISSING** |
+| `hero.relayEntries` | Your app lists “{primary}” and “{backup}”. If one stops working, pick the other. | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | سرور پشت پیکربندی شما روشن است و پاسخ می‌دهد. اگر هنوز وصل نمی‌شوید، احتمالاً شبکه یا ارائه‌دهندهٔ اینترنت شما آن را فیلتر می‌کند - حالت اتصال یا مکان دیگری را امتحان کنید. |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | سرور پشت پیکربندی شما فعلاً آفلاین است. این مشکل از سمت ماست، نه شبکهٔ شما. چند دقیقهٔ دیگر دوباره امتحان کنید، یا یک پیکربندی جدید بسازید (در صورت تمایل در مکانی دیگر). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | شما تمام داده‌های خود را برای این مدت استفاده کرده‌اید. به‌طور خودکار بازنشانی می‌شود، یا می‌توانید برای اطلاعات بیشتر ارتقا دهید. |
