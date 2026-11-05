@@ -66,6 +66,7 @@ import type { VectorActivation } from './lib/edges/setupRuns';
 import { listenersOf } from './relayListeners';
 import { activationVectorFor } from './nodeActivation';
 import { nodeAddressesOf } from './nodeIntents';
+import { audienceForPublish } from './edgeAudiences';
 
 export const REHEARSAL_MAX_ATTEMPTS = 3;
 
@@ -240,12 +241,30 @@ export const context = internalQuery({
         (deliveryStyle === 'subscription' || f === 'links') &&
         protos.some((p) => formatSupported(p, f)),
     );
-    const { published, matchers } = await publishedEdgesOf(
+    const { published: pool, matchers } = await publishedEdgesOf(
       ctx,
       relay,
       activationRunId ? { kind: 'activation', activationRunId } : { kind: 'member' },
       { includeIneligible: true },
     );
+    // As the pool will stand after go-live (docs/edges.md "Addresses only for
+    // some countries"): a candidate at an only location takes its audience at
+    // its first publication, so the rehearsal judges it contained now. It then
+    // never counts toward the body's groups and is never in a body with no
+    // country, so two-group coverage cannot vanish when it becomes contained.
+    const published: typeof pool = [];
+    for (const e of pool) {
+      if (e.audience?.length) {
+        published.push(e);
+        continue;
+      }
+      const row = await ctx.db.get(e.edgeId as Id<'edges'>);
+      const at =
+        row && row.publishedAt === undefined ? await audienceForPublish(ctx.db, row) : null;
+      published.push(
+        at && 'patch' in at && at.patch.audience ? { ...e, audience: at.patch.audience } : e,
+      );
+    }
     // The activation the rehearsal was asked for must still be the node's
     // current, running one, or there is nothing it could prove.
     const activationCurrent =

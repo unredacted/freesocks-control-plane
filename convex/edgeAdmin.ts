@@ -848,14 +848,31 @@ export async function renderPreviewFor(
       // meant for a country", "Latency over the whole path").
       primaryWhy:
         out.meantFor && out.snapshot.primaryEdgeId
-          ? { meantFor: out.meantFor.primary, ...latencyWhy(out.latency?.primary) }
+          ? {
+              meantFor: out.meantFor.primary,
+              ...latencyWhy(out.latency?.primary),
+              ...audienceWhy(published, out.snapshot.primaryEdgeId),
+            }
           : null,
       backupWhy:
         out.meantFor && out.snapshot.backupEdgeId
-          ? { meantFor: out.meantFor.backup, ...latencyWhy(out.latency?.backup) }
+          ? {
+              meantFor: out.meantFor.backup,
+              ...latencyWhy(out.latency?.backup),
+              ...audienceWhy(published, out.snapshot.backupEdgeId),
+            }
           : null,
     };
   }
+}
+
+/** A contained endpoint's countries for the preview; nothing for one everyone may be handed. */
+function audienceWhy(
+  published: readonly { edgeId: string; audience?: string[] }[],
+  edgeId: string,
+): { audience?: string[] } {
+  const a = published.find((e) => e.edgeId === edgeId)?.audience;
+  return a?.length ? { audience: a } : {};
 }
 
 /** An endpoint's band and path for the preview; nothing while latency ordering is off. */

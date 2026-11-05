@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countryName } from '@client/lib/countries';
   /**
    * One transport's addresses on the node page: a reduced pool strip (one health
    * dot per address in use, a spare cell per spare) and a plain line per
@@ -114,7 +115,15 @@
   const WORD = { published: 'In use', unpublished: 'Spare', draining: 'Retiring' } as const;
   // With address lanes on, an address in use says which lane it serves.
   const laneWord = (e: EdgeAdmin) =>
-    lanes && e.publication === 'published' ? (e.lane === 'trusted' ? ' (trusted)' : ' (open)') : '';
+    (lanes && e.publication === 'published'
+      ? e.lane === 'trusted'
+        ? ' (trusted)'
+        : ' (open)'
+      : '') +
+    // Only for some countries (docs/edges.md): who it is handed to.
+    (e.audience.length > 0
+      ? ` (only for ${e.audience.map((c) => countryName(c, 'en')).join(', ')})`
+      : '');
   const CHECKED_BY_FCP = "checked by FCP's client";
   // The provider's check is not the members' view: whether it answers from outside, apart.
   const reachWord = (e: EdgeAdmin) =>
