@@ -296,6 +296,10 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // for them ride these, so plaintext is refused (docs/privacy.md).
   'GET /api/v1/account/connection-region': REVEAL_REQUIRED,
   'POST /api/v1/account/connection-region': SEAL_BOTH_REQUIRED,
+  // The one-time move to the exit location of that choice: it follows from the
+  // choice, and the response carries the subscription URL (docs/edges.md
+  // "Exit location by country").
+  'POST /api/v1/account/move-to-exit': REVEAL_REQUIRED,
   // The membership code is a bearer secret and rides the REQUEST (the response
   // is only the granted tier + duration).
   'POST /api/v1/account/redeem-code': SEAL_REQ,

@@ -456,5 +456,11 @@ export const ConnectionRegionResponse = z.object({
   detect: z.boolean(),
   /** A guess is forgotten about this many days after it was last seen. */
   stickyDays: z.number(),
+  /**
+   * On Automatic, with their own country choice mapped to an exit location
+   * while the key is elsewhere: that location's label, for the one-time move
+   * (POST account/move-to-exit). Optional for rolling-deploy compat.
+   */
+  exit: z.object({ label: z.string() }).nullable().optional().default(null),
 });
 export type ConnectionRegionResponse = z.infer<typeof ConnectionRegionResponse>;

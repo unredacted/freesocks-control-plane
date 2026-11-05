@@ -26,6 +26,7 @@ import { resolveSniConfig, resolveSniVantageConfig, vantageCountries } from './l
 import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { usableSources } from './lib/sniConfig';
 import { resolveMemberCountryConfig } from './memberCountry';
+import { countryExitLabels } from './countryExits';
 import { publishedEdgesOf, deliveryStyleOf, latencyContextOf } from './edgeRender';
 import { listenersOf } from './relayListeners';
 import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/render';
@@ -858,6 +859,9 @@ export const country = internalQuery({
       totals,
       origins,
       meantFor: meantForIn(await meantForLoad(ctx.db), loaded, code, now),
+      // Where new keys on Automatic of members who chose this country go
+      // (docs/edges.md "Exit location by country"); counts no member.
+      exits: await countryExitLabels(ctx.db, code),
     };
   },
 });

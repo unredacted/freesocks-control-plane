@@ -402,6 +402,56 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
+  describe('exit locations (a member on Automatic who chose a country)', () => {
+    async function threeLocations(opts: { bFull?: boolean } = {}) {
+      const t = convexTest(schema, modules);
+      const a = await seedLocatedServer(t, { slug: 'a', location: 'loc-a' });
+      const b = await seedLocatedServer(t, {
+        slug: 'b',
+        location: 'loc-b',
+        ...(opts.bFull ? { keyCount: 10, maxKeys: 10 } : {}),
+      });
+      const c = await seedLocatedServer(t, { slug: 'c', location: 'loc-c' });
+      await bindPool(t, 'freedom-ws', ['sq-a', 'sq-b', 'sq-c']);
+      await seedNode(t, a, { placement: 'sq-a', usersOnline: 1 });
+      await seedNode(t, b, { placement: 'sq-b', usersOnline: 50 });
+      await seedNode(t, c, { placement: 'sq-c', usersOnline: 50 });
+      return { t, a, b, c };
+    }
+
+    test('tried in order: the first that can take the key wins over a less loaded one', async () => {
+      const { t, b } = await threeLocations();
+      const target = await t.run((ctx) =>
+        resolvePlacementTarget(ctx.db, 'freedom-ws', {
+          exitLocations: ['loc-gone', 'loc-b', 'loc-c'],
+        }),
+      );
+      expect(target).toEqual({ placement: 'sq-b', serverId: b });
+    });
+
+    test("the member's own location pick wins over them", async () => {
+      const { t, c } = await threeLocations();
+      const target = await t.run((ctx) =>
+        resolvePlacementTarget(ctx.db, 'freedom-ws', {
+          location: 'loc-c',
+          exitLocations: ['loc-b'],
+        }),
+      );
+      expect(target).toEqual({ placement: 'sq-c', serverId: c });
+    });
+
+    test("none of them can take it (full, unknown): today's least-loaded choice", async () => {
+      const { t, a } = await threeLocations({ bFull: true });
+      const target = await t.run((ctx) =>
+        resolvePlacementTarget(ctx.db, 'freedom-ws', {
+          exitLocations: ['loc-b', 'loc-gone'],
+          rand: () => 0,
+        }),
+      );
+      expect(target).toEqual({ placement: 'sq-a', serverId: a });
+    });
+  });
+
   test('onlyServerId pins to that backend; a mode with no mode group there resolves null', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });

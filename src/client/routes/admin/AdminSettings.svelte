@@ -21,7 +21,15 @@
   import AlertsCard from './AlertsCard.svelte';
   import CensoredCountriesCard from './CensoredCountriesCard.svelte';
   import HomeImageCard from './HomeImageCard.svelte';
-  import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import {
+    adminAnalyticsQuery,
+    adminCensoredCountriesQuery,
+    appSettingsQuery,
+    configQuery,
+    queryKeys,
+  } from '../../lib/queries';
+  import { EXIT_SLOTS, exitRows, slotsOf, withSlot } from '../../lib/countryExits';
+  import { countryName } from '../../lib/countries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { AdminAnalyticsConfig, AppSettingsRecord } from '../../../shared/contracts/admin';
@@ -61,6 +69,13 @@
       initialized = true;
     }
   });
+
+  // Exit location by country (docs/edges.md): one row per listed country, the
+  // member catalog's locations in order.
+  const censored = adminCensoredCountriesQuery();
+  const exits = $derived(exitRows(draft['delivery.country.exits']));
+  const setExit = (country: string, slot: number, code: string) =>
+    (draft = { ...draft, 'delivery.country.exits': withSlot(exits, country, slot, code) });
 
   const save = createMutation(() => ({
     mutationFn: async () => {
@@ -704,6 +719,44 @@
               tunnel) never sets a guess. Node, origin and edge addresses are known already; add
               ranges traffic leaves from otherwise (NAT, a separate egress).
             </p>
+          </div>
+          <div class="space-y-2">
+            <p class="font-medium">Exit location for each country</p>
+            <p class="text-xs text-muted-foreground">
+              A new key of a member on Automatic who chose one of these countries themselves goes to
+              the first of its locations that can take it, with ordering by country on. Never for a
+              guessed country, and keys already issued never move by themselves: the member's
+              account page offers them a one-time move instead. The location a key is on then hints
+              at the country its member chose, as a location they picked would.
+            </p>
+            {#if (censored.data?.countries ?? []).length === 0}
+              <p class="text-xs text-muted-foreground">
+                No country is on the censored-country list.
+              </p>
+            {:else}
+              <div class="space-y-2">
+                {#each censored.data?.countries ?? [] as c (c.code)}
+                  {@const slots = slotsOf(exits, c.code)}
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="w-32 text-xs">{countryName(c.code, 'en')}</span>
+                    {#each Array.from({ length: EXIT_SLOTS }, (_, i) => i) as i (i)}
+                      <select
+                        aria-label={`${countryName(c.code, 'en')}: location ${i + 1}`}
+                        class="border-input bg-background h-9 rounded-md border px-2 text-xs"
+                        value={slots[i]}
+                        disabled={i > 0 && !slots[i - 1]}
+                        onchange={(e) => setExit(c.code, i, e.currentTarget.value)}
+                      >
+                        <option value="">{i === 0 ? 'Least loaded' : 'None'}</option>
+                        {#each cfg.data?.locations ?? [] as l (l.code)}
+                          <option value={l.code}>{l.label}</option>
+                        {/each}
+                      </select>
+                    {/each}
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
         </CardContent>
       </Card>

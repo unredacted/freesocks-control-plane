@@ -174,6 +174,9 @@ export const resolveIssueTarget = internalQuery({
     backend: backendIdValidator,
     modeId: v.union(v.string(), v.null()),
     location: v.optional(v.union(v.string(), v.null())),
+    // The exit locations of a member's own country choice on Automatic
+    // (lib/countryExits.ts), tried in order when `location` is unset.
+    exitLocations: v.optional(v.array(v.string())),
     onlyServerId: v.optional(v.union(v.id('backendServers'), v.null())),
     // "Anything but this one" — the member's switch-server action, so the pick
     // has to actually move the key off the placement it is on.
@@ -182,9 +185,13 @@ export const resolveIssueTarget = internalQuery({
     // pick needs randomness, but a query must stay deterministic for OCC.
     rand: v.optional(v.number()),
   },
-  handler: (ctx, { backend, modeId, location, onlyServerId, excludePlacement, rand }) =>
+  handler: (
+    ctx,
+    { backend, modeId, location, exitLocations, onlyServerId, excludePlacement, rand },
+  ) =>
     resolverFor(backend).resolveTarget(ctx.db, modeId, {
       location: location ?? null,
+      ...(exitLocations?.length ? { exitLocations } : {}),
       onlyServerId: (onlyServerId as string | null | undefined) ?? null,
       excludePlacement: excludePlacement ?? null,
       rand: typeof rand === 'number' ? () => rand : undefined,

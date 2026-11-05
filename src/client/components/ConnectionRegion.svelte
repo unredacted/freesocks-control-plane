@@ -12,13 +12,20 @@
    * Country names come from the browser (`Intl.DisplayNames`), in the page's
    * language, so there is nothing per country to translate.
    *
+   * On Automatic, when the member's own country choice has an exit location
+   * and their key is elsewhere (`exit`, sealed like the choice), one line
+   * offers to move the key there once (POST account/move-to-exit): the link
+   * stays the same and the member stays on Automatic. docs/edges.md "Exit
+   * location by country".
+   *
    * Props: disabled?: boolean
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { connectionRegionQuery, queryKeys, setConnectionRegion } from '../lib/queries';
   import { countryName } from '../lib/countries';
-  import { ApiCallError } from '../lib/api';
+  import { ApiCallError, apiClient } from '../lib/api';
+  import { SwitchServerResponse } from '@shared/contracts/account';
   import { sealingEnabled } from '../lib/hpke';
   import { getLocale, t } from '../lib/i18n/index.svelte';
   import { Button } from './ui/button';
@@ -40,6 +47,26 @@
   const shown = $derived(!!view && view.applies && view.options.length > 0);
   // The select is open by default unless a guess is being shown with its "Change".
   const showSelect = $derived(changing || view?.source !== 'guess');
+
+  let confirming = $state(false);
+  let moving = $state(false);
+  async function moveToExit() {
+    moving = true;
+    try {
+      await apiClient.post('/api/v1/account/move-to-exit', { confirm: true }, SwitchServerResponse);
+      confirming = false;
+      // The key now lives elsewhere: what the page shows of it changes too.
+      void qc.invalidateQueries({ queryKey: queryKeys.connectionRegion });
+      void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
+      void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
+      toast.success(t('region.exitMoved'));
+    } catch {
+      toast.error(t('region.exitFailed'));
+    } finally {
+      moving = false;
+    }
+  }
 
   async function choose(value: string) {
     saving = true;
@@ -83,6 +110,36 @@
           ? t('region.chosenElsewhere')
           : t('region.chosen', { country: name(view.choice) })}
       </p>
+    {/if}
+    {#if view.exit && view.choice && view.choice !== ELSEWHERE}
+      <div class="mt-2 text-sm">
+        <p>{t('region.exitFaster', { country: name(view.choice), location: view.exit.label })}</p>
+        {#if confirming}
+          <p class="text-muted-foreground mt-1">{t('region.exitConfirm')}</p>
+          <div class="mt-2 flex gap-2">
+            <Button size="sm" disabled={disabled || moving} onclick={() => void moveToExit()}>
+              {t('region.exitMoveNow')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={moving}
+              onclick={() => (confirming = false)}
+            >
+              {t('common.cancel')}
+            </Button>
+          </div>
+        {:else}
+          <Button
+            variant="link"
+            class="h-auto p-0 align-baseline"
+            disabled={disabled || moving}
+            onclick={() => (confirming = true)}
+          >
+            {t('region.exitMove')}
+          </Button>
+        {/if}
+      </div>
     {/if}
     <p id="connection-region-help" class="text-muted-foreground mt-1 text-sm">
       {t('region.help')}

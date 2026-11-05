@@ -340,6 +340,10 @@ async function placementWeights(
  *  - `location`: keep backends whose `location` code matches (the member's picked
  *    location). No active backend matches / none of its mode groups are in the pool →
  *    the filter is dropped (issue anywhere) rather than blocking issuance.
+ *  - `exitLocations` (only without `location`): the exit locations of a member's
+ *    own country choice on Automatic (lib/countryExits.ts), tried in order the
+ *    same way; the first code with an eligible backend and a pool mode group
+ *    there wins, and none of them leaves today's choice over every backend.
  *  - capacity/health: at-capacity backends (maxKeys) are dropped the same way
  *    `pickCandidatesForIssue` drops them; if that empties the pool the filter
  *    is dropped (a degraded pool still issues — same posture as pickByNodeLoad).
@@ -362,6 +366,7 @@ export async function resolvePlacementTarget(
   modeId: string | null | undefined,
   opts: {
     location?: string | null;
+    exitLocations?: readonly string[];
     onlyServerId?: string | null;
     excludePlacement?: string | null;
     // Injected PRNG for the anti-herding pick (queries must stay deterministic —
@@ -431,26 +436,26 @@ export async function resolvePlacementTarget(
   let eligible = servers.filter((s) => s.maxKeys == null || s.keyCount < s.maxKeys);
   if (eligible.length === 0) eligible = servers; // fail-soft: degraded > blocked
 
-  // Soft location narrowing: prefer the member's picked location, drop the
-  // filter whenever honoring it would block issuance.
-  let allowed = eligible;
-  if (opts.location) {
-    const atLocation = eligible.filter((s) => s.location === opts.location);
-    if (atLocation.length > 0) allowed = atLocation;
-  }
-  const allowedIds = new Set(allowed.map((s) => s._id as string));
-  let constrained = pool.filter((p) => {
-    const attributed = statsByPlacement.get(p);
-    return attributed != null && allowedIds.has(attributed.serverId);
-  });
-  if (constrained.length === 0 && allowed !== eligible) {
-    // The picked location has no bound mode groups — fall back to any eligible backend.
-    const eligibleIds = new Set(eligible.map((s) => s._id as string));
-    constrained = pool.filter((p) => {
+  // Soft location narrowing: prefer the member's picked location (else the exit
+  // locations of their country choice, in order), drop the filter whenever
+  // honoring it would block issuance.
+  const attributedTo = (servers: typeof eligible) => {
+    const ids = new Set(servers.map((s) => s._id as string));
+    return pool.filter((p) => {
       const attributed = statsByPlacement.get(p);
-      return attributed != null && eligibleIds.has(attributed.serverId);
+      return attributed != null && ids.has(attributed.serverId);
     });
+  };
+  const narrowTo = opts.location ? [opts.location] : (opts.exitLocations ?? []);
+  let constrained: string[] = [];
+  for (const code of narrowTo) {
+    const atLocation = eligible.filter((s) => s.location === code);
+    if (atLocation.length === 0) continue;
+    constrained = attributedTo(atLocation);
+    if (constrained.length > 0) break;
   }
+  // No location asked for, or none of them has bound mode groups: any eligible backend.
+  if (constrained.length === 0) constrained = attributedTo(eligible);
   if (constrained.length === 0) {
     // No mode group is attributable yet (the stats cron hasn't observed a node behind
     // any pool mode group — bring-up or a freshly-added backend). On a MULTI-backend

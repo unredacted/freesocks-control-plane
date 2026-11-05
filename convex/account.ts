@@ -172,14 +172,21 @@ async function tombstoneOldSub(
  * preferred location; null-everything for other backends. `serverId` pins
  * issueUser to the mode group's backend — without it the instance pick could land on a
  * different backend than the mode group (a dead key on any multi-backend deploy).
+ * `userId`: with no location pick, the exit locations of the member's own
+ * country choice (countryExits.forIssue) narrow it softly, in order.
  */
 async function resolveIssueTarget(
   ctx: ActionCtx,
   backend: Backend,
   modeId: string | null,
   location: string | null,
+  userId?: Id<'users'>,
 ): Promise<{ placement: string | null; serverId: Id<'backendServers'> | null }> {
   if (!capabilitiesOf(backend).placement) return { placement: null, serverId: null };
+  const exitLocations =
+    !location && userId
+      ? await ctx.runQuery(internal.countryExits.forIssue, { userId, backend, modeId })
+      : [];
   // Mint the anti-herding randomness HERE (actions may use the CSPRNG; queries
   // must stay deterministic) and thread it through the resolution.
   const randBuf = new Uint32Array(1);
@@ -188,6 +195,7 @@ async function resolveIssueTarget(
     backend,
     modeId,
     location,
+    ...(exitLocations.length > 0 ? { exitLocations } : {}),
     rand: randBuf[0]! / 2 ** 32,
   });
   // Multi-backend + zero attributable mode groups: an unpinned issue would mint a
@@ -754,6 +762,7 @@ export const regenerate = internalAction({
       tier.backend,
       user.connectionModeId ?? null,
       effectiveLocation,
+      userId,
     );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
@@ -892,6 +901,7 @@ export const switchBackend = internalAction({
       peerTier.backend,
       user.connectionModeId ?? null,
       user.preferredLocation ?? null,
+      userId,
     );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
@@ -1085,6 +1095,7 @@ export const switchMode = internalAction({
         tier.backend,
         target,
         user.preferredLocation ?? null,
+        userId,
       );
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
       const issued = await issueNewSubscription(ctx, {
@@ -1413,10 +1424,19 @@ export const switchServer = internalAction({
       if (!canPlace) return { placement: null, serverId: null, unattributedMultiPanel: false };
       const rand = new Uint32Array(1);
       crypto.getRandomValues(rand);
+      // A member on Automatic who chose a country: its exit locations first.
+      const exitLocations = user.preferredLocation
+        ? []
+        : await ctx.runQuery(internal.countryExits.forIssue, {
+            userId,
+            backend: tier.backend,
+            modeId,
+          });
       return ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
         backend: tier.backend,
         modeId,
         location: user.preferredLocation ?? null,
+        ...(exitLocations.length > 0 ? { exitLocations } : {}),
         excludePlacement: oldSub.backendPlacement ?? null,
         rand: rand[0]! / 2 ** 32,
       });
@@ -1649,6 +1669,110 @@ export const switchServer = internalAction({
       code: 'server.no_alternative',
       message: 'There is no other server available right now. Please try again later.',
       status: 409,
+    };
+  },
+});
+
+/**
+ * The account page's one-time move (docs/edges.md "Exit location by country"):
+ * a member on Automatic whose own country choice has an exit location, while
+ * their key is somewhere else (`countryExits.memberExit`), has the key
+ * re-issued there ONCE. The location is not saved as their pick, so they stay
+ * on Automatic; like a server switch, their link, their country and their
+ * mirrors carry over. Refused, minting nothing, when nothing is offered or the
+ * offered location cannot take the key now.
+ */
+export const moveToCountryExit = internalAction({
+  args: { userId: v.id('users'), requestId: v.optional(v.string()) },
+  handler: async (ctx, { userId, requestId }): Promise<SwitchServerResult> => {
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
+    if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
+    const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
+    if (!tier) return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
+    const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    const nothing: SwitchServerResult = {
+      ok: false,
+      code: 'exit.none',
+      message: 'There is no better location for this key right now.',
+      status: 409,
+    };
+    if (!oldSub || oldSub.backend !== tier.backend || !capabilitiesOf(tier.backend).placement)
+      return nothing;
+    const offer = await ctx.runQuery(internal.countryExits.memberExit, { userId });
+    if (!offer) return nothing;
+    const modeId = user.connectionModeId ?? null;
+    if (await isEffectiveModeBlocked(ctx, tier.backend, modeId)) {
+      return {
+        ok: false,
+        code: 'mode.unavailable',
+        message: MODE_UNAVAILABLE_MESSAGE,
+        status: 400,
+      };
+    }
+    const rand = new Uint32Array(1);
+    crypto.getRandomValues(rand);
+    const target = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+      backend: tier.backend,
+      modeId,
+      location: offer.code,
+      rand: rand[0]! / 2 ** 32,
+    });
+    if (target.unattributedMultiPanel) {
+      return {
+        ok: false,
+        code: 'backend.placement_unresolved',
+        message: 'Node placement is still resolving. Please try again in a few minutes.',
+        status: 503,
+      };
+    }
+    // The narrowing is soft: a key the offered location cannot take now stays put.
+    const server = target.serverId
+      ? await ctx.runQuery(internal.backendServers.getById, {
+          id: target.serverId as Id<'backendServers'>,
+        })
+      : null;
+    if (!target.placement || server?.location !== offer.code) return nothing;
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+    const issued = await issueNewSubscription(ctx, {
+      userId,
+      backend: tier.backend,
+      spec: {
+        username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
+        trafficLimitBytes: await carriedTrafficLimit(
+          ctx,
+          oldSub,
+          resolveTrafficLimitBytes(tier, bonusGb),
+        ),
+        trafficLimitStrategy: tier.trafficStrategy,
+        expireAt: computeExpireAtIso(user.membershipExpiresAt),
+        hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
+        tag: tier.slug,
+        placement: target.placement,
+      },
+      pinServerId: target.serverId as Id<'backendServers'>,
+      excludeNode: oldSub.pinnedNode ?? undefined,
+      // A move, not a rotation: the member keeps their saved link.
+      carrySubTokenFromId: oldSub._id,
+    });
+    const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
+    if (tier.isDefaultFree) {
+      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+    }
+    // Neither the country nor the location: the key's own server says where it went.
+    await ctx.runMutation(internal.audit.record, {
+      actorType: 'member',
+      actorId: userId,
+      action: 'subscription.move_location',
+      targetType: 'subscription',
+      targetId: issued.subscriptionId,
+      requestId,
+    });
+    return {
+      ok: true,
+      ...(await memberFacing(ctx, issued.subscriptionId, issued)),
+      inPlace: false,
+      oldSubscriptionDeletedAt: tomb ? new Date(tomb.deletedAt).toISOString() : null,
     };
   },
 });

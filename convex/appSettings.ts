@@ -65,6 +65,11 @@ export const SETTINGS_DEFAULTS = {
   // guess may then be any real country, and another one replaces it only after
   // a day (lib/memberCountry.ts `wideGuesses`). Off: no bands, listed guesses only.
   'delivery.country.latency': false,
+  // Exit location by country (lib/countryExits.ts, docs/edges.md): per listed
+  // country, up to three location codes of the member catalog, in order. A new
+  // freedom-family key of a member on Automatic whose OWN country choice has an
+  // entry narrows softly to them (steering on); never a guess, never a move.
+  'delivery.country.exits': [] as Array<{ country: string; locations: string[] }>,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA
