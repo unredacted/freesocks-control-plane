@@ -16,6 +16,8 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { adoptL4Edge, insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
 import { enrolledOriginOf } from './nodeIntents';
+import { verificationCurrent, verificationStaleReason } from './lib/edges/verification';
+import { verificationListenerOf } from './lib/edges/verificationContext';
 import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
 import { jsonRes, routeFetch, type Captured } from './lib/edges/testing/mockFetch';
 import { gateOfNode } from './lib/edges/testing/reads';
@@ -78,8 +80,20 @@ const setupInput = {
   adopt: false,
 };
 
-/** A backend set up for a direct and a WebSocket mode, with nothing enrolled yet. */
-async function seed() {
+/** An L4-fronted REALITY mode (a relay's), for `seed({ relay: true })`. */
+const relayMode = {
+  slug: 'freedom-reality',
+  name: 'Freedom-Reality',
+  shape: { transport: 'reality' as const, fronting: 'edge-l4' as const },
+  familySlug: 'fam-relay',
+  acceptProxyProtocol: false,
+};
+
+/**
+ * A backend set up for a direct and a WebSocket mode (and, asked, a relay's
+ * L4-fronted one), with nothing enrolled yet.
+ */
+async function seed(opts: { relay?: boolean } = {}) {
   const t = convexTest(schema, modules);
   current = t;
   const serverId = await insertPanelServer(t);
@@ -97,6 +111,18 @@ async function seed() {
     slug: 'fam-direct',
     lines: ['decoy-a.example'],
   });
+  if (opts.relay) {
+    await t.mutation(internal.sniFamilies.create, {
+      slug: 'fam-relay',
+      label: 'fam-relay',
+      targetAddress: 'decoy-b.example',
+      targetPort: 443,
+    });
+    await t.mutation(internal.sniFamilies.importNames, {
+      slug: 'fam-relay',
+      lines: ['decoy-b.example'],
+    });
+  }
   for (const n of (await t.query(internal.sniFamilies.dueForQualification, {})).names)
     await t.mutation(internal.sniFamilies.recordQualification, {
       id: n.id,
@@ -106,7 +132,7 @@ async function seed() {
     });
   const started = await t.mutation(internal.backendSetup.start, {
     backendServerId: serverId,
-    input: setupInput,
+    input: opts.relay ? { ...setupInput, modes: [...setupInput.modes, relayMode] } : setupInput,
   });
   const setup = await until(
     () => t.run((ctx) => ctx.db.get(started.setupId)),
@@ -117,8 +143,8 @@ async function seed() {
   const priv = panel.profiles[0].config.inbounds[0].streamSettings.realitySettings.privateKey;
   const { realityPublicKey } = await import('./lib/backend/digest');
   panel.profiles[0].publicKeyByTag[TAG] = realityPublicKey(priv);
-  const [reality, ws] = panel.profiles[0].inbounds as { uuid: string; tag: string }[];
-  return { t, serverId, panel, reality: reality!, ws: ws! };
+  const [reality, ws, relay] = panel.profiles[0].inbounds as { uuid: string; tag: string }[];
+  return { t, serverId, panel, reality: reality!, ws: ws!, relay };
 }
 type Seeded = Awaited<ReturnType<typeof seed>>;
 
@@ -1061,35 +1087,51 @@ describe('a node Edges already protect', () => {
       (i) => i.id === `retest_needed:${edgeId}`,
     );
 
-  test('is refused while a tested address of its origin would need a new test', async () => {
+  /** The node's adopted intent with its origin's listener, as the verification functions read it. */
+  async function adoptedEdge(s: Seeded, edgeId: Id<'edges'>, intentId: Id<'panelNodeIntents'>) {
+    return s.t.run(async (ctx) => {
+      const edge = (await ctx.db.get(edgeId))!;
+      const listener = await verificationListenerOf(ctx.db, (await ctx.db.get(edge.listenerId))!);
+      return { edge, listener, intent: (await ctx.db.get(intentId))! };
+    });
+  }
+
+  test('keeps the tested address members hold: its confirmation carries over to the node’s REALITY key', async () => {
     const s = await seed();
     const { nodeUuid, edgeId } = await protectedLegacy(s, { verified: true, publish: true });
-    // Its confirmation was taken with no REALITY authentication component (the
-    // node was not enrolled); enrolling it adds one, so the render gate would
-    // withhold the address from members until it is tested again.
-    await expect(
-      s.t.mutation(internal.nodeIntents.adoptNode, {
-        backendServerId: s.serverId,
-        nodeUuid,
-        mode: 'privacy-reality',
-      }),
-    ).rejects.toThrow(/servers\.adopt_edges_retest/);
-    expect(await s.t.run((ctx) => ctx.db.query('panelNodeIntents').collect())).toEqual([]);
-    expect(await retestItems(s.t, edgeId)).toEqual([]);
-  });
-
-  test('goes ahead when no address of its origin holds a confirmation adoption would undo', async () => {
-    const s = await seed();
-    const { nodeUuid } = await protectedLegacy(s, { verified: false, publish: false });
+    const before = (await s.t.run((ctx) => ctx.db.get(edgeId)))!.verification!;
+    expect(before.authRevision).toBeUndefined();
     const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
       backendServerId: s.serverId,
       nodeUuid,
       mode: 'privacy-reality',
     });
-    expect(r.addresses).toBe(1);
+    expect(r).toMatchObject({ addresses: 1, carried: 1 });
+    const { edge, listener, intent } = await adoptedEdge(s, edgeId, r.intentId);
+    // Enrolled now: the binding carries its auth revision, and the record is current under it.
+    expect(intent.authRevision).toBeTruthy();
+    expect(listener.authRevision).toBe(intent.authRevision);
+    expect(verificationCurrent(edge, listener)).toBe(true);
+    // Who confirmed it, how and when are the original test's.
+    expect(edge.verification).toMatchObject({
+      rung: 'verified',
+      by: before.by,
+      at: before.at,
+      method: before.method,
+      endpoint: before.endpoint,
+      listenerRevision: before.listenerRevision,
+      authRevision: intent.authRevision,
+    });
+    expect(edge.verification!.configHash).not.toBe(before.configHash);
+    expect(await retestItems(s.t, edgeId)).toEqual([]);
+    // From now on the key is bound, as for any enrolled node: a key change asks for the test again.
+    await s.t.run((ctx) => ctx.db.patch(r.intentId, { authRevision: 'another-key' }));
+    const moved = await adoptedEdge(s, edgeId, r.intentId);
+    expect(verificationCurrent(moved.edge, moved.listener)).toBe(false);
+    expect(verificationStaleReason(moved.edge, moved.listener)).toBe('reality_key_changed');
   });
 
-  test('goes ahead when the only tested address is a spare members are not handed', async () => {
+  test('a tested spare members are not handed carries over too', async () => {
     const s = await seed();
     const { nodeUuid, edgeId } = await protectedLegacy(s, { verified: true, publish: false });
     const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
@@ -1097,9 +1139,98 @@ describe('a node Edges already protect', () => {
       nodeUuid,
       mode: 'privacy-reality',
     });
+    expect(r).toMatchObject({ addresses: 1, carried: 1 });
+    const { edge, listener } = await adoptedEdge(s, edgeId, r.intentId);
+    expect(verificationCurrent(edge, listener)).toBe(true);
+    expect(await retestItems(s.t, edgeId)).toEqual([]);
+  });
+
+  test('an address nobody tested stays untested', async () => {
+    const s = await seed();
+    const { nodeUuid, edgeId } = await protectedLegacy(s, { verified: false, publish: false });
+    const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    expect(r).toMatchObject({ addresses: 1, carried: 0 });
+    const { edge, listener } = await adoptedEdge(s, edgeId, r.intentId);
+    expect(edge.verification?.rung ?? null).not.toBe('verified');
+    expect(verificationCurrent(edge, listener)).toBe(false);
+  });
+
+  test('an L4-fronted node keeps the address its edges dial, never the private one its row holds', async () => {
+    const s = await seed({ relay: true });
+    const nodeUuid = UUID(480);
+    // As prod's relay: the row holds a private management address, no Host
+    // dials the node, and the operator gave Edges its public address.
+    s.panel.nodes.push({
+      uuid: nodeUuid,
+      name: 'legacy-r',
+      address: '10.20.30.40',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: s.panel.profiles[0].uuid,
+        activeInbounds: [s.relay!],
+      },
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const { relayId, listenerId } = await registerRelay(s.t, {
+      nodeName: 'legacy-r',
+      originAddress: '203.0.113.10',
+    });
+    const { edgeId } = await adoptL4Edge(s.t, relayId, listenerId, {
+      verified: true,
+      publish: true,
+    });
+    const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'freedom-reality',
+    });
+    expect(r).toMatchObject({ addresses: 0, carried: 1 });
+    const origin = await s.t.run((ctx) => enrolledOriginOf(ctx, s.serverId, 'legacy-r'));
+    expect(origin).toMatchObject({ originAddress: '203.0.113.10', mode: 'freedom-reality' });
+    // The management address is still known as the node (a Host dialing it is a direct one).
+    expect(origin!.directAddresses).toContain('10.20.30.40');
+    const relay = (await s.t.run((ctx) => ctx.db.get(relayId)))!;
+    expect(relay.originAddress).toBe('203.0.113.10');
+    const { edge, listener } = await adoptedEdge(s, edgeId, r.intentId);
+    expect(verificationCurrent(edge, listener)).toBe(true);
+  });
+
+  test('is refused while a change made on the backend outside FCP is flagged, until it is seen', async () => {
+    const s = await seed();
+    const { nodeUuid } = await legacyDirect(s);
+    const profileUuid = s.panel.profiles[0].uuid;
+    await s.t.run(async (ctx) => {
+      const row = (await ctx.db.query('panelProfiles').collect()).find(
+        (p) => p.profileUuid === profileUuid,
+      )!;
+      await ctx.db.patch(row._id, { foreignEditAt: Date.now() });
+    });
+    // Its first reconcile would close it as drift.
+    await expect(
+      s.t.mutation(internal.nodeIntents.adoptNode, {
+        backendServerId: s.serverId,
+        nodeUuid,
+        mode: 'privacy-reality',
+      }),
+    ).rejects.toThrow(/servers\.foreign_profile_edit/);
+    expect(await s.t.run((ctx) => ctx.db.query('panelNodeIntents').collect())).toEqual([]);
+    await s.t.mutation(internal.backendObserve.acknowledgeForeignEdit, {
+      backendServerId: s.serverId,
+      profileUuid,
+    });
+    const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
     expect(r.addresses).toBe(1);
-    // The spare needs its test again before a rotation uses it; nobody held it.
-    expect((await retestItems(s.t, edgeId)).map((i) => i.code)).toEqual(['reality_key_changed']);
   });
 });
 
