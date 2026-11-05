@@ -4,6 +4,7 @@
  * source silently reads "not known": this makes the failure itself visible
  * (Probes page, attention `probe_source_failing`).
  */
+import type { GlobalpingAccountView } from '../probes/globalpingAccount';
 
 /**
  * A short class for why a run could not measure. Stored on the run, so it
@@ -53,9 +54,17 @@ export interface SourceRun {
  * the only trace of it.
  */
 export interface GlobalpingCap {
-  /** Probes asked of Globalping in the last hour (`probeRuns.tests`). */
+  /** Probes the probe rounds asked of Globalping in the last hour (`probeRuns.tests`). */
   used: number;
+  /** `probe.globalpingTestsPerHour`: every Globalping test FCP asks in an hour. */
   perHour: number;
+  /**
+   * The name checks' share of `perHour` (probes.ts `globalpingNamesShare`): the
+   * probe rounds may use `perHour - reserved`. 0 when no name check is on.
+   */
+  reserved: number;
+  /** Globalping's own answer about the allowance, as last read (absent before any). */
+  account?: GlobalpingAccountView;
   /** What one run of an edge asks: every checked country's vantages, plus the controls. */
   perRun: number;
   /** Cron rounds requested in the last hour (each asks every enabled source). */

@@ -45,6 +45,9 @@
         <span class="min-w-0 flex-1">
           <Badge variant={words.tone}>{words.label}</Badge>
           <span class="text-muted-foreground mt-1 block text-xs">{words.detail}</span>
+          {#if words.account}
+            <span class="text-muted-foreground mt-1 block text-xs">{words.account}</span>
+          {/if}
         </span>
       </li>
     {/each}

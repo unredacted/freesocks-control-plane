@@ -36,6 +36,132 @@ export function globalpingTestsOf(req: { locations: ReadonlyArray<{ limit: numbe
 }
 
 /**
+ * What Globalping itself says about the allowance FCP's token (or, without
+ * one, FCP's address) has: the free tests of the current hour window and the
+ * credits left. Read from its `GET /v1/limits` answer or from a create's
+ * response headers. FCP's own cap (`probe.globalpingTestsPerHour`) is a
+ * separate number; the Probes page shows both so they can be told apart.
+ */
+export interface GlobalpingReading {
+  /** `user` with a token, `ip` without one (limits answers only). */
+  type?: 'user' | 'ip';
+  /** Free tests in the window, spent or not. */
+  limit: number;
+  /** Free tests left in the window. */
+  remaining: number;
+  /**
+   * Seconds until the window resets. The window opens with the first test
+   * spent, so 0 with nothing spent means no window is open.
+   */
+  resetSec: number;
+  /** Credits left (with a token). Globalping calls the header's figure approximate. */
+  credits?: number;
+  /** Credits this one request spent: tests past the free allowance (create headers only). */
+  creditsConsumed?: number;
+}
+
+/** A finite, non-negative whole number, else undefined. */
+function count(x: unknown): number | undefined {
+  if (x === null || x === undefined || x === '') return undefined;
+  const n = Number(x);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
+
+/** A `GET /v1/limits` answer as a reading; null for any other shape. */
+export function readingFromLimits(data: unknown): GlobalpingReading | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as {
+    rateLimit?: { measurements?: { create?: Record<string, unknown> } };
+    credits?: { remaining?: unknown };
+  };
+  const c = d.rateLimit?.measurements?.create;
+  const limit = count(c?.limit);
+  const remaining = count(c?.remaining);
+  if (limit === undefined || remaining === undefined) return null;
+  const credits = count(d.credits?.remaining);
+  return {
+    ...(c?.type === 'user' || c?.type === 'ip' ? { type: c.type } : {}),
+    limit,
+    remaining,
+    resetSec: count(c?.reset) ?? 0,
+    ...(credits !== undefined ? { credits } : {}),
+  };
+}
+
+/** The headers of a create (`X-RateLimit-*`, `X-Credits-*`) as a reading; null without them. */
+export function readingFromHeaders(
+  headers: { get(name: string): string | null } | null | undefined,
+): GlobalpingReading | null {
+  if (!headers || typeof headers.get !== 'function') return null;
+  const limit = count(headers.get('x-ratelimit-limit'));
+  const remaining = count(headers.get('x-ratelimit-remaining'));
+  if (limit === undefined || remaining === undefined) return null;
+  const credits = count(headers.get('x-credits-remaining'));
+  const consumed = count(headers.get('x-credits-consumed'));
+  return {
+    limit,
+    remaining,
+    resetSec: count(headers.get('x-ratelimit-reset')) ?? 0,
+    ...(credits !== undefined ? { credits } : {}),
+    ...(consumed !== undefined && consumed > 0 ? { creditsConsumed: consumed } : {}),
+  };
+}
+
+/** Globalping's own answer about the allowance; null when it cannot be read. */
+export async function globalpingLimits(client: GlobalpingLike): Promise<GlobalpingReading | null> {
+  if (!client.getLimits) return null;
+  try {
+    const res = await client.getLimits();
+    return res.ok ? readingFromLimits(res.data) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One reading and when it was taken. */
+export interface TimedReading {
+  at: number;
+  reading: GlobalpingReading;
+}
+
+/**
+ * The same client, also handing every answer about the allowance to `sink`:
+ * each limits read and each create's headers (refused creates too). The
+ * action saves what it collected once it is done (`probes.noteGlobalping`).
+ */
+export function recordingClient(
+  client: GlobalpingLike,
+  sink: TimedReading[],
+  now: () => number = Date.now,
+): GlobalpingLike {
+  const getLimits = client.getLimits?.bind(client);
+  return {
+    createMeasurement: async (req) => {
+      const res = await client.createMeasurement(req);
+      const reading = readingFromHeaders(res.response?.headers);
+      if (reading) sink.push({ at: now(), reading });
+      return res;
+    },
+    getMeasurement: (id) => client.getMeasurement(id),
+    ...(getLimits
+      ? {
+          getLimits: async () => {
+            const res = await getLimits();
+            const reading = res.ok ? readingFromLimits(res.data) : null;
+            if (reading) sink.push({ at: now(), reading });
+            return res;
+          },
+        }
+      : {}),
+  };
+}
+
+/** Whether `tests` fit a reading: the free tests left in the window plus any credits. */
+export function readingFits(r: GlobalpingReading, tests: number): boolean {
+  return r.remaining + (r.credits ?? 0) >= tests;
+}
+
+/**
  * Whether the measurement fits what Globalping still allows: the rate-limit
  * points left in the window plus any credits. `null` when it cannot be told
  * (no limits call, an error, an unexpected shape): the create itself decides.
@@ -44,21 +170,8 @@ export async function globalpingFits(
   client: GlobalpingLike,
   tests: number,
 ): Promise<boolean | null> {
-  if (!client.getLimits) return null;
-  try {
-    const res = await client.getLimits();
-    if (!res.ok || !res.data) return null;
-    const d = res.data as {
-      rateLimit?: { measurements?: { create?: { remaining?: unknown } } };
-      credits?: { remaining?: unknown };
-    };
-    const remaining = Number(d.rateLimit?.measurements?.create?.remaining);
-    if (!Number.isFinite(remaining)) return null;
-    const credits = Number(d.credits?.remaining ?? 0);
-    return remaining + (Number.isFinite(credits) ? credits : 0) >= tests;
-  } catch {
-    return null;
-  }
+  const r = await globalpingLimits(client);
+  return r ? readingFits(r, tests) : null;
 }
 
 /** Which Globalping measurement type a probe protocol maps to. */

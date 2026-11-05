@@ -20,8 +20,11 @@ import {
   globalpingRequest,
   globalpingStart,
   globalpingTestsOf,
+  recordingClient,
   type GlobalpingLike,
+  type TimedReading,
 } from './lib/edges/probes/globalping';
+import { saveGlobalpingReadings } from './lib/edges/probes/globalpingNote';
 import { checkhostNodes, checkhostPoll, checkhostStart } from './lib/edges/probes/checkhost';
 import { ripeAtlasPoll, ripeAtlasStart, type AtlasStarted } from './lib/edges/probes/ripeatlas';
 import { internalProbe, type InternalProbeDeps } from './lib/edges/probes/internal';
@@ -127,33 +130,40 @@ export const execute = internalAction({
           return null;
         }
         case 'globalping': {
-          const client = globalpingFactory(secrets.globalpingToken);
-          const kind = globalpingKind(target);
-          // Never start what Globalping would refuse half-way: a run that does
-          // not fit its limit is no evidence, not a failing country.
-          if (
-            (await globalpingFits(client, globalpingTestsOf(globalpingRequest(target, opts)))) ===
-            false
-          ) {
-            await fail(ctx, runId, 'globalping_limit');
-            return null;
-          }
-          const started = await globalpingStart(client, target, opts);
-          await ctx.runMutation(internal.probes.markRunning, {
-            runId,
-            externalId: started.externalId,
-          });
-          const deadline = Date.now() + 60_000;
-          while (Date.now() < deadline) {
-            await sleep(3000);
-            const p = await globalpingPoll(client, started.externalId, { kind, redact });
-            if (p.status === 'finished') {
-              await finish(ctx, runId, p.results);
+          // What Globalping says about the allowance is kept for the Probes page.
+          const readings: TimedReading[] = [];
+          const client = recordingClient(globalpingFactory(secrets.globalpingToken), readings);
+          try {
+            const kind = globalpingKind(target);
+            // Never start what Globalping would refuse half-way: a run that does
+            // not fit its limit is no evidence, not a failing country.
+            if (
+              (await globalpingFits(client, globalpingTestsOf(globalpingRequest(target, opts)))) ===
+              false
+            ) {
+              await fail(ctx, runId, 'globalping_limit');
               return null;
             }
+            const started = await globalpingStart(client, target, opts);
+            await saveGlobalpingReadings(ctx, readings);
+            await ctx.runMutation(internal.probes.markRunning, {
+              runId,
+              externalId: started.externalId,
+            });
+            const deadline = Date.now() + 60_000;
+            while (Date.now() < deadline) {
+              await sleep(3000);
+              const p = await globalpingPoll(client, started.externalId, { kind, redact });
+              if (p.status === 'finished') {
+                await finish(ctx, runId, p.results);
+                return null;
+              }
+            }
+            await fail(ctx, runId, 'globalping timeout', true);
+            return null;
+          } finally {
+            await saveGlobalpingReadings(ctx, readings);
           }
-          await fail(ctx, runId, 'globalping timeout', true);
-          return null;
         }
         case 'checkhost': {
           const nodes = await checkhostNodes(fetch);
