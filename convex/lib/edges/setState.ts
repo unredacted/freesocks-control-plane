@@ -23,6 +23,7 @@ import { accountsForSlot } from './rotation';
 import { frontsAllowed } from './providers/capabilities';
 import { placeProblemOf } from './l7Place';
 import { websocketNodeOf } from './websocketNode';
+import { onlyCodesOf } from './audience';
 import { allocatePoolIndex, freeSlotCount } from './pool';
 import {
   coverTargets,
@@ -151,6 +152,9 @@ export async function setPicksOf(
         provider: account.provider,
         locationKey: locationKeyOf(account.provider, location.placeKey),
         ...(pickWant(p.want) !== undefined ? { want: pickWant(p.want) } : {}),
+        ...(onlyCodesOf(location.forCountries)
+          ? { onlyCodes: onlyCodesOf(location.forCountries)! }
+          : {}),
       },
       location,
       account,
@@ -162,7 +166,7 @@ export async function setPicksOf(
 }
 
 export function publishedRefOf(
-  edge: Pick<Doc<'edges'>, 'locationId' | 'provider' | 'placeKey'>,
+  edge: Pick<Doc<'edges'>, 'locationId' | 'provider' | 'placeKey' | 'audience'>,
   listenerKey: string,
 ): PublishedRef {
   return {
@@ -171,6 +175,7 @@ export function publishedRefOf(
     provider: edge.provider ?? null,
     locationKey:
       edge.provider && edge.placeKey ? locationKeyOf(edge.provider, edge.placeKey) : null,
+    ...(edge.audience?.length ? { audience: edge.audience } : {}),
   };
 }
 

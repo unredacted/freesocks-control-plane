@@ -1607,7 +1607,17 @@ export default defineSchema({
     // meant for a country"): listed codes only. A member steered by one of them
     // is handed an address here first, among those not blocked there. Absent =
     // no country in particular. Rollback: `edgeLocations:clearCountriesForRollback`.
-    forCountries: v.optional(v.object({ codes: v.array(v.string()), updatedAt: v.number() })),
+    // `only` (docs/edges.md "Addresses only for some countries"): addresses made
+    // here after `since` are handed only to members in these countries
+    // (`edges.audience`); rollback: `edgeAudiences:retireAudiencesForRollback`
+    // then `edgeAudiences:clearAudiencesForRollback` (before the countries' own).
+    forCountries: v.optional(
+      v.object({
+        codes: v.array(v.string()),
+        updatedAt: v.number(),
+        only: v.optional(v.object({ since: v.number() })),
+      }),
+    ),
     // Where members are told an address here is (docs/edges.md "Names in
     // apps"): a place name and an ISO 3166-1 alpha-2 country an operator typed
     // for members (`🇧🇷 via Example Town`), never the provider's region name
@@ -2395,6 +2405,17 @@ export default defineSchema({
     // were switched on; absent = open, for good (every address published
     // before lanes, or while they were off, was handed to everyone).
     lane: v.optional(v.literal('trusted')),
+    // The countries this address may be handed to (lib/edges/audience.ts,
+    // docs/edges.md "Addresses only for some countries"): set at its FIRST
+    // publication from its location's countries, when that location is only
+    // for them and the address is clean (the lanes' taint rule); frozen from
+    // then on. Absent = everyone. Cleared for good when its location stops being
+    // only. Rollback: `edgeAudiences:retireAudiencesForRollback`.
+    audience: v.optional(v.array(v.string())),
+    // Set with `audience` (and cleared with it): what the `by_contained` index
+    // finds, so the rollback reaches every contained address however many
+    // edges the fleet holds.
+    contained: v.optional(v.literal(true)),
     // The first time this (trusted) address was judged blocked (convex/edgeTrust.ts
     // `noteBlocked`): claimed once, so repeated detector passes, a manual mark and
     // a country round strike its fresh holders once. `evidenceAt`: when the block's
@@ -2412,6 +2433,7 @@ export default defineSchema({
     .index('by_status', ['status', 'statusChangedAt'])
     .index('by_account_status', ['accountId', 'status'])
     .index('by_location_status', ['locationId', 'status'])
+    .index('by_contained', ['contained', 'status'])
     .index('by_name', ['name']),
 
   // A name for a load balancer address (lib/edges/addressNames.ts, docs/edges.md

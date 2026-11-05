@@ -73,6 +73,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // stampede-guarded, so this is hygiene against a hot polling loop.
   'account.node-status': { max: 20, windowMs: MINUTE, enabled: true },
   'account.connection-region': { max: 20, windowMs: MINUTE, enabled: true },
+  // A country chosen on the account page (another listed one than before): its
+  // addresses only for that country follow it, so a day's changes are bounded
+  // (docs/edges.md "Addresses only for some countries").
+  'account.country.day': { max: 3, windowMs: DAY, enabled: true },
   // Member account read (per user): each fetch does a LIVE backend getUser, so
   // open tabs × polling would otherwise scale backend QPS linearly. Generous —
   // the SPA polls ~1/min + on window focus.

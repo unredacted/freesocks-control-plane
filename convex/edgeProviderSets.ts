@@ -60,6 +60,7 @@ import { liveEdgesOfRelay } from './lib/edges/relayGuards';
 import { listenersOf } from './relayListeners';
 import { boundToRelay, startReprotect } from './edgeSetupRuns';
 import { EDGE_LIVE_STATUSES, publishedCount } from './lib/edges/pool';
+import { AUDIENCE_NEEDS_SPREAD } from './edgeAudiences';
 
 const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
 
@@ -327,6 +328,9 @@ export const change = internalMutation({
           code: 'edge.l4_not_for_websocket',
           message: L4_NOT_FOR_WEBSOCKET,
         });
+      // An only location's addresses need the rendezvous walk.
+      if (loc.forCountries?.only && relay.edgePick !== 'hrw1')
+        throw new ConvexError(AUDIENCE_NEEDS_SPREAD);
     }
     for (const id of remove)
       if (!before.some((p) => p.locationId === id))

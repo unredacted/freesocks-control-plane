@@ -139,6 +139,7 @@ import { setupRunLiveOn } from './lib/edges/relayGuards';
 import { spendOf } from './edgePlans';
 import { atCap } from './lib/edges/pricing';
 import { countGapsOf } from './edgePickWants';
+import { resolveMemberCountryConfig } from './memberCountry';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -1195,6 +1196,7 @@ export const attention = internalQuery({
   args: {},
   handler: async (ctx) => {
     const cfg = await resolveEdgeConfig(ctx.db);
+    const countrySteer = (await resolveMemberCountryConfig(ctx.db)).steer;
     const items: AttentionItem[] = [];
     const now = Date.now();
     const base = (relay: Relay) => ({
@@ -1900,6 +1902,38 @@ export const attention = internalQuery({
             since: null,
           });
         }
+      }
+      // Addresses only for some countries (docs/edges.md): a transport whose
+      // only addresses in use are contained leaves every other member without
+      // one (critical); with ordering by country off, contained ones serve
+      // nobody (info).
+      if (relay.enabled && setState.published.some((p) => p.audience?.length)) {
+        for (const l of setState.listeners) {
+          const mine = setState.published.filter((p) => p.listenerKey === l.listenerKey);
+          if (mine.length > 0 && mine.every((p) => p.audience?.length))
+            items.push({
+              ...base(relay),
+              id: `audience_only_left:${relay._id}:${l._id}`,
+              kind: 'audience_only_left',
+              severity: 'critical',
+              listenerKey: l.listenerKey,
+              code: null,
+              facts: { count: mine.length },
+              action: 'open_relay',
+              since: null,
+            });
+        }
+        if (!countrySteer)
+          items.push({
+            ...base(relay),
+            id: `audience_idle:${relay._id}`,
+            kind: 'audience_idle',
+            severity: 'info',
+            code: null,
+            facts: { count: setState.published.filter((p) => p.audience?.length).length },
+            action: 'open_relay',
+            since: null,
+          });
       }
       // The node's provider set: a pick that cools after a burn (no automatic
       // work goes there until it ends), and transports whose picks give no

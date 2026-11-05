@@ -4646,6 +4646,69 @@ location, walk order`, so the backup still leaves the primary's failure domain f
   `edgeLocations:clearCountriesForRollback`: it clears every location's countries and moves the
   affected origins' epochs, so members are ordered by evidence alone again.
 
+### Addresses only for some countries
+
+A location meant for some countries (§ Locations meant for a country) may be **only** for them
+(the location's "Only for these countries"; `edgeLocations.forCountries.only`, since when;
+`convex/edgeAudiences.ts`, pure rules in `convex/lib/edges/audience.ts`). An address made there
+from then on is CONTAINED: when it is first published it takes the location's countries as its
+**audience** (`edges.audience`, frozen from then on), and only a member whose steered country is
+in it is ever handed it.
+
+- **What it buys:** a censor's account sees only the pool of the country it claims or is
+  guessed in, so one country's accounts never learn another country's addresses, and members
+  with no country never draw them. It does not hide a country's pool from that country's
+  censor: lanes and suspicion keep working inside it, and a small pool is easy to see whole
+  (keep at least 4 addresses there where accounts try to collect them).
+- **Who is handed one** (`assignEndpoints`): a member whose `edgeCountry` is in the audience.
+  Anyone else is not, failing closed: no stored country, the opt-out, a privacy-family key, a
+  mirror without the member's choice, and every member while steering is off. It keeps its seat
+  (as a trusted address does for an open member), so nobody else moves. The detector's proof
+  (`steeringAvoids`) counts a way around only where a member there may be handed it.
+- **The taint rule** (`audienceAtPublish`, the address lanes' own): an address takes the
+  audience only when it was made after the switch, was never published, was made by FCP (a
+  resource of its own, none adopted) and was never handed out under another row. A
+  replacement for an address everyone is handed never gets an audience; one for a contained
+  address takes its own location's when that location is only for every country it served.
+- **An only location holds only contained addresses** from then on: every first publication
+  there checks it (`audienceForPublish`: a rotation's publish, upkeep's, the operator's, an
+  adoption), and an address that cannot take the audience is never put in use there
+  (`audience_standby`, `edge.audience_tainted`). Addresses in use when it was switched on stay
+  for everyone. Automatic selection uses an only location only for a contained replacement it
+  covers (ranked first) or for its own count (§ Addresses per location); spares there are no one
+  else's.
+- **Never the template.** A contained address is never a transport's template address (the
+  backend's Host, and every raw body, follow it): `refreshTemplateEdges` skips it, no Host flip
+  follows it, and it is never a transport's first address in use
+  (`edge.audience_first_address`).
+- **The requirement:** an only location carries no basic coverage or diversity, and contained
+  addresses count for neither (nor for the rehearsal's groups); its count (§ Addresses per
+  location) counts only addresses contained to exactly its current countries. Lanes size and
+  clean up only addresses everyone is handed; a contained address that may be trusted is
+  trusted. A name for addresses moves only between addresses with the same audience.
+- **Switching it on** (`POST providers/{id}/locations/{locationId}/only {only: true}`, with
+  `…/only/preview` first) needs steering on (`edge.audience_needs_steering`), the rendezvous
+  walk on every node picking the location (`edge.audience_needs_spread`) and, for every
+  transport it carries for such a node, another location carrying it for everyone
+  (`edge.audience_leaves_none`). From then on such a node keeps the rendezvous walk, and a
+  legacy node may not add the location. **Switching it off** makes every address there
+  everyone's for good (members of every country are handed them from their next refresh);
+  switching on again starts from new addresses. Audited `edge.location.only`. Its countries may
+  change while it is on (not to none): addresses made before keep the audience they were given.
+- **Attention:** `audience_only_left` (critical) when every address of a transport in use is
+  contained; `audience_idle` (info) when contained addresses are in use while steering is off.
+- **The member's choice** of a country is limited to 3 changes a day (`account.country.day`):
+  each one is handed that country's own addresses.
+- **Rollback** (before `edgeLocations:clearCountriesForRollback`, which refuses while a
+  location is only): `edgeAudiences:retireAudiencesForRollback` (refused while a run holds such
+  a node; every location stops being only; addresses in use drain for the burned drain and are
+  destroyed, spares at once; `{widen: true}` makes those in use everyone's instead), then
+  `edgeAudiences:clearAudiencesForRollback` once none is left. A contained address that drains
+  is not kept as a spare (`edge.audience_drain_final`).
+- **Not yet** (the next step): the detector's veto for evidence from outside the audience,
+  probing a contained address only from its countries, retiring addresses an edit of the
+  countries left out of date, and the rehearsal's prospective audiences.
+
 ### Latency over the whole path
 
 Every member's traffic leaves the service at the NODE, so the nearest address is not always the

@@ -175,8 +175,20 @@ export interface MoveFacts {
   eligibleZones: readonly string[];
   now: number;
   name: { state: AddressNameState; zoneLocationId: string; movedAt?: number } | null;
-  from: { listenerId: string; lane: 'open' | 'trusted' };
-  to: { listenerId: string; lane: 'open' | 'trusted'; layer: 'l4' | 'l7'; v4: string | null };
+  /** `audience`: the countries a contained address is handed to (absent = everyone). */
+  from: { listenerId: string; lane: 'open' | 'trusted'; audience?: readonly string[] };
+  to: {
+    listenerId: string;
+    lane: 'open' | 'trusted';
+    layer: 'l4' | 'l7';
+    v4: string | null;
+    audience?: readonly string[];
+  };
+}
+
+/** Two audiences hand an address to the same members (absent and empty are everyone). */
+function sameAudience(a: readonly string[] = [], b: readonly string[] = []): boolean {
+  return a.length === b.length && a.every((c) => b.includes(c));
 }
 
 export type MoveVerdict =
@@ -190,6 +202,7 @@ export type MoveVerdict =
         | 'no_address'
         | 'other_listener'
         | 'other_lane'
+        | 'other_audience'
         | 'zone_not_eligible'
         | 'moved_recently';
     };
@@ -209,6 +222,10 @@ export function mayMoveName(f: MoveFacts): MoveVerdict {
   if (!f.to.v4) return { move: false, reason: 'no_address' };
   if (f.to.listenerId !== f.from.listenerId) return { move: false, reason: 'other_listener' };
   if (f.to.lane !== f.from.lane) return { move: false, reason: 'other_lane' };
+  // Everyone holding the name would dial the new address: only where the same
+  // members may be handed it (docs/edges.md "Addresses only for some countries").
+  if (!sameAudience(f.from.audience, f.to.audience))
+    return { move: false, reason: 'other_audience' };
   if (!f.eligibleZones.includes(f.name.zoneLocationId))
     return { move: false, reason: 'zone_not_eligible' };
   if (f.name.movedAt !== undefined && f.now - f.name.movedAt < f.moveQuietDays * 86_400_000)

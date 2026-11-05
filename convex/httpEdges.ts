@@ -139,6 +139,15 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
   // Which country lists hold some names or addresses: a read over stored versions.
   if (parts.length === 2 && parts[0] === 'lists' && parts[1] === 'lookup') return true;
+  // What switching a location to only for its countries would do: nothing written.
+  if (
+    parts.length === 6 &&
+    parts[0] === 'providers' &&
+    parts[2] === 'locations' &&
+    parts[4] === 'only' &&
+    parts[5] === 'preview'
+  )
+    return true;
   // What saving a location's countries would move: synthetic seats, nothing written.
   if (
     parts.length === 6 &&
@@ -751,6 +760,25 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+  }
+  // Addresses only for these countries (docs/edges.md "Addresses only for
+  // some countries"): switch on or off; first what it would do (read only).
+  if (a === 'providers' && b && c === 'locations' && d && e === 'only') {
+    if (parts[5] === 'preview' && !parts[6])
+      return json(
+        await ctx.runQuery(internal.edgeAudiences.onlyPreview, { id: id<'edgeLocations'>(d) }),
+      );
+    if (!parts[5]) {
+      if (typeof body.only !== 'boolean')
+        return errorJson('validation', 'only must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeAudiences.setOnly, {
+          id: id<'edgeLocations'>(d),
+          only: body.only,
+          ...act,
+        }),
+      );
+    }
   }
   if (a === 'sni') {
     if (b === 'families' && !c)

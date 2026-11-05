@@ -130,6 +130,8 @@ import {
   ProviderSetChangeResponse,
   PickWantPreview,
   PickWantResponse,
+  EdgeLocationOnlyPreview,
+  EdgeLocationOnlyResponse,
   SetupRunAdmin,
   SetupRunCancelResponse,
   SetupRunContinueRequest,
@@ -543,6 +545,20 @@ export const estimateLocationCountries = (accountId: string, locationId: string,
     `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/countries/estimate`,
     { codes },
     EdgeLocationCountriesEstimate,
+  );
+/** What switching a location to only for its countries would do, or why it may not (read only). */
+export const previewLocationOnly = (accountId: string, locationId: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/only/preview`,
+    {},
+    EdgeLocationOnlyPreview,
+  );
+/** Switch a location to only for its countries, or back to everyone (docs/edges.md). */
+export const setLocationOnly = (accountId: string, locationId: string, only: boolean) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/only`,
+    { only },
+    EdgeLocationOnlyResponse,
   );
 export const deleteProviderLocation = (accountId: string, locationId: string) =>
   apiClient.delete(

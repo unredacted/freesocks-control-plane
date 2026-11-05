@@ -119,6 +119,7 @@ export {
   liveEdgesOfRelay,
   scheduleMirrorRefresh,
 } from './lib/edges/relayGuards';
+import { audienceForPublish } from './edgeAudiences';
 
 type Db = DatabaseReader;
 
@@ -1581,6 +1582,9 @@ async function insertAdoptedEdge(
     } else allocated = alloc.index;
     const cfg = await resolveEdgeConfig(ctx.db);
     const fresh = (await ctx.db.get(edgeId))!;
+    // An adopted address is never contained: at an only location it is never put in use.
+    if (!refusedCode && 'refused' in (await audienceForPublish(ctx.db, fresh)))
+      refusedCode = 'audience_tainted';
     const check = refusedCode
       ? { ok: false as const, code: refusedCode }
       : await checkPublishable(ctx, fresh, cfg.requireProviderHealth);
@@ -1883,7 +1887,9 @@ export async function refreshTemplateEdges(ctx: MutationCtx, origin: Doc<'relays
     for (const edgeId of relay.publishedEdgeIds) {
       if (!edgeId) continue;
       const e = await ctx.db.get(edgeId);
-      if (e && e.listenerId === l._id && e.publication === 'published') {
+      // A contained address is never the template: the backend's Host (and
+      // every raw body) would carry it to everyone.
+      if (e && e.listenerId === l._id && e.publication === 'published' && !e.audience?.length) {
         pick = e._id;
         break;
       }
@@ -1940,7 +1946,24 @@ export const publishEdge = internalMutation({
     // would leave the backend sending everyone to the previous address: the
     // rotation machine (kind `publish`) does the flip.
     const listener = await ctx.db.get(edge.listenerId);
+    // Its audience at its first publication (docs/edges.md "Addresses only for
+    // some countries"): refused where an only location cannot hand it to its
+    // countries, and a contained address is never a transport's first one.
+    const audience = await audienceForPublish(ctx.db, edge);
+    if ('refused' in audience)
+      throw new ConvexError({
+        code: 'edge.audience_tainted',
+        message:
+          'This location is only for some countries, and this address cannot be: one made before the switch, published before or adopted is never put in use here',
+      });
+    if (audience.contained && !listener?.templateEdgeId)
+      throw new ConvexError({
+        code: 'edge.audience_first_address',
+        message:
+          'An address only for some countries is never a transport’s first one: put an address for everyone in use first',
+      });
     const becomesTemplate =
+      !audience.contained &&
       origin.hostMode === 'fcp' &&
       (!listener?.templateEdgeId ||
         origin.publishedEdgeIds.findIndex((e) => e === listener.templateEdgeId) > idx);
@@ -1955,7 +1978,10 @@ export const publishEdge = internalMutation({
     await ctx.db.patch(edgeId, {
       publication: 'published',
       poolIndex: idx,
-      ...(await laneForPublish(ctx.db, origin, edge)),
+      ...(await laneForPublish(ctx.db, origin, edge, null, {
+        contained: audience.contained,
+      })),
+      ...audience.patch,
       publishedAt: now,
       updatedAt: now,
     });
