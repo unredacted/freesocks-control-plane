@@ -715,7 +715,10 @@ protects it), never from the row, which may hold a private management address. A
 tool made it) is `externallyFronted`: it needs no standbys until Edges protects it, one node
 at a time, through the normal flow; after maintenance its approval commits in its own
 transaction (nothing of FCP's publishes for it, so nothing would wake a run waiting at
-publish), or is refused with nothing changed. A WebSocket node is adopted with its **origin
+publish), or is refused with nothing changed. An adopted node FCP's Edges do protect is
+approved after a maintenance on the addresses it already has, as an enrolled node is (§ A
+fronted node's activation, "Approve on the addresses it has"): no new address is bought while
+each one's check is current. A WebSocket node is adopted with its **origin
 name** (`originHostname`; the dialog's "Origin name"), required
 (`servers.adopt_origin_name_required`): the name its CDN fronts dial, the one its Caddy's
 certificate is for. Edges dials the same name once it protects the node (the node's origin and
@@ -822,7 +825,7 @@ registered → bootstrap_available → machine_applied → machine_ready → can
 | `bootstrap_available` | `POST …/bootstrap` served the machine configuration and the backend's node secret. The secret is read from the backend on the call and returned to the caller; FCP never persists, audits or logs it (the machine holds it in its compose file). |
 | `machine_applied` | The role reported `appliedRevision == machineRevision`. Idempotent; a lower revision is `servers.revision_stale` (run the role again), a higher one `servers.revision_unknown`; a report never regresses a stage. |
 | `machine_ready` | The node op that applied the current profile and transport is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header. A managed name's resolution is proved earlier, before the applied report (§ Origin names); the rest once the role has reported, never while a role run is under way (§ Node registration). |
-| `candidates_verified` | Direct: the isolated **direct test links**, one per server name the transport serves (the node's own test credential, the transport's live parameters), confirmed together against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the full name set the links cover, the credential. A moved endpoint or a name set that differs from the live one refuses (`servers.confirmation_stale`); after a family adds a name, the re-tick covers it. Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
+| `candidates_verified` | Direct: the isolated **direct test links**, one per server name the transport serves (the node's own test credential, the transport's live parameters), confirmed together against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the full name set the links cover, the credential. A moved endpoint or a name set that differs from the live one refuses (`servers.confirmation_stale`); after a family adds a name, the re-tick covers it. Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); with no run, a node that was live is approved on the addresses it already has, when their checks are current (§ A fronted node's activation, "Approve on the addresses it has"); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
 | `awaiting_approval` | The review card hashes the delivery **shape** (mode, ingress, profile revision, every listener with its provider account, location + template, subscription templates, the Host tuple), never individual addresses. |
 | `activating` | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the addresses as **candidate resources**, rehearses the backend's real bodies in every client family (`lib/backend/rehearsal.ts`), and commits. The rehearsal reads EVERY address the run would commit, each with the server name it is there to serve (links `sni`, sing-box `tls.server_name`, Clash `servername`) and the expected REALITY key: one entry proves nothing about the others, and the detail records `<family>:<name>:absent                                                                                                                                                                                                                                   | key | sni`. A run that fails its rehearsal, blocks, throws, is refused by its commit or is superseded turns off again what it turned on and releases nothing: each address it enables is recorded on the run before the write (`enabledHostUuids`), and an address that was on before the run (a live or adopted node's) stays on. A run owns an address until its rollback has turned it off (one the backend refused to turn off, or with a write to it still open, stays owned); an approval takes over what an older run still owns, whatever the cache shows (an enable in flight may still land; the older run gives it up), so an address an operator turned on again after a rollback is never turned off by a later run. A run superseded mid-way leaves that to the newer run. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run. |
 | `live` | `nodeActivation.commit`: one mutation that re-validates the approval, the evidence, the rehearsal and open obligations, then **promotes the snapshot** (`intent.approved`, the committed resources), opens the gate, bumps the gate version. A fronted node's Autopilot go-live calls the same promotion inside its own mutation; no independent go-live exists while an activation is unapproved, blocked or superseded. |
@@ -916,7 +919,8 @@ mirror). FCP never starts a run by itself.
   node supersedes the old activation run and rebinds the open setup run.
 - **The approval wakes exactly that run.** `approve` (fronted) is allowed from `machine_ready`,
   `candidates_verified`, `awaiting_approval` and, for a re-approval, `live`, when every listener
-  of the open setup run has a verified standby whose L4 tick is still current: an L4 tick binds to
+  of the open setup run (with none, see "Approve on the addresses it has" below) has a verified
+  standby whose L4 tick is still current: an L4 tick binds to
   the node's REALITY authentication revision too (docs/edges.md "Publication"), so a key, short-id
   or clock-bound change since the ticks refuses `servers.standbys_unverified` (the review card
   says the key moved) until each address is tried again with the new key. On a live node the same
@@ -979,6 +983,27 @@ mirror). FCP never starts a run by itself.
   drains; the bound activation is blocked as for any cancel). A failure leaves the node live and
   hands the origin back to upkeep and the detector; retry claims it again. One run has one
   provider account: a node served through several is refused (`edge.reprotect_mixed_accounts`).
+- **Approve on the addresses it has.** A maintenance closes a node and its finish clears the
+  committed approval, but its addresses stay published and their checks stay where they were. So
+  a fronted node FCP protects (not an adopted node whose edge was made outside FCP) that was live
+  (`exposure.everLive`), is not live now, and has no setup run, is approved on what its members
+  would be served the moment its gate opens, with nothing bought (`nodeActivation.keptAddressesOf`).
+  Its origin must be its own, switched on, bound to it (the delivery binding names it), and
+  neither being removed, restored nor owned by a run. Every transport with a published, active
+  address that is not a candidate of an activation needs at least one address whose check is
+  current, exactly as the member render reads it: an L4 confirmation for the listener's revision,
+  the edge's configuration and the node's REALITY authentication revision (docs/edges.md
+  "Publication"); an L7 front's proof. Those addresses are the approval's standbys
+  (`standbys_verified` is recorded, the review card lists them and says nothing new is bought);
+  an address on the same transport whose check went stale stays published and is not served
+  until it is tried again, as on a live node. Nothing publishes, so no run waits at publish: the
+  approval commits in its own transaction through `promoteCandidate`, or is refused with nothing
+  changed. A transport with no current address refuses `servers.standbys_unverified`: the review
+  card says `:key_changed` when only the key moved (a key, short-id or clock-bound change still
+  needs every address tried again, on the node in Edges, or Protect again) and `:retest`
+  otherwise (an address or its transport changed since its test). With no published address, an
+  origin that is not bound, or a live node, it stays `servers.standbys_missing`: Protect again is
+  the way back. The audit row of the approval carries `kept`, the number of addresses reused.
 - **Candidate Hosts on a live node.** A direct node's body reaches members as the backend serves
   it, so an address a candidate would enable cannot be kept out of it; a fronted listener without
   a committed template edge would get a new Host or a moved Host pointer. Either needs the gate

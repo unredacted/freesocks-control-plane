@@ -741,8 +741,15 @@ export const ActivationReview = z.object({
           provider: z.string().nullable(),
         }),
       ),
+      /**
+       * A fronted approval that takes the node live itself, with no setup run
+       * to publish or rehearse: `kept` (the addresses it already has, each
+       * check still current, after a maintenance) or `external` (an adopted
+       * node whose edge FCP does not run). Null: its setup run takes it live.
+       */
+      atOnce: z.enum(['kept', 'external']).nullable().default(null),
     })
-    .default({ standbys: [] }),
+    .default({ standbys: [], atOnce: null }),
 });
 export type ActivationReview = z.infer<typeof ActivationReview>;
 

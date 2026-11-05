@@ -1629,6 +1629,159 @@ describe('re-protect a live node (its own run kind)', () => {
   });
 });
 
+// --- after a maintenance: approve on the addresses the node has ------------------------------------
+
+describe('after a maintenance, Approve takes the node live on the addresses it has', () => {
+  /** Start and Finish maintenance over HTTP, as the node page does. */
+  async function maintain(t: T, cookie: string, intentId: Id<'panelNodeIntents'>) {
+    const path = `nodes/intents/${intentId}/maintenance`;
+    expect((await servers(t, cookie, 'POST', path, { start: true })).status).toBe(200);
+    expect((await servers(t, cookie, 'POST', path, {})).status).toBe(200);
+    await drive(
+      t,
+      () => intentOf(t, intentId),
+      (i) => !i.claim,
+      'the reconcile after maintenance',
+    );
+  }
+  /** What the node owns at its edges: nothing is bought or started by this approval. */
+  const owned = (t: T) =>
+    t.run(async (c) => ({
+      edges: (await c.db.query('edges').collect()).map((e) => e._id as string).sort(),
+      setupRuns: (await c.db.query('edgeSetupRuns').collect()).length,
+    }));
+  const reviewOf = (t: T, intentId: Id<'panelNodeIntents'>) =>
+    t.query(internal.nodeActivation.review, { intentId });
+  const rekey = (t: T, intentId: Id<'panelNodeIntents'>) =>
+    t.run((c) => c.db.patch(intentId, { authRevision: 'auth-moved' }));
+
+  test('with its confirmations current, the approval itself takes it live: nothing bought, no setup run, members served again', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    await memberBody(t, e1Address);
+    const before = await owned(t);
+    const rehearsals = w.calls.rehearsedEdges.length;
+
+    await maintain(t, live.cookie, live.intentId);
+    const closed = await intentOf(t, live.intentId);
+    expect(closed.delivery.disposition).toBe('staged');
+    expect(closed.approved).toBeUndefined();
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    expect((await fetchSub(t)).headers.get('x-fcp-delivery')).toBe('node_gated');
+
+    // The card lists the address it keeps and says the approval takes it live itself.
+    const { review, runId } = await approveOverHttp(t, live.cookie, live.intentId);
+    expect(review.display.atOnce).toBe('kept');
+    expect(review.display.standbys.map((s) => s.endpoint)).toEqual([
+      expect.stringContaining(e1Address),
+    ]);
+    // Live in the approval's own transaction: no run waits at publish.
+    const after = await intentOf(t, live.intentId);
+    expect([after.activation.stage, after.delivery.disposition]).toEqual(['live', 'live']);
+    expect(after.approved?.committed.edgeIds).toEqual([live.e1]);
+    expect(after.activation.evidence.some((e) => e.kind === 'standbys_verified')).toBe(true);
+    expect((await activationRun(t, runId)).state).toBe('committed');
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    expect(await bindingOf(t, serverId)).toBeTruthy();
+    expect(await owned(t)).toEqual(before);
+    // Nothing to rehearse: each address's check is what proves it.
+    expect(w.calls.rehearsedEdges).toHaveLength(rehearsals);
+    await memberBody(t, e1Address);
+    const approvals = await t.run((c) =>
+      c.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'servers.node.approved'))
+        .collect(),
+    );
+    expect(approvals.at(-1)?.payload).toMatchObject({ kept: 1 });
+    // Upkeep is admitted again under the new commitment, within its shape.
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    const listener = (await t.run((c) => c.db.get(e1.listenerId)))!;
+    expect(
+      (
+        await t.run((ctx) =>
+          publicationAdmission(ctx, serverId, NODE, {
+            listenerKey: listener.listenerKey,
+            accountId: String(live.l4),
+            locationId: e1.locationId ? String(e1.locationId) : null,
+            templateHash: e1.templateHash ?? null,
+          }),
+        )
+      ).kind,
+    ).toBe('committed');
+  });
+
+  test('a key change while it was closed still blocks until each address is tried again with the new key', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const before = await owned(t);
+    await maintain(t, live.cookie, live.intentId);
+    // The node's key moved meanwhile (its digest; Finish's reconcile reads the backend's key).
+    await rekey(t, live.intentId);
+
+    const review = await reviewOf(t, live.intentId);
+    expect(review.blockers).toContain('servers.standbys_unverified:key_changed');
+    // No address is offered as kept: the key it was tried with is gone.
+    expect(review.display.standbys).toEqual([]);
+    await expect(
+      t.mutation(internal.nodeActivation.approve, {
+        intentId: live.intentId,
+        reviewHash: review.reviewHash,
+      }),
+    ).rejects.toThrow(/servers\.standbys_unverified/);
+    const still = await intentOf(t, live.intentId);
+    expect(still.delivery.disposition).toBe('staged');
+    expect(still.activation.currentRunId).toBeUndefined();
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+
+    // Tried again with the new key (the node in Edges): the approval follows, still buying nothing.
+    await verifyL4Edge(t, live.e1);
+    await approveOverHttp(t, live.cookie, live.intentId);
+    expect((await intentOf(t, live.intentId)).delivery.disposition).toBe('live');
+    expect(await owned(t)).toEqual(before);
+    await memberBody(t, await edgeAddress(t, live.e1));
+  });
+
+  test('an address that changed since its test asks for a retest; a live node, an unbound origin or one with nothing published keep Protect again', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    // Live, no run: nothing is reused (a re-approval of a live node needs its run).
+    expect((await reviewOf(t, live.intentId)).blockers).toContain('servers.standbys_missing');
+
+    await maintain(t, live.cookie, live.intentId);
+    expect((await reviewOf(t, live.intentId)).blockers).toEqual([]);
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    // The provider gave the address another IPv4: its confirmation no longer describes it.
+    await t.run((c) =>
+      c.db.patch(live.e1, { addresses: { ...e1.addresses, v4: '198.51.100.250' } }),
+    );
+    expect((await reviewOf(t, live.intentId)).blockers).toContain(
+      'servers.standbys_unverified:retest',
+    );
+    await t.run((c) => c.db.patch(live.e1, { addresses: e1.addresses }));
+    expect((await reviewOf(t, live.intentId)).blockers).toEqual([]);
+
+    // The origin no longer bound to the node: nothing of it is reused.
+    const binding = (await bindingOf(t, serverId))!;
+    await t.run((c) => c.db.patch(binding._id, { state: 'released' }));
+    expect((await reviewOf(t, live.intentId)).blockers).toContain('servers.standbys_missing');
+    await t.run((c) => c.db.patch(binding._id, { state: binding.state }));
+
+    // An address that is a candidate of an activation never reached members: not reused.
+    await t.run((c) =>
+      c.db.patch(live.actId, {
+        state: 'superseded',
+        resources: { hostUuids: [], edgeIds: [live.e1] },
+      }),
+    );
+    expect((await reviewOf(t, live.intentId)).blockers).toContain('servers.standbys_missing');
+  });
+});
+
 // --- fencing ----------------------------------------------------------------------------------------
 
 describe('ownership links and attempt fencing', () => {

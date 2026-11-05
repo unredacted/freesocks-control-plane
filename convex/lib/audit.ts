@@ -321,7 +321,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.profile.transition_released': ['backendSlug', 'held'],
   'servers.node.settings': ['backendSlug', 'name', 'change'],
   'servers.node.direct_confirmed': ['backendSlug', 'name'],
-  'servers.node.approved': ['backendSlug', 'name', 'mode'],
+  // `kept`: how many addresses it already had the approval took it live on (no setup run).
+  'servers.node.approved': ['backendSlug', 'name', 'mode', 'kept'],
   'servers.node.live': ['backendSlug', 'name', 'mode'],
   'servers.node.drift': ['backendSlug', 'name', 'kind', 'wasLive'],
   'servers.node.maintenance_started': ['backendSlug', 'name'],
