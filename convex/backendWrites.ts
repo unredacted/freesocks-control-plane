@@ -1176,6 +1176,8 @@ export const requestLoggingPatch = internalMutation({
     baseToken: v.string(),
     expectedToken: v.string(),
     inboundUuids: v.record(v.string(), v.string()),
+    /** The admin who pressed Apply; `actorRun` names the run otherwise. */
+    ...actor,
   },
   handler: async (ctx, a): Promise<{ opId: Id<'panelOps'> }> => {
     const sid = a.backendServerId;
@@ -1204,7 +1206,8 @@ export const requestLoggingPatch = internalMutation({
       intent: { logging: true, baseToken: a.baseToken },
       postcondition: { expectedToken: a.expectedToken, inboundUuids: a.inboundUuids },
       asyncNodeUuids: nodes.map((n) => n.nodeUuid),
-      actorRun: 'cron:logging-privacy',
+      actorAdminId: a.actorAdminId,
+      actorRun: a.actorAdminId ? undefined : (a.actorRun ?? 'cron:logging-privacy'),
     });
     return { opId };
   },

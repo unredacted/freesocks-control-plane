@@ -362,13 +362,20 @@ off somewhere. How a write is made (the cron's and the Apply button's alike):
   rollout or node change interleaves with the read-modify-write; the send re-reads and refuses a
   profile that moved since the preview (`servers.profile_changed`: left for the next run), and
   the token the profile will have is in the op's postcondition before the send, so the observer
-  counts it as FCP's own. A profile another change holds is read, counted busy, and tried the
-  next hour. It touches no transport: no origin is claimed and nothing closes.
+  counts it as FCP's own. A profile counts as turned off only once the ledger has SEEN that token
+  (`panelState: observed`); a write whose answer was lost or whose read-back failed keeps its op
+  open and its profile claimed, and is counted busy until a look settles it. A profile another
+  change holds is read, counted busy, and tried the next hour. An admin's Apply is attributed to
+  that admin (`actorAdminId`), the cron's to `cron:logging-privacy`. It touches no transport: no
+  origin is claimed and nothing closes.
 - **Elsewhere** no ledger op can be admitted, so the write is direct; a backend an older op
-  still holds is left alone. Before each PATCH the token the profile will have is recorded
-  (`backendObserve.noteOwnProfileTokens`, appState `panel:ownProfileTokens:<id>`, the newest 64
-  for 30 days), so a later observation attributes the change to FCP even when the re-read right
-  after the write fails, and no node is closed for a `servers.foreign_profile_edit`.
+  still holds is left alone (the cron and the Apply button alike), and so is any backend whose
+  ledger eligibility cannot be read (never a reason to skip the ledger). Before each PATCH the
+  token the profile will have is recorded (`backendObserve.noteOwnProfileTokens`, appState
+  `panel:ownProfileTokens:<id>`, one per profile, for 30 days), and an observation accepts it
+  for that profile only, so a later observation attributes the change to FCP even when the
+  re-read right after the write fails, no node is closed for a `servers.foreign_profile_edit`,
+  and another profile that reaches the same config is still flagged.
 
 This covers the backend-config half of the no-log posture; the node-container logging driver and
 the Reality/transport settings remain the province of `ansible-role-freesocks` (see

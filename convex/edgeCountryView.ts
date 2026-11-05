@@ -686,10 +686,10 @@ function viewOf(
 
 /**
  * Every location meant for some country (docs/edges.md "Locations meant for a
- * country") with its grades and location marks in every country: one index
- * range each per location, whatever the number of countries.
+ * country") with its grade and location mark in ONE country: one index range
+ * each per location, ending in the country.
  */
-async function meantForLoad(db: Db) {
+async function meantForLoad(db: Db, country: string) {
   const out: Array<{
     row: Doc<'edgeLocations'>;
     grades: Map<string, { state: string; until?: number }>;
@@ -701,7 +701,7 @@ async function meantForLoad(db: Db) {
     const grades = new Map<string, { state: string; until?: number }>();
     for (const g of await db
       .query('countryGroupGrades')
-      .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
+      .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey).eq('country', country))
       .collect())
       grades.set(g.country, {
         state: g.state,
@@ -710,7 +710,7 @@ async function meantForLoad(db: Db) {
     const marks = new Map<string, 'proven' | 'blocked'>();
     for (const m of await db
       .query('countryMarks')
-      .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
+      .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey).eq('country', country))
       .collect())
       if (m.scope === 'group') marks.set(m.country, m.state);
     out.push({ row, grades, marks });
@@ -826,7 +826,7 @@ export const summaryRow = internalQuery({
     const handedBlocked = origins.flatMap((o) =>
       o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
     );
-    const locations = meantForIn(await meantForLoad(ctx.db), loaded, code, now);
+    const locations = meantForIn(await meantForLoad(ctx.db, code), loaded, code, now);
     return {
       country: code,
       listed,
@@ -865,7 +865,7 @@ export const country = internalQuery({
       curated: st.sni.curatedCountries.includes(code),
       totals,
       origins,
-      meantFor: meantForIn(await meantForLoad(ctx.db), loaded, code, now),
+      meantFor: meantForIn(await meantForLoad(ctx.db, code), loaded, code, now),
     };
   },
 });

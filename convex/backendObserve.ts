@@ -175,27 +175,30 @@ export async function upsertObservedSquads(
 /**
  * Profile tokens FCP itself is about to leave behind OUTSIDE the ledger (the
  * logging-privacy write on a backend no ledger op can reach): recorded BEFORE
- * the write, read by `record` like a ledger op's expected token, so a later
+ * the write, per profile, and read by `record` for THAT profile only, so a later
  * observation attributes the change to FCP even when the immediate re-read
- * after the write failed. Bounded: the newest OWN_TOKENS_MAX per backend, none
- * older than OWN_TOKENS_TTL_MS.
+ * after the write failed, while another profile that happens to reach the same
+ * config is still flagged. One token per profile (the newest write is the state
+ * the profile should show), so every profile of a run is kept however many
+ * there are; none older than OWN_TOKENS_TTL_MS, and at most OWN_TOKENS_MAX
+ * profiles per backend (a bound on the row, far above a backend's profiles).
  */
 const ownTokensKey = (sid: Id<'backendServers'>) => `panel:ownProfileTokens:${sid}`;
-type OwnToken = { profileUuid: string; token: string; at: number };
-const OWN_TOKENS_MAX = 64;
+type OwnTokens = Record<string, { token: string; at: number }>;
+const OWN_TOKENS_MAX = 2000;
 const OWN_TOKENS_TTL_MS = 30 * 86_400_000;
 
-async function ownTokensOf(db: DatabaseReader, sid: Id<'backendServers'>): Promise<OwnToken[]> {
+async function ownTokensOf(db: DatabaseReader, sid: Id<'backendServers'>): Promise<OwnTokens> {
   const now = Date.now();
   const raw = await readStateJson<unknown>(db, ownTokensKey(sid));
-  return (Array.isArray(raw) ? raw : []).filter(
-    (t): t is OwnToken =>
-      !!t &&
-      typeof t === 'object' &&
-      typeof (t as OwnToken).token === 'string' &&
-      typeof (t as OwnToken).at === 'number' &&
-      now - (t as OwnToken).at < OWN_TOKENS_TTL_MS,
-  );
+  const out: OwnTokens = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [profileUuid, t] of Object.entries(raw as Record<string, unknown>)) {
+    const e = t as { token?: unknown; at?: unknown };
+    if (typeof e?.token === 'string' && typeof e.at === 'number' && now - e.at < OWN_TOKENS_TTL_MS)
+      out[profileUuid] = { token: e.token, at: e.at };
+  }
+  return out;
 }
 
 export const noteOwnProfileTokens = internalMutation({
@@ -205,9 +208,12 @@ export const noteOwnProfileTokens = internalMutation({
   },
   handler: async (ctx, { backendServerId, tokens }) => {
     const now = Date.now();
-    const kept = await ownTokensOf(ctx.db, backendServerId);
-    const next = [...kept, ...tokens.map((t) => ({ ...t, at: now }))].slice(-OWN_TOKENS_MAX);
-    await writeStateJson(ctx.db, ownTokensKey(backendServerId), next);
+    const next = await ownTokensOf(ctx.db, backendServerId);
+    for (const t of tokens) next[t.profileUuid] = { token: t.token, at: now };
+    const kept = Object.entries(next)
+      .sort(([, a], [, b]) => b.at - a.at)
+      .slice(0, OWN_TOKENS_MAX);
+    await writeStateJson(ctx.db, ownTokensKey(backendServerId), Object.fromEntries(kept));
   },
 });
 
@@ -309,8 +315,8 @@ export const record = internalMutation({
           // An unreadable postcondition expects nothing.
         }
       }
-    // ...and every token FCP recorded before a write outside the ledger.
-    if (!a.ownEdit) for (const t of await ownTokensOf(ctx.db, sid)) expectedTokens.add(t.token);
+    // ...and, per profile, the token FCP recorded before a write outside the ledger.
+    const ownTokens = a.ownEdit ? {} : await ownTokensOf(ctx.db, sid);
     for (const p of a.profiles) {
       const prev = profileBy.get(p.profileUuid);
       // A token made with another key is a new baseline, not a change.
@@ -325,7 +331,12 @@ export const record = internalMutation({
         digestKeyId: a.digestKeyId,
         tokenChangedAt: moved ? now : prev?.tokenChangedAt,
         foreignEditAt:
-          moved && !a.ownEdit && !expectedTokens.has(p.changeToken) ? now : prev?.foreignEditAt,
+          moved &&
+          !a.ownEdit &&
+          !expectedTokens.has(p.changeToken) &&
+          ownTokens[p.profileUuid]?.token !== p.changeToken
+            ? now
+            : prev?.foreignEditAt,
         inbounds: p.inbounds,
         observedAt: now,
       };

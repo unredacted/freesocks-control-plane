@@ -413,6 +413,8 @@ type ServerWithSecret = {
   config: unknown;
 };
 type LoggingProfile = LoggingInstanceReport['profiles'][number];
+/** Who a logging write is attributed to: the admin who pressed Apply, else the run. */
+type LoggingActor = { actorAdminId?: Id<'adminUsers'>; actorRun?: string };
 
 /** A ledger refusal that means "another change holds it": left for the next run. */
 const HELD_CODES = new Set(['servers.op_running', 'servers.op_uncertain']);
@@ -430,6 +432,7 @@ async function hardenThroughLedger(
   ctx: ActionCtx,
   s: ServerWithSecret,
   writes: NonNullable<(typeof PROVIDERS)[keyof typeof PROVIDERS]['backendWrites']>,
+  actor: LoggingActor,
 ): Promise<LoggingRunRow> {
   const provider = PROVIDERS[s.backend];
   const config = s.config as BackendConfig;
@@ -459,6 +462,7 @@ async function hardenThroughLedger(
         baseToken: preview.baseToken,
         expectedToken: preview.expectedToken,
         inboundUuids: preview.inboundUuids,
+        ...actor,
       };
       let opId: Id<'panelOps'>;
       try {
@@ -475,10 +479,18 @@ async function hardenThroughLedger(
       }
       await ctx.runAction(internal.backendWrites.run, { opId });
       const op = await ctx.runQuery(internal.backendLedger.getForRun, { opId });
-      if (op?.attemptId && op.request !== 'rejected_pre_mutation') {
+      // Hardened only once the ledger SAW the expected profile (its token): a
+      // write whose answer was lost, or whose read-back failed or still shows
+      // the old config, is not reported as done. Its op stays open and holds
+      // the profile; a later look settles it and the next run reads it again.
+      if (op?.request === 'acknowledged' && op.panelState === 'observed') {
         wrote = true;
         profiles.push({ uuid: p.uuid, name: p.name, hardened: true, changed: true });
-      } else if (op?.errorCode === 'servers.profile_changed') leftAlone(p);
+      } else if (
+        (op?.attemptId && op.request !== 'rejected_pre_mutation') ||
+        op?.errorCode === 'servers.profile_changed'
+      )
+        leftAlone(p);
       else
         profiles.push({
           uuid: p.uuid,
@@ -517,36 +529,41 @@ async function hardenThroughLedger(
  * A write goes through the ledger where ledger ops can run (`loggingThroughLedger`);
  * elsewhere it is direct, and the token each profile will have is recorded
  * BEFORE the write (`backendObserve.noteOwnProfileTokens`) so a later observation
- * attributes the change to FCP even when the immediate re-read fails. With
- * `leaveBusyAlone`, a direct-path backend an older server change still holds
- * (`serverChangeRunning`) is only READ and left for the next run.
+ * attributes the change to FCP even when the immediate re-read fails. A
+ * direct-path backend an older server change still holds (`serverChangeRunning`),
+ * and any backend whose ledger eligibility cannot be read, is only READ and left
+ * for the next run.
  */
 async function hardenEveryBackend(
   ctx: ActionCtx,
-  opts: { dryRun: boolean; leaveBusyAlone: boolean },
+  opts: { dryRun: boolean; actor: LoggingActor },
 ): Promise<LoggingRunRow[]> {
   const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
   const rows: LoggingRunRow[] = [];
   for (const s of servers) {
     const provider = PROVIDERS[s.backend];
     if (!provider.hardenLogging) continue; // no config-profile concept (Outline)
-    const ledger =
+    // Fail closed: an eligibility read that fails (null) is never permission to
+    // bypass the ledger; that backend is only read this time.
+    const ledger: boolean | null =
       !opts.dryRun && !!provider.backendWrites
         ? await ctx
             .runQuery(internal.backendServers.loggingThroughLedger, { backendServerId: s._id })
-            .catch(() => false)
+            .catch(() => null)
         : false;
-    // Fail safe: a guard that cannot be read counts as busy (read, never write).
+    // Off the ledger, an older op may still hold a profile or a node: left alone
+    // (a guard that cannot be read counts as held). Admin Apply and cron alike.
     const busy =
-      !ledger && opts.leaveBusyAlone && !opts.dryRun
-        ? await ctx
-            .runQuery(internal.backendServers.serverChangeRunning, { backendServerId: s._id })
-            .catch(() => true)
-        : false;
+      ledger === null ||
+      (!opts.dryRun &&
+        ledger === false &&
+        (await ctx
+          .runQuery(internal.backendServers.serverChangeRunning, { backendServerId: s._id })
+          .catch(() => true)));
     const dryRun = opts.dryRun || busy;
     try {
-      if (ledger && provider.backendWrites) {
-        rows.push(await hardenThroughLedger(ctx, s, provider.backendWrites));
+      if (ledger === true && provider.backendWrites) {
+        rows.push(await hardenThroughLedger(ctx, s, provider.backendWrites, opts.actor));
         continue;
       }
       // Without the key (a deployment missing ACCOUNT_ID_PEPPER) nothing is
@@ -759,9 +776,19 @@ export const getLoggingLastCheck = internalQuery({
  * (`source: 'manual'`); a failure to store it never fails the admin's request.
  */
 export const hardenRemnawaveLogging = internalAction({
-  args: { dryRun: v.boolean() },
-  handler: async (ctx, { dryRun }): Promise<{ instances: LoggingInstanceReport[] }> => {
-    const rows = await hardenEveryBackend(ctx, { dryRun, leaveBusyAlone: false });
+  args: {
+    dryRun: v.boolean(),
+    /** The admin who pressed Apply: its ledger ops are theirs (absent: an API token). */
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (
+    ctx,
+    { dryRun, actorAdminId },
+  ): Promise<{ instances: LoggingInstanceReport[] }> => {
+    const rows = await hardenEveryBackend(ctx, {
+      dryRun,
+      actor: actorAdminId ? { actorAdminId } : { actorRun: 'admin:logging-apply' },
+    });
     try {
       await ctx.runMutation(
         internal.backendServers.recordLoggingCheck,
@@ -785,7 +812,10 @@ export const autoHardenLogging = internalAction({
   args: {},
   handler: async (ctx): Promise<LoggingCheckRecord> =>
     runWithCronOutcome(ctx, 'logging-privacy', async (): Promise<LoggingCheckRecord> => {
-      const rows = await hardenEveryBackend(ctx, { dryRun: false, leaveBusyAlone: true });
+      const rows = await hardenEveryBackend(ctx, {
+        dryRun: false,
+        actor: { actorRun: 'cron:logging-privacy' },
+      });
       return ctx.runMutation(
         internal.backendServers.recordLoggingCheck,
         summarizeLoggingRun(rows, 'automatic', false),

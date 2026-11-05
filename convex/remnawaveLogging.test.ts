@@ -472,6 +472,145 @@ describe('logging-privacy write under the backend-write ledger', () => {
   });
 });
 
+describe('logging-privacy under the ledger: confirmed only once seen, and whose write it was', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  async function managed(t: T) {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const sid = await seedPanel(t);
+    await markBackendSetUp(t, sid);
+    await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
+    await t.run(async (ctx) => {
+      await ctx.db.insert('panelProfiles', {
+        backendServerId: sid,
+        profileUuid: 'p-log',
+        name: 'Profile logging',
+        shapeHash: 'shape',
+        changeToken: 'cached',
+        digestKeyId: 'k',
+        inbounds: [],
+        observedAt: Date.now(),
+      });
+    });
+    return sid;
+  }
+
+  test('a write whose read-back fails is not reported as turned off', async () => {
+    const t = convexTest(schema, modules);
+    await managed(t);
+    const profiles = [{ uuid: 'p-log', name: 'Profile logging', config: baseConfig() as unknown }];
+    let patched = false;
+    mockFetch((call) => {
+      if (call.method === 'GET' && call.path === '/api/config-profiles')
+        return jsonRes({ response: { configProfiles: profiles } });
+      if (call.method === 'GET' && call.path === '/api/config-profiles/p-log')
+        // The look after the write cannot read the profile back.
+        return patched ? jsonRes({ message: 'busy' }, 503) : jsonRes({ response: profiles[0] });
+      if (call.method === 'PATCH' && call.path === '/api/config-profiles') {
+        patched = true;
+        profiles[0]!.config = (call.body as { config: unknown }).config;
+        return jsonRes({ response: profiles[0] });
+      }
+      if (call.method === 'GET' && call.path === '/api/nodes') return jsonRes({ response: [] });
+      return jsonRes({ message: 'not found' }, 404);
+    });
+
+    const rec = await t.action(internal.backendServers.autoHardenLogging, {});
+    expect(patched).toBe(true);
+    expect(rec).toMatchObject({ profilesTurnedOff: 0, panelsBusy: 1 });
+    expect(await auditRows(t)).toHaveLength(0);
+    const [op] = await t.run((ctx) => ctx.db.query('panelOps').collect());
+    // Still open: the profile stays claimed until a look settles it.
+    expect(op).toMatchObject({ request: 'acknowledged', panelState: 'unobserved', open: true });
+  });
+
+  test("an admin's Apply is attributed to that admin, the cron's to the run", async () => {
+    const t = convexTest(schema, modules);
+    await managed(t);
+    fakeProfiles([{ uuid: 'p-log', name: 'Profile logging', config: baseConfig() }]);
+    const adminId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'ops',
+        displayName: 'Ops',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+
+    await t.action(internal.backendServers.hardenRemnawaveLogging, {
+      dryRun: false,
+      actorAdminId: adminId,
+    });
+    const [op] = await t.run((ctx) => ctx.db.query('panelOps').collect());
+    expect(op).toMatchObject({ actorAdminId: adminId });
+    expect(op!.actorRun).toBeUndefined();
+  });
+});
+
+describe('the direct path', () => {
+  test("an admin's Apply leaves alone a profile an older server change still holds", async () => {
+    const t = convexTest(schema, modules);
+    const sid = await seedPanel(t);
+    const panel = fakeProfiles([{ uuid: 'p-log', name: 'Profile logging', config: baseConfig() }]);
+    await holdClaim(t, sid, 'profile:p-log');
+
+    const report = await t.action(internal.backendServers.hardenRemnawaveLogging, {
+      dryRun: false,
+    });
+    expect(panel.patches).toEqual([]);
+    expect(report.instances[0]!.profiles[0]).toMatchObject({ hardened: false, changed: true });
+    expect(await t.query(internal.backendServers.getLoggingLastCheck, {})).toMatchObject({
+      panelsBusy: 1,
+      profilesTurnedOff: 0,
+    });
+  });
+});
+
+describe('tokens recorded before a direct write', () => {
+  test('excuse only their own profile, and every profile of a long run is kept', async () => {
+    const t = convexTest(schema, modules);
+    const sid = await seedPanel(t);
+    const many = Array.from({ length: 150 }, (_, i) => ({
+      profileUuid: `p-${i}`,
+      token: `tok-${i}`,
+    }));
+    for (const one of many)
+      await t.mutation(internal.backendObserve.noteOwnProfileTokens, {
+        backendServerId: sid,
+        tokens: [one],
+      });
+    await t.run(async (ctx) => {
+      for (const id of ['p-0', 'p-1'])
+        await ctx.db.insert('panelProfiles', {
+          backendServerId: sid,
+          profileUuid: id,
+          name: id,
+          shapeHash: 'shape',
+          changeToken: 'before',
+          digestKeyId: 'k',
+          inbounds: [],
+          observedAt: Date.now(),
+        });
+    });
+    // p-0 reaches the token FCP recorded for it (the first of 150: still kept);
+    // p-1 reaches p-0's token: somebody else's edit all the same.
+    await t.mutation(internal.backendObserve.record, {
+      backendServerId: sid,
+      digestKeyId: 'k',
+      nodes: [],
+      profiles: [
+        { profileUuid: 'p-0', name: 'p-0', shapeHash: 'shape', changeToken: 'tok-0', inbounds: [] },
+        { profileUuid: 'p-1', name: 'p-1', shapeHash: 'shape', changeToken: 'tok-0', inbounds: [] },
+      ],
+      hosts: [],
+      squads: [],
+    });
+    const rows = await t.run((ctx) => ctx.db.query('panelProfiles').collect());
+    expect(rows.find((r) => r.profileUuid === 'p-0')!.foreignEditAt).toBeUndefined();
+    expect(rows.find((r) => r.profileUuid === 'p-1')!.foreignEditAt).toBeTypeOf('number');
+  });
+});
+
 describe('logging-privacy write outside the ledger: attribution survives a failed re-read', () => {
   afterEach(() => vi.unstubAllEnvs());
 
