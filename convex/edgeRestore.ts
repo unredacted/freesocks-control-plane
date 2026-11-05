@@ -47,7 +47,10 @@ import { isTerminalPhase } from './lib/edges/rotation';
 import { relayRemarkRegex, sameAddress } from './lib/edges/hosts';
 import { decodeLinkList, remarkOf } from './lib/edges/render/links';
 import { parseProxyUri } from './lib/edges/render/uri';
-import { cohortValidator, walkRelayCohorts } from './edgeCohorts';
+import { cohortValidator, walkRelayCohorts, type CohortCandidate } from './edgeCohorts';
+import { MAX_CANDIDATES } from './lib/edges/cohorts';
+import { placeholderBody } from './lib/nodePinning';
+import { bodyMentionsAny } from './lib/subscriptionDelivery';
 import {
   hasHideRows,
   startRestoreWorkflow,
@@ -260,6 +263,10 @@ export const context = internalQuery({
 /** How a raw check fetches one cohort's body (its representative key). */
 export interface CohortRef {
   key: string;
+  /** The cohort's placement (null = keys without one): where its next keys are read. */
+  placement: string | null;
+  /** The cohort's backend server (the walk's), for reading its next keys. */
+  cohortServerId: Id<'backendServers'>;
   subscriptionId: Id<'subscriptions'>;
   backend: Doc<'subscriptions'>['backend'];
   backendServerId: Id<'backendServers'> | null;
@@ -278,6 +285,8 @@ export const cohortRefs = internalQuery({
       if (!sub) continue;
       out.push({
         key: c.key,
+        placement: c.placement,
+        cohortServerId: c.backendServerId,
         subscriptionId: sub._id,
         backend: sub.backend,
         backendServerId: sub.backendServerId ?? null,
@@ -439,17 +448,87 @@ export const inProgress = internalQuery({
 
 // --- Node half: the driver ---------------------------------------------------------------------
 
-/** Fetch the RAW backend body of one cohort's representative (the sub route's fetch path, no render). */
-async function rawBodyOf(ctx: ActionCtx, c: CohortRef): Promise<string> {
+/** One key a raw check fetches: the cohort's representative, or one of its next keys. */
+type KeyRef = Pick<CohortRef, 'backendShortId' | 'subscriptionUrl' | 'excludeNode'>;
+
+/** Fetch the RAW backend body of one key of a cohort (the sub route's fetch path, no render). */
+async function rawBodyOf(
+  ctx: ActionCtx,
+  c: CohortRef,
+  key: KeyRef,
+): Promise<{ content: string; nodeless: boolean }> {
   const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
     backend: c.backend,
     ...(c.backendServerId ? { backendServerId: c.backendServerId } : {}),
-    backendShortId: c.backendShortId,
-    subscriptionUrl: c.subscriptionUrl,
-    ...(c.excludeNode ? { excludeNode: c.excludeNode } : {}),
+    backendShortId: key.backendShortId,
+    subscriptionUrl: key.subscriptionUrl,
+    ...(key.excludeNode ? { excludeNode: key.excludeNode } : {}),
     nodeCheck: true,
   });
-  return fetched.content;
+  return { content: fetched.content, nodeless: fetched.nodeless === true };
+}
+
+/**
+ * Whether a raw body stands for nobody: the backend's placeholder for an
+ * expired or disabled key (every entry names no node, at an unusable address),
+ * which that member gets whatever FCP does. One that names this node is judged
+ * as it is (as delivery and the rehearsal refuse it).
+ */
+function placeholderOf(body: { content: string; nodeless: boolean }, raw: RawBodyContext) {
+  return (
+    body.nodeless &&
+    placeholderBody(body.content) &&
+    !bodyMentionsAny(body.content, [raw.originAddress, ...(raw.nodeAddresses ?? [])])
+  );
+}
+
+/**
+ * The raw check of one cohort, judged by its first key whose body is not the
+ * backend's placeholder (as the rehearsal picks its representative,
+ * `edgeRehearsal.pickRepresentative`): the cohort's own key, then its next
+ * keys (`edgeCohorts.candidates`, active accounts first). A cohort whose every
+ * key is a placeholder has nobody this node serves anything to, now or after
+ * the release, so it passes; when its keys run past what one read returns,
+ * it holds (`placeholders_only`) rather than judge keys it never read. A body
+ * that could not be fetched holds, as before: an outage is never read as an
+ * empty cohort.
+ */
+async function checkCohort(
+  ctx: ActionCtx,
+  c: RestoreContext,
+  cohort: CohortRef,
+  want: 'fcp' | 'direct',
+): Promise<string | null> {
+  const seen = new Set<string>([cohort.subscriptionId as string]);
+  let next: KeyRef | undefined = cohort;
+  let rest: CohortCandidate[] | null = null;
+  while (next) {
+    let body: { content: string; nodeless: boolean };
+    try {
+      body = await rawBodyOf(ctx, cohort, next);
+    } catch {
+      return `fetch_failed:${cohort.key}`;
+    }
+    if (!placeholderOf(body, c.raw)) {
+      const verdict = judgeRawBody(body.content, c.raw);
+      if (verdict.unreadable) return `unreadable_body:${cohort.key}`;
+      if (want === 'fcp' && (verdict.fcp === 0 || verdict.direct > 0))
+        return `${verdict.fcp === 0 ? 'no_fcp_entry' : 'direct_entry_present'}:${cohort.key}`;
+      if (want === 'direct' && verdict.direct === 0) return `no_direct_entry:${cohort.key}`;
+      return null;
+    }
+    rest ??= await ctx.runQuery(internal.edgeCohorts.candidates, {
+      backendServerId: cohort.cohortServerId,
+      ...(c.relay.nodeName ? { nodeName: c.relay.nodeName } : {}),
+      placement: cohort.placement,
+      limit: MAX_CANDIDATES,
+    });
+    const candidate = rest.find((x) => !seen.has(x.subscriptionId as string));
+    if (candidate) seen.add(candidate.subscriptionId as string);
+    next = candidate;
+  }
+  // Every key read is a placeholder: the whole cohort when the read held all of it.
+  return rest && rest.length >= MAX_CANDIDATES ? `placeholders_only:${cohort.key}` : null;
 }
 
 /**
@@ -465,17 +544,8 @@ async function checkCohorts(
   const dark = new Set(c.relay.darkCohortKeys ?? []);
   for (const cohort of await restoreCohorts(ctx, c.relay._id)) {
     if (dark.has(cohort.key)) continue;
-    let body: string;
-    try {
-      body = await rawBodyOf(ctx, cohort);
-    } catch {
-      return `fetch_failed:${cohort.key}`;
-    }
-    const verdict = judgeRawBody(body, c.raw);
-    if (verdict.unreadable) return `unreadable_body:${cohort.key}`;
-    if (want === 'fcp' && (verdict.fcp === 0 || verdict.direct > 0))
-      return `${verdict.fcp === 0 ? 'no_fcp_entry' : 'direct_entry_present'}:${cohort.key}`;
-    if (want === 'direct' && verdict.direct === 0) return `no_direct_entry:${cohort.key}`;
+    const err = await checkCohort(ctx, c, cohort, want);
+    if (err) return err;
   }
   return null;
 }

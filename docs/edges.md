@@ -2558,7 +2558,13 @@ observation; (3) `verify_fcp_raw` (bound origins only): the RAW backend body of 
 cohort (one representative key per placement pinned to the node, `convex/lib/edges/cohorts.ts`:
 the first key of each distinct placement over `subscriptions.by_backend_server_pinned`, a page
 of placements per query, driven from the action) carries an FCP entry and no
-origin entry, fetched through the same path the sub route uses; (4) `release_binding`: the
+origin entry, fetched through the same path the sub route uses. A key whose body is the
+backend's placeholder for an expired or disabled user (every entry names no node, at an
+unusable address, and none names this node) stands for nobody: the cohort is judged by its
+next keys instead (`edgeCohorts.candidates`, active accounts first, as the rehearsal picks its
+representative). A cohort whose every key is a placeholder passes, since nobody there is served
+anything now or after the release; one whose keys run past one read of candidates holds
+(`placeholders_only:<cohort>`), and a fetch that fails holds as before; (4) `release_binding`: the
 delivery binding is released WHILE the origin stays enabled and its edges published, so members
 keep the protected entry in raw delivery. **A direct Host is never re-enabled while the origin
 is bound**: the renderer would answer `leak_detected` for every member, an outage FCP would
@@ -2566,7 +2572,7 @@ have caused itself (pinned by a test that asserts the ordering inside the backen
 (5) `restore`: each `confirmed` row is re-observed; still disabled at the observed tuple →
 re-enabled through a `restore` row, read-back confirmed; changed or removed by an administrator
 → released untouched (audited `edge.host.restored`); (6) `verify_direct`: the raw bodies carry
-the origin entry again; (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
+the origin entry again (placeholder keys skipped the same way); (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
 `bindingDeferred`, edges published, attention `go_live_pending`); `release_requirement` retains
 everything and sets `bindingDeferred` so `require-edges` can re-apply the activation policy;
 `delete_relay` runs the deletion body only now (drain, destroy, remove; an edge that was never

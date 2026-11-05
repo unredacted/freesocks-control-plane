@@ -7,7 +7,9 @@
  *   PATCH /api/hosts            `{uuid, isDisabled}` (the hide / restore bit),
  *                               behaviour per `mode`: apply | ignore | fail
  *   GET   /sub/<shortUuid>      a link-list body built from the ENABLED Hosts
- *                               (one vless line per Host, remark = the Host's)
+ *                               (one vless line per Host, remark = the Host's),
+ *                               or the backend's placeholder for a key in
+ *                               `disabledKeys` (an expired or disabled user)
  *
  * so what members download follows the backend's own Host state end to end.
  * Not a test file itself. Every value is RFC 5737 / `*.example`.
@@ -45,7 +47,15 @@ export interface FakeHostPanel {
   subFetches: () => number;
   find: (uuid: string) => AddressRow;
   body: () => string;
+  /** Short ids whose body is the backend's placeholder for a disabled user. */
+  disabledKeys: Set<string>;
 }
+
+/** What the backend hands a disabled user: entries naming no node, at an unusable address. */
+export const DISABLED_PLACEHOLDER = [
+  `vless://${FAKE_USER_UUID}@0.0.0.0:1?encryption=none&type=tcp#${encodeURIComponent('🚫 Subscription disabled')}`,
+  `vless://${FAKE_USER_UUID}@0.0.0.0:1?encryption=none&type=tcp#Contact%20support`,
+].join('\n');
 
 export function fakeHostPanel(initial: AddressRow[], mode: PatchMode = 'apply'): FakeHostPanel {
   const hosts = initial.map((h) => ({ ...h }));
@@ -53,6 +63,7 @@ export function fakeHostPanel(initial: AddressRow[], mode: PatchMode = 'apply'):
   let hook: ((p: { uuid: string; isDisabled: boolean }) => Promise<void>) | null = null;
   const patches: Array<{ uuid: string; isDisabled: boolean }> = [];
   let subFetches = 0;
+  const disabledKeys = new Set<string>();
   // A real backend puts each Host's own server name in its entry, which is what
   // tells two addresses of one node apart.
   const qs = (h: AddressRow) =>
@@ -80,7 +91,11 @@ export function fakeHostPanel(initial: AddressRow[], mode: PatchMode = 'apply'):
     }
     if (c.method === 'GET' && (c.path.startsWith('/sub/') || c.path.startsWith('/api/sub/'))) {
       subFetches++;
-      return new Response(body(), { status: 200, headers: { 'content-type': 'text/plain' } });
+      const key = c.path.split('/').pop() ?? '';
+      return new Response(disabledKeys.has(key) ? DISABLED_PLACEHOLDER : body(), {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      });
     }
     return jsonRes({ message: 'not found' }, 404);
   });
@@ -101,5 +116,6 @@ export function fakeHostPanel(initial: AddressRow[], mode: PatchMode = 'apply'):
       return h;
     },
     body,
+    disabledKeys,
   };
 }
