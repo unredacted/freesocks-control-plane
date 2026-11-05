@@ -12,7 +12,7 @@ vi.mock('@client/lib/serversApi', async (importOriginal) => ({
 }));
 
 /** What the review route answers for a live fronted node gaining its first edges. */
-function reviewWith(blockers: string[]) {
+function reviewWith(blockers: string[], atOnce: 'kept' | 'external' | null = null) {
   return {
     isPending: false,
     isError: false,
@@ -38,6 +38,7 @@ function reviewWith(blockers: string[]) {
             locationLabel: 'Anycast',
           },
         ],
+        atOnce,
       },
     },
   };
@@ -46,8 +47,8 @@ function reviewWith(blockers: string[]) {
 let client: QueryClient;
 let app: ReturnType<typeof mountWithQuery> | null = null;
 
-function mount(blockers: string[]) {
-  vi.mocked(reviewQuery).mockReturnValue(reviewWith(blockers) as never);
+function mount(blockers: string[], atOnce: 'kept' | 'external' | null = null) {
+  vi.mocked(reviewQuery).mockReturnValue(reviewWith(blockers, atOnce) as never);
   vi.mocked(approveNode).mockReset().mockResolvedValue({ runId: 'run1' });
   client = new QueryClient();
   app = mountWithQuery(client, NodeApprovalCard, {
@@ -116,5 +117,28 @@ describe('What you approve', () => {
       .click();
     await vi.waitFor(() => expect(approveNode).toHaveBeenCalled());
     expect(vi.mocked(approveNode).mock.lastCall).toEqual(['panel', 'i1', 'h1', false]);
+  });
+
+  test('after a maintenance with its tests current, it reopens on the addresses it has, at once', async () => {
+    mount([], 'kept');
+    expect(document.body.textContent).toMatch(
+      /Approve reopens it on the addresses it already has. Nothing new is bought./,
+    );
+    expect(document.body.textContent).toMatch(/members get front-a\.example\.org:443/);
+    button('Approve go-live')!.click();
+    flushSync();
+    await tick();
+    const dialog = document.querySelector('[role="alertdialog"]')!;
+    expect(dialog.textContent).toMatch(/through the addresses it already has/);
+    expect(dialog.textContent).not.toMatch(/rehearses/);
+    const input = dialog.querySelector<HTMLInputElement>('input')!;
+    input.value = 'node-a';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent?.trim() === 'Approve go-live')!
+      .click();
+    await vi.waitFor(() => expect(approveNode).toHaveBeenCalled());
+    await vi.waitFor(() => expect(document.body.textContent).toMatch(/It is live again\./));
   });
 });
