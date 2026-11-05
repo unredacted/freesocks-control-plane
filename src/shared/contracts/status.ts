@@ -55,8 +55,6 @@ export type PublicStatusResponse = z.infer<typeof PublicStatusResponse>;
 // --- admin editor surface ---------------------------------------------------
 
 export const AdminStatusPageConfig = z.object({
-  busyAt: z.number().int().positive(),
-  crowdedAt: z.number().int().positive(),
   rows: z.array(CensorshipRow),
   /** The censored-country list, in order: the editor shows one row per country. */
   countries: z.array(z.string()).default([]),

@@ -899,6 +899,7 @@ export async function remnawaveGetNodeInventory(cfg: RemnawaveConfig): Promise<N
     port: n.port ?? undefined,
     countryCode: n.countryCode ?? undefined,
     xrayVersion: nodeXrayVersion(n) ?? undefined,
+    ...(nodeCpu(n.system) ?? {}),
   }));
 }
 
@@ -938,6 +939,24 @@ function nodeXrayVersion(n: {
   return n.versions?.xray?.trim() || n.xrayVersion?.trim() || null;
 }
 
+/** The node's CPU as `/api/nodes` reports it (`system.info.cpus` +
+ *  `system.stats.loadAvg`, 1/5/15 minutes; contract
+ *  `libs/contract/models/node-system.schema.ts`). Read loosely on purpose:
+ *  `system` is null while a node is disconnected and its shape is newer than
+ *  the rest of the node, so anything unexpected means "no CPU report" and
+ *  never fails the whole node list. */
+const NodeCpuReport = z.object({
+  info: z.object({ cpus: z.number().int().positive() }),
+  stats: z.object({ loadAvg: z.array(z.number().nonnegative()).min(1) }),
+});
+export function nodeCpu(system: unknown): { cpuLoad5: number; cpuCores: number } | null {
+  const r = NodeCpuReport.safeParse(system);
+  if (!r.success) return null;
+  const avg = r.data.stats.loadAvg;
+  // [1, 5, 15] minutes: the 5-minute figure, so a short spike doesn't count.
+  return { cpuLoad5: avg[1] ?? avg[0]!, cpuCores: r.data.info.cpus };
+}
+
 // /api/nodes → (unwrapped) an array of nodes. The load-relevant fields, plus
 // the node's active config profile for inbound discovery. Verified against
 // remnawave/backend `libs/contract/models/nodes.schema.ts`
@@ -955,6 +974,8 @@ const NodesResponse = z.array(
     usersOnline: z.number().nullish(),
     trafficUsedBytes: z.number().nullish(),
     ...NodeXrayVersionFields,
+    /** Parsed by nodeCpu() alone, never validated here (see there). */
+    system: z.unknown().optional(),
     configProfile: z
       .object({
         activeConfigProfileUuid: z.string().nullish(),

@@ -58,11 +58,12 @@
     document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'center' });
   });
 
+  // The load band is the location's CPU load. 'unknown' (no node reporting
+  // it) has no badge: nothing is said rather than a non-answer.
   const LOAD_BADGE: Record<string, { key: MessageKey; cls: string }> = {
     quiet: { key: 'status.loadQuiet', cls: 'text-primary' },
     busy: { key: 'status.loadBusy', cls: 'text-amber-700 dark:text-amber-400' },
     crowded: { key: 'status.loadCrowded', cls: 'text-destructive' },
-    unknown: { key: 'status.loadUnknown', cls: 'text-muted-foreground' },
   };
 
   const CELL_STYLE: Record<string, { key: MessageKey; dot: string }> = {
@@ -127,7 +128,7 @@
     {:else if status.data && status.data.locations.length > 0}
       <ul>
         {#each status.data.locations as loc (loc.code)}
-          {@const badge = LOAD_BADGE[loc.load] ?? LOAD_BADGE.unknown!}
+          {@const badge = LOAD_BADGE[loc.load]}
           <li
             id="loc-{loc.code}"
             class="flex scroll-mt-24 flex-wrap items-center justify-between gap-x-6 gap-y-1 border-t border-border/70 py-4 last:border-b"
@@ -149,8 +150,10 @@
               <span class={loc.online ? 'text-foreground' : 'text-destructive'}>
                 {loc.online ? t('status.online') : t('status.offline')}
               </span>
-              <span class="text-muted-foreground" aria-hidden="true">·</span>
-              <span class="font-bold {badge.cls}">{t(badge.key)}</span>
+              {#if badge}
+                <span class="text-muted-foreground" aria-hidden="true">·</span>
+                <span class="font-bold {badge.cls}">{t(badge.key)}</span>
+              {/if}
             </p>
           </li>
         {/each}

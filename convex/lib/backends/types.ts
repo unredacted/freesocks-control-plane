@@ -359,6 +359,10 @@ export interface NodeInventoryRow {
   countryCode?: string;
   /** The node's Xray version as the backend reports it (absent while unknown). */
   xrayVersion?: string;
+  /** The node's 5-minute CPU load average and core count, when it reports
+   *  them (the public load bands, lib/loadBands). */
+  cpuLoad5?: number;
+  cpuCores?: number;
 }
 
 import type { PatchChange, PatchMaterial, PatchOp } from '../backend/patchOps';

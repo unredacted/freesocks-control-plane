@@ -2,7 +2,8 @@
  * Network-status page — registered wrappers over the pure projection in
  * lib/statusPage.ts. `getPublic` feeds the unauthenticated GET /api/v1/status
  * route; the admin functions back the CMS Status page (incidents + the
- * censorship matrix + load thresholds, all in the `status.*` namespace).
+ * censorship matrix in the `status.*` namespace). Load bands need no config:
+ * they come from the nodes' CPU load (lib/loadBands).
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { ConvexError, v } from 'convex/values';
@@ -47,8 +48,6 @@ export const getPageConfig = internalQuery({
       resolveCensoredCountries(ctx.db),
     ]);
     return {
-      busyAt: cfg.busyAt,
-      crowdedAt: cfg.crowdedAt,
       rows: cfg.censorshipRows,
       countries: censored.codes,
     };
@@ -56,91 +55,50 @@ export const getPageConfig = internalQuery({
 });
 
 /**
- * Admin sets the censorship matrix + load thresholds. `rows` replaces the full
- * matrix (the editor always submits the whole grid); thresholds validate to
- * positive ints with the EFFECTIVE pair required to satisfy crowdedAt > busyAt
- * (equality would make the busy band unreachable — crowded matches first).
+ * Admin sets the censorship matrix. `rows` replaces the full matrix (the
+ * editor always submits the whole grid).
  */
 export const setPageConfig = internalMutation({
   args: {
     rows: v.optional(v.any()),
-    busyAt: v.optional(v.number()),
-    crowdedAt: v.optional(v.number()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { rows, busyAt, crowdedAt, actorAdminId }) => {
-    if (rows === undefined && busyAt === undefined && crowdedAt === undefined) {
+  handler: async (ctx, { rows, actorAdminId }) => {
+    if (rows === undefined) {
       throw new ConvexError({ code: 'validation', message: 'no recognized status-page fields' });
     }
-    if (busyAt !== undefined || crowdedAt !== undefined) {
-      // Validate the EFFECTIVE pair (new value over the stored one), so an
-      // equal-or-inverted combination can never be persisted.
-      const current = await resolveStatusConfig(ctx.db);
-      const nextBusy = busyAt ?? current.busyAt;
-      const nextCrowded = crowdedAt ?? current.crowdedAt;
-      if (nextCrowded <= nextBusy) {
-        throw new ConvexError({
-          code: 'validation',
-          message:
-            'crowdedAt must be greater than busyAt (equality makes the busy band unreachable)',
-        });
-      }
-    }
-    let savedRows: number | undefined;
-    if (rows !== undefined) {
-      const valid = await resolveValidModeIds(ctx.db);
-      const [current, censored] = await Promise.all([
-        resolveStatusConfig(ctx.db),
-        resolveCensoredCountries(ctx.db),
-      ]);
-      // The editor shows only listed countries; rows of countries that left the
-      // list are kept (re-adding the country brings its row back).
-      const clean = sanitizeCensorshipRows(
-        {
-          rows: mergeCensorshipRows(
-            sanitizeCensorshipRows({ rows }, valid),
-            current.censorshipRows,
-            censored.codes,
-          ),
-        },
-        valid,
-      );
-      savedRows = clean.length;
-      await upsertSettingRow(
-        ctx,
-        STATUS_KEYS.censorship,
-        JSON.stringify({ rows: clean }),
-        actorAdminId,
-      );
-    }
-    for (const [key, val] of [
-      [STATUS_KEYS.loadBusyAt, busyAt],
-      [STATUS_KEYS.loadCrowdedAt, crowdedAt],
-    ] as const) {
-      if (val === undefined) continue;
-      if (!Number.isInteger(val) || val < 1 || val > 100_000) {
-        throw new ConvexError({ code: 'validation', message: 'thresholds must be 1..100000' });
-      }
-      await upsertSettingRow(ctx, key, JSON.stringify(val), actorAdminId);
-    }
+    const valid = await resolveValidModeIds(ctx.db);
+    const [current, censored] = await Promise.all([
+      resolveStatusConfig(ctx.db),
+      resolveCensoredCountries(ctx.db),
+    ]);
+    // The editor shows only listed countries; rows of countries that left the
+    // list are kept (re-adding the country brings its row back).
+    const clean = sanitizeCensorshipRows(
+      {
+        rows: mergeCensorshipRows(
+          sanitizeCensorshipRows({ rows }, valid),
+          current.censorshipRows,
+          censored.codes,
+        ),
+      },
+      valid,
+    );
+    await upsertSettingRow(
+      ctx,
+      STATUS_KEYS.censorship,
+      JSON.stringify({ rows: clean }),
+      actorAdminId,
+    );
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
       action: 'status.page.update',
       targetType: 'status_page',
-      payload: {
-        ...(savedRows !== undefined ? { censorshipRows: savedRows } : {}),
-        ...(busyAt !== undefined ? { busyAt } : {}),
-        ...(crowdedAt !== undefined ? { crowdedAt } : {}),
-      },
+      payload: { censorshipRows: clean.length },
     });
-    const [cfg, censored] = await Promise.all([
-      resolveStatusConfig(ctx.db),
-      resolveCensoredCountries(ctx.db),
-    ]);
+    const cfg = await resolveStatusConfig(ctx.db);
     return {
-      busyAt: cfg.busyAt,
-      crowdedAt: cfg.crowdedAt,
       rows: cfg.censorshipRows,
       countries: censored.codes,
     };

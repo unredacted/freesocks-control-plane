@@ -12,13 +12,7 @@ import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
 import { BACKEND_IDS } from './backendIds';
 import { CAPABILITIES } from './backends/capabilities';
-import {
-  computeLocationLoad,
-  HEALTH_FRESH_MS,
-  LOAD_THRESHOLD_DEFAULTS,
-  type LoadBand,
-  type LoadThresholds,
-} from './loadBands';
+import { computeLocationLoad, HEALTH_FRESH_MS, type LoadBand } from './loadBands';
 
 export interface LocationEntry {
   code: string;
@@ -50,35 +44,9 @@ export async function collectLocationCapableServers(
 
 export { HEALTH_FRESH_MS };
 
-/** The `status.*` threshold rows the load bands resolve against (kept
- *  dependency-light here so publicConfig can compute locations without the
- *  full status-page config). */
-async function readThresholds(db: DatabaseReader): Promise<LoadThresholds> {
-  const read = async (key: string, fallback: number): Promise<number> => {
-    const row = await db
-      .query('appSettings')
-      .withIndex('by_key', (q) => q.eq('key', key))
-      .unique();
-    if (!row) return fallback;
-    try {
-      const v = JSON.parse(row.value);
-      return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 100_000 ? v : fallback;
-    } catch {
-      return fallback;
-    }
-  };
-  const busyAt = await read('status.loadBusyAt', LOAD_THRESHOLD_DEFAULTS.busyAt);
-  const crowdedAt = Math.max(
-    await read('status.loadCrowdedAt', LOAD_THRESHOLD_DEFAULTS.crowdedAt),
-    busyAt,
-  );
-  return { busyAt, crowdedAt };
-}
-
 export async function resolveLocations(db: DatabaseReader): Promise<LocationEntry[]> {
   const servers = await collectLocationCapableServers(db);
-  const statsRows = await db.query('remnawaveNodeStats').collect();
-  const thresholds = await readThresholds(db);
+  const nodeRows = await db.query('backendNodeInventory').collect();
   const now = Date.now();
 
   const byCode = new Map<string, typeof servers>();
@@ -103,10 +71,8 @@ export async function resolveLocations(db: DatabaseReader): Promise<LocationEntr
       online,
       coords: located ? { lat: located.locationLat!, lng: located.locationLng! } : null,
       load: computeLocationLoad(
-        instances,
-        statsRows,
+        nodeRows,
         new Set(instances.map((s) => s._id)),
-        thresholds,
         now,
         HEALTH_FRESH_MS,
       ),

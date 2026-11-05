@@ -97,8 +97,11 @@
   let visibleModes = $derived(withCurrentMode(modes, selected, currentMode));
   let groups = $derived(groupModesByFamily(visibleModes, families));
   // Per-card "More details" disclosure state, keyed by the group's stable key
-  // (family id, or the orphan leaf's id). Independent of selection: expanding
-  // a card is reading, not choosing.
+  // (family id, or the orphan leaf's id). Expanding a card is reading, not
+  // choosing. A card the member never toggled follows the selection: the
+  // selected family starts open, so its transport chooser is one click away,
+  // and the open card moves with a switch. A card the member did toggle keeps
+  // their choice.
   let detailsOpen = $state<Record<string, boolean>>({});
   let selectedGroupIndex = $derived(
     groups.findIndex((g) => g.children.some((m) => m.id === selected)),
@@ -220,13 +223,13 @@
           {/if}
         </button>
 
-        <!-- "More details" disclosure, identical on EVERY card (selected or not):
-             non-technical members get a one-glance choice; the description and
-             the transport chooser wait behind the toggle for those who want
-             them. stopPropagation so expanding never also selects the family. -->
+        <!-- "More details" disclosure, on EVERY card: non-technical members get
+             a one-glance choice; the description and the transport chooser wait
+             behind the toggle. The selected card starts open (see detailsOpen).
+             stopPropagation so expanding never also selects the family. -->
         {#if body || g.family}
           {@const key = g.family?.id ?? g.children[0]!.id}
-          {@const expanded = !!detailsOpen[key]}
+          {@const expanded = detailsOpen[key] ?? isSelectedGroup}
           <div class="border-t border-border/70 px-4 pb-3 pt-1.5">
             <button
               type="button"

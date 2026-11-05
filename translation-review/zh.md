@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**166 of 773 strings are missing** (the app currently shows English for
+**171 of 777 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -190,7 +190,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | 通行密钥登录失败 |
 | `passkey.notNow` | Not now | 暂不 |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(9 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(10 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -249,6 +249,7 @@ review.
 | `account.refreshFailedTitle` | Could not refresh membership | 无法刷新会员状态 |
 | `account.graceTitle` | Your account is in a grace period | 你的账户处于宽限期 |
 | `account.graceBody` | Your membership has lapsed, so this account will be limited soon. Renew - donate or redeem a membership code below - to keep your plan. | 你的会员已到期，此账户即将受限。请续订--捐款或在下方兑换会员码--以保留你的套餐。 |
+| `account.graceRenewBody` | Your membership has lapsed, so this account will be limited soon. Renew to keep your plan. | ⚠️ **MISSING** |
 | `account.disabledTitle` | Your account is currently disabled | 你的账户当前已停用 |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | 此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。 |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | 如果您的32位账号可能已泄露，请立即更换。旧账号将立即失效。 |
@@ -529,13 +530,17 @@ review.
 | `footer.socialBluesky` | FreeSocks on Bluesky | Bluesky 上的 FreeSocks |
 | `footer.support` | Support | 支持 |
 
-## `renew` — Expiring/expired membership callouts and renewal prompts.
+## `renew` — Expiring/expired membership callouts and renewal prompts. *(4 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `renew.expiringTitle` | Your membership is expiring soon | 你的会员即将到期 |
 | `renew.expiredTitle` | Your membership has expired | 你的会员已过期 |
 | `renew.body` | FreeSocks is community-funded - donations keep it running. To renew your membership, donate or contact us for a membership code. | FreeSocks 由社区捐助运营。要续订会员，请捐款或联系我们获取会员码。 |
+| `renew.renewBody` | Renew now to keep your membership. | ⚠️ **MISSING** |
+| `renew.renewBodyDonation` | Renew now to keep your membership. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
+| `renew.expiredRenewBody` | Renew to get your membership back. | ⚠️ **MISSING** |
+| `renew.expiredRenewBodyDonation` | Renew to get your membership back. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
 | `renew.donate` | Donate | 捐款 |
 | `renew.contact` | Contact us | 联系我们 |
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | 您当前使用的是免费套餐。在下方续订以恢复您的会员资格。 |
@@ -922,7 +927,6 @@ review.
 | `status.loadQuiet` | Quiet | 空闲 |
 | `status.loadBusy` | Busy | 繁忙 |
 | `status.loadCrowded` | Crowded | 拥挤 |
-| `status.loadUnknown` | Load unknown | 负载未知 |
 | `status.matrixTitle` | Availability in censored regions | 受审查地区的可用性 |
 | `status.matrixBody` | How well each connection mode works from specific countries, based on reports we receive. "Partial" means some networks or times of day block it. | 根据我们收到的报告，各连接模式在特定国家的可用情况。“部分可用”表示某些网络或某些时段会封锁它。 |
 | `status.matrixAvailable` | Available | 可用 |

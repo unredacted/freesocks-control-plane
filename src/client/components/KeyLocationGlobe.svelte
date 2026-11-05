@@ -65,11 +65,12 @@
   ];
   const OFFLINE: [number, number, number] = [0.55, 0.55, 0.55];
 
+  // No marker `id`s: cobe 2 turns each id into a CSS anchor element it moves
+  // on every frame, and nothing here positions HTML against the markers.
   function buildMarkers(focusCode: string | null) {
     return dotted.map((l) => {
       const isKey = focusCode !== null && l.code === focusCode;
       return {
-        id: l.code,
         location: [l.coords!.lat, l.coords!.lng] as [number, number],
         size: isKey ? 0.1 : 0.05,
         color: isKey ? ACTIVE : l.online ? dim(ACTIVE) : OFFLINE,
@@ -231,6 +232,9 @@
         markerColor: ACTIVE,
         glowColor: dark ? [0.12, 0.12, 0.12] : [0.92, 0.92, 0.92],
         markers: buildMarkers(highlighted ? focus!.code : null),
+        // On the surface: cobe 2 lifts markers 0.05 by default, and a lifted
+        // marker just behind the edge still shows, floating outside the globe.
+        markerElevation: 0,
         scale: 1.02,
       });
       startLoop();
@@ -257,20 +261,25 @@
 </script>
 
 <div class="panel flex h-full flex-col">
-  <h2 class="text-xl font-bold leading-tight">{t('account.map.title')}</h2>
+  <h2 class="text-center text-xl font-bold leading-tight">{t('account.map.title')}</h2>
   <div class="flex flex-1 items-center justify-center py-3">
-    <canvas
-      bind:this={canvas}
-      style="width:{size}px;max-width:100%;aspect-ratio:1;touch-action:pan-y"
-      class={dragging ? 'cursor-grabbing' : 'cursor-grab'}
-      role="img"
-      aria-label={t('account.map.aria')}
-      onpointerdown={onPointerDown}
-      onpointermove={onPointerMove}
-      onpointerup={endDrag}
-      onpointercancel={endDrag}
-      onlostpointercapture={endDrag}
-    ></canvas>
+    <!-- The globe's own box, sized to the globe: cobe 2 wraps the canvas in a
+         width:100% div of its own, which would otherwise take the whole row
+         and leave the canvas at its start instead of centered. -->
+    <div style="width:{size}px;max-width:100%">
+      <canvas
+        bind:this={canvas}
+        style="display:block;width:100%;aspect-ratio:1;touch-action:pan-y"
+        class={dragging ? 'cursor-grabbing' : 'cursor-grab'}
+        role="img"
+        aria-label={t('account.map.aria')}
+        onpointerdown={onPointerDown}
+        onpointermove={onPointerMove}
+        onpointerup={endDrag}
+        onpointercancel={endDrag}
+        onlostpointercapture={endDrag}
+      ></canvas>
+    </div>
   </div>
   <div class="space-y-0.5 text-center">
     {#if currentLabel}

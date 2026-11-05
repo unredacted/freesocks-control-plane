@@ -658,6 +658,26 @@
   // tab when self-service purchase is available, instead of the external donate
   // URL. (Review #4.)
   let billingEnabled = $derived(!!config.data?.billing?.enabled);
+  // The renewal checkout offers an optional donation on top (UpgradeMembership's
+  // "Add a donation"), so the callouts can say so when it is on.
+  let renewWithDonation = $derived(billingEnabled && !!config.data?.billing?.donation?.enabled);
+  // What the expiry/lifecycle callouts say. With self-service billing a member
+  // renews in the Membership tab; without it, a donation or a membership code
+  // is the only way back, and the older copy says exactly that.
+  let expiringBody = $derived(
+    !billingEnabled
+      ? t('renew.body')
+      : renewWithDonation
+        ? t('renew.renewBodyDonation')
+        : t('renew.renewBody'),
+  );
+  let expiredBody = $derived(
+    !billingEnabled
+      ? t('renew.body')
+      : renewWithDonation
+        ? t('renew.expiredRenewBodyDonation')
+        : t('renew.expiredRenewBody'),
+  );
 
   // One-time "your membership expired" banner: Login stashes a flag when the server
   // auto-downgraded a lapsed member; read + clear it once so it shows only on the
@@ -897,7 +917,7 @@
           <MembershipCallout
             tone="warn"
             title={t('account.graceTitle')}
-            body={t('account.graceBody')}
+            body={billingEnabled ? t('account.graceRenewBody') : t('account.graceBody')}
             ctaUrl={config.data?.donateUrl}
             onCta={billingEnabled ? () => (activeTab = 'membership') : undefined}
             ctaLabel={billingEnabled ? t('renew.renewCta') : t('renew.donate')}
@@ -919,13 +939,15 @@
           <MembershipCallout
             tone="warn"
             title={t('renew.expiringTitle')}
-            body={t('renew.body')}
+            body={expiringBody}
             ctaUrl={config.data?.donateUrl}
             onCta={billingEnabled ? () => (activeTab = 'membership') : undefined}
             ctaLabel={billingEnabled ? t('renew.renewCta') : t('renew.donate')}
           >
             {#snippet secondaryAction()}
-              {#if config.data?.contactUrl}
+              <!-- "Contact us" is the way to a membership code, so only where
+                   there is no self-service renewal. -->
+              {#if config.data?.contactUrl && !billingEnabled}
                 <a
                   class="text-xs text-muted-foreground underline hover:text-foreground"
                   href={config.data.contactUrl}
@@ -940,13 +962,13 @@
           <MembershipCallout
             tone="error"
             title={t('renew.expiredTitle')}
-            body={t('renew.body')}
+            body={expiredBody}
             ctaUrl={config.data?.donateUrl}
             onCta={billingEnabled ? () => (activeTab = 'membership') : undefined}
             ctaLabel={billingEnabled ? t('renew.renewCta') : t('renew.donate')}
           >
             {#snippet secondaryAction()}
-              {#if config.data?.contactUrl}
+              {#if config.data?.contactUrl && !billingEnabled}
                 <a
                   class="text-xs text-muted-foreground underline hover:text-foreground"
                   href={config.data.contactUrl}
@@ -1089,6 +1111,14 @@
                        the pass, and point at the supported apps. -->
                   <AppNoticeHint notice={data.subscription.appNotice} />
                 {/if}
+                {#if rawConfigFirst}
+                  <!-- rawConfig mode: the raw config IS the deliverable (the
+                       CDN-fetched link is hidden on the pass), so it sits right
+                       under the pass, before the help row, usage and the app
+                       list. No public mirrors - they'd expose the config to
+                       third parties. -->
+                  <RawConfig prominent />
+                {/if}
                 {#if !rawConfigFirst}
                   <!-- Right under the pass it fixes. Always rendered outside
                        rawConfig modes: mirror AVAILABILITY is member-visible state
@@ -1167,11 +1197,7 @@
                   usageTotal={usage.data?.usage?.total}
                 />
                 {#if rawConfigFirst}
-                  <!-- rawConfig mode: the raw config IS the deliverable (the
-                       CDN-fetched link is hidden above), so it comes before the
-                       app list. No public mirrors - they'd expose the config to
-                       third parties. -->
-                  <RawConfig prominent />
+                  <!-- The raw config itself already sits under the pass. -->
                   <ConnectClient
                     backend={data.subscription.backend}
                     rawConfigFirst

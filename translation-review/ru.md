@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**166 of 773 strings are missing** (the app currently shows English for
+**171 of 777 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -190,7 +190,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | Не удалось войти с пасс-ключом |
 | `passkey.notNow` | Not now | Не сейчас |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(9 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(10 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -249,6 +249,7 @@ review.
 | `account.refreshFailedTitle` | Could not refresh membership | Не удалось обновить членство |
 | `account.graceTitle` | Your account is in a grace period | Аккаунт в льготном периоде |
 | `account.graceBody` | Your membership has lapsed, so this account will be limited soon. Renew - donate or redeem a membership code below - to keep your plan. | Членство закончилось, и скоро аккаунт будет ограничен. Продлите его - пожертвуйте или активируйте код членства ниже - чтобы сохранить тариф. |
+| `account.graceRenewBody` | Your membership has lapsed, so this account will be limited soon. Renew to keep your plan. | ⚠️ **MISSING** |
 | `account.disabledTitle` | Your account is currently disabled | Аккаунт сейчас отключён |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | Новые ключи и изменения для этого аккаунта приостановлены. Активируйте код членства ниже, чтобы вернуть доступ, или напишите в поддержку, указав свой ID для поддержки. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | Замените свой 32-значный номер счета, если произошла утечка данных. Старый номер перестанет работать немедленно. |
@@ -529,13 +530,17 @@ review.
 | `footer.socialBluesky` | FreeSocks on Bluesky | FreeSocks в Bluesky |
 | `footer.support` | Support | Поддержка |
 
-## `renew` — Expiring/expired membership callouts and renewal prompts.
+## `renew` — Expiring/expired membership callouts and renewal prompts. *(4 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `renew.expiringTitle` | Your membership is expiring soon | Ваше членство скоро истекает |
 | `renew.expiredTitle` | Your membership has expired | Ваше членство истекло |
 | `renew.body` | FreeSocks is community-funded - donations keep it running. To renew your membership, donate or contact us for a membership code. | FreeSocks существует на пожертвования. Чтобы продлить членство, сделайте пожертвование или свяжитесь с нами для получения кода членства. |
+| `renew.renewBody` | Renew now to keep your membership. | ⚠️ **MISSING** |
+| `renew.renewBodyDonation` | Renew now to keep your membership. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
+| `renew.expiredRenewBody` | Renew to get your membership back. | ⚠️ **MISSING** |
+| `renew.expiredRenewBodyDonation` | Renew to get your membership back. When you renew, you can also add an optional donation to help free users. | ⚠️ **MISSING** |
 | `renew.donate` | Donate | Пожертвовать |
 | `renew.contact` | Contact us | Связаться с нами |
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | Сейчас вы на бесплатном тарифе. Продлите ниже, чтобы восстановить членство. |
@@ -922,7 +927,6 @@ review.
 | `status.loadQuiet` | Quiet | Свободно |
 | `status.loadBusy` | Busy | Загружено |
 | `status.loadCrowded` | Crowded | Переполнено |
-| `status.loadUnknown` | Load unknown | Загрузка неизвестна |
 | `status.matrixTitle` | Availability in censored regions | Доступность в регионах с цензурой |
 | `status.matrixBody` | How well each connection mode works from specific countries, based on reports we receive. "Partial" means some networks or times of day block it. | Насколько хорошо каждый режим подключения работает из конкретных стран, по полученным нами сообщениям. "Частично" означает, что некоторые сети или время суток его блокируют. |
 | `status.matrixAvailable` | Available | Доступен |

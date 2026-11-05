@@ -244,7 +244,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'censorship.legacy_keys.changed': ['keys', 'count'],
   // Admin -> Status: the availability matrix's row count and the load-band
   // thresholds (operator configuration of the public status page).
-  'status.page.update': ['censorshipRows', 'busyAt', 'crowdedAt'],
+  'status.page.update': ['censorshipRows'],
   // By-id backend-server CRUD from the CMS (the by-slug IaC path audits
   // separately); never the config secret / apiUrl.
   'admin.backend_server.create': ['slug', 'backend'],

@@ -853,7 +853,6 @@
     "loadQuiet": "空闲",
     "loadBusy": "繁忙",
     "loadCrowded": "拥挤",
-    "loadUnknown": "负载未知",
     "matrixTitle": "受审查地区的可用性",
     "matrixBody": "根据我们收到的报告，各连接模式在特定国家的可用情况。“部分可用”表示某些网络或某些时段会封锁它。",
     "matrixAvailable": "可用",

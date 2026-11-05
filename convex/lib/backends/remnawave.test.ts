@@ -966,6 +966,34 @@ describe('hosts + node inventory (origin edges)', () => {
     expect(rows.map((r) => r.xrayVersion)).toEqual(['26.7.28', '25.10.15', undefined]);
   });
 
+  test("remnawaveGetNodeInventory reads each node's CPU: 5-minute load + cores, loosely", async () => {
+    const system = (loadAvg: unknown, cpus: unknown) => ({
+      info: { arch: 'x64', cpus, cpuModel: 'x', memoryTotal: 1 },
+      stats: { memoryFree: 1, memoryUsed: 1, uptime: 1, loadAvg, interface: null },
+    });
+    mockFetch(() =>
+      jsonRes({
+        response: [
+          { uuid: 'n-1', name: 'a', system: system([3.1, 2.4, 1.9], 4) },
+          { uuid: 'n-2', name: 'b', system: system([0.5], 2) }, // only one figure
+          { uuid: 'n-3', name: 'c', system: null }, // disconnected
+          { uuid: 'n-4', name: 'd', system: system('busy', 4) }, // odd shape
+          { uuid: 'n-5', name: 'e', system: system([1, 1, 1], 0) }, // no cores
+          { uuid: 'n-6', name: 'f' }, // older panel: no field at all
+        ],
+      }),
+    );
+    const rows = await remnawaveGetNodeInventory(cfg);
+    expect(rows.map((r) => [r.cpuLoad5, r.cpuCores])).toEqual([
+      [2.4, 4],
+      [0.5, 2],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+    ]);
+  });
+
   test('remnawaveGetNodeInventory maps /api/nodes rows (name falls back to uuid)', async () => {
     mockFetch(() =>
       jsonRes({
