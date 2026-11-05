@@ -107,6 +107,13 @@
         ordered this way.
       </Dialog.Description>
     </Dialog.Header>
+    {#if location?.onlyForMeant}
+      <p class="text-muted-foreground text-xs">
+        This location is only for its countries. Addresses made for the old list keep serving the
+        members they were handed to; upkeep makes addresses for the new list (with a count), then
+        retires the old ones one at a time.
+      </p>
+    {/if}
     {#if list.isPending}
       <p class="text-muted-foreground text-sm">Reading the censored-country list.</p>
     {:else if options.length === 0}

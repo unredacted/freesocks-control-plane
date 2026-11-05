@@ -665,6 +665,18 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           continue;
         }
       }
+      // 5O. Addresses only for some countries (convex/edgeAudiences.ts): after an
+      // edit of an only location's countries, an address contained to the old
+      // ones leaves once current ones there meet the count (one per pass).
+      if (origin.providerSet) {
+        const out = await ctx.runMutation(internal.edgeAudiences.retireOutOfDate, {
+          relayId: origin._id,
+        });
+        if (out.retired) {
+          report.published++;
+          continue;
+        }
+      }
       if (lanes.kind === 'off' && publishedNow < desired && uncovered.length === 0) {
         // 5b. Origin-wide fill (every listener covered): any publishable standby, else a provision.
         if (standbys.length > 0) {

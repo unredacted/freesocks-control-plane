@@ -1416,7 +1416,16 @@ export const runContext = internalQuery({
       const listener = edge ? await ctx.db.get(edge.listenerId) : null;
       servername = listener ? (hostSniOf(listener) ?? undefined) : undefined;
     }
-    return { run, cfg, secrets, servername: servername ?? null };
+    // A contained address is handed only to members in its audience (docs/edges.md
+    // "Addresses only for some countries"): it is checked from those of the
+    // checked countries only (the controls stay), which spends no test where
+    // nobody is handed it.
+    let countries = cfg.probe.countries;
+    if (run.targetKind === 'edge') {
+      const edge = await ctx.db.get(run.targetRef as Id<'edges'>);
+      if (edge?.audience?.length) countries = countries.filter((c) => edge.audience!.includes(c));
+    }
+    return { run, cfg, secrets, servername: servername ?? null, countries };
   },
 });
 

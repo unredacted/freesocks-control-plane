@@ -15,6 +15,7 @@ import {
   type PublishedEdge,
 } from './assignment';
 import type { ListenerProto } from './protocols';
+import { steeringVeto } from './scoring';
 
 const SINCE = 1_000;
 const ONLY = { codes: ['RU', 'IR'], only: { since: SINCE } };
@@ -165,5 +166,33 @@ describe('the assignment', () => {
         },
       ),
     ).toBe(false);
+  });
+});
+
+describe("the detector's veto for a contained address", () => {
+  const paths = [{ format: 'links' as const, canEmitV6: false }];
+  const steering = (published: PublishedEdge[]) => ({
+    published,
+    paths,
+    checked: ['IR', 'RU'],
+    curated: ['IR', 'RU'],
+    held: [],
+    freedomListeners: ['a1'],
+  });
+
+  test('evidence only from outside its audience: never replaced', () => {
+    const only = edge('only-ir', 0, { audience: ['IR'], blockedIn: ['RU'] });
+    expect(
+      steeringVeto({ edgeId: 'only-ir', countries: ['RU'] }, steering([only, edge('x', 1)])),
+    ).toBe('outside_audience');
+  });
+
+  test('evidence from inside it, or naming no country: judged as before', () => {
+    const only = edge('only-ir', 0, { audience: ['IR'], blockedIn: ['IR'] });
+    // Blocked in every checked country it serves: replaced (no veto).
+    expect(
+      steeringVeto({ edgeId: 'only-ir', countries: ['IR'] }, steering([only, edge('x', 1)])),
+    ).toBeNull();
+    expect(steeringVeto({ edgeId: 'only-ir', countries: [] }, steering([only]))).toBeNull();
   });
 });

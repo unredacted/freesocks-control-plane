@@ -1149,6 +1149,11 @@ export const EdgeAdmin = z.object({
   listenerId: z.string(),
   /** Address lanes: `trusted` (handed only to trusted members), or null for an open address. */
   lane: z.literal('trusted').nullable().default(null),
+  /**
+   * Addresses only for some countries (docs/edges.md): the countries it is
+   * handed to; empty for an address everyone may be handed.
+   */
+  audience: z.array(z.string()).default([]),
   accountId: z.string().nullable(),
   /** The location the edge was created in (frozen; null for an import without an account). */
   locationId: z.string().nullable().default(null),
@@ -2345,6 +2350,8 @@ export type RenderClientFamily = z.infer<typeof RenderClientFamily>;
  */
 export const EdgeRenderPreviewWhy = z.object({
   meantFor: z.boolean(),
+  /** The endpoint is only for these countries (docs/edges.md "Addresses only for some countries"). */
+  audience: z.array(z.string()).optional(),
   latency: z
     .object({
       band: z.enum(['near', 'medium', 'far']),

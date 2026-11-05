@@ -1256,6 +1256,11 @@ const COPY = {
     explain:
       'Every edge suffers alike, which points at the protocol being blocked, not the address.',
   },
+  outside_audience: {
+    label: 'Blocked only outside its countries',
+    explain:
+      'This address is only for some countries, and every report of a block comes from elsewhere, where nobody is handed it. It is not replaced.',
+  },
   country_scoped: {
     label: 'Routed around by country',
     explain:

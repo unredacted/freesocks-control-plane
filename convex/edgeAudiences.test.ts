@@ -343,3 +343,66 @@ describe('review fixes', () => {
     });
   });
 });
+
+describe('part 2', () => {
+  test('after an edit of the countries, an out-of-date address leaves once a current one is in use', async () => {
+    const w = await world({ onlyA: true });
+    const old = await freshSpareAtA(w, '198.51.100.40');
+    await publish(w, old);
+    // Iran and Russia now: the address made for Iran alone is out of date.
+    await w.t.mutation(internal.edgeLocations.setForCountries, {
+      id: w.a._id,
+      codes: ['IR', 'RU'],
+    });
+    expect(
+      await w.t.mutation(internal.edgeAudiences.retireOutOfDate, { relayId: w.relayId }),
+    ).toEqual({
+      retired: null,
+    });
+    const current = await freshSpareAtA(w, '198.51.100.41');
+    await publish(w, current);
+    expect((await edgeOf(w, current)).audience).toEqual(['IR', 'RU']);
+    expect(
+      await w.t.mutation(internal.edgeAudiences.retireOutOfDate, { relayId: w.relayId }),
+    ).toEqual({
+      retired: old,
+    });
+    expect((await edgeOf(w, old)).publication).toBe('draining');
+    expect((await edgeOf(w, current)).publication).toBe('published');
+  });
+
+  test('a contained address is probed only from its countries (the controls stay)', async () => {
+    const w = await world({ onlyA: true });
+    const spare = await freshSpareAtA(w, '198.51.100.42');
+    await publish(w, spare);
+    const runId = await w.t.run((c) =>
+      c.db.insert('probeRuns', {
+        targetKind: 'edge',
+        targetRef: spare,
+        source: 'globalping',
+        target: '198.51.100.42:443',
+        status: 'requested',
+        trigger: 'cron',
+        requestedAt: Date.now(),
+        results: [],
+      }),
+    );
+    const ctx = await w.t.query(internal.probes.runContext, { runId });
+    expect(ctx?.countries).toEqual(['IR']);
+    const everyoneRun = await w.t.run((c) =>
+      c.db.insert('probeRuns', {
+        targetKind: 'edge',
+        targetRef: w.everyone,
+        source: 'globalping',
+        target: '198.51.100.20:443',
+        status: 'requested',
+        trigger: 'cron',
+        requestedAt: Date.now(),
+        results: [],
+      }),
+    );
+    expect(
+      (await w.t.query(internal.probes.runContext, { runId: everyoneRun }))?.countries,
+    ).toEqual(['IR', 'RU']);
+  });
+});

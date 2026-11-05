@@ -109,7 +109,8 @@ export const execute = internalAction({
     // Error strings are stored: a hostname target's own name never goes into one.
     const redact = target.addressKind === 'name' ? [target.address] : [];
     const opts = {
-      countries: cfg.probe.countries,
+      // The checked countries, or for a contained address those of its audience.
+      countries: c.countries,
       perCountryLimit: cfg.probe.perCountryLimit,
       preferEyeball: cfg.probe.preferEyeball,
       // Fixed when the round was requested (per-country checks, external sources only).
