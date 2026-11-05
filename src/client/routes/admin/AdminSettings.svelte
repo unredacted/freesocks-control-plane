@@ -28,7 +28,7 @@
     configQuery,
     queryKeys,
   } from '../../lib/queries';
-  import { EXIT_SLOTS, exitRows, slotsOf, withSlot } from '../../lib/countryExits';
+  import { EXIT_SLOTS, editorCountries, exitRows, slotsOf, withSlot } from '../../lib/countryExits';
   import { countryName } from '../../lib/countries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -74,6 +74,13 @@
   // member catalog's locations in order.
   const censored = adminCensoredCountriesQuery();
   const exits = $derived(exitRows(draft['delivery.country.exits']));
+  // Listed countries, then any that left the list but keep a mapping (to clear it).
+  const exitCountries = $derived(
+    editorCountries(
+      (censored.data?.countries ?? []).map((c) => c.code),
+      exits,
+    ),
+  );
   const setExit = (country: string, slot: number, code: string) =>
     (draft = { ...draft, 'delivery.country.exits': withSlot(exits, country, slot, code) });
 
@@ -729,16 +736,24 @@
               account page offers them a one-time move instead. The location a key is on then hints
               at the country its member chose, as a location they picked would.
             </p>
-            {#if (censored.data?.countries ?? []).length === 0}
+            {#if exitCountries.length === 0}
               <p class="text-xs text-muted-foreground">
                 No country is on the censored-country list.
               </p>
             {:else}
               <div class="space-y-2">
-                {#each censored.data?.countries ?? [] as c (c.code)}
+                {#each exitCountries as c (c.code)}
                   {@const slots = slotsOf(exits, c.code)}
                   <div class="flex flex-wrap items-center gap-2">
-                    <span class="w-32 text-xs">{countryName(c.code, 'en')}</span>
+                    <span class="w-32 text-xs">
+                      {countryName(c.code, 'en')}
+                      {#if !c.listed}
+                        <span class="text-muted-foreground block">
+                          Not on the list: unused, but it applies again if the country is listed.
+                          Clear it here.
+                        </span>
+                      {/if}
+                    </span>
                     {#each Array.from({ length: EXIT_SLOTS }, (_, i) => i) as i (i)}
                       <select
                         aria-label={`${countryName(c.code, 'en')}: location ${i + 1}`}

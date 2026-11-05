@@ -239,6 +239,25 @@ describe("the account page's one-time move", () => {
   });
 });
 
+describe('a key that carries no backend (an older one)', () => {
+  test('its mode group tells where it is: no offer at the exit, one elsewhere, none when unknown', async () => {
+    const atExit = await world({ sub: { backendServerId: undefined, backendPlacement: SQUAD_B } });
+    expect(
+      await atExit.t.query(internal.countryExits.memberExit, { userId: atExit.userId }),
+    ).toBeNull();
+    const elsewhere = await world({ sub: { backendServerId: undefined } });
+    expect(
+      await elsewhere.t.query(internal.countryExits.memberExit, { userId: elsewhere.userId }),
+    ).toMatchObject({ code: 'loc-b' });
+    const unknown = await world({
+      sub: { backendServerId: undefined, backendPlacement: 'not-attributed' },
+    });
+    expect(
+      await unknown.t.query(internal.countryExits.memberExit, { userId: unknown.userId }),
+    ).toBeNull();
+  });
+});
+
 describe('rollback', () => {
   test('clearForRollback deletes the setting; new keys go least-loaded again', async () => {
     const w = await world();

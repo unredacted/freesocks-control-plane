@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { exitRows, exitSentence, slotsOf, withSlot } from './countryExits';
+import { editorCountries, exitRows, exitSentence, slotsOf, withSlot } from './countryExits';
 
 describe('editing exit locations', () => {
   const rows = [
@@ -32,6 +32,14 @@ describe('editing exit locations', () => {
     expect(withSlot(rows, 'RU', 0, '')).toEqual([rows[0]]);
   });
 
+  test('the editor shows every listed country, then mapped ones that left the list', () => {
+    expect(editorCountries(['IR', 'CN'], rows)).toEqual([
+      { code: 'IR', listed: true },
+      { code: 'CN', listed: true },
+      { code: 'RU', listed: false },
+    ]);
+  });
+
   test('whatever the settings bag holds is read as rows or none', () => {
     expect(exitRows(undefined)).toEqual([]);
     expect(exitRows([{ country: 'IR', locations: ['loc-a', 3] }, 'x'])).toEqual([
@@ -42,10 +50,17 @@ describe('editing exit locations', () => {
 
 describe('the country page sentence', () => {
   test('names the locations in order, or says where to set them', () => {
-    expect(exitSentence(['Alpha'])).toContain('go to Alpha, the first');
-    expect(exitSentence(['Alpha', 'Beta', 'Gamma'])).toContain('go to Alpha, Beta or Gamma');
-    expect(exitSentence([])).toContain('least-loaded');
-    for (const s of [exitSentence([]), exitSentence(['Alpha', 'Beta'])])
+    expect(exitSentence(['Alpha'], true)).toContain('go to Alpha, the first');
+    expect(exitSentence(['Alpha', 'Beta', 'Gamma'], true)).toContain('go to Alpha, Beta or Gamma');
+    expect(exitSentence([], true)).toContain('least-loaded');
+  });
+
+  test('with ordering by country off, it says the mapping does nothing yet', () => {
+    const s = exitSentence(['Alpha'], false);
+    expect(s).toContain('ordering by country is off');
+    expect(s).toContain('least-loaded');
+    expect(s).not.toContain('go to Alpha, the first');
+    for (const s of [exitSentence([], true), exitSentence(['Alpha', 'Beta'], false)])
       expect(s).not.toContain(String.fromCharCode(0x2014));
   });
 });

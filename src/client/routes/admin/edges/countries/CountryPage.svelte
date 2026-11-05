@@ -158,7 +158,12 @@
           {/each}
         </ul>
       {/if}
-      <p class="text-muted-foreground">{exitSentence(v.exits.map((e) => e.label))}</p>
+      <p class="text-muted-foreground">
+        {exitSentence(
+          v.exits.map((e) => e.label),
+          v.switches.steering,
+        )}
+      </p>
     </CardContent>
   </Card>
 

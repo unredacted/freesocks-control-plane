@@ -54,13 +54,37 @@ export function withSlot(
   return [...rows.slice(0, at), next, ...rows.slice(at + 1)];
 }
 
-/** The country page's sentence for where new keys on Automatic go. */
-export function exitSentence(labels: readonly string[]): string {
+/**
+ * The countries the settings editor shows: every listed one, then any country
+ * that still has a mapping but left the list. A mapping there does nothing,
+ * but it would apply again the day the country is listed again, so it stays
+ * in view, to be cleared.
+ */
+export function editorCountries(
+  listed: readonly string[],
+  rows: readonly CountryExitRow[],
+): Array<{ code: string; listed: boolean }> {
+  return [
+    ...listed.map((code) => ({ code, listed: true })),
+    ...rows
+      .filter((r) => !listed.includes(r.country) && r.locations.length > 0)
+      .map((r) => ({ code: r.country, listed: false })),
+  ];
+}
+
+/**
+ * The country page's sentence for where new keys on Automatic go. The mapping
+ * applies only with ordering by country on (`steering`): with it off, new keys
+ * go least-loaded whatever is set.
+ */
+export function exitSentence(labels: readonly string[], steering: boolean): string {
   if (labels.length === 0)
     return 'New keys on Automatic go to the least-loaded location. Choose exit locations for this country under Settings.';
   const list =
     labels.length === 1
       ? labels[0]!
       : `${labels.slice(0, -1).join(', ')} or ${labels[labels.length - 1]!}`;
+  if (!steering)
+    return `Exit locations are set (${list}), but ordering by country is off, so new keys on Automatic go to the least-loaded location. Turn it on under Settings.`;
   return `New keys on Automatic of members who chose this country themselves go to ${list}, the first that can take them.`;
 }

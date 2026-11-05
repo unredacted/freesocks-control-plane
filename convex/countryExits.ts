@@ -101,8 +101,9 @@ export interface MemberExit {
 
 /**
  * The account page's one-time suggestion, or null: a member on Automatic
- * whose country choice has an exit location, while their key is somewhere
- * else. The first exit location that is in the catalog and online is offered.
+ * whose country choice has an exit location, while their key is known to be
+ * somewhere else. The first exit location that is in the catalog and online is
+ * offered.
  */
 export async function memberExitOf(
   db: DatabaseReader,
@@ -111,8 +112,21 @@ export async function memberExitOf(
 ): Promise<MemberExit | null> {
   const { codes, choice, sub } = await exitsOf(db, user, backend, user.connectionModeId ?? null);
   if (codes.length === 0 || !choice || !sub) return null;
-  const server = sub.backendServerId ? await db.get(sub.backendServerId) : null;
-  if (server?.location && codes.includes(server.location)) return null;
+  // Where the key is now: its backend, else the one its mode group is attributed
+  // to (an older key may carry no backend). Unknown offers nothing: a move could
+  // re-issue it into the very location it is in.
+  const serverId =
+    sub.backendServerId ??
+    (sub.backendPlacement
+      ? (
+          await db
+            .query('remnawaveNodeStats')
+            .withIndex('by_placement', (q) => q.eq('placement', sub.backendPlacement!))
+            .unique()
+        )?.backendServerId
+      : undefined);
+  const server = serverId ? await db.get(serverId) : null;
+  if (!server?.location || codes.includes(server.location)) return null;
   const catalog = await resolveLocations(db);
   for (const code of codes) {
     const at = catalog.find((l) => l.code === code);

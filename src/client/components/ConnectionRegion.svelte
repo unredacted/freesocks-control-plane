@@ -58,6 +58,8 @@
       // The key now lives elsewhere: what the page shows of it changes too.
       void qc.invalidateQueries({ queryKey: queryKeys.connectionRegion });
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      // A new key: a new traffic counter and usage history.
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
       void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
       toast.success(t('region.exitMoved'));
