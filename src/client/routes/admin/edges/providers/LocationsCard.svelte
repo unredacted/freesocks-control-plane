@@ -49,6 +49,7 @@
   import { codeLabel } from '../../../../lib/edgeCodes';
   import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
+  import NameDialog from '../components/NameDialog.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { relativeTime } from '../lib/time';
   import LocationPicker from '../forms/LocationPicker.svelte';
@@ -58,7 +59,8 @@
   import { invalidateSni, networksQuery, setLocationNetwork } from '../../../../lib/sniApi';
   import { countryName } from '@client/lib/countries';
   import MeantForDialog from './MeantForDialog.svelte';
-  import { meantForLine } from './meantForWords';
+  import OnlyForDialog from './OnlyForDialog.svelte';
+  import { meantForLine, onlyForWords } from './meantForWords';
   import MemberPlaceDialog from './MemberPlaceDialog.svelte';
   import { CDN_PLACE_LINE, memberPlaceLine } from './memberPlaceWords';
 
@@ -148,6 +150,9 @@
   let adding = $state(false);
   // The countries a location is meant for (docs/edges.md "Locations meant for a country").
   let meantFor = $state<EdgeLocationAdmin | null>(null);
+  /** The location whose "only for these countries" switch is being changed. */
+  let onlyFor = $state<EdgeLocationAdmin | null>(null);
+  let onlyOpen = $state(false);
   let meantOpen = $state(false);
   // Where members are told it is (docs/edges.md "Names in apps").
   let placeFor = $state<EdgeLocationAdmin | null>(null);
@@ -156,6 +161,8 @@
   let trustOpen = $state(false);
   let removing = $state<EdgeLocationAdmin | null>(null);
   let removeOpen = $state(false);
+  let renaming = $state<EdgeLocationAdmin | null>(null);
+  let renameOpen = $state(false);
 
   const patch = createMutation(() => ({
     mutationFn: (a: { id: string; patch: Parameters<typeof updateProviderLocation>[2] }) =>
@@ -196,10 +203,10 @@
     <CardDescription>
       {#if zones}
         The DNS zones this account fronts in. Pick one, or any other zone the account reaches, when
-        you protect a node or add an address; each address stays in the zone it was created in.
-        Trust is per zone: a new one is trusted by its first proven front.
+        you front a node or add an address; each address stays in the zone it was created in. Trust
+        is per zone: a new one is trusted by its first proven front.
       {:else}
-        Where this account's edges are created. Pick one when you protect a node or add an address;
+        Where this account's edges are created. Pick one when you front a node or add an address;
         each address stays in the location it was created in. Trust is per location: a new one is
         trusted by its first tested address.
       {/if}
@@ -209,7 +216,7 @@
     {#if account.locations.length === 0}
       <p class="text-muted-foreground text-sm">
         {zones
-          ? 'No zone yet. Add one here, or pick one when you protect a node.'
+          ? 'No zone yet. Add one here, or pick one when you front a node.'
           : 'No location yet. Add one: nothing can be created in this account until it has one.'}
       </p>
     {/if}
@@ -294,6 +301,19 @@
             {/if}
             {#if l.costNote}<p class="text-xs">{l.costNote}</p>{/if}
             <p class="text-xs">{meantForLine(l.meantFor, (c) => countryName(c, 'en'))}</p>
+            {#if !zones && l.meantFor.length > 0}
+              <p class="text-xs">
+                {onlyForWords(l.meantFor, (c) => countryName(c, 'en')).line(l.onlyForMeant)}
+                <button
+                  type="button"
+                  class="text-primary min-h-11 underline-offset-2 hover:underline sm:min-h-0"
+                  onclick={() => {
+                    onlyFor = l;
+                    onlyOpen = true;
+                  }}>{l.onlyForMeant ? 'Back to everyone' : 'Only for these countries'}</button
+                >
+              </p>
+            {/if}
             <p class="text-xs">{zones ? CDN_PLACE_LINE : memberPlaceLine(l.memberPlace)}</p>
             {#if !zones}
               <label class="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
@@ -397,6 +417,17 @@
                 size="sm"
                 variant="outline"
                 class="h-11 sm:h-8"
+                onclick={() => {
+                  renaming = l;
+                  renameOpen = true;
+                }}
+              >
+                Rename
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                class="h-11 sm:h-8"
                 disabled={patch.isPending}
                 onclick={() => patch.mutate({ id: l.id, patch: { enabled: !l.enabled } })}
               >
@@ -463,6 +494,7 @@
 <PlanDialog bind:open={planOpen} {account} location={planFor} {sizeKey} />
 
 <MeantForDialog bind:open={meantOpen} {account} location={meantFor} />
+<OnlyForDialog bind:open={onlyOpen} {account} location={onlyFor} />
 
 <MemberPlaceDialog bind:open={placeOpen} {account} location={placeFor} />
 
@@ -475,10 +507,27 @@
   onQualify={qualify}
 />
 
+{#if renaming}
+  {@const r = renaming}
+  <NameDialog
+    bind:open={renameOpen}
+    name={r.label}
+    title={`Rename ${r.label}`}
+    description={zones
+      ? 'Only admins see this name. Nothing changes at the provider or in DNS.'
+      : 'Only admins see this name. Members read the one under Name in apps, and nothing changes at the provider.'}
+    empty={`Give the ${zones ? 'zone' : 'location'} a name.`}
+    saved={zones ? 'Zone renamed' : 'Location renamed'}
+    save={(label) =>
+      updateProviderLocation(account.id, r.id, { label }).then(() => invalidateProviders(qc))}
+    errorWords={edgeErrorMessage}
+  />
+{/if}
+
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove the location ${removing?.label ?? ''}?`}
-  body="Nothing at the provider is touched. FCP refuses while an address still lives here or a protected node uses this location."
+  body="Nothing at the provider is touched. FCP refuses while an address still lives here or a fronted node uses this location."
   confirmLabel="Remove location"
   danger
   onConfirm={async () => {

@@ -498,7 +498,7 @@
         ...(originGiven ? { originAddress: originGiven } : {}),
       }),
     onSuccess: (r) => {
-      toast.success('Protecting the node.');
+      toast.success('Fronting the node.');
       onRunCreated(r.runId);
     },
     onError: (e) => toast.error(edgeErrorMessage(e)),
@@ -544,7 +544,7 @@
 >
   <Sheet.Content side="right" class="gap-0 sm:max-w-xl">
     <Sheet.Header class="border-b">
-      <Sheet.Title>{runId ? 'Protecting the node' : TITLES[step]}</Sheet.Title>
+      <Sheet.Title>{runId ? 'Fronting the node' : TITLES[step]}</Sheet.Title>
       <Sheet.Description>
         {#if runId}
           You can close this. It keeps going.
@@ -619,8 +619,8 @@
             {#if presetTaken}
               <div class="space-y-2 rounded-md border p-3 text-sm" role="status">
                 <p>
-                  {presetTaken.name} is already protected. To give it new addresses, use Protect again
-                  on its page.
+                  {presetTaken.name} is already fronted. To give it new addresses, use Front again on
+                  its page.
                 </p>
                 <Button
                   size="sm"
@@ -676,7 +676,7 @@
                       <span class="text-muted-foreground block text-xs">
                         {countryLabel(n.countryCode) ?? 'No country set'}
                         {#if taken}
-                          <span class="mx-1" aria-hidden="true">·</span>Already protected
+                          <span class="mx-1" aria-hidden="true">·</span>Already fronted
                         {:else if n.leftover}
                           <span class="mx-1" aria-hidden="true">·</span>Half set up
                         {:else if !n.online}
@@ -699,7 +699,7 @@
             <fieldset class="space-y-3 rounded-md border p-3 text-sm">
               <legend class="px-1 font-medium">Which transports?</legend>
               <p>
-                This node has {frontable.length} transports a provider address can carry. One run protects
+                This node has {frontable.length} transports a provider address can carry. One run fronts
                 up to {SETUP_RUN_MAX_LISTENERS}: pick the ones members need most. The others keep
                 the direct address, or are hidden if you consent on the review.
               </p>
@@ -734,12 +734,11 @@
               {#if required.length === 0}
                 <p>
                   No transport on this node can be carried by a provider address yet. It cannot be
-                  protected this way.
+                  fronted this way.
                 </p>
               {:else}
                 <p class="font-medium">
-                  {required.length === 1 ? 'This transport gets' : 'These transports get'} a protected
-                  address
+                  {required.length === 1 ? 'This transport gets' : 'These transports get'} a fronted address
                 </p>
                 <ul class="space-y-1">
                   {#each required as i (i.listenerKey)}
@@ -818,8 +817,7 @@
               class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
               role="status"
             >
-              This node's earlier protection is still being removed. Protect it again once it is
-              gone.
+              This node's earlier fronting is still being removed. Front it again once it is gone.
             </p>
           {/if}
           {#if asksOrigin && !planM.isPending && !choosingTransports}
@@ -1139,7 +1137,7 @@
               Members cannot pick {plan.modesOff
                 .map((m) => adminModeName({ id: m.slug, label: m.label }))
                 .join(', ')} yet: {plan.modesOff.length === 1 ? 'the mode is' : 'the modes are'} turned
-              off. The node is protected, but nobody is given it until {plan.modesOff.length === 1
+              off. The node is fronted, but nobody is given it until {plan.modesOff.length === 1
                 ? 'it is'
                 : 'they are'} on.
             </p>
@@ -1157,7 +1155,7 @@
             <p class="mt-1">{r.why}</p>
             <p class="mt-1">{r.fix}</p>
             <p class="text-muted-foreground mt-1 text-xs">
-              You can protect the node all the same. Once it is live, it shows this warning until
+              You can front the node all the same. Once it is live, it shows this warning until
               these clients can connect.
             </p>
           </div>
@@ -1188,8 +1186,8 @@
         {/if}
         {#if plan.familiesDisabled.length > 0}
           <p class="text-muted-foreground text-sm">
-            Protected delivery is off for {plan.familiesDisabled.join(', ')} clients. The run asks you
-            to turn it on before going live.
+            Fronted delivery is off for {plan.familiesDisabled.join(', ')} clients. The run asks you to
+            turn it on before going live.
           </p>
         {/if}
         {#if plan.existingRelay}

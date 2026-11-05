@@ -139,6 +139,15 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
   // Which country lists hold some names or addresses: a read over stored versions.
   if (parts.length === 2 && parts[0] === 'lists' && parts[1] === 'lookup') return true;
+  // What switching a location to only for its countries would do: nothing written.
+  if (
+    parts.length === 6 &&
+    parts[0] === 'providers' &&
+    parts[2] === 'locations' &&
+    parts[4] === 'only' &&
+    parts[5] === 'preview'
+  )
+    return true;
   // What saving a location's countries would move: synthetic seats, nothing written.
   if (
     parts.length === 6 &&
@@ -600,11 +609,25 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   // or one country in full (origins -> transports -> addresses and names), with
   // the probe sources' health (a failing or capped source is why a country goes quiet).
   if (a === 'countries' && b === 'summary' && !c) {
-    const [view, sources] = await Promise.all([
-      ctx.runQuery(internal.edgeCountryView.summary, {}),
+    // The frame, then each listed country in a query of its own, side by side:
+    // one query for every country ran past a query's time limit.
+    const [head, sources] = await Promise.all([
+      ctx.runQuery(internal.edgeCountryView.summaryHead, {}),
       ctx.runQuery(internal.probes.sourceHealthView, {}),
     ]);
-    return json({ ...view, sources: sources.sources });
+    const rows = await Promise.all(
+      head.countries.map((country) =>
+        ctx.runQuery(internal.edgeCountryView.summaryRow, { country }),
+      ),
+    );
+    return json({
+      generatedAt: head.generatedAt,
+      switches: head.switches,
+      controls: head.controls,
+      origins: head.origins,
+      countries: rows.filter((r) => r !== null),
+      sources: sources.sources,
+    });
   }
   if (a === 'countries' && b && /^[A-Za-z]{2}$/.test(b) && !c) {
     const [view, sources] = await Promise.all([
@@ -751,6 +774,25 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+  }
+  // Addresses only for these countries (docs/edges.md "Addresses only for
+  // some countries"): switch on or off; first what it would do (read only).
+  if (a === 'providers' && b && c === 'locations' && d && e === 'only') {
+    if (parts[5] === 'preview' && !parts[6])
+      return json(
+        await ctx.runQuery(internal.edgeAudiences.onlyPreview, { id: id<'edgeLocations'>(d) }),
+      );
+    if (!parts[5]) {
+      if (typeof body.only !== 'boolean')
+        return errorJson('validation', 'only must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeAudiences.setOnly, {
+          id: id<'edgeLocations'>(d),
+          only: body.only,
+          ...act,
+        }),
+      );
+    }
   }
   if (a === 'sni') {
     if (b === 'families' && !c)

@@ -127,7 +127,7 @@
   import { oneAddressNote, originSentence, statusOf } from '../lib/statusWords';
   import { timelineLinkParams } from '../relay/relayLogic';
   import EndpointTestCard from './EndpointTestCard.svelte';
-  import ListenerAddresses from './ListenerAddresses.svelte';
+  import AddressRow from './AddressRow.svelte';
   import NodeProvidersCard from './NodeProvidersCard.svelte';
   import PausedCard from './PausedCard.svelte';
   import SpareDialog from './SpareDialog.svelte';
@@ -173,6 +173,21 @@
   const listeners = $derived((listenersQ.data?.listeners ?? []).filter((l) => !l.retired));
   const edges = $derived((edgesQ.data ?? []).filter((e) => e.status !== 'destroyed'));
   const published = $derived(edges.filter((e) => e.publication === 'published'));
+  // Every address the page lists, of a transport still served: in use, spares,
+  // then retiring (draining, or being deleted at the provider).
+  const shownEdges = $derived.by(() => {
+    const live = new Set(listeners.map((l) => l.id));
+    const mine = edges.filter((e) => live.has(e.listenerId));
+    return [
+      ...mine.filter((e) => e.publication === 'published' && e.status !== 'destroying'),
+      ...mine.filter((e) => e.publication === 'unpublished' && e.status === 'active'),
+      ...mine.filter((e) => e.publication === 'draining' || e.status === 'destroying'),
+    ];
+  });
+  const transportOf = (e: EdgeAdmin): string | null => {
+    const l = listeners.find((x) => x.id === e.listenerId);
+    return l ? transportName(l) : null;
+  };
   // Automatic replacement held for some transports (a replacement blocked again soon).
   const heldNames = $derived(
     (relay?.autoReplaceHolds ?? [])
@@ -447,7 +462,7 @@
     {#if relay}
       <div class="flex shrink-0 flex-wrap items-center gap-2">
         {#if protectAgainFirst}
-          <Button onclick={() => (againOpen = true)}>Protect again</Button>
+          <Button onclick={() => (againOpen = true)}>Front again</Button>
         {:else if relay.bindingDeferred && !runId && published.length > 0}
           <Button disabled={goLiveBusy} onclick={goLive}>Go live</Button>
         {:else if published.length > 0}
@@ -473,9 +488,7 @@
               Add a spare address
             </DropdownMenu.Item>
             {#if canProtectAgain && !protectAgainFirst}
-              <DropdownMenu.Item onSelect={() => (againOpen = true)}
-                >Protect again</DropdownMenu.Item
-              >
+              <DropdownMenu.Item onSelect={() => (againOpen = true)}>Front again</DropdownMenu.Item>
             {/if}
             <DropdownMenu.Item onSelect={() => router.navigate(edgesPaths.relay(relay.slug))}>
               Origin details
@@ -486,7 +499,7 @@
               disabled={relay.deleting || !!relay.restore}
               onSelect={() => (removeOpen = true)}
             >
-              Remove protection
+              Remove fronting
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Root>
@@ -555,43 +568,71 @@
       </section>
     {/if}
 
-    <section aria-labelledby={`${uid}-addresses`}>
-      <h3 id={`${uid}-addresses`} class="mb-3 text-sm font-semibold">Addresses in use</h3>
-      {#if listenersQ.isPending || edgesQ.isPending}
-        <Skeleton class="h-20 w-full" />
-      {:else if listenersQ.isError}
-        <AdminListState error={listenersQ.error} onRetry={() => void listenersQ.refetch()} />
-      {:else if edgesQ.isError}
-        <AdminListState error={edgesQ.error} onRetry={() => void edgesQ.refetch()} />
-      {:else if listeners.length === 0}
-        <p class="text-muted-foreground text-sm">This node has no transport FCP can protect yet.</p>
-      {:else}
-        <ul class="space-y-3">
-          {#each listeners as l (l.id)}
-            <li class="rounded-lg border p-3">
-              <p class="text-sm font-medium">{transportName(l)}</p>
-              <ListenerAddresses
-                listener={l}
-                {edges}
-                onTest={(edgeId) => (testEdgeIds = [edgeId])}
-                lanes={!!relay.lanes}
-                publishable={busy ? null : (putInUse?.edgeId ?? null)}
-                onPublish={() => (putInUseOpen = true)}
-                onRetiring={canEndDrains
-                  ? (edge, action) => (ending = { edge, action })
-                  : undefined}
-                countries={countriesQ.data ?? null}
-              />
-            </li>
+    <!-- One row per address (AddressRow), under the location it comes from on a
+         panel node (NodeProvidersCard), else in one list. -->
+    {#snippet addressRows(locationId: string | null, known: string[])}
+      {@const rows = shownEdges.filter((e) =>
+        locationId === null
+          ? !e.locationId || !known.includes(e.locationId)
+          : e.locationId === locationId,
+      )}
+      {#if rows.length > 0}
+        <ul class="divide-y">
+          {#each rows as e (e.id)}
+            <AddressRow
+              edge={e}
+              transport={listeners.length > 1 ? transportOf(e) : null}
+              lanes={!!relay.lanes}
+              countries={countriesQ.data ?? null}
+              onTest={(edgeId) => (testEdgeIds = [edgeId])}
+              publishable={!busy && putInUse?.edgeId === e.id}
+              onPublish={() => (putInUseOpen = true)}
+              onRetiring={canEndDrains ? (edge, action) => (ending = { edge, action }) : undefined}
+            />
           {/each}
         </ul>
-        {#if config.data?.config.clientCheck.enabled && published.length === 1}
-          <p class="text-muted-foreground mt-2 text-xs">
-            {oneAddressNote(relay.desiredPublished)}
-          </p>
-        {/if}
+      {:else if locationId !== null}
+        <p class="text-muted-foreground py-1 text-xs">No address here yet.</p>
       {/if}
-    </section>
+    {/snippet}
+
+    {#if listenersQ.isPending || edgesQ.isPending}
+      <Skeleton class="h-20 w-full" />
+    {:else if listenersQ.isError}
+      <AdminListState error={listenersQ.error} onRetry={() => void listenersQ.refetch()} />
+    {:else if edgesQ.isError}
+      <AdminListState error={edgesQ.error} onRetry={() => void edgesQ.refetch()} />
+    {:else if listeners.length === 0}
+      <p class="text-muted-foreground text-sm">This node has no transport FCP can front yet.</p>
+    {:else if relay.origin.kind === 'panel-node'}
+      <NodeProvidersCard
+        relay={{ id: relay.id, slug: relay.slug }}
+        {busy}
+        {upkeepAdds}
+        nameOf={(key) => {
+          const l = listeners.find((x) => x.listenerKey === key);
+          return l ? transportName(l) : key;
+        }}
+        onRunStarted={(id) => router.navigate(edgesPaths.home({ run: id }))}
+        rows={addressRows}
+      />
+    {:else}
+      <section aria-labelledby={`${uid}-addresses`}>
+        <h3 id={`${uid}-addresses`} class="mb-3 text-sm font-semibold">Addresses</h3>
+        <div class="rounded-lg border px-3">
+          {#if shownEdges.length === 0}
+            <p class="text-muted-foreground py-3 text-sm">No address yet.</p>
+          {:else}
+            {@render addressRows(null, [])}
+          {/if}
+        </div>
+      </section>
+    {/if}
+    {#if config.data?.config.clientCheck.enabled && published.length === 1}
+      <p class="text-muted-foreground -mt-4 text-xs">
+        {oneAddressNote(relay.desiredPublished)}
+      </p>
+    {/if}
 
     {#if relay.edgePick === 'hrw1'}
       <LanesCard
@@ -617,19 +658,6 @@
           {SPREAD_CARD.action}
         </Button>
       </section>
-    {/if}
-
-    {#if relay.origin.kind === 'panel-node'}
-      <NodeProvidersCard
-        relay={{ id: relay.id, slug: relay.slug }}
-        {busy}
-        {upkeepAdds}
-        nameOf={(key) => {
-          const l = listeners.find((x) => x.listenerKey === key);
-          return l ? transportName(l) : key;
-        }}
-        onRunStarted={(id) => router.navigate(edgesPaths.home({ run: id }))}
-      />
     {/if}
 
     <section class="flex items-start justify-between gap-4 rounded-lg border p-3">
@@ -803,26 +831,26 @@
   </ActionConfirm>
   <ActionConfirm
     bind:open={againOpen}
-    title={`Protect ${name} again?`}
+    title={`Front ${name} again?`}
     body="FCP makes a new address for each transport, you try each one from a real app, and you approve go-live if the node needs it. Members keep the addresses they have until the new ones go live, then the new ones take their places. Cancelling drops only the new addresses."
-    confirmLabel="Protect again"
+    confirmLabel="Front again"
     run={async () => {
       const res = await reprotectRelay(relay.id);
-      toast.success('Protecting again. The progress opens now.');
+      toast.success('Fronting again. The progress opens now.');
       invalidateRelay(qc, slug);
       router.navigate(edgesPaths.home({ run: res.runId }));
     }}
   />
   <ActionConfirm
     bind:open={removeOpen}
-    title={`Remove protection from ${name}?`}
+    title={`Remove fronting from ${name}?`}
     body="Members get the node's own address back at their next refresh, the panel is restored one checked step at a time, and the provider addresses are destroyed afterwards. The node's own address becomes visible again."
     typed={relay.slug}
-    confirmLabel="Remove protection"
+    confirmLabel="Remove fronting"
     danger
     run={async () => {
       assertEdgeOk(await deleteRelay(relay.id, 'restore-direct'));
-      toast.success('Removing protection. The node page shows each step.');
+      toast.success('Removing fronting. The node page shows each step.');
       invalidateRelay(qc, slug);
     }}
   />

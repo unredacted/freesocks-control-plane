@@ -77,7 +77,7 @@
     <CardTitle class="text-base">What this account reaches</CardTitle>
     <CardDescription>
       {meta.layer === 'l7' || meta.providesDns
-        ? 'The zones and configurations these credentials reach. Any of them can be picked when you protect a node; a zone becomes a location the first time it is picked.'
+        ? 'The zones and configurations these credentials reach. Any of them can be picked when you front a node; a zone becomes a location the first time it is picked.'
         : 'What these credentials can use at the provider. A region becomes a location the first time it is picked for a node, or when you add it here.'}
     </CardDescription>
   </CardHeader>

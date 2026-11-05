@@ -10,7 +10,8 @@
    * Picked names can be checked again, retired (confirmed: it states the name
    * drain, `edge.sniDrainMinutes`), brought back, burned (typed), or marked
    * for a curated country. Adding names by hand and the list's settings sit
-   * below, folded away.
+   * below, folded away. "Rename" by the title changes the list's name only
+   * (components/NameDialog): its slug is this page's link and never changes.
    *
    * Wording lives in ./lib/listWords.ts, ./lib/transportWords.ts and
    * ./lib/words.ts (pure, unit-tested).
@@ -51,6 +52,7 @@
   } from '@client/lib/sniApi';
   import { router } from '@client/stores/router.svelte';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
+  import NameDialog from '../components/NameDialog.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
   import { drainLength } from '../simple/drainWords';
@@ -213,6 +215,7 @@
   }
 
   // --- the list itself -------------------------------------------------------------------------
+  let renameOpen = $state(false);
   let removeOpen = $state(false);
   const setEnabled = (enabled: boolean) => run(() => updateFamily(slug, { enabled }));
   const setRequireH2 = (requireH2: boolean) => run(() => updateFamily(slug, { requireH2 }));
@@ -297,7 +300,13 @@
   <SectionHeader
     title={f.label}
     description={`Names the cover site ${f.target.address}:${f.target.port} serves${f.requireH2 ? ', over HTTP/2' : ''}${f.network ? `, on ${f.network.label}` : ''}.`}
-  />
+  >
+    {#snippet actions()}
+      <Button size="sm" variant="outline" disabled={busy} onclick={() => (renameOpen = true)}>
+        Rename
+      </Button>
+    {/snippet}
+  </SectionHeader>
 
   <section class="space-y-3" aria-labelledby={`${uid}-ports`}>
     <h2 id={`${uid}-ports`} class="text-base font-semibold">Where it is used</h2>
@@ -759,12 +768,22 @@
     label={f.label}
     onPort={family.data.bindings.length > 0}
   />
+  <NameDialog
+    bind:open={renameOpen}
+    name={f.label}
+    title={`Rename ${f.label}`}
+    description="Only admins see this name. The list keeps its names, the ports that use it and this page's link, and nothing is sent to a node."
+    empty="Give the list a name."
+    saved="List renamed"
+    save={(label) => updateFamily(slug, { label }).then(() => invalidateSni(qc))}
+    errorWords={(e) => sniErrorWords(codeOf(e))}
+  />
 {/if}
 
 <ConfirmDialog
   bind:open={retireOpen}
   title={`Retire ${picked.length} ${picked.length === 1 ? 'name' : 'names'}?`}
-  body={`New subscriptions stop presenting ${picked.length === 1 ? 'it' : 'them'} at once, on every origin that presents ${picked.length === 1 ? 'it' : 'them'}. Each node keeps accepting ${picked.length === 1 ? 'it' : 'them'} for ${nameDrain}, so members who already hold ${picked.length === 1 ? 'it' : 'one'} stay connected until their app refreshes. An origin keeps its last active name, and an origin that is busy (replacing an address, removing protection, paused) is skipped. Bring ${picked.length === 1 ? 'it' : 'them'} back any time.`}
+  body={`New subscriptions stop presenting ${picked.length === 1 ? 'it' : 'them'} at once, on every origin that presents ${picked.length === 1 ? 'it' : 'them'}. Each node keeps accepting ${picked.length === 1 ? 'it' : 'them'} for ${nameDrain}, so members who already hold ${picked.length === 1 ? 'it' : 'one'} stay connected until their app refreshes. An origin keeps its last active name, and an origin that is busy (replacing an address, removing fronting, paused) is skipped. Bring ${picked.length === 1 ? 'it' : 'them'} back any time.`}
   confirmLabel="Retire"
   danger
   onConfirm={() => {

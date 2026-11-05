@@ -51,8 +51,10 @@ accidentally regress it).
     (`subscriptions.sniRegion`), a country on the censored-country list (Admin -> Settings) or
     the opt-out, "Opt-out: do not use my location" (`ZZ`). While an answer is set nothing is
     guessed, and any guess is cleared. The opt-out stores no country at all: the key gets the
-    universal server names and the same address spread as a key with no country, and nothing
-    is ordered by where it is. Automatic removes the answer.
+    universal server names and the same address spread as a key with no country, nothing is
+    ordered by where it is, and it is never handed an address only for some countries. A
+    country can be chosen anew at most 3 times a day (`account.country.day`: the count is kept
+    per account in the rate-limit table, never the country). Automatic removes the answer.
   - **The guess.** Only with `delivery.country.detect` on (Admin -> Settings, off by default)
     and only on Automatic: the country the CDN reports (`CF-IPCountry`, read only when
     `CF_FRONTED=true`) is stored on the subscription (`regionSeenCountry`, first and last
@@ -256,6 +258,20 @@ settings below to every profile via the backend API (`POST
 with no transports, key-order-independent check). The node-container logging driver
 and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
 §"Xray logging privacy harden".
+
+FCP also **checks on its own every hour**: the `logging-privacy` cron
+(`backendServers.autoHardenLogging`) runs the same check and turns logging off on any
+profile it finds logging, with the same safe read-modify-write as the Apply button.
+Once every profile is hardened a run writes nothing, so no node restarts in the steady
+state. A backend where a server change is in progress (an open op of the backend-write
+ledger holding a profile or a node there) is only read that hour and left for the next
+run. Each check, automatic or an admin's Check / Apply, is stored as the newest "last
+check" (`appState` key `logging:lastCheck`, read by `GET
+/api/v1/admin/remnawave/logging-last-check`) and shown on the card as one line. The
+record holds counts and a time only (profiles checked, found logging, turned off,
+skipped; backends unreadable or busy), never a profile's config or name, a backend's
+address or a credential. A run that turned logging off anywhere writes a system audit
+row, `remnawave.logging_hardened`, with the same counts.
 
 - **Xray logging OFF.** The Xray access log records `from <client-ip> …` for every
   connection. In the Config Profile's Xray JSON set the `log` block so no client IP

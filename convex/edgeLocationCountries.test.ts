@@ -220,8 +220,8 @@ describe('what a member there is handed', () => {
       facts: { country: 'IR' },
       action: 'open_account',
     });
-    const summary = await t.query(internal.edgeCountryView.summary, {});
-    expect(summary.countries.find((c) => c.country === 'IR')!.meantFor).toEqual({
+    const line = await t.query(internal.edgeCountryView.summaryRow, { country: 'IR' });
+    expect(line!.meantFor).toEqual({
       locations: 1,
       blocked: 1,
     });

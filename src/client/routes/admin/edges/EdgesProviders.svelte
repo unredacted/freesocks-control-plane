@@ -50,7 +50,7 @@
 </script>
 
 <SectionHeader
-  title="Providers"
+  title="Edge providers"
   description={used !== null && capacity !== null
     ? `${used} of ${capacity} addresses used across your accounts.`
     : 'The accounts FCP creates addresses in.'}

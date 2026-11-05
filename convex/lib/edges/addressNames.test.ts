@@ -187,6 +187,23 @@ describe('a replacement takes the name', () => {
     expect(mayMoveName(old)).toEqual({ move: true });
   });
 
+  test('never between audiences: everyone holding the name would dial the new address', () => {
+    const to = { listenerId: 'l1', lane: 'open' as const, layer: 'l4' as const, v4: 'x' };
+    expect(mayMoveName(facts({ to: { ...to, audience: ['IR'] } }))).toEqual({
+      move: false,
+      reason: 'other_audience',
+    });
+    expect(
+      mayMoveName(
+        facts({
+          from: { listenerId: 'l1', lane: 'open', audience: ['RU', 'IR'] },
+          to: { ...to, audience: ['IR', 'RU'] },
+        }),
+      ),
+    ).toEqual({ move: true });
+    expect(mayMoveName(facts({ to: { ...to, audience: [] } }))).toEqual({ move: true });
+  });
+
   test('never across lanes, listeners or into a zone no longer eligible', () => {
     expect(
       mayMoveName(facts({ to: { listenerId: 'l1', lane: 'trusted', layer: 'l4', v4: 'x' } })),

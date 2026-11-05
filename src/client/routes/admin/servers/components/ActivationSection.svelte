@@ -15,7 +15,11 @@
    * A fronted node goes live through its protection in Edges (Start, try each
    * address, approve go-live, all in the protect sheet): this page links there
    * ("Protect this node" / "Open progress") and mirrors the approval card while
-   * the protection waits for it. A node an Edges origin already protects has
+   * the protection waits for it. A fronted node closed with no protection open
+   * whose approval takes it live by itself (the review's `display.atOnce`: after a
+   * maintenance on the addresses it already has, or an adopted node whose edge
+   * FCP does not run) shows the approval card here instead of sending the
+   * operator to protect it again. A node an Edges origin already protects has
    * its edges panel on the same page: protecting it again starts there
    * ("Protect again"), never in the protect sheet.
    *
@@ -35,6 +39,7 @@
     invalidateServers,
     rejectRetirement,
     retireNode,
+    reviewQuery,
   } from '@client/lib/serversApi';
   import Link from '@client/components/Link.svelte';
   import { router } from '@client/stores/router.svelte';
@@ -59,7 +64,6 @@
   let ticked = $state(false);
   let retireOpen = $state(false);
   let wipedOpen = $state(false);
-  let words = $derived(stageWords(intent));
 
   async function run(fn: () => Promise<unknown>) {
     busy = true;
@@ -109,6 +113,25 @@
   let unprotected = $derived(!direct && !intent.protection && !intent.retirement);
   let canProtect = $derived(unprotected && (intent.stage === 'machine_ready' || reviewable));
   let canReprotect = $derived(unprotected && intent.stage === 'live' && !origin);
+  // Closed with no protection open: the review says whether its approval takes it
+  // live by itself (read only then; the approval card shares the same query).
+  let closedUnprotected = $derived(unprotected && intent.stage !== 'live');
+  const review = reviewQuery(
+    () => slug,
+    () => (closedUnprotected ? intent.id : null),
+  );
+  let atOnce = $derived(closedUnprotected ? (review.data?.display.atOnce ?? null) : null);
+  let words = $derived(
+    atOnce && !intent.maintenance
+      ? {
+          dot: 'amber' as const,
+          sentence:
+            atOnce === 'kept'
+              ? 'Closed. Approve it to reopen it on the addresses it already has.'
+              : 'Closed. Approve it to reopen it through the edge it already has.',
+        }
+      : stageWords(intent),
+  );
   // The fronted mirror of the approval card, while the protection waits for it.
   let mirrorShown = $derived(
     !direct &&
@@ -118,7 +141,7 @@
       intent.stage !== 'activating',
   );
   // The approval card carries Finish maintenance itself: the row below leaves it out.
-  let cardShown = $derived((direct && reviewable) || mirrorShown);
+  let cardShown = $derived((direct && reviewable) || mirrorShown || !!atOnce);
   const protect = () =>
     router.navigate(
       edgesPaths.home({ protect: '1', server: slug, node: intent.nodeUuid ?? undefined }),
@@ -277,18 +300,28 @@
         />
       </div>
     {/if}
+  {:else if atOnce}
+    <div class="mt-3">
+      <NodeApprovalCard
+        {slug}
+        intentId={intent.id}
+        nodeName={intent.name}
+        fronted
+        maintenance={intent.maintenance}
+      />
+    </div>
   {:else if canProtect && origin}
     <p class="bg-card mt-3 rounded-md border p-3 text-sm">
-      It goes live again through its edges below: Protect again makes new addresses, you try each
-      one, then you approve go-live.
+      It goes live again through its edges below: Front again makes new addresses, you try each one,
+      then you approve go-live.
     </p>
   {:else if canProtect}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3 text-sm">
       <p>
-        Members reach this node through provider addresses. Protect it from Edges: FCP creates them,
+        Members reach this node through provider addresses. Front it from Edges: FCP creates them,
         you try each one, then you approve go-live there.
       </p>
-      <Button size="sm" onclick={protect}>Protect this node</Button>
+      <Button size="sm" onclick={protect}>Front this node</Button>
     </div>
   {/if}
 

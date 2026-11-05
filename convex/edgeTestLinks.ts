@@ -428,7 +428,7 @@ export const build = internalAction({
             : cred.code === 'mode_groups_unknown'
               ? "The panel's mode groups could not be read yet, so no test account was made"
               : cred.code === 'no_group_holds_transports'
-                ? 'A transport this protection covers is in no mode group on the panel'
+                ? 'A transport this fronting covers is in no mode group on the panel'
                 : 'No test credential is available for this origin',
       });
     const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {

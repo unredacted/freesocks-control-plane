@@ -540,8 +540,31 @@ async function planTarget(
     runsPerSource,
     cost: costOf(use, families, resolved.ports.length),
     controls,
-    testsPerRun: globalpingTestsPerRun(cfg, controls.length),
+    // Planned and charged with the countries the run will ask (`runContext`).
+    testsPerRun: globalpingTestsPerRun(
+      cfg,
+      controls.length,
+      (await probeCountriesOf(ctx.db, cfg, target)).length,
+    ),
   };
+}
+
+/**
+ * The checked countries a target is probed from. A contained address is
+ * handed only to members in its audience (docs/edges.md "Addresses only for
+ * some countries"): it is checked from those of them only (the controls stay),
+ * which spends no test where nobody is handed it.
+ */
+async function probeCountriesOf(
+  db: QueryCtx['db'],
+  cfg: EdgeConfig,
+  target: { kind: string; ref: string },
+): Promise<string[]> {
+  const countries = cfg.probe.countries;
+  if (target.kind !== 'edge') return countries;
+  const edge = await db.get(target.ref as Id<'edges'>);
+  const audience = edge?.audience;
+  return audience?.length ? countries.filter((c) => audience.includes(c)) : countries;
 }
 
 /** The runs a round of these sources costs (each source over the families it takes). */
@@ -549,11 +572,16 @@ function costOf(sources: ProbeSource[], families: RequestedFamily[], ports: numb
   return sources.reduce((n, s) => n + sourceFamilies(s, families).length * ports, 0);
 }
 
-/** What one Globalping run asks for: every checked country's vantages, plus one per control. */
-export function globalpingTestsPerRun(cfg: EdgeConfig, controls: number): number {
-  return (
-    cfg.probe.countries.length * Math.max(1, Math.min(cfg.probe.perCountryLimit, 10)) + controls
-  );
+/**
+ * What one Globalping run asks for: every checked country's vantages (or those
+ * of the countries a contained address is checked from), plus one per control.
+ */
+export function globalpingTestsPerRun(
+  cfg: EdgeConfig,
+  controls: number,
+  countries = cfg.probe.countries.length,
+): number {
+  return countries * Math.max(1, Math.min(cfg.probe.perCountryLimit, 10)) + controls;
 }
 
 /**
@@ -1498,7 +1526,11 @@ export const runContext = internalQuery({
       const listener = edge ? await ctx.db.get(edge.listenerId) : null;
       servername = listener ? (hostSniOf(listener) ?? undefined) : undefined;
     }
-    return { run, cfg, secrets, servername: servername ?? null };
+    const countries = await probeCountriesOf(ctx.db, cfg, {
+      kind: run.targetKind,
+      ref: run.targetRef,
+    });
+    return { run, cfg, secrets, servername: servername ?? null, countries };
   },
 });
 

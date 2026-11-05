@@ -300,7 +300,9 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
     node-placement mode group pools —
     write-only UUIDs, with per-mode bound counts — + a read-only per-placement node-load
     table; the hardening card is a dry-run `logging-status` / apply `harden-logging` against
-    every backend config profile, §"Xray logging privacy harden" in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
+    every backend config profile, plus the newest check's one-line summary
+    (`logging-last-check`; the hourly `logging-privacy` cron applies it on its own),
+    §"Xray logging privacy harden" in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
     **Client apps** (the DB-driven recommended-client catalog — `convex/clients.ts`, `AdminClients.svelte`,
     `/admin/clients`; per-client `easeOfUse` (easy/moderate/advanced) + `openSource`/`license`/
@@ -354,9 +356,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   registration (`PUT …/edges/relays/by-slug/{slug}`, contract v1) is retired; `GET
 …/relays/by-slug/{slug}` stays as an admin read of `publishedEndpoints`, `connectionPlan` and
   `hostsPlan`. **The admin CMS section** (own lazy chunk,
-  `src/client/routes/admin/edges/`, one sidebar leaf under Servers with an in-page header
-  `Nodes | Providers | Advanced`) has a **simple face** in plain words (the nodes home with
-  "Protect a node" = the guided setup runs, a per-node page, provider cards; `simple/`) and,
+  `src/client/routes/admin/edges/`, sharing the Servers sidebar leaf and its tab bar
+  `Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced`) has a
+  **simple face** in plain words (the Edges home with "Front a node" = the guided setup runs, a
+  per-node page, provider cards; `simple/`) and,
   under Advanced, the technical pages: the fleet dashboard (fleet tiles, server-ranked
   attention list, readiness), the **manual setup** driven entirely by the origin-scoped
   `setup-status` endpoint, per-origin pages (edges, listeners, rotations, probes, timeline,
@@ -595,6 +598,11 @@ Convex runs these natively (no Workers triggers, no node-cron):
   challenge sweeps — admin and member — close the last unswept-table gap).
 - `donation-bonus-reconcile` (hourly): re-cap the free fleet's traffic limits from the
   shared donation bandwidth bonus (bulk update ≤500 uuids/chunk; handles the month roll).
+- `logging-privacy` (hourly): check every Remnawave config profile and turn Xray logging off on
+  any found logging (the hardening card's safe read-modify-write; a no-op once hardened). A
+  backend a server change holds is only read and left for the next run. Stores the newest
+  check as counts (`appState` `logging:lastCheck`, shown on the card) and audits
+  `remnawave.logging_hardened` only when it changed a profile (`docs/privacy.md` §5).
 - `billing-pending-sweep` (15 min): expire abandoned membership checkouts (never grants).
 - `billing-gift-reveal-sweep` (hourly): clear the transient plaintext gift-code reveal from
   paid gift orders the buyer never acknowledged, so plaintext never lingers at rest (the

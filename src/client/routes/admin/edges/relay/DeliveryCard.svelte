@@ -133,7 +133,7 @@
 <ConfirmDialog
   bind:open={directOpen}
   title="Serve this node directly again?"
-  body="Members stop receiving edge addresses for this node and get its own address back. FCP first checks that every member is served, releases edge-required delivery, and only then re-enables the direct addresses it hid. The edges stay, so the node can be protected again later."
+  body="Members stop receiving edge addresses for this node and get its own address back. FCP first checks that every member is served, releases edge-required delivery, and only then re-enables the direct addresses it hid. The edges stay, so the node can be fronted again later."
   confirmLabel="Serve directly"
   danger
   onConfirm={serveDirect}

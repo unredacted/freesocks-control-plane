@@ -27,6 +27,7 @@ import { MAX_PICK_WANT, pickWant } from './lib/edges/providerSet';
 import { carries, coolingOf, setStateOf, type SetState } from './lib/edges/setState';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { hasPublishableAddress } from './lib/edges/ip';
+import { audienceForPublish } from './edgeAudiences';
 import { capRefusal, costAdmin, edgeCostAt, sizeAt, spendOf } from './edgePlans';
 import { atCap } from './lib/edges/pricing';
 
@@ -85,9 +86,14 @@ export async function countGapsOf(
     const listeners = s.listeners.filter((l) =>
       carries(row, l, { websocketNode: s.websocketNode, originAddress: relay.originAddress }),
     );
+    // At an only location, the addresses contained there count: one an edit of
+    // the countries left out of date holds its place until step 5O renews it.
+    const only = row.pick.onlyCodes;
+    const counts = (x: { audience?: readonly string[] }) => !only || !!x.audience?.length;
     for (const l of listeners) {
       const inUse = s.published.filter(
-        (x) => x.listenerKey === l.listenerKey && x.locationId === (p.locationId as string),
+        (x) =>
+          x.listenerKey === l.listenerKey && x.locationId === (p.locationId as string) && counts(x),
       ).length;
       if (inUse >= want) continue;
       const held = (relay.refusedLocations ?? []).some(
@@ -111,14 +117,32 @@ export async function countGapsOf(
         listenerKey: l.listenerKey,
         want,
         inUse,
-        spares: standbys
-          .filter((e) => e.listenerId === l._id && e.locationId === p.locationId)
-          .map((e) => e._id),
+        spares: await sparesTakingAudience(
+          db,
+          standbys.filter((e) => e.listenerId === l._id && e.locationId === p.locationId),
+          !!only,
+        ),
         cause,
       });
     }
   }
   return gaps;
+}
+
+/**
+ * The spares that could fill a count: at an only location, only one that can
+ * still take its audience (a spare made before the switch never will, and must
+ * not hold a fresh one back).
+ */
+async function sparesTakingAudience(
+  db: DatabaseReader,
+  spares: readonly Doc<'edges'>[],
+  onlyHere: boolean,
+): Promise<Id<'edges'>[]> {
+  const out: Id<'edges'>[] = [];
+  for (const e of spares)
+    if (!onlyHere || !('refused' in (await audienceForPublish(db, e)))) out.push(e._id);
+  return out;
 }
 
 /** Whether one more address at this location would pass the account's monthly cap. */

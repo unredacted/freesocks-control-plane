@@ -610,6 +610,9 @@ export function mapLocationAdmin(
     autoQualifyHold: r.autoQualifyHold === true,
     // The countries it is meant for (docs/edges.md "Locations meant for a country").
     meantFor: r.forCountries?.codes ?? [],
+    // Its addresses made from then on are only for those countries (docs/edges.md
+    // "Addresses only for some countries").
+    onlyForMeant: !!r.forCountries?.only,
     // Where members are told its addresses are (docs/edges.md "Names in apps").
     memberPlace: {
       name: r.memberPlace?.name ?? null,
@@ -947,6 +950,11 @@ export const update = internalMutation({
           regionalParams: 'regionalParams' in patch ? patch.regionalParams : row.regionalParams,
         }),
       );
+    // What actually moved, for the audit row (the field names, never a value).
+    const changed: string[] = (Object.keys(patch) as (keyof Location)[]).filter(
+      (k) => k !== 'updatedAt' && JSON.stringify(patch[k]) !== JSON.stringify(row[k]),
+    );
+    if (a.makeDefault && account.defaultLocationId !== row._id) changed.push('default');
     await ctx.db.patch(row._id, patch);
     if (templateMoved && row.qualified)
       await untrustLocation(ctx, account, row, { actorAdminId: a.actorAdminId });
@@ -962,6 +970,7 @@ export const update = internalMutation({
         provider: account.provider,
         placeKey: row.placeKey,
         enabled: patch.enabled ?? row.enabled,
+        changed,
       },
     });
     return { ok: true as const };
@@ -1060,9 +1069,23 @@ export const setForCountries = internalMutation({
     const before = row.forCountries?.codes ?? [];
     if (changedCountries(before, clean.codes).length === 0 && before.length === clean.codes.length)
       return { ok: true as const, changed: false, codes: before, nodes: 0 };
+    // An only location keeps its switch (docs/edges.md "Addresses only for some
+    // countries"); it cannot be left with no country while it is on.
+    if (row.forCountries?.only && clean.codes.length === 0)
+      throw new ConvexError({
+        code: 'edge.audience_only_on',
+        message: 'This location is only for its countries: switch that off first',
+      });
     const now = Date.now();
     await ctx.db.patch(row._id, {
-      forCountries: clean.codes.length > 0 ? { codes: clean.codes, updatedAt: now } : undefined,
+      forCountries:
+        clean.codes.length > 0
+          ? {
+              codes: clean.codes,
+              updatedAt: now,
+              ...(row.forCountries?.only ? { only: row.forCountries.only } : {}),
+            }
+          : undefined,
       updatedAt: now,
     });
     const { origins } = await originsPublishedAt(ctx.db, [row._id]);
@@ -1165,7 +1188,15 @@ export const clearCountriesForRollback = internalMutation({
   args: {},
   handler: async (ctx) => {
     const ids: Id<'edgeLocations'>[] = [];
-    for (const r of await ctx.db.query('edgeLocations').collect())
+    const rows = await ctx.db.query('edgeLocations').collect();
+    // The contained addresses' rollback comes first (it needs the countries).
+    if (rows.some((r) => r.forCountries?.only))
+      throw new ConvexError({
+        code: 'edge.audience_only_on',
+        message:
+          'A location is only for its countries: run edgeAudiences:retireAudiencesForRollback and edgeAudiences:clearAudiencesForRollback first',
+      });
+    for (const r of rows)
       if (r.forCountries) {
         await ctx.db.patch(r._id, { forCountries: undefined, updatedAt: Date.now() });
         ids.push(r._id);
@@ -1358,12 +1389,12 @@ export const remove = internalMutation({
     if (use.sets > 0)
       throw new ConvexError({
         code: 'edge.location_in_use',
-        message: 'A protected node still uses this location; remove it from the node first',
+        message: 'A fronted node still uses this location; remove it from the node first',
       });
     if (use.runs > 0)
       throw new ConvexError({
         code: 'edge.location_in_use',
-        message: 'A node is being protected in this location; finish or cancel that first',
+        message: 'A node is being fronted in this location; finish or cancel that first',
       });
     // Nor a zone that still holds names for addresses: their records are
     // reached only through it.

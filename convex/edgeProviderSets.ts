@@ -60,6 +60,7 @@ import { liveEdgesOfRelay } from './lib/edges/relayGuards';
 import { listenersOf } from './relayListeners';
 import { boundToRelay, startReprotect } from './edgeSetupRuns';
 import { EDGE_LIVE_STATUSES, publishedCount } from './lib/edges/pool';
+import { AUDIENCE_NEEDS_SPREAD } from './edgeAudiences';
 
 const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
 
@@ -327,6 +328,9 @@ export const change = internalMutation({
           code: 'edge.l4_not_for_websocket',
           message: L4_NOT_FOR_WEBSOCKET,
         });
+      // An only location's addresses need the rendezvous walk.
+      if (loc.forCountries?.only && relay.edgePick !== 'hrw1')
+        throw new ConvexError(AUDIENCE_NEEDS_SPREAD);
     }
     for (const id of remove)
       if (!before.some((p) => p.locationId === id))
@@ -335,12 +339,12 @@ export const change = internalMutation({
     if (remaining.length + add.length > MAX_PROVIDER_PICKS)
       throw new ConvexError({
         code: 'edge.set_too_large',
-        message: `A node is protected from at most ${MAX_PROVIDER_PICKS} locations`,
+        message: `A node is fronted from at most ${MAX_PROVIDER_PICKS} locations`,
       });
     if (remaining.length + add.length === 0)
       throw new ConvexError({
         code: 'validation',
-        message: 'Keep at least one location (remove protection to serve the node directly)',
+        message: 'Keep at least one location (remove fronting to serve the node directly)',
       });
     const now = Date.now();
     let drained = 0;

@@ -2,12 +2,15 @@
   /**
    * Edge settings (`/admin/edges/settings`).
    * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | names | lists | maintenance | freedom.
-   * Basics and Maintenance are always open; `?section` opens ONE advanced card and
-   * scrolls to it. Each section saves only its own changed keys (flat patch); the
+   * Basics and Maintenance are always open. The advanced cards open and close in
+   * place, any number at once, and nothing else on the page moves; `?section`
+   * (a deep link from an attention item) opens its card and scrolls to it once.
+   * Each section saves only its own changed keys (flat patch); the
    * knobs, their copy and their section live in settings/fields.ts, bounds and
    * defaults come from the server view.
    */
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
@@ -62,19 +65,31 @@
 
   const sectionParam = searchParam('section', 'basics');
   const section = $derived(parseSection(sectionParam.value));
+  // The advanced cards open by hand: opening one never closes another or
+  // scrolls, so the page does not jump under the pointer.
+  const opened = new SvelteSet<SettingsSection>();
+  const isOpen = (id: SettingsSection) => opened.has(id);
   const toggle = (id: SettingsSection) => (open: boolean) => {
-    sectionParam.value = open ? id : 'basics';
+    if (open) opened.add(id);
+    else opened.delete(id);
+    // Closing the deep-linked card drops the link, so following it again reopens it.
+    if (!open && section === id) sectionParam.value = 'basics';
   };
 
-  // Bring the addressed section into view once the cards exist (deep links from attention items).
+  // A deep link (`?section=`, from an attention item): open that card and bring
+  // it into view once the cards exist.
   let scrolledFor = $state<string | null>(null);
   $effect(() => {
     const target = section;
     if (!config.data || scrolledFor === target) return;
     scrolledFor = target;
     if (target === 'basics') return;
+    untrack(() => opened.add(target));
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     void tick().then(() =>
-      document.getElementById(`settings-${target}`)?.scrollIntoView({ block: 'start' }),
+      document
+        .getElementById(`settings-${target}`)
+        ?.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' }),
     );
   });
 
@@ -179,7 +194,7 @@
       {form}
       paths={SECTION_PATHS.rotation}
       collapsible
-      open={section === 'rotation'}
+      open={isOpen('rotation')}
       onToggle={toggle('rotation')}
     >
       <div class="grid gap-5 sm:grid-cols-2">
@@ -200,7 +215,7 @@
       {form}
       paths={renderingPaths}
       collapsible
-      open={section === 'rendering'}
+      open={isOpen('rendering')}
       onToggle={toggle('rendering')}
       note="A rendering change alters what every member receives: cached subscriptions are renewed and stored mirrors are rebuilt once."
     >
@@ -220,7 +235,7 @@
       {form}
       paths={SECTION_PATHS.detector}
       collapsible
-      open={section === 'detector'}
+      open={isOpen('detector')}
       onToggle={toggle('detector')}
     >
       <div class="grid gap-5 sm:grid-cols-2">
@@ -237,7 +252,7 @@
       {form}
       paths={SECTION_PATHS.probes}
       collapsible
-      open={section === 'probes'}
+      open={isOpen('probes')}
       onToggle={toggle('probes')}
       extra={secretChanges}
       onSaved={clearSecrets}
@@ -339,7 +354,7 @@
       {form}
       paths={SECTION_PATHS.l7}
       collapsible
-      open={section === 'l7'}
+      open={isOpen('l7')}
       onToggle={toggle('l7')}
     >
       <div class="grid gap-5 sm:grid-cols-2">
@@ -356,7 +371,7 @@
       {form}
       paths={SECTION_PATHS.names}
       collapsible
-      open={section === 'names'}
+      open={isOpen('names')}
       onToggle={toggle('names')}
     >
       <p class="text-muted-foreground mb-4 text-sm">
@@ -404,7 +419,7 @@
       {form}
       paths={SECTION_PATHS.lists}
       collapsible
-      open={section === 'lists'}
+      open={isOpen('lists')}
       onToggle={toggle('lists')}
     >
       <p class="text-muted-foreground mb-4 text-sm">

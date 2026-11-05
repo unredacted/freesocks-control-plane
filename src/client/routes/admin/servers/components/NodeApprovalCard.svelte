@@ -4,7 +4,9 @@
    * the review the approval names, what keeps it from approval in words, and
    * Approve with its confirmation. A direct node lists the addresses members
    * get; a fronted node lists the new addresses its protection tested, one per
-   * transport. The Servers node page and the Edges protection progress both
+   * transport, or, after a maintenance with no protection run, the addresses it
+   * already has whose tests still hold (`display.atOnce` `kept`: the approval
+   * itself takes it live on them, nothing is bought or rehearsed). The Servers node page and the Edges protection progress both
    * show this card, so approving looks and works the same in either place.
    *
    * Approve is enabled iff the review is loaded and names no blocker (the
@@ -67,6 +69,8 @@
   );
   const closesGate = $derived(blocked('servers.maintenance_required') && others.length === 0);
   const canApprove = $derived(!!review.data && others.length === 0);
+  // The approval takes the node live itself: no protection run rehearses first.
+  const atOnce = $derived(review.data?.display.atOnce ?? null);
   // A listener with no tested address yet is named too, so nothing is approved unseen.
   const bare = $derived(
     review.data
@@ -98,9 +102,11 @@
       await approveNode(slug, intentId, data.reviewHash, closesGate);
       approved = true;
       toast.success(
-        fronted
-          ? `Approved. ${nodeName} goes live once its rehearsal passes.`
-          : `Approved. ${nodeName} is being released to members.`,
+        atOnce
+          ? `Approved. ${nodeName} is live again.`
+          : fronted
+            ? `Approved. ${nodeName} goes live once its rehearsal passes.`
+            : `Approved. ${nodeName} is being released to members.`,
       );
       onApproved?.();
     } catch (e) {
@@ -121,7 +127,11 @@
   {#if approved}
     <p class="flex items-center gap-1 text-emerald-700 dark:text-emerald-300" role="status">
       <Check class="size-4" aria-hidden="true" />
-      {fronted ? 'Approved. Going live once the rehearsal passes.' : 'Approved. Releasing it now.'}
+      {atOnce
+        ? 'Approved. It is live again.'
+        : fronted
+          ? 'Approved. Going live once the rehearsal passes.'
+          : 'Approved. Releasing it now.'}
     </p>
   {:else if review.isPending}
     <Skeleton class="h-16 w-full" />
@@ -143,6 +153,9 @@
         {#each bare as l (l.listenerKey)}
           <li>{l.listenerKey}: no tested address yet.</li>
         {/each}
+        {#if atOnce === 'kept'}
+          <li>Approve reopens it on the addresses it already has. Nothing new is bought.</li>
+        {/if}
       {:else}
         {#each s.addressTuples as a (a.sni ?? a.address)}
           <li>Members get {a.address}:{a.port}{a.sni ? ` as ${a.sni}` : ''}.</li>
@@ -174,9 +187,13 @@
   title={fronted ? `Approve go-live for ${nodeName}?` : `Release ${nodeName} to members?`}
   body={closesGate
     ? `This closes ${nodeName} for members until it goes live, about a minute: members who refresh meanwhile are given another node, or keep their configuration. FCP then rehearses the real subscription bodies and opens it with the new addresses only if that passes.`
-    : fronted
-      ? 'FCP rehearses the real subscription bodies first. Members get the new addresses only if that passes, and nothing changes for them until then.'
-      : 'The node is enabled for members only once its real subscription bodies rehearse correctly. Until then nobody sees it.'}
+    : atOnce === 'kept'
+      ? `Members get ${nodeName} again at once, through the addresses it already has, each one tested and its test still current. Nothing new is bought.`
+      : atOnce === 'external'
+        ? `Members get ${nodeName} again at once, through the edge it already has.`
+        : fronted
+          ? 'FCP rehearses the real subscription bodies first. Members get the new addresses only if that passes, and nothing changes for them until then.'
+          : 'The node is enabled for members only once its real subscription bodies rehearse correctly. Until then nobody sees it.'}
   typed={fronted || closesGate ? nodeName : undefined}
   confirmLabel={label}
   danger={closesGate}

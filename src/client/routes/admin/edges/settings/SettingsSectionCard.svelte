@@ -159,72 +159,95 @@
         onclick={() => onToggle?.(!open)}
       >
         {shown ? 'Hide' : 'Show'}
-        <ChevronDown class={cn('transition-transform', shown && 'rotate-180')} aria-hidden="true" />
+        <ChevronDown
+          class={cn(
+            'transition-transform duration-200 motion-reduce:transition-none',
+            shown && 'rotate-180',
+          )}
+          aria-hidden="true"
+        />
       </Button>
     {/if}
   </header>
 
-  <div id={`settings-${id}-body`} class="border-t px-4 py-4" hidden={!shown}>
-    {#key epoch}
-      {@render children()}
-    {/key}
+  <!-- Opens and closes by sliding (grid rows 0fr <-> 1fr), kept mounted so a
+       half-filled field survives; `inert` keeps a closed body out of the tab
+       order and away from screen readers. -->
+  <div
+    id={`settings-${id}-body`}
+    class={cn(
+      'grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none',
+      shown ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+    )}
+    inert={!shown}
+  >
+    <div class="min-h-0 overflow-hidden">
+      <div class="border-t px-4 py-4">
+        {#key epoch}
+          {@render children()}
+        {/key}
 
-    {#if adjusted.length > 0}
-      <div
-        class="mt-4 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm"
-        role="status"
-      >
-        <p class="font-medium">The server stored some values differently</p>
-        <ul class="mt-1 space-y-0.5">
-          {#each adjusted as a (a.display)}
-            <li>
-              <code class="text-xs">{a.display}</code>: you sent {formatConfigValue(a.sent)}, stored
-              as {formatConfigValue(a.stored)}
-            </li>
-          {/each}
-        </ul>
-        <Button variant="ghost" size="xs" class="mt-1" onclick={() => (adjusted = [])}>
-          Dismiss
-        </Button>
-      </div>
-    {/if}
+        {#if adjusted.length > 0}
+          <div
+            class="mt-4 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm"
+            role="status"
+          >
+            <p class="font-medium">The server stored some values differently</p>
+            <ul class="mt-1 space-y-0.5">
+              {#each adjusted as a (a.display)}
+                <li>
+                  <code class="text-xs">{a.display}</code>: you sent {formatConfigValue(a.sent)},
+                  stored as {formatConfigValue(a.stored)}
+                </li>
+              {/each}
+            </ul>
+            <Button variant="ghost" size="xs" class="mt-1" onclick={() => (adjusted = [])}>
+              Dismiss
+            </Button>
+          </div>
+        {/if}
 
-    {#if count > 0 || invalid}
-      <div class="mt-4 border-t pt-3">
-        {#if count > 0}
-          <p class="text-sm font-medium">Changes to save</p>
-          <ul class="mt-1 space-y-0.5 text-sm" aria-label={`Pending changes in ${title}`}>
-            {#each changes as c (c.display)}
-              <li>
-                <code class="text-xs">{c.display}</code>:
-                <span class="text-muted-foreground">{formatConfigValue(c.from)}</span>
-                <span aria-hidden="true"> &rarr; </span><span class="sr-only"> becomes </span>
-                <span class="font-medium">{formatConfigValue(c.to)}</span>
-              </li>
-            {/each}
-            {#each extraChanges?.lines ?? [] as line (line)}
-              <li>{line}</li>
-            {/each}
-          </ul>
+        {#if count > 0 || invalid}
+          <div class="mt-4 border-t pt-3">
+            {#if count > 0}
+              <p class="text-sm font-medium">Changes to save</p>
+              <ul class="mt-1 space-y-0.5 text-sm" aria-label={`Pending changes in ${title}`}>
+                {#each changes as c (c.display)}
+                  <li>
+                    <code class="text-xs">{c.display}</code>:
+                    <span class="text-muted-foreground">{formatConfigValue(c.from)}</span>
+                    <span aria-hidden="true"> &rarr; </span><span class="sr-only"> becomes </span>
+                    <span class="font-medium">{formatConfigValue(c.to)}</span>
+                  </li>
+                {/each}
+                {#each extraChanges?.lines ?? [] as line (line)}
+                  <li>{line}</li>
+                {/each}
+              </ul>
+            {/if}
+            {#if note && count > 0}
+              <p class="text-muted-foreground mt-2 text-xs">{note}</p>
+            {/if}
+            {#if invalid}
+              <p class="text-destructive mt-2 text-xs">Fix the highlighted fields before saving.</p>
+            {/if}
+            {#if save.isError}
+              <InlineError class="mt-2" message={edgeErrorMessage(save.error)} />
+            {/if}
+            <div class="mt-3 flex flex-wrap gap-2">
+              <Button
+                disabled={count === 0 || invalid || save.isPending}
+                onclick={() => save.mutate()}
+              >
+                {save.isPending ? 'Saving…' : 'Save changes'}
+              </Button>
+              <Button variant="outline" disabled={save.isPending} onclick={discard}>
+                Discard changes
+              </Button>
+            </div>
+          </div>
         {/if}
-        {#if note && count > 0}
-          <p class="text-muted-foreground mt-2 text-xs">{note}</p>
-        {/if}
-        {#if invalid}
-          <p class="text-destructive mt-2 text-xs">Fix the highlighted fields before saving.</p>
-        {/if}
-        {#if save.isError}
-          <InlineError class="mt-2" message={edgeErrorMessage(save.error)} />
-        {/if}
-        <div class="mt-3 flex flex-wrap gap-2">
-          <Button disabled={count === 0 || invalid || save.isPending} onclick={() => save.mutate()}>
-            {save.isPending ? 'Saving…' : 'Save changes'}
-          </Button>
-          <Button variant="outline" disabled={save.isPending} onclick={discard}>
-            Discard changes
-          </Button>
-        </div>
       </div>
-    {/if}
+    </div>
   </div>
 </section>

@@ -203,7 +203,7 @@
     act.mutate(async () => {
       await setEdgeAutomation(true);
       invalidateConfig(qc);
-      toast.success('Automatic protection is on.');
+      toast.success('Automatic replacement is on.');
     });
 
   // Secondary pickers.
@@ -363,7 +363,7 @@
 
   {#if run.kind === 'reprotect' && live}
     <p class="text-sm">
-      Protecting {run.nodeName} again with new addresses. Members keep the addresses they have until the
+      Fronting {run.nodeName} again with new addresses. Members keep the addresses they have until the
       new ones go live.
     </p>
   {/if}
@@ -389,15 +389,15 @@
   {#if run.state === 'done'}
     <div class="space-y-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
       <p>
-        New subscription downloads on {run.nodeName} use the protected address. A configuration someone
+        New subscription downloads on {run.nodeName} use the fronted address. A configuration someone
         copied by hand keeps working until they re-import it.
       </p>
       {#if automation === false}
         <div class="space-y-2 border-t border-emerald-500/30 pt-3">
-          <p class="font-medium">Turn on automatic protection?</p>
+          <p class="font-medium">Turn on automatic replacement?</p>
           <p class="text-muted-foreground">
-            FCP then watches every protected node and switches members to a tested spare address
-            when one looks blocked. It keeps one spare per transport, which your provider bills.
+            FCP then watches every fronted node and switches members to a tested spare address when
+            one looks blocked. It keeps one spare per transport, which your provider bills.
           </p>
           <Button class="h-11 sm:h-8" disabled={act.isPending} onclick={turnOnAutomation}>
             Turn on
@@ -644,7 +644,7 @@
     {#if live}
       <Button variant="outline" size="sm" onclick={onClose}>Close</Button>
       <Button variant="ghost" size="sm" disabled={act.isPending} onclick={cancel}>
-        {run.kind === 'reprotect' ? 'Cancel, drop the new addresses' : 'Cancel protection'}
+        {run.kind === 'reprotect' ? 'Cancel, drop the new addresses' : 'Cancel fronting'}
       </Button>
     {:else}
       <Button size="sm" onclick={() => router.navigate(edgesPaths.node(run.relaySlug))}>

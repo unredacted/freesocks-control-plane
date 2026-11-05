@@ -8,7 +8,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { resolveEdgeConfig } from './lib/edgeConfig';
+import { originPolicy, resolveEdgeConfig } from './lib/edgeConfig';
 import { blockedCountries } from './edgeCountry';
 import {
   assertNoRotationOrQuarantine,
@@ -17,6 +17,7 @@ import {
   poolAdmitOf,
   refreshTemplateEdges,
   scheduleMirrorRefresh,
+  unpublishFromPool,
 } from './relays';
 import { destroyedPatch } from './edges';
 import { allocatePoolIndex, withEdgeAt, type PoolAdmit } from './lib/edges/pool';
@@ -24,6 +25,10 @@ import { isCooling } from './lib/edges/setState';
 import { publicationApproval, startRotation } from './edgeRotations';
 import { recordCandidateEdge } from './nodeActivation';
 import { laneForPublish } from './edgeLanes';
+import { audienceForPublish } from './edgeAudiences';
+import { liveEdgesOfRelay } from './lib/edges/relayGuards';
+import { onlyCodesOf } from './lib/edges/audience';
+import { pickWant } from './lib/edges/providerSet';
 
 export const markDestroyed = internalMutation({
   args: { edgeId: v.id('edges') },
@@ -284,10 +289,19 @@ export const publishStandby = internalMutation({
       // stays a spare; one of the node's running activation is its candidate.
       const approval = await publicationApproval(ctx, origin, edge);
       if (approval.kind === 'refused') continue;
+      // Its audience at its first publication: a spare an only location cannot
+      // hand to its countries stays a spare (docs/edges.md "Addresses only for
+      // some countries").
+      const audience = await audienceForPublish(ctx.db, edge);
+      if ('refused' in audience) continue;
+      const listener = await ctx.db.get(edge.listenerId);
+      // A contained address is never a transport's first one: the backend's
+      // Host (and every raw body) would carry it to everyone.
+      if (audience.contained && !listener?.templateEdgeId) continue;
       if (publish === false)
         return { published: false, rotationId: null, awaitingVerification, ready: true };
-      const listener = await ctx.db.get(edge.listenerId);
       const becomesTemplate =
+        !audience.contained &&
         origin.hostMode === 'fcp' &&
         (!listener?.templateEdgeId || listener.templateEdgeId === edge._id);
       if (becomesTemplate) {
@@ -312,7 +326,10 @@ export const publishStandby = internalMutation({
       await ctx.db.patch(edgeId, {
         publication: 'published',
         poolIndex: idx,
-        ...(await laneForPublish(ctx.db, origin, edge)),
+        ...(await laneForPublish(ctx.db, origin, edge, null, {
+          contained: audience.contained,
+        })),
+        ...audience.patch,
         publishedAt: now,
         updatedAt: now,
       });
@@ -334,6 +351,143 @@ export const publishStandby = internalMutation({
       return { published: true, rotationId: null, awaitingVerification, ready: false };
     }
     return { published: false, rotationId: null, awaitingVerification, ready: false };
+  },
+});
+
+const sameCodes = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((c) => b.includes(c));
+
+/**
+ * Step 5O (docs/edges.md "Addresses only for some countries"): renew ONE
+ * address that an edit of an only location's countries left out of date
+ * (contained to other countries than the location's current ones). Until then
+ * it keeps serving the members it was handed to, and it holds its place in the
+ * pool and in the location's count, so the pool never grows for its renewal:
+ * - the location holds more current addresses of its transport than the count
+ *   asks for (at least one): it leaves, drained like a replaced one;
+ * - else a tested spare there takes ITS slot, contained to the current
+ *   countries, and it drains: one swap, the pool keeps its size;
+ * - else the reconcile makes one spare there (`needs_spare`); a spare already
+ *   there that awaits its test is waited for.
+ * `publish: false` (spares go in use by hand) never swaps. Like every pool
+ * write outside a rotation it does nothing while a rotation, quarantine,
+ * restore, server change or guided setup holds the node.
+ */
+export const renewOutOfDate = internalMutation({
+  args: { relayId: v.id('relays'), publish: v.optional(v.boolean()) },
+  handler: async (
+    ctx,
+    { relayId, publish },
+  ): Promise<
+    | { kind: 'none' | 'waiting' }
+    | { kind: 'retired'; edgeId: Id<'edges'> }
+    | { kind: 'renewed'; edgeId: Id<'edges'>; by: Id<'edges'> }
+    | { kind: 'needs_spare'; listenerId: Id<'relayListeners'>; locationId: Id<'edgeLocations'> }
+  > => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin?.providerSet || origin.deleting || origin.setupOwned) return { kind: 'none' };
+    try {
+      await assertNoRotationOrQuarantine(ctx.db, origin);
+    } catch {
+      return { kind: 'none' };
+    }
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const published: Doc<'edges'>[] = [];
+    for (const id of origin.publishedEdgeIds) {
+      if (!id) continue;
+      const e = await ctx.db.get(id);
+      if (e && e.publication === 'published' && e.status === 'active') published.push(e);
+    }
+    // Spares as upkeep finds them: the node's live, unpublished edges.
+    const spares = (await liveEdgesOfRelay(ctx.db, relayId)).filter(
+      (e) => e.status === 'active' && e.publication === 'unpublished',
+    );
+    let waiting = false;
+    for (const pick of origin.providerSet) {
+      // Automatic work stays out of a pick that cools.
+      if (isCooling(origin, pick.locationId)) continue;
+      const location = await ctx.db.get(pick.locationId);
+      const codes = onlyCodesOf(location?.forCountries);
+      if (!location || !codes) continue;
+      const here = published.filter((e) => e.locationId === pick.locationId);
+      for (const listenerId of new Set(here.map((e) => e.listenerId))) {
+        const mine = here.filter((e) => e.listenerId === listenerId);
+        const old = mine
+          .filter((e) => e.audience?.length && !sameCodes(e.audience, codes))
+          .sort((a, b) => (a.publishedAt ?? 0) - (b.publishedAt ?? 0))[0];
+        if (!old || old.poolIndex === undefined) continue;
+        const audit = (how: 'retired' | 'renewed') =>
+          writeAuditLog(ctx, {
+            actorType: 'system',
+            action: 'edge.audience_retired',
+            targetType: 'edge',
+            targetId: old._id,
+            payload: {
+              relaySlug: origin.slug,
+              placeKey: location.placeKey,
+              was: (old.audience ?? []).join(' '),
+              now: codes.join(' '),
+              how,
+            },
+          });
+        const drainMs = originPolicy(origin, cfg).drainMs;
+        const current = mine.filter((e) => sameCodes(e.audience ?? [], codes)).length;
+        if (current >= Math.max(1, pickWant(pick.want) ?? 1)) {
+          await unpublishFromPool(ctx, origin, old, { drainMs });
+          await audit('retired');
+          return { kind: 'retired', edgeId: old._id };
+        }
+        let spareThere = false;
+        for (const s of spares) {
+          if (s.listenerId !== listenerId || s.locationId !== pick.locationId) continue;
+          // A spare the location cannot hand to its countries never serves there.
+          const audience = await audienceForPublish(ctx.db, s);
+          if ('refused' in audience || !audience.contained) continue;
+          spareThere = true;
+          // Awaiting its test (or its provider unhealthy): wait, buy nothing more.
+          if (!(await checkPublishable(ctx, s, cfg.requireProviderHealth)).ok) continue;
+          const approval = await publicationApproval(ctx, origin, s);
+          if (approval.kind === 'refused') continue;
+          if (publish === false) continue;
+          if (approval.kind === 'candidate') await recordCandidateEdge(ctx, approval.run, s._id);
+          const idx = old.poolIndex;
+          await unpublishFromPool(ctx, origin, old, { drainMs });
+          const after = (await ctx.db.get(relayId))!;
+          const now = Date.now();
+          await ctx.db.patch(s._id, {
+            publication: 'published',
+            poolIndex: idx,
+            ...(await laneForPublish(ctx.db, after, s, null, { contained: true })),
+            ...audience.patch,
+            publishedAt: now,
+            updatedAt: now,
+          });
+          const epoch = after.publicationEpoch + 1;
+          await ctx.db.patch(relayId, {
+            publishedEdgeIds: withEdgeAt(after.publishedEdgeIds, idx, s._id),
+            standbyEdgeIds: after.standbyEdgeIds.filter((e) => e !== s._id),
+            publicationEpoch: epoch,
+            updatedAt: now,
+          });
+          await refreshTemplateEdges(ctx, after);
+          await writeAuditLog(ctx, {
+            actorType: 'system',
+            action: 'edge.published',
+            targetType: 'edge',
+            targetId: s._id,
+            payload: { relaySlug: origin.slug, edgeId: s._id, poolIndex: idx, epoch },
+          });
+          await audit('renewed');
+          return { kind: 'renewed', edgeId: old._id, by: s._id };
+        }
+        if (spareThere) {
+          waiting = true;
+          continue;
+        }
+        return { kind: 'needs_spare', listenerId, locationId: pick.locationId };
+      }
+    }
+    return { kind: waiting ? 'waiting' : 'none' };
   },
 });
 

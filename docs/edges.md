@@ -357,7 +357,7 @@ out every load-balancer address the node has. (An L4 pool member must also be an
 WebSocket node's origin is a name.) So an L4 account or location is not offered and not accepted
 for such a listener anywhere: the protect plan (the account and each of its locations read
 `l4_not_for_websocket`, alone), `create` and its picks (`checkPicks` / `checkPickOptions` refuse
-`edge.l4_not_for_websocket`), Protect again and adding a location (`startReprotect`, the set's
+`edge.l4_not_for_websocket`), Front again and adding a location (`startReprotect`, the set's
 `change` and its `available` list), switching a run's pick (`retry`), a named account, location
 or spare at a rotation start, automatic selection (no L4 account is eligible, no L4 spare is a
 standby), and publication (`checkPublishable` answers `l4_not_for_websocket`). The set's view
@@ -1266,6 +1266,9 @@ via relay A                         an address whose location has no member-faci
   members, Admin -> Edges -> a provider account -> Locations, "Name in apps"; `POST
 providers/{id}/locations/{locationId}/member-place {name, country}`). The provider's own region
   name (`edgeLocations.label`) is admin-only and never reaches a member: it can name the provider.
+  "Rename" on the location changes it (`PATCH providers/{id}/locations/{locationId} {label}`, up to
+  80 characters; the location keeps its placement and its trust; audited `edge.location.updated`
+  with the fields that moved, `changed`, never a value).
   Without a name the address reads `via relay A` and no flag shows, whatever the country says.
   The place travels on the published pool (`PublishedEdge.memberPlace`, one read per location of
   the pool, as the countries it is meant for do). Saving it moves the epoch of every origin with an
@@ -1909,7 +1912,7 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `POST relays/{id}/require-edges`                                    | Starts a guided run for a deferred origin (it never binds by itself): the SAME activation policy. Every published L4 edge without a current confirmation comes back as `pending[]` (the node page renders the `try_it` card) instead of a binding; with nothing pending the run starts at the rehearsal and goes live through stage 8. Refuses `edge.not_deferred`, `edge.coverage_incomplete`, `edge.setup_run_active`, `edge.busy`, `edge.quarantined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `POST relays/{id}/serve-direct`                                     | "Serve this node directly again": the restore workflow with purpose `release_requirement` (binding released before any direct Host is re-enabled; edges and listeners kept). Refuses `edge.quarantined`, `edge.setup_owned`, `edge.restore_in_progress` and `edge.not_edge_required`. See § "Operations safety".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `POST relays/{id}/restore/skip-direct`                              | "Skip restoring direct": a node delete (`delete_relay`) whose restore is held at `verify_direct` (the check ran and no member group's raw body carries a direct entry, e.g. the node's direct Host was deleted from the panel after FCP hid it) moves to `finish` through the workflow's fenced transition, and the delete body runs. Members on the node keep no direct entry. Refuses `edge.restore_not_running`, `edge.restore_not_held_at_direct` (any other phase, the check not run yet, or a restore that keeps the node), `edge.quarantined`, `edge.panel_op_running` and `edge.rotation_running`. Audited `edge.restore.direct_skipped`. See § "Direct-Host hides and the restore workflow".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `POST relays/{id}/reprotect`                                        | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`, `mode` `replace_all` or `add`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `POST relays/{id}/reprotect`                                        | "Front again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`, `mode` `replace_all` or `add`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `GET relays/{id}/providers`                                         | The node's provider set (§ "Provider sets"): each pick with its addresses in use and spare, whether it cools and until when, the locations outside the set that hold one of its addresses (`outside`), the transports with no backup at another provider, the deficit and what it is (`missing`, named), the pool and how many of its free slots the deficit holds (`pool`), per spare whether a publish would get it a slot (`spares`), the locations that could be added, and the regions a load balancer account reaches that are no location yet (`regions`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `POST relays/{id}/providers {add?, remove?}`                        | Edit the set: adding a location to a live enrolled node starts an `add` re-protect run (the response names it); elsewhere the set is saved. Removing one drains its addresses, refused (`edge.set_would_uncover`) unless the tested survivors elsewhere still serve every transport and meet the remaining requirement. Refused under a setup run, a rotation, quarantine, a restore or the freeze; at most 6 picks (`edge.set_too_large`). Audited `edge.relay.providers_changed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST providers/{id}/cost {cost}`                                   | What the account costs (§ "Plans and prices"): `{paid, perEdgeMonthly?, currency?, note?, monthlyCap?}` with `paid` one of `list`, `free`, `amount`; `null` for the default. Audited as `edge.provider_account.cost_changed` (amounts, never the note).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -2013,7 +2016,7 @@ named by the origin status (`failedRunId`, "Open the run" on the node page; the 
 opens its sheet) and by attention `setup_run_failed` (warning; info for a re-protect, whose
 members keep what they had; action `open_run`). The sheet's clock counts from the current
 attempt (`attemptStartedAt`, set by a retry).
-A **re-protect** run (`kind: 'reprotect'`, `POST relays/{id}/reprotect`, "Protect again" on the
+A **re-protect** run (`kind: 'reprotect'`, `POST relays/{id}/reprotect`, "Front again" on the
 node page) is its own kind for a LIVE node: an enrolled node whose members are already served
 through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin not bound yet,
 `edge.reprotect_not_enrolled` for a node the role did not enroll; plus the usual
@@ -2216,37 +2219,40 @@ What a protect run writes to such a panel, in order:
    operator's Host is never written: it is a front, not the node.
 4. **Go-live writes nothing to the panel**: the binding makes the member render serve FCP's
    addresses and leave the operator's Host out (`front_host_unused`).
-5. **Removal** (Remove protection): the FCP Host is deleted (confirmed by read-back), any hidden
+5. **Removal** (Remove fronting): the FCP Host is deleted (confirmed by read-back), any hidden
    direct Host is put back by the restore workflow, and the check user is deleted through the
    owed-removal ledger. The operator's Host and load balancer are left as they are.
 
 ### Admin section (Admin -> Edges)
 
-Its own lazy chunk under `src/client/routes/admin/edges/`, reached from ONE sidebar leaf
-(**Servers -> Edges**, lit on every `/admin/edges/*` path). Inside, a quiet in-page header row
-`Nodes | Countries | Providers | Advanced` (`components/SectionNav.svelte`) sits at the top of
-every page.
+Its own lazy chunk under `src/client/routes/admin/edges/`, reached from the ONE **Servers**
+sidebar leaf it shares with the Servers section (lit on every `/admin/servers/*` and
+`/admin/edges/*` path). Both sections sit under one quiet tab bar,
+`Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced`
+(`servers/components/ServersNav.svelte`): Nodes, Backends and Mode pools are the Servers pages
+(docs/servers.md "The page"), the rest are this section's, so a node row on the Edges tab opens
+the node's page without leaving the section.
 The section has two faces:
 
-**The simple screens** (`simple/`, plain words: origin -> protected node, edge -> address,
+**The simple screens** (`simple/`, plain words: origin -> fronted node, edge -> address,
 published / standby / draining -> in use / spare / retiring, rotate -> replace address,
 qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
 `src/client/lib/edgeCodes.ts`):
 
-- **Nodes** (`/admin/edges`, `EdgesHome`): one status sentence with a dot ("All 6 nodes
-  protected" / "1 node needs attention" / "Setting up 1 node"), the **Needs you** rows from
+- **Edges** (`/admin/edges`, `EdgesHome`, the Edges tab): one status sentence with a dot ("All 6
+  nodes fronted" / "1 node needs attention" / "Setting up 1 node"), the **Action needed** rows from
   `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
-  and renders the same card for whatever comes back pending), one row per protected node
+  and renders the same card for whatever comes back pending), one row per fronted node
   (name, country, one sentence, dot; a live run shows "Setting up, step N of 4" and opens its
   progress; a backend node's row opens its Servers node page). A row that waits on the operator
   says what is wrong and what to do (the item's label, then the first sentence of its fix, or
-  the run's next step from `lib/runNeedWords.ts`), never only that it "needs you". Then the
-  primary **Protect a node**, and the automatic-protection switch (`POST
+  the run's next step from `lib/runNeedWords.ts`), never only that action is needed. Then the
+  primary **Front a node**, and the automatic replacement switch (`POST
 automation`; while it is off, a card with the cost and limitation sentences shows once a node is
   live, and the same offer sits on a run's Live card).
   `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.
-- **Protect a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
-  progress. Which node (a backend's nodes; already protected ones greyed; the plan from `POST
+- **Front a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
+  progress. Which node (a backend's nodes; already fronted ones greyed; the plan from `POST
 setup-runs/plan` lists the transports in words, a closed "Not supported yet" disclosure and a
   formats note), where from (each account's locations as checkboxes, an account carrying
   only some transports says which, an incompatible one greyed with the reason; each change
@@ -2256,7 +2262,7 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   account" renders `ProviderAccountStepper` in its `compact` mode; each location shows its
   grade from every checked country, "IR: works" / "blocked" / "some addresses blocked" / "not
   checked yet", with the age and any mark in its tooltip), review
-  (one sentence; the uncovered-hosts statement with the button "Protect and hide N unsupported
+  (one sentence; the uncovered-hosts statement with the button "Front and hide N unsupported
   hosts", consent = the exact uuids; the fleet-wide rendering sentence; the quiet alternative
   "Keep those members on the direct address" = `keepDirect`). Progress: four plain stages
   (Creating the address / Checking from outside / Checking it works / Going live, folded from
@@ -2271,8 +2277,18 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
 - **A node's edges** (`NodeEdgesPanel`, no tabs), part of the node's ONE page: a backend node's
   Servers node page embeds it (docs/servers.md "The page") and `/admin/edges/nodes/<slug>`
   redirects there (`nodeHomeOf`, keeping `?test=`); an origin that is not a backend node (manual,
-  a whole Outline server) keeps it at that address. The status sentence, "Addresses in use" per
-  transport (a reduced pool strip + one plain line per address; a retiring address says
+  a whole Outline server) keeps it at that address. The status sentence, then **Addresses**
+  (`NodeProvidersCard` + `AddressRow`, words in `simple/addressWords.ts`): one group per
+  location of the node's provider set (its name and provider once, how many addresses are in
+  use and spare there, the count it wants and its options with Change, Remove), each holding
+  that location's addresses as one row apiece (a health dot, IPv4 and IPv6 side by side or the
+  name a CDN front answers on, In use / Spare / Retiring and whether it is tested, the transport
+  when the node has several, and every checked country in one line grouped by what the address
+  counts as there, "Works: CN RU IR · Not known: AE"); a location outside the set that holds
+  one of its addresses closes the groups, then any address of no listed location. The row
+  keeps its main action (Test it, Put it in use, Delete now); **Details** slides open the rest:
+  the provider's and the outside checks, FCP's client check and "Check with FCP's client",
+  "Keep as a spare", and each country in full. A retiring address says
   when it is deleted, from `drainUntil` and the 5-minute reconcile, and offers **Delete now**
   (`DELETE edges/{id}`: the drain ends early, audited `edge.delete` with `drainEndedEarly`;
   members who have not refreshed lose it) and **Keep as a spare** (the operator `reactivate`;
@@ -2292,9 +2308,9 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   be put in use at once" only when the dry run's `takesSlot` allows it, else that it stays a
   spare and why), the per-node
   "Replace addresses automatically" switch (origin `autoRotate`, captioned when the global
-  switch is off), "Where its addresses come from" (`NodeProvidersCard`: each pick with its
-  addresses in use and spare, cooling, untrusted; a location outside the set that holds one of
-  its addresses; what members miss; the addresses still missing, with their locations, added by
+  switch is off), the location groups of **Addresses** above (each pick with its addresses in
+  use and spare, cooling, untrusted; a location outside the set that holds one of its
+  addresses; what members miss; the addresses still missing, with their locations, added by
   automatic upkeep only while `edge.enabled` and `edge.autoProvisionToDesired` are on for an
   enabled node no setup owns (`upkeepAddsMissing`; otherwise "Nothing adds it on its own: add a
   spare address there, or remove the location") and only in a trusted location (else "add a
@@ -2302,12 +2318,12 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   reaches, and Remove, § "Provider sets"; Replace and Add a spare take a "Where" choice),
   "Recent activity" (the
   timeline through `plainAuditActionLabel`), and More: add
-  a spare address, **Protect again** (an enrolled node live behind edges: a re-protect run, see
-  "Guided setup runs"; the primary action while the node waits to be protected again), Origin
-  details, remove protection (`restore-direct`; the restore workflow's phase is shown while it
+  a spare address, **Front again** (an enrolled node live behind edges: a re-protect run, see
+  "Guided setup runs"; the primary action while the node waits to be fronted again), Origin
+  details, **Remove fronting** (`restore-direct`; the restore workflow's phase is shown while it
   runs, and a removal held at the direct check says why and offers **Skip restoring direct**,
   § "Direct-Host hides and the restore workflow"). `?test=<edgeId>` opens the test card.
-- **Providers** (`/admin/edges/providers`): cards (Connected / Problem / Not tested, "3 of 6
+- **Edge providers** (`/admin/edges/providers`): cards (Connected / Problem / Not tested, "3 of 6
   addresses used" from `providers/usage`, and the trust line: "Trusted automatically, checked
   with a real session on <date>" / "Tried with a real session by you on <date>" / "Reached from
   outside. Not yet tried with a real session"); a card opens the account page, whose
@@ -2560,7 +2576,13 @@ observation; (3) `verify_fcp_raw` (bound origins only): the RAW backend body of 
 cohort (one representative key per placement pinned to the node, `convex/lib/edges/cohorts.ts`:
 the first key of each distinct placement over `subscriptions.by_backend_server_pinned`, a page
 of placements per query, driven from the action) carries an FCP entry and no
-origin entry, fetched through the same path the sub route uses; (4) `release_binding`: the
+origin entry, fetched through the same path the sub route uses. A key whose body is the
+backend's placeholder for an expired or disabled user (every entry names no node, at an
+unusable address, and none names this node) stands for nobody: the cohort is judged by its
+next keys instead (`edgeCohorts.candidates`, active accounts first, as the rehearsal picks its
+representative). A cohort whose every key is a placeholder passes, since nobody there is served
+anything now or after the release; one whose keys run past one read of candidates holds
+(`placeholders_only:<cohort>`), and a fetch that fails holds as before; (4) `release_binding`: the
 delivery binding is released WHILE the origin stays enabled and its edges published, so members
 keep the protected entry in raw delivery. **A direct Host is never re-enabled while the origin
 is bound**: the renderer would answer `leak_detected` for every member, an outage FCP would
@@ -2568,7 +2590,7 @@ have caused itself (pinned by a test that asserts the ordering inside the backen
 (5) `restore`: each `confirmed` row is re-observed; still disabled at the observed tuple →
 re-enabled through a `restore` row, read-back confirmed; changed or removed by an administrator
 → released untouched (audited `edge.host.restored`); (6) `verify_direct`: the raw bodies carry
-the origin entry again; (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
+the origin entry again (placeholder keys skipped the same way); (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
 `bindingDeferred`, edges published, attention `go_live_pending`); `release_requirement` retains
 everything and sets `bindingDeferred` so `require-edges` can re-apply the activation policy;
 `delete_relay` runs the deletion body only now (drain, destroy, remove; an edge that was never
@@ -3163,7 +3185,7 @@ traffic off the address Edges protect.
 **Where it shows.** On the node's names block, under "Test one name": FCP is testing a name now,
 its test did not pass and why (the clients refused, in words), it could not test and why, it set
 its test aside, or it stopped after four tries; on a name list's page, each node's line; in
-Servers' "Needs you", "FCP is testing one now". `GET sni/transports` carries `autoTest` per node
+Servers' "Action needed", "FCP is testing one now". `GET sni/transports` carries `autoTest` per node
 (state, the name, how many did not pass, verdict or code, engines) and `switches.autoTest`
 (`ready`, `off`, `not_configured`, `unhealthy`).
 
@@ -3246,7 +3268,7 @@ everything new. "More" holds the name list, looking for more names (the cover si
 and certificate logs), and Stop managing (an unbind: the names stay); a transport FCP does not
 manage offers editing its names by hand there instead.
 
-Servers -> Nodes, "Needs you", adds one line per transport that waits for someone: checked names
+Servers -> Nodes, "Action needed", adds one line per transport that waits for someone: checked names
 a switch keeps from the backend (which switch), checked names to send, a node whose names wait for
 a test, suggestions to add, names the cover site no longer serves.
 
@@ -3363,7 +3385,9 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
 `POST families/{slug}/vantage` and `POST families/{slug}/vantage/apply` (§ Checks from inside a
-country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
+country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**; a change
+to a list (`edge.sni.family.update`) records which fields moved (`changed`: label, enabled,
+requireH2, network), never the label itself.
 
 ### What members' reports say about a name
 
@@ -4135,15 +4159,17 @@ transport's names).
   (`GET sni/families` gives every list its `delivery` counts and `suggestions`: names in use,
   waiting for a test, to send, being checked, checked, failing, suggestions, and how many ports use
   it); "Add a name list" (the cover site is fixed at creation).
-- A name list's page: first where it is used, one block per port (`names/FamilyPort.svelte`) with
-  the node page's status line and next step for every node at once, then each node behind the
+- A name list's page: "Rename" by its title changes its name (`label`, up to 80 characters; only
+  admins see it; `components/NameDialog.svelte`). The slug is the page's link and never changes,
+  and nothing is sent to a node. Then where it is used, one block per port
+  (`names/FamilyPort.svelte`) with the node page's status line and next step for every node at once, then each node behind the
   port with what its members get and, where names wait for a test there, "Test one name". Then
   **one list** of its names and the names found for it (`names/lib/listWords.ts`), each with one
   state on the way to members: Suggested (with Add and Ignore on the row), Being checked, Waiting
   to be sent, Waiting for a test, In use (on how many nodes), and off the way Failing, Retired,
   Burned, Ignored (Stop ignoring), Not usable (Check again). Each row says its state and why in one
   sentence; what was measured (the check, the handshakes, timing, countries, OONI, sources, the
-  score) is under Details. Three filters: Needs you (suggestions, waiting for a test or a send,
+  score) is under Details. Three filters: Action needed (suggestions, waiting for a test or a send,
   failing, and any name member reports or the checks from inside a country single out), In use,
   All. Picked names of the list can be checked again, retired (confirmed: it states the name drain,
   `edge.sniDrainMinutes`), brought back, burned (typed), or, under "For a country", recorded for a
@@ -4158,7 +4184,7 @@ transport's names).
   switch. On a list, every name shows under Details one line per country it was checked from (what
   the checks saw, then what they suggest against the mark standing today) with **Apply** (or "Use
   the checks instead" on a conflict); a block suggestion or a conflict also puts the name under
-  "Needs you".
+  "Action needed".
 
 - Advanced (`/admin/edges/find-names`, "Advanced" on the Server names page; `names/NamesAdvanced.svelte`):
   what most setups never need, in one place. Finding names: its switch (its line says what is true
@@ -4664,6 +4690,95 @@ location, walk order`, so the backup still leaves the primary's failure domain f
 - **Rollback.** Before deploying a build without it, run
   `edgeLocations:clearCountriesForRollback`: it clears every location's countries and moves the
   affected origins' epochs, so members are ordered by evidence alone again.
+
+### Addresses only for some countries
+
+A location meant for some countries (§ Locations meant for a country) may be **only** for them
+(the location's "Only for these countries"; `edgeLocations.forCountries.only`, since when;
+`convex/edgeAudiences.ts`, pure rules in `convex/lib/edges/audience.ts`). An address made there
+from then on is CONTAINED: when it is first published it takes the location's countries as its
+**audience** (`edges.audience`, frozen from then on), and only a member whose steered country is
+in it is ever handed it.
+
+- **What it buys:** a censor's account sees only the pool of the country it claims or is
+  guessed in, so one country's accounts never learn another country's addresses, and members
+  with no country never draw them. It does not hide a country's pool from that country's
+  censor: lanes and suspicion keep working inside it, and a small pool is easy to see whole
+  (keep at least 4 addresses there where accounts try to collect them).
+- **Who is handed one** (`assignEndpoints`): a member whose `edgeCountry` is in the audience.
+  Anyone else is not, failing closed: no stored country, the opt-out, a privacy-family key, a
+  mirror without the member's choice, and every member while steering is off. It keeps its seat
+  (as a trusted address does for an open member), so nobody else moves. The detector's proof
+  (`steeringAvoids`) counts a way around only where a member there may be handed it.
+- **The taint rule** (`audienceAtPublish`, the address lanes' own): an address takes the
+  audience only when it was made after the switch, was never published, was made by FCP (a
+  resource of its own, none adopted) and was never handed out under another row. A
+  replacement for an address everyone is handed never gets an audience; one for a contained
+  address takes its own location's when that location is only for every country it served.
+- **An only location holds only contained addresses** from then on: every first publication
+  there checks it (`audienceForPublish`: a rotation's publish, upkeep's, the operator's, an
+  adoption), and an address that cannot take the audience is never put in use there
+  (`audience_standby`, `edge.audience_tainted`). Addresses in use when it was switched on stay
+  for everyone. Automatic selection uses an only location only for a contained replacement it
+  covers (ranked first) or for its own count (§ Addresses per location); spares there are no one
+  else's.
+- **Never the template.** A contained address is never a transport's template address (the
+  backend's Host, and every raw body, follow it): `refreshTemplateEdges` skips it, no Host flip
+  follows it, and it is never a transport's first address in use
+  (`edge.audience_first_address`).
+- **The requirement:** an only location carries no basic coverage or diversity, and contained
+  addresses count for neither (nor for the rehearsal's groups); its count (§ Addresses per
+  location) counts only addresses contained to exactly its current countries. Lanes size and
+  clean up only addresses everyone is handed; a contained address that may be trusted is
+  trusted. A name for addresses moves only between addresses with the same audience.
+- **Switching it on** (`POST providers/{id}/locations/{locationId}/only {only: true}`, with
+  `…/only/preview` first) needs steering on (`edge.audience_needs_steering`), the rendezvous
+  walk on every node picking the location (`edge.audience_needs_spread`) and, for every
+  transport it carries for such a node, another location carrying it for everyone
+  (`edge.audience_leaves_none`). From then on such a node keeps the rendezvous walk, and a
+  legacy node may not add the location. **Switching it off** makes every address there
+  everyone's for good (members of every country are handed them from their next refresh);
+  switching on again starts from new addresses. Audited `edge.location.only`. Its countries may
+  change while it is on (not to none): addresses made before keep the audience they were given.
+- **Attention:** `audience_only_left` (critical) when every address of a transport in use is
+  contained; `audience_idle` (info) when contained addresses are in use while steering is off.
+- **The member's choice** of a country is limited to 3 changes a day (`account.country.day`):
+  each one is handed that country's own addresses.
+- **Rollback** (before `edgeLocations:clearCountriesForRollback`, which refuses while a
+  location is only): `edgeAudiences:retireAudiencesForRollback` (refused while a run holds such
+  a node; every location stops being only; addresses in use drain for the burned drain and are
+  destroyed, spares at once; `{widen: true}` makes those in use everyone's instead), then
+  `edgeAudiences:clearAudiencesForRollback` once none is left. A contained address that drains
+  is not kept as a spare (`edge.audience_drain_final`).
+- **The detector** (`steeringVeto`): evidence of a block only from countries outside a
+  contained address's audience is no reason to replace it (veto `outside_audience`: nobody there
+  is handed it). In mixed evidence the countries outside the audience are left out before the
+  rest is judged. Evidence naming no country (down everywhere) rotates as before, and "blocked
+  in every checked country, replace it" counts only the checked countries of its audience.
+- **Probes** check a contained address only from the checked countries of its audience (the
+  controls stay; `probes.runContext`). The round is planned and charged against the Globalping
+  budget for those countries too, so no test is spent where nobody is handed it, and the
+  per-country verdicts and guards see it only there.
+- **Editing the countries** of an only location leaves the addresses made for the old list
+  OUT OF DATE: they keep serving the members they were handed to (nobody is stranded), and
+  each holds its place in the pool and in the location's count until it is renewed, so the pool
+  never grows for that. Upkeep renews one per pass (step 5O,
+  `edgeReconcileMutations.renewOutOfDate`, audited `edge.audience_retired`):
+  - when the location already holds more current addresses of its transport than its count
+    asks for (at least one), it leaves, drained like a replaced one;
+  - otherwise a tested spare there takes its slot, contained to the new list, and it drains
+    (with spares going in use by hand, upkeep only waits);
+  - otherwise upkeep makes one spare there (automatic provisioning on; one at a time, and a
+    spare awaiting its test is waited for).
+
+  Adding a country never widens an existing address to it; removing one never strands the
+  countries that stay.
+
+- **The rehearsal** judges a candidate at an only location with the audience it takes at its
+  first publication, so a body with no country never counts on it and two-group coverage
+  cannot vanish when it becomes contained.
+- **Where it shows:** each address on the node page says "(only for Iran, Russia)", and the
+  preview's reasons say "only for IR, RU" for a contained endpoint.
 
 ### Latency over the whole path
 

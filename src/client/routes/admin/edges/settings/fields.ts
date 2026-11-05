@@ -101,7 +101,7 @@ export const BASIC_NUMBERS: Field[] = [
     label: 'Standbys per listener',
     unit: 'edges',
     helper:
-      'Ready edges kept in reserve for each deployed listener, on top of the per-origin standbys. Automatic protection sets this to one. Each one is billed.',
+      'Ready edges kept in reserve for each deployed listener, on top of the per-origin standbys. Automatic replacement sets this to one. Each one is billed.',
   },
   {
     kind: 'number',
@@ -171,7 +171,7 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'How often apps check for a new address',
     unit: 'hours',
     helper:
-      'Sent with the subscription of a protected node. Apps that honour it fetch their configuration this often, so a replaced address reaches them in time.',
+      'Sent with the subscription of a fronted node. Apps that honour it fetch their configuration this often, so a replaced address reaches them in time.',
   },
   {
     kind: 'number',

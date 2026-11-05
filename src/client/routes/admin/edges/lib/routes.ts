@@ -23,7 +23,7 @@
  *   legacyEdgesRedirect(path, search)  the new address of a moved page, or null
  *   edgesPaths                       link builders (slug / id URL-encoded, optional search params)
  *   setupStepTarget(step, slug)      where a readiness step is done now
- *   sectionTabOf(route)              which in-page header link the route lights up
+ *   sectionTabOf(route)              which tab of the Servers tab bar the route lights up
  *   RELAY_TABS / RelayTab            the `?tab` values of the origin page
  */
 import { matchRoute } from '../../../../lib/matchRoute';
@@ -108,14 +108,17 @@ export function legacyEdgesRedirect(pathname: string, search = ''): string | nul
   return null;
 }
 
-/** The in-page header: Nodes | Countries | Providers | Advanced. */
-export type SectionTab = 'nodes' | 'countries' | 'providers' | 'advanced';
+/**
+ * The tab an Edges page lights in the Servers tab bar (servers/components/ServersNav.svelte):
+ * Edges (the home and an origin's node page), Countries, Edge providers, or Advanced.
+ */
+export type SectionTab = 'edges' | 'countries' | 'providers' | 'advanced';
 export function sectionTabOf(route: EdgesRoute): SectionTab {
   switch (route.page) {
     case 'home':
     case 'node':
     case 'not-found':
-      return 'nodes';
+      return 'edges';
     case 'countries':
     case 'country':
     case 'lists':

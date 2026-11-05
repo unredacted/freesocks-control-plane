@@ -375,7 +375,7 @@ export function namesOnListsLine(l: CountryViewListener): string | null {
 }
 
 const HANDED_REASON_WORDS: Record<CountryViewHandedReason, string> = {
-  render_off: 'Members are not handed protected addresses: rendering is off.',
+  render_off: 'Members are not handed fronted addresses: rendering is off.',
   origin_disabled: 'This origin is switched off.',
   no_published: 'No published address serves this transport, so members get nothing through it.',
 };
@@ -460,7 +460,7 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
     out.push(
       'Country checks are off: no address is graded, so the states below come from the outside probes alone and delivery does not act on them.',
     );
-  if (!s.render) out.push('Rendering is off: members are not handed protected addresses.');
+  if (!s.render) out.push('Rendering is off: members are not handed fronted addresses.');
   if (s.render && !s.steering)
     out.push('Delivery by country is off: members are not steered away from blocked addresses.');
   if (!s.names) out.push('Server name families are off: names are not judged per country.');

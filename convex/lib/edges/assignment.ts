@@ -45,6 +45,7 @@
 
 import { hostTargetFor } from './layers';
 import { bandsOf, type LatencyBand } from './latency';
+import { inAudience } from './audience';
 import type { EdgeLayer } from './providers/capabilities';
 import {
   formatSupported,
@@ -136,6 +137,13 @@ export interface PublishedEdge {
    * open. Read only when the assignment is given a `memberLane`.
    */
   lane?: 'trusted';
+  /**
+   * The countries this address may be handed to (`edges.audience`,
+   * lib/edges/audience.ts): only a member whose `edgeCountry` is one of them
+   * gets it; anyone else (no country at all included) never does. It keeps its
+   * position, as a trusted address does for an open member. Absent = everyone.
+   */
+  audience?: string[];
   /**
    * False when the edge is published but must not be selected (listener retired,
    * undeployed or disabled, no codec for the body, no template entry). It still occupies its pool index so the
@@ -641,12 +649,16 @@ export function assignEndpoints(
   published: readonly PublishedEdge[],
   opts: AssignOptions,
 ): Assignment {
-  // An open member is never handed a trusted address: it stays in the walk
-  // (its position holds) but is not assignable for them.
+  // An open member is never handed a trusted address, nor anyone an address
+  // whose audience leaves out their country (fail closed: no country, none):
+  // it stays in the walk (its position holds) but is not assignable for them.
+  const country = opts.edgeCountry ?? null;
   const pool = [...published]
     .sort((a, b) => a.poolIndex - b.poolIndex)
     .map((e) =>
-      opts.memberLane === 'open' && e.lane === 'trusted' ? { ...e, eligible: false } : e,
+      (opts.memberLane === 'open' && e.lane === 'trusted') || !inAudience(e.audience, country)
+        ? { ...e, eligible: false }
+        : e,
     );
   if (pool.length === 0) return { primary: null, backup: null };
   // A trusted member walks the trusted lane first (`assignByTier`'s lane rank).
@@ -949,11 +961,13 @@ export function steeringAvoids(
     !!edgeHostname(e) ||
     !protocolUsesSni(e.proto) ||
     e.serverNames.some((n) => n.status === 'active' && countryTier(n, where) !== null);
+  // A way around is an address a member there may be handed (its audience, if any, holds the country).
   const on = (e: PublishedEdge, p: DeliveryPath) =>
     edgeAssignable(e, { canEmitV6: p.canEmitV6 }) &&
     e.listenerKey === chosen.listenerKey &&
     formatSupported(e.proto, p.format) &&
-    usableThere(e);
+    usableThere(e) &&
+    inAudience(e.audience, country);
   const served = paths.filter((p) => on(chosen, p));
   if (served.length === 0) return false;
   const blockedAnywhere = (e: PublishedEdge) =>
@@ -963,9 +977,14 @@ export function steeringAvoids(
     const need = p.backupFirst ? 2 : 1;
     const others = published.filter((e) => e.edgeId !== chosen.edgeId && on(e, p) && laneOk(e));
     if (others.filter((e) => edgeTier(e, country) < 2).length < need) return false;
+    // Mirrors without a choice never carry a contained address: for one, the
+    // universal clause has nothing to prove, and none is ever a way around.
     return (
       !opts.universal ||
-      others.filter((e) => !blockedAnywhere(e) && universalNameOn(e, nowhere)).length >= need
+      !!chosen.audience?.length ||
+      others.filter(
+        (e) => !e.audience?.length && !blockedAnywhere(e) && universalNameOn(e, nowhere),
+      ).length >= need
     );
   });
 }

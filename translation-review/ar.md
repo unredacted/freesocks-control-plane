@@ -316,8 +316,8 @@ review.
 | `hero.nodeUnknown` | Node status unknown | حالة العقدة غير معروفة |
 | `hero.nodeStatusLink` | Network status | حالة الشبكة |
 | `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
-| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
-| `hero.relayBackupHint` | If your app lists {primary} and {backup} separately and {primary} stops working, pick {backup}. | ⚠️ **MISSING** |
+| `hero.relayEntry` | Your app lists it as “{name}”. | ⚠️ **MISSING** |
+| `hero.relayEntries` | Your app lists “{primary}” and “{backup}”. If one stops working, pick the other. | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | الخادم الذي يقف خلف إعدادك يعمل ويستجيب. إذا كنت ما زلت غير قادر على الاتصال، فمن المرجح أن شبكتك أو مزوّد الإنترنت يحجبه - جرّب وضع اتصال أو موقعًا آخر. |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | الخادم الذي يقف خلف إعدادك متوقف حاليًا. المشكلة من جهتنا، وليست من شبكتك. أعد المحاولة بعد بضع دقائق، أو أنشئ إعدادًا جديدًا (ويمكنك اختيار موقع مختلف). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | لقد استنفدت جميع بياناتك لهذه الفترة. ستتم إعادة ضبطها تلقائيًا، أو يمكنك الترقية للحصول على المزيد. |

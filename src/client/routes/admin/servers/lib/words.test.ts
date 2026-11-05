@@ -628,10 +628,10 @@ describe('enrolled nodes', () => {
       }).dot,
     ).toBe('red');
   });
-  test('a fronted node goes live through its protection in Edges', () => {
+  test('a fronted node goes live through its fronting in Edges', () => {
     const fronted = { ...base, mode: { shape: { fronting: 'edge-l4' } } };
     expect(stageWords({ ...fronted, stage: 'machine_ready' }).sentence).toBe(
-      'The machine is ready. Protect it from Edges to go live.',
+      'The machine is ready. Front it from Edges to go live.',
     );
     expect(
       stageWords({
@@ -639,7 +639,7 @@ describe('enrolled nodes', () => {
         stage: 'machine_ready',
         protection: { state: 'running', need: null },
       }).sentence,
-    ).toBe('Being protected in Edges.');
+    ).toBe('Being fronted in Edges.');
     expect(
       stageWords({
         ...fronted,
@@ -656,7 +656,7 @@ describe('enrolled nodes', () => {
       }).sentence,
     ).toMatch(/^Live\. .*approve go-live/);
     expect(stageWords({ ...fronted, stage: 'awaiting_approval' }).sentence).toMatch(
-      /approve go-live in its protection progress/,
+      /approve go-live in its fronting progress/,
     );
     // A direct node ignores a protection it cannot have.
     expect(
@@ -678,7 +678,7 @@ describe('enrolled nodes', () => {
         stage: 'machine_ready',
         protection: { state: 'needs_you', need: 'try_it' },
       }).sentence,
-    ).toBe('Being protected in Edges. Test each new address.');
+    ).toBe('Being fronted in Edges. Test each new address.');
     expect(
       stageWords({
         ...fronted,
@@ -687,7 +687,7 @@ describe('enrolled nodes', () => {
         protection: { state: 'needs_you', need: 'address_unreachable' },
       }).sentence,
     ).toBe(
-      'Live. Its protection in Edges is waiting. The new address cannot be reached. Check it again.',
+      'Live. Its fronting in Edges is waiting. The new address cannot be reached. Check it again.',
     );
     expect(protectionWords({ state: 'needs_you', need: 'try_it' })).toBe('Test each new address.');
     expect(protectionWords({ state: 'needs_you', need: null })).toBe(

@@ -358,6 +358,11 @@ export const ATTENTION_KINDS = [
   // what holds new ones back (`pick_cooling`, `locations_refused`,
   // `location_untrusted`, `account_spend_cap_reached`), none while upkeep can buy them.
   'location_short',
+  // Addresses only for some countries (docs/edges.md): a transport whose only
+  // addresses in use are contained, so members with no country get none
+  // (critical); and contained addresses idle while ordering by country is off.
+  'audience_only_left',
+  'audience_idle',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

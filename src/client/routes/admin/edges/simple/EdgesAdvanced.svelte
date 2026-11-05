@@ -17,7 +17,7 @@
     },
     {
       label: 'New origin',
-      hint: 'An address described by hand or a whole Outline server, then its first edge. A backend node is protected from Nodes instead.',
+      hint: 'An address described by hand or a whole Outline server, then its first edge. A backend node is fronted from Nodes instead.',
       href: edgesPaths.overview({ new: '1' }),
     },
     {
@@ -47,7 +47,7 @@
     },
     {
       label: 'Delivery places',
-      hint: 'Where members must receive a protected address, including places whose node is gone.',
+      hint: 'Where members must receive a fronted address, including places whose node is gone.',
       href: edgesPaths.settings({ section: 'delivery' }),
     },
   ];
@@ -55,7 +55,7 @@
 
 <SectionHeader
   title="Advanced"
-  description="The technical pages. Nothing here is needed day to day; the nodes page covers the usual work."
+  description="The technical pages. Nothing here is needed day to day; Nodes and Edges cover the usual work."
 />
 
 <ul class="divide-border divide-y rounded-lg border" aria-label="Advanced pages">

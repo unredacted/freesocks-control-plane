@@ -348,8 +348,8 @@
     "nodeUnknown": "Node status unknown",
     "nodeStatusLink": "Network status",
     "relayRefreshSuggested": "New connection details are available. Update this subscription in your app to keep connecting.",
-    "relayConnections": "Connections in your config:",
-    "relayBackupHint": "If your app lists {primary} and {backup} separately and {primary} stops working, pick {backup}.",
+    "relayEntry": "Your app lists it as “{name}”.",
+    "relayEntries": "Your app lists “{primary}” and “{backup}”. If one stops working, pick the other.",
     "nodeOnlineHint": "The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location.",
     "nodeOfflineBody": "The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location).",
     "keyLimited": "You've used all your data for this period. It resets automatically, or you can upgrade for more.",
@@ -794,7 +794,8 @@
     "chosenElsewhere": "You opted out: we do not use your location.",
     "change": "Change",
     "saved": "Saved. Refresh your app to pick up the change.",
-    "failed": "That did not save. Try again."
+    "failed": "That did not save. Try again.",
+    "tooOften": "You can change your country a few times a day. Try again tomorrow."
   },
   "delivery": {
     "title": "Connection mode",

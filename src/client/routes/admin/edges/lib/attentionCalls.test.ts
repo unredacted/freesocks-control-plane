@@ -171,7 +171,7 @@ describe('confirm copy in both vocabularies', () => {
     const { title, body } = ATTENTION_ACTION_PLAN.publish.confirm;
     expect(plainWords(title)).toBe('Put this address in use?');
     expect(plainWords(body)).toBe(
-      'Members of this protected node start receiving this address on their next subscription refresh.',
+      'Members of this fronted node start receiving this address on their next subscription refresh.',
     );
   });
 

@@ -16,6 +16,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { adoptL4Edge, insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
 import { enrolledOriginOf } from './nodeIntents';
+import { upsertDeliveryBinding } from './relays';
 import { verificationCurrent, verificationStaleReason } from './lib/edges/verification';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
@@ -1200,6 +1201,75 @@ describe('a node Edges already protect', () => {
     expect(relay.originAddress).toBe('203.0.113.10');
     const { edge, listener } = await adoptedEdge(s, edgeId, r.intentId);
     expect(verificationCurrent(edge, listener)).toBe(true);
+  });
+
+  test('switched off, it reopens after a maintenance on the address it has while its test holds, and a key change asks for the test first', async () => {
+    const s = await seed({ relay: true });
+    const nodeUuid = UUID(490);
+    s.panel.nodes.push({
+      uuid: nodeUuid,
+      name: 'legacy-r',
+      address: '10.20.30.40',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: s.panel.profiles[0].uuid,
+        activeInbounds: [s.relay!],
+      },
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const { relayId, listenerId } = await registerRelay(s.t, {
+      nodeName: 'legacy-r',
+      originAddress: '203.0.113.10',
+    });
+    const { edgeId } = await adoptL4Edge(s.t, relayId, listenerId, {
+      verified: true,
+      publish: true,
+    });
+    // Its members are held to the origin's edges (the protection bound it).
+    await s.t.run(async (ctx) => {
+      await ctx.db.patch(relayId, { bindingDeferred: undefined });
+      await upsertDeliveryBinding(ctx, (await ctx.db.get(relayId))!);
+    });
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'freedom-reality',
+    });
+    const edgesBefore = await s.t.run(
+      async (ctx) => (await ctx.db.query('edges').collect()).length,
+    );
+
+    await throughMaintenance(s.t, intentId);
+    const review = await s.t.query(internal.nodeActivation.review, { intentId });
+    expect(review.blockers).toEqual([]);
+    expect(review.display.atOnce).toBe('kept');
+    const { runId } = await s.t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    expect((await s.t.run((ctx) => ctx.db.get(runId)))!.state).toBe('committed');
+    const live = (await intentOf(s.t, intentId))!;
+    expect(live).toMatchObject({
+      activation: { stage: 'live' },
+      delivery: { disposition: 'live' },
+    });
+    expect(live.approved?.committed.edgeIds).toEqual([edgeId]);
+    expect(await s.t.run(async (ctx) => (await ctx.db.query('edges').collect()).length)).toBe(
+      edgesBefore,
+    );
+
+    // Closed again and its key moves meanwhile: no address is reused until it is tested again.
+    await throughMaintenance(s.t, intentId);
+    await s.t.run((ctx) => ctx.db.patch(intentId, { authRevision: 'another-key' }));
+    const keyed = await s.t.query(internal.nodeActivation.review, { intentId });
+    expect(keyed.blockers).toContain('servers.standbys_unverified:key_changed');
+    await expect(
+      s.t.mutation(internal.nodeActivation.approve, { intentId, reviewHash: keyed.reviewHash }),
+    ).rejects.toThrow(/servers\.standbys_unverified/);
+    expect((await intentOf(s.t, intentId))!.delivery.disposition).toBe('staged');
   });
 
   test('is refused while a change made on the backend outside FCP is flagged, until it is seen', async () => {

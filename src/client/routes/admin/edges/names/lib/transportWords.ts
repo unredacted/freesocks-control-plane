@@ -183,8 +183,8 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
       return `The new names are on the node. Members get them once a test proves the node accepts them: test one on ${step.nodes === 1 ? 'the node' : `each of the ${step.nodes} nodes`} below.`;
     case 'unprotected':
       return step.here
-        ? "This node is not protected, so FCP hands its members none of these names: they get the one name on each of the node's own addresses. Protect it to hand them out."
-        : 'No node behind this port is protected, so FCP hands these names to no member yet: members get names only through protected addresses.';
+        ? "This node is not fronted, so FCP hands its members none of these names: they get the one name on each of the node's own addresses. Front it to hand them out."
+        : 'No node behind this port is fronted, so FCP hands these names to no member yet: members get names only through fronted addresses.';
     case 'test_needs_address':
       return 'The node has the new names, but none of its addresses has been tried yet. Try one on its Edges first: a name is tested through an address that already works.';
     case 'add_suggestions':

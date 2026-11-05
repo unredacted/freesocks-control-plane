@@ -24,6 +24,7 @@ import {
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { certificateDigest } from './lib/edges/choices';
 import { parseIntent } from './lib/edges/intent';
+import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import type { Values } from './lib/edges/providers/options';
 import { assertAdmission } from './lib/edges/maintenance';
 import { ConvexError, v } from 'convex/values';
@@ -49,7 +50,7 @@ import {
   type Revisions,
   type Stage,
 } from './lib/backend/activation';
-import type { VectorActivation } from './lib/edges/setupRuns';
+import { isTerminalRunState, type VectorActivation } from './lib/edges/setupRuns';
 import { panelDigestKey } from './lib/backend/key';
 import {
   REHEARSAL_USER_AGENTS,
@@ -71,7 +72,7 @@ import {
   transportFor,
 } from './nodeIntents';
 import { bumpGateVersion, setupReady, type Setup } from './backendSetup';
-import { relayForBackendNode, scheduleMirrorRefresh } from './relays';
+import { deliveryBindingFor, relayForBackendNode, scheduleMirrorRefresh } from './relays';
 import { isCandidateEdge, type NodeGate } from './lib/backend/deliveryGate';
 
 const refuse = (code: string, message: string): never => {
@@ -317,8 +318,18 @@ export const review = internalQuery({
       reviewHash,
       blockers,
       stage: intent.activation.stage,
-      // Shown, never hashed: the addresses a fronted approval releases.
-      display: { standbys: direct ? [] : await standbyDisplayOf(ctx, intent) },
+      // Shown, never hashed: the addresses a fronted approval releases, and
+      // whether the approval itself takes the node live (no run to rehearse).
+      display: {
+        standbys: direct ? [] : await standbyDisplayOf(ctx, intent, standbys),
+        atOnce: direct
+          ? null
+          : intent.adopted?.externallyFronted
+            ? ('external' as const)
+            : standbys?.kept
+              ? ('kept' as const)
+              : null,
+      },
     };
   },
 });
@@ -326,12 +337,21 @@ export const review = internalQuery({
 /**
  * What the review card shows of a fronted node's candidates: one line per
  * (transport, location) the approval releases (the run's targets; with no run,
- * what is served).
+ * the kept addresses whose checks are current, else what is served).
  */
-async function standbyDisplayOf(ctx: { db: QueryCtx['db'] }, intent: Intent) {
+async function standbyDisplayOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+  standbys: Standbys | null,
+) {
   const out = [];
   const all = await frontedListenersOf(ctx, intent);
-  const shown = all.some((l) => l.fromRun) ? all.filter((l) => l.fromRun) : all;
+  const kept = standbys?.kept ? new Set<string>(standbys.edgeIds) : null;
+  const shown = all.some((l) => l.fromRun)
+    ? all.filter((l) => l.fromRun)
+    : kept
+      ? all.filter((l) => !!l.edge && kept.has(l.edge._id))
+      : all;
   for (const l of shown) {
     const e = l.edge;
     const host = e ? (e.addresses.v4 ?? e.addresses.hostname ?? e.addresses.v6 ?? null) : null;
@@ -384,17 +404,31 @@ interface Standbys {
   /** The open setup run whose standbys these are (absent = none). */
   runId?: Id<'edgeSetupRuns'>;
   edgeIds: Id<'edges'>[];
+  /**
+   * No setup run: the addresses the node already has (`keptAddressesOf`), so
+   * the approval commits in its own transaction and nothing is bought.
+   */
+  kept?: boolean;
 }
 
 /**
  * A front or origin node's candidates are the listeners of the Autopilot run
  * protecting it, each with a live, verified standby (an L7 proof; an L4
  * revision-bound confirmation) before that run reaches publish and waits for
- * this approval. `code` null = verified now.
+ * this approval. Without a run, a node that was live is approved on the
+ * addresses it already has, when their checks are still current
+ * (`keptAddressesOf`). `code` null = verified now.
  */
 async function standbysOf(ctx: { db: QueryCtx['db'] }, intent: Intent): Promise<Standbys> {
   const run = await openSetupRunOf(ctx, intent);
-  if (!run) return { code: 'servers.standbys_missing', listenerKeys: [], edgeIds: [] };
+  if (!run)
+    return (
+      (await keptAddressesOf(ctx, intent)) ?? {
+        code: 'servers.standbys_missing',
+        listenerKeys: [],
+        edgeIds: [],
+      }
+    );
   const listenerKeys = [...new Set(run.listeners.map((l) => l.listenerKey))].sort();
   const edgeIds = run.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e);
   if (run.listeners.length === 0 || run.listeners.some((l) => !l.edgeId || l.verify !== 'verified'))
@@ -433,6 +467,113 @@ async function standbysOf(ctx: { db: QueryCtx['db'] }, intent: Intent): Promise<
       };
   }
   return { code: null, listenerKeys, runId: run._id, edgeIds };
+}
+
+/**
+ * Approve on the addresses it has (docs/servers.md "A fronted node's
+ * activation"): a fronted node FCP protects that was live, is not live now (a
+ * maintenance closed it) and has no setup run, is taken live again on what
+ * its members would be served the moment its gate opens, with nothing bought.
+ * Its origin must be its own, switched on, bound to it, and neither removed,
+ * restored nor owned by a run. Each transport with a published, active
+ * address that is not a candidate of an activation needs at least one whose
+ * check is current: an L4 confirmation for the listener's revision, the
+ * edge's configuration and the node's REALITY authentication revision (a key
+ * change therefore still needs every address tried again); an L7 front's
+ * proof. Those addresses are the standbys. A transport with none refuses
+ * (`servers.standbys_unverified`, `keyChanged` when only the key moved). Null
+ * when the rule does not apply (`servers.standbys_missing`, as before):
+ * Protect again is then the way back.
+ */
+async function keptAddressesOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+): Promise<Standbys | null> {
+  if (intent.adopted?.externallyFronted) return null;
+  if (intent.delivery.disposition === 'live' || !intent.delivery.exposure.everLive) return null;
+  const relay = await relayForBackendNode(ctx.db, intent.backendServerId, intent.name);
+  if (!relay || relay.origin.kind !== 'panel-node' || relay.origin.nodeName !== intent.name)
+    return null;
+  if (relay.deleting || !relay.enabled || relay.restore || relay.setupOwned) return null;
+  if (relay.bindingDeferred) return null;
+  const binding = await deliveryBindingFor(ctx.db, intent.backendServerId, intent.name);
+  if (!binding || binding.relaySlug !== relay.slug) return null;
+  // A setup run of the node not in an open state yet or any more (one being
+  // cancelled, say) decides what it leaves behind.
+  const runs = await ctx.db
+    .query('edgeSetupRuns')
+    .withIndex('by_origin', (q) =>
+      q.eq('backendServerId', intent.backendServerId).eq('nodeName', intent.name),
+    )
+    .collect();
+  if (runs.some((r) => !isTerminalRunState(r.state))) return null;
+  const listeners = (
+    await verificationListenersOf(
+      ctx.db,
+      relay,
+      await ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+        .collect(),
+    )
+  ).filter((l) => !l.retired && l.deployed && l.enabled);
+  // What members are not served before a commit: every activation's candidates,
+  // except an address a run of the node committed. The finish of a maintenance
+  // cleared the committed set the gate subtracts, so an older run superseded
+  // before a retry that committed the same address would otherwise make it a
+  // candidate again.
+  const gate = await nodeGateFor(ctx, intent.backendServerId, intent.name);
+  const committedBefore = new Set<string>();
+  for (const r of await ctx.db
+    .query('panelActivationRuns')
+    .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+    .collect())
+    if (r.state === 'committed')
+      for (const id of [...(r.delivery?.edgeIds ?? []), ...r.resources.edgeIds])
+        committedBefore.add(id as string);
+  const now = Date.now();
+  const byListener = new Map<string, { current: Id<'edges'>[]; keyOnly: boolean }>();
+  for (const id of relay.publishedEdgeIds) {
+    if (!id || (isCandidateEdge(gate, id as string) && !committedBefore.has(id as string)))
+      continue;
+    const e = await ctx.db.get(id);
+    if (!e || e.publication !== 'published' || e.status !== 'active') continue;
+    const l = listeners.find((x) => x._id === e.listenerId);
+    if (!l) continue;
+    const entry = byListener.get(l.listenerKey) ?? { current: [], keyOnly: true };
+    byListener.set(l.listenerKey, entry);
+    const hasAddress = !!e.addresses.v4 || !!e.addresses.v6 || !!e.addresses.hostname;
+    const l4 = needsEndpointVerification(e);
+    const current = hasAddress && (l4 ? verificationCurrent(e, l) : l7ProofCurrent(e, l, now));
+    if (current) entry.current.push(e._id);
+    else if (!l4 || verificationStaleReason(e, l) !== 'reality_key_changed') entry.keyOnly = false;
+  }
+  if (byListener.size === 0) return null;
+  const listenerKeys = [...byListener.keys()].sort();
+  const edgeIds = [...byListener.values()].flatMap((x) => x.current);
+  const untested = [...byListener.values()].filter((x) => x.current.length === 0);
+  if (untested.length > 0)
+    return {
+      code: 'servers.standbys_unverified',
+      ...(untested.every((x) => x.keyOnly) ? { keyChanged: true } : {}),
+      listenerKeys,
+      edgeIds,
+      kept: true,
+    };
+  return { code: null, listenerKeys, edgeIds, kept: true };
+}
+
+/** An L7 front's proof is current for what would be rendered for it now (edgeRender's own rule). */
+function l7ProofCurrent(edge: Doc<'edges'>, listener: Doc<'relayListeners'>, now: number): boolean {
+  const intent = parseIntent(edge.provisionIntent);
+  if (!intent) return false;
+  return (
+    qualificationVerdict(
+      edge.frontQualification,
+      qualificationBinding({ listener, intent, params: listener.transportParams ?? {} }),
+      now,
+    ) === 'ok'
+  );
 }
 
 /**
@@ -502,10 +643,17 @@ async function activationBlockers(
   if (!has('machine_ready')) out.push('servers.machine_not_ready');
   if (direct && !has('direct_confirmed')) out.push('servers.direct_unconfirmed');
   // An adopted node whose edge FCP does not run yet has no standbys to show.
-  // Every other fronted approval is driven by its open setup run: without
-  // one, nothing would publish the candidate.
+  // Every other fronted approval is driven by its open setup run (without
+  // one, nothing would publish the candidate), or reuses the addresses the
+  // node already has (`keptAddressesOf`).
   if (!direct && !intent.adopted?.externallyFronted && standbys?.code)
-    out.push(standbys.keyChanged ? `${standbys.code}:key_changed` : standbys.code);
+    out.push(
+      standbys.keyChanged
+        ? `${standbys.code}:key_changed`
+        : standbys.kept
+          ? `${standbys.code}:retest`
+          : standbys.code,
+    );
   const mode = modeEntry(setup, modeSlug(intent));
   if (mode.placement !== 'bound') out.push('servers.placement_skipped');
   if (mode.family === 'unbound' || mode.family === 'target_mismatch')
@@ -993,6 +1141,7 @@ export const approve = internalMutation({
     // A fronted approval names the standbys of the open setup run: they are
     // this run's candidates from now on (members never see one before the
     // commit), except an edge members already hold under the committed approval.
+    // Kept addresses are this run's too, and committed with it at once.
     const committedEdges = new Set(intent.approved?.committed.edgeIds ?? []);
     const setupRunId = standbys?.runId;
     const runId = await ctx.db.insert('panelActivationRuns', {
@@ -1045,7 +1194,12 @@ export const approve = internalMutation({
       action: 'servers.node.approved',
       targetType: 'panel_node_intent',
       targetId: intent._id,
-      payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: modeSlug(intent) },
+      payload: {
+        backendSlug: server?.slug ?? '',
+        name: intent.name,
+        mode: modeSlug(intent),
+        ...(standbys?.kept ? { kept: standbys.edgeIds.length } : {}),
+      },
     });
     if (direct)
       await ctx.scheduler.runAfter(0, internal.nodeActivation.runDirect, {
@@ -1063,12 +1217,13 @@ export const approve = internalMutation({
         activationRunId: runId,
         generation: setupRun.generation,
       });
-    } else if (intent.adopted?.externallyFronted) {
-      // An adopted node whose edge FCP does not run: nothing of FCP's
-      // publishes for it, so nothing would ever wake a run waiting at publish.
-      // Members reach it through that edge as before; the approval commits
-      // here, through the same promotion every go-live uses, or is refused
-      // with nothing changed.
+    } else if (intent.adopted?.externallyFronted || standbys?.kept) {
+      // An adopted node whose edge FCP does not run, or a node taken live
+      // again on the addresses it already has: nothing publishes for it, so
+      // nothing would ever wake a run waiting at publish. Members reach it
+      // through those addresses as before; the approval commits here, through
+      // the same promotion every go-live uses, or is refused with nothing
+      // changed.
       const r = await promoteCandidate(ctx, (await ctx.db.get(runId))!);
       if (!r.ok) refuse(r.code, 'The node could not go live');
     }

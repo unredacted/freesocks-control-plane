@@ -397,7 +397,7 @@ function frontUnusedWords(facts: AttentionItem['facts']): string | null {
   if (stale === null || keys === null) return null;
   const n = (x: number) => x.toLocaleString('en-US');
   const front =
-    'A backend Host on a protected node dials a front FCP did not build, such as a load balancer made by hand. Members no longer get it in their subscriptions.';
+    'A backend Host on a fronted node dials a front FCP did not build, such as a load balancer made by hand. Members no longer get it in their subscriptions.';
   // A key counts once any app on it fetched: a zero is no proof that no app
   // still uses the front, so the traffic check stays.
   if (stale === 0)

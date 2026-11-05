@@ -330,7 +330,7 @@ The integration harness pins a 3.x backend (`docker-compose.remnawave-test.yml`)
 
 ## Xray logging privacy harden (Config Profiles)
 
-Admin → Remnawave has a fleet-wide **no-log enforcement** card backed by two routes
+Admin → Servers → Backends has a fleet-wide **no-log enforcement** card backed by three routes
 (`admin:servers:read` / `admin:servers:write`):
 
 - `GET /api/v1/admin/remnawave/logging-status` — dry-run: fetches every config profile and
@@ -345,6 +345,16 @@ Admin → Remnawave has a fleet-wide **no-log enforcement** card backed by two r
   which canonically reorders object keys, so a stringify-compare reports false drift forever.
   Applying restarts the affected nodes (Xray reloads config); it is idempotent — re-applying a
   compliant fleet is a no-op.
+- `GET /api/v1/admin/remnawave/logging-last-check` — the newest check, whoever ran it: when,
+  automatic or manual, and counts only (profiles checked, found logging, turned off, skipped,
+  panels unreadable or busy). The card (Servers → Backends) shows it as one line.
+
+The hourly `logging-privacy` cron (`backendServers.autoHardenLogging`) runs the same apply on its
+own, so a profile that starts logging again is turned off within the hour. It writes nothing
+while every profile is compliant (no node restart), skips a backend while a server change holds
+one of its profiles or nodes (the backend-write ledger's claims; it is read, counted busy, and
+tried the next hour), records the result in `appState` `logging:lastCheck`, and audits
+`remnawave.logging_hardened` (counts only) when it turned logging off somewhere.
 
 This covers the backend-config half of the no-log posture; the node-container logging driver and
 the Reality/transport settings remain the province of `ansible-role-freesocks` (see
