@@ -99,7 +99,7 @@ export const DNS_ACCOUNT_USES = {
   front: {
     label: 'DNS and fronting',
     detail:
-      'Also a CDN front: nodes can be protected through its zones, as with any L7 provider. Read its terms first: they may not allow proxy traffic.',
+      'Also a CDN front: nodes can be fronted through its zones, as with any L7 provider. Read its terms first: they may not allow proxy traffic.',
   },
 } as const;
 

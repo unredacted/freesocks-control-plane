@@ -312,16 +312,16 @@
     </div>
   {:else if canProtect && origin}
     <p class="bg-card mt-3 rounded-md border p-3 text-sm">
-      It goes live again through its edges below: Protect again makes new addresses, you try each
-      one, then you approve go-live.
+      It goes live again through its edges below: Front again makes new addresses, you try each one,
+      then you approve go-live.
     </p>
   {:else if canProtect}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3 text-sm">
       <p>
-        Members reach this node through provider addresses. Protect it from Edges: FCP creates them,
+        Members reach this node through provider addresses. Front it from Edges: FCP creates them,
         you try each one, then you approve go-live there.
       </p>
-      <Button size="sm" onclick={protect}>Protect this node</Button>
+      <Button size="sm" onclick={protect}>Front this node</Button>
     </div>
   {/if}
 

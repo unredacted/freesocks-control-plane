@@ -82,14 +82,14 @@ afterEach(() => {
   client.clear();
 });
 
-describe('a fronted node closed with no protection open', () => {
-  test('whose approval reuses its addresses shows the approval card, not Protect again', () => {
+describe('a fronted node closed with no fronting open', () => {
+  test('whose approval reuses its addresses shows the approval card, not Front again', () => {
     mount('kept');
     const text = document.body.textContent ?? '';
     expect(text).toMatch(/Closed\. Approve it to reopen it on the addresses it already has\./);
     expect(text).toMatch(/What you approve/);
     expect(text).toMatch(/members get 198\.51\.100\.7:443/);
-    expect(text).not.toMatch(/Protect again makes new addresses/);
+    expect(text).not.toMatch(/Front again makes new addresses/);
     // The review is read for this node only.
     expect(vi.mocked(reviewQuery).mock.calls[0]![1]()).toBe('i1');
   });
@@ -103,10 +103,10 @@ describe('a fronted node closed with no protection open', () => {
     expect(document.body.textContent).toMatch(/Closed for maintenance/);
   });
 
-  test('with nothing to reuse it still says to protect it again', () => {
+  test('with nothing to reuse it still says to front it again', () => {
     mount(null);
     const text = document.body.textContent ?? '';
-    expect(text).toMatch(/Protect again makes new addresses/);
+    expect(text).toMatch(/Front again makes new addresses/);
     expect(text).not.toMatch(/What you approve/);
   });
 

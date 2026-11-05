@@ -1,6 +1,7 @@
 /**
  * Admin -> Servers paths (pure; unit-tested). The only place the section's
- * paths are spelled. The section is ONE sidebar leaf with three tabs:
+ * paths are spelled. The section shares ONE sidebar leaf and one tab bar with
+ * Edges (components/ServersNav.svelte); its own three tabs are:
  *
  *   /admin/servers/backends                       Backends: the backend servers FCP issues keys on
  *   /admin/servers[?instance=<slug>]              Nodes: the nodes of one instance (the default tab)

@@ -4492,6 +4492,21 @@ http.route({
   }),
 });
 
+// GET /api/v1/admin/remnawave/logging-last-check: the newest logging-privacy
+// check, whoever ran it (the hourly `logging-privacy` cron, or an admin's Check /
+// Apply), as counts + a time; `lastCheck` is null until one has run. Reads the
+// stored record only: never touches a backend.
+http.route({
+  path: '/api/v1/admin/remnawave/logging-last-check',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
+    return json({
+      lastCheck: await ctx.runQuery(internal.backendServers.getLoggingLastCheck, {}),
+    });
+  }),
+});
+
 // POST /api/v1/admin/remnawave/harden-logging: enforce the no-client-IP-logging
 // posture on every Remnawave config profile (safe read-modify-write of the Xray
 // log/policy — preserves transports/Reality/routing; restarts the affected nodes).

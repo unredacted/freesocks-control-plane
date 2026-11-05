@@ -88,20 +88,20 @@ describe('originSentence', () => {
     ).toBe('Setting up, step 3 of 4. Test each new address.');
   });
 
-  test('a re-protect says members keep what they have', () => {
+  test('a re-front says members keep what they have', () => {
     expect(
       originSentence(status({ kind: 'setting-up', runId: 'r', runKind: 'reprotect', step: 1 })),
-    ).toBe('Protecting again, step 1 of 4. Members keep what they have.');
+    ).toBe('Fronting again, step 1 of 4. Members keep what they have.');
     expect(
       originSentence(
         status({ kind: 'needs-you', runId: 'r', runKind: 'reprotect', step: 3, code: 'try_it' }),
       ),
-    ).toBe('Protecting again, step 3 of 4. Test each new address.');
+    ).toBe('Fronting again, step 3 of 4. Test each new address.');
   });
 
   test('every other kind', () => {
     expect(originSentence(status({ kind: 'removing', code: 'restore' }))).toBe(
-      'Removing protection.',
+      'Removing fronting.',
     );
     expect(originSentence(status({ kind: 'removing', code: 'deleting' }))).toBe('Being removed.');
     expect(originSentence(status({ kind: 'paused', dot: 'red' }))).toBe(
@@ -116,39 +116,39 @@ describe('originSentence', () => {
     expect(originSentence(status({ kind: 'needs-you', code: 'members_dark' }))).toBe(
       'Members get nothing. Put an address in use and turn rendering on.',
     );
-    expect(originSentence(status({ kind: 'off' }))).toBe('Protection is switched off (Advanced).');
+    expect(originSentence(status({ kind: 'off' }))).toBe('Fronting is switched off (Advanced).');
     expect(originSentence(status({ kind: 'not-live', published: 1 }))).toBe(
       'Address ready, not live yet. Members still use the direct address.',
     );
     expect(originSentence(status({ kind: 'not-live', published: 0 }))).toBe(
-      'Not protected yet. Members use the direct address.',
+      'Not fronted yet. Members use the direct address.',
     );
     // A fronted node (a WebSocket front, say) has no direct address to fall back on.
     expect(originSentence(status({ kind: 'not-live', published: 0, fronted: true }))).toBe(
-      'Not protected yet. Members get no address for this node until it goes live.',
+      'Not fronted yet. Members get no address for this node until it goes live.',
     );
     expect(originSentence(status({ kind: 'not-live', published: 1, fronted: true }))).toBe(
       'Address ready, not live yet. Members get no address for this node until it goes live.',
     );
     expect(originSentence(status({ kind: 'needs-you', code: 'setup_run_failed' }))).toBe(
-      'Setup stopped. Open the run and try again, or remove protection to start over.',
+      'Setup stopped. Open the run and try again, or remove fronting to start over.',
     );
     expect(originSentence(status({ kind: 'unprotected', published: 0 }))).toBe(
       'No address in use. Members get nothing.',
     );
     expect(originSentence(status({ published: 2, standbys: 1 }))).toBe(
-      'Protected. 2 addresses in use, 1 spare.',
+      'Fronted. 2 addresses in use, 1 spare.',
     );
-    expect(originSentence(status({ published: 1 }))).toBe('Protected. 1 address in use.');
+    expect(originSentence(status({ published: 1 }))).toBe('Fronted. 1 address in use.');
   });
 });
 
 describe('originSentence: one address in use', () => {
   // The server raises single_address only when the node wants more than it has
   // (convex/edgeReplaceWithoutSpare.test.ts pins that side).
-  test('1 of 1 wanted: protected, nothing asked of the operator', () => {
+  test('1 of 1 wanted: fronted, nothing asked of the operator', () => {
     const one = originSentence(status({ published: 1 }));
-    expect(one).toBe('Protected. 1 address in use.');
+    expect(one).toBe('Fronted. 1 address in use.');
     expect(one).not.toMatch(/need|you/i);
   });
 
@@ -196,7 +196,7 @@ describe('fleetSentence', () => {
   test('what matters most, then the count', () => {
     expect(fleetSentence(null)).toBe('');
     expect(fleetSentence({ kind: 'empty', dot: 'grey', count: 0, total: 0, protected: 0 })).toBe(
-      'No node is protected yet.',
+      'No node is fronted yet.',
     );
     expect(
       fleetSentence({ kind: 'needs-you', dot: 'amber', count: 1, total: 3, protected: 2 }),
@@ -212,12 +212,12 @@ describe('fleetSentence', () => {
     ).toBe('2 nodes are not live yet.');
     expect(
       fleetSentence({ kind: 'protected', dot: 'green', count: 1, total: 1, protected: 1 }),
-    ).toBe('Your node is protected.');
+    ).toBe('Your node is fronted.');
     expect(
       fleetSentence({ kind: 'protected', dot: 'green', count: 6, total: 6, protected: 6 }),
-    ).toBe('All 6 nodes protected.');
+    ).toBe('All 6 nodes fronted.');
     expect(fleetSentence({ kind: 'partial', dot: 'green', count: 1, total: 3, protected: 1 })).toBe(
-      '1 of 3 nodes protected.',
+      '1 of 3 nodes fronted.',
     );
   });
 });

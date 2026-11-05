@@ -188,7 +188,7 @@
 {#if account.isPending}
   <SectionHeader
     title="Provider account"
-    back={{ href: edgesPaths.providers(), label: 'Providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
   />
   <div class="space-y-3" role="status">
     <span class="sr-only">Loading the account</span>
@@ -198,7 +198,7 @@
 {:else if notFound}
   <SectionHeader
     title="Provider account"
-    back={{ href: edgesPaths.providers(), label: 'Providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
   />
   <AdminListState
     emptyText="This account does not exist any more. Go back to Providers to pick another one or add it again."
@@ -206,7 +206,7 @@
 {:else if account.isError || !a}
   <SectionHeader
     title="Provider account"
-    back={{ href: edgesPaths.providers(), label: 'Providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
   />
   <AdminListState error={account.error} onRetry={() => void account.refetch()} />
 {:else}
@@ -215,7 +215,7 @@
     description={EDGE_PROVIDER_META[a.provider].role === 'dns'
       ? `${providerLabel(a.provider)} account: ${DNS_ACCOUNT_USES[useNow].label}. ${DNS_ACCOUNT_BLURB}`
       : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
-    back={{ href: edgesPaths.providers(), label: 'Providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
   >
     {#snippet badges()}
       <FakeBadge fake={a.fake} />
@@ -590,7 +590,7 @@
       ? 'Let this account front traffic?'
       : 'Make this account DNS only?'}
     body={useChoice === 'front'
-      ? 'Nodes can then be protected through its zones. Its zones are checked with a credential test right away, and its locations are trusted again by their first proven front. Fronts it already has are kept.'
+      ? 'Nodes can then be fronted through its zones. Its zones are checked with a credential test right away, and its locations are trusted again by their first proven front. Fronts it already has are kept.'
       : 'It gets no new fronts and its spares do not go live. Fronts that carry members now are kept until they are replaced or deleted. The records it holds for other fronts are not touched.'}
     confirmLabel={useChoice === 'front' ? 'Front traffic too' : 'DNS only'}
     onConfirm={saveUse}

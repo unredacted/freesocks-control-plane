@@ -56,7 +56,7 @@
 {#if notFound}
   <SectionHeader title="Node not found" {back} />
   <p class="text-muted-foreground text-sm">
-    There is no protected node called "{slug}". It may have been removed, or the link is old.
+    There is no fronted node called "{slug}". It may have been removed, or the link is old.
   </p>
 {:else if !relay || resolving}
   <SectionHeader title={slug} {back} />

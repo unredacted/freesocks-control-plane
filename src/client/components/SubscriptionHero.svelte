@@ -120,16 +120,18 @@
   // the UI so the user knows what they're looking at. All labels resolve in
   // $derived so a locale switch re-renders them (t() reads $state).
   let resolvedTitle = $derived(title ?? t('hero.titleDefault'));
-  // The names of this key's main and backup addresses (without the form an
-  // entry takes of its address), when it has a backup.
-  let relayBackup = $derived.by(() => {
+  // The names of this key's main and backup addresses, without the form an
+  // entry takes (domain, IPv4, IPv6): one name per address, so the line stays
+  // short however many forms the config carries.
+  let relayNames = $derived.by(() => {
     const nameOf = (role: string) => {
       const c = nodeRelay?.connections.find((x) => x.role === role);
       return c ? (c.base ?? c.label) : undefined;
     };
-    const primary = nameOf('primary');
+    const primary = nameOf('primary') ?? nodeRelay?.connections[0]?.base;
     const backup = nameOf('backup');
-    return primary && backup ? { primary, backup } : null;
+    if (!primary) return null;
+    return backup && backup !== primary ? { primary, backup } : { primary, backup: null };
   });
   let isAccessKey = $derived(accessKeyOnly ?? backend === 'outline');
   let urlLabel = $derived(
@@ -275,19 +277,15 @@
           {t('hero.relayRefreshSuggested')}
         </p>
       {/if}
-      {#if nodeRelay && nodeRelay.connections.length > 0}
+      <!-- One line: the names the app shows for this key. An app that imports a
+           plain link list (Anywhere, v2rayNG...) shows the main and backup entries
+           side by side and never switches on its own, so the line says to. -->
+      {#if relayNames}
         <p class="text-sm text-muted-foreground">
-          {t('hero.relayConnections')}
-          <span class="text-foreground">{nodeRelay.connections.map((c) => c.label).join(', ')}</span
-          >
+          {relayNames.backup
+            ? t('hero.relayEntries', { primary: relayNames.primary, backup: relayNames.backup })
+            : t('hero.relayEntry', { name: relayNames.primary })}
         </p>
-        <!-- An app that imports a plain link list (Anywhere, v2rayNG...) shows the
-             main and backup entries side by side and never switches on its own. -->
-        {#if relayBackup}
-          <p class="text-sm text-muted-foreground">
-            {t('hero.relayBackupHint', relayBackup)}
-          </p>
-        {/if}
       {/if}
     </div>
 

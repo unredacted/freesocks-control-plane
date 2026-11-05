@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * Admin -> Servers section shell: the admin chrome, the tabs
-   * (Backends | Nodes | Mode pools) and the section's page. AdminRouter
+   * Admin -> Servers section shell: the admin chrome, the tab bar it shares
+   * with Edges (components/ServersNav.svelte) and the section's page. AdminRouter
    * lazy-imports this file for every `/admin/servers` path (and redirects the
    * old Backend servers and Remnawave addresses here), so the section is one
    * chunk outside the main admin bundle. Routes: lib/routes.ts.

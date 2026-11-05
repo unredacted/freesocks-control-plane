@@ -138,6 +138,26 @@ describe('audit.record (integration, via the real mutation)', () => {
 });
 
 describe('AUDIT_PAYLOAD_ALLOWLIST coverage', () => {
+  test('both node logging privacy actions (admin Apply + the hourly cron) keep their counts', () => {
+    expect(AUDIT_PAYLOAD_ALLOWLIST['admin.remnawave.logging_hardened']).toEqual([
+      'instances',
+      'profilesChanged',
+      'profilesTotal',
+    ]);
+    // The `logging-privacy` cron (system actor): counts only, never a profile or backend name.
+    expect(AUDIT_PAYLOAD_ALLOWLIST['remnawave.logging_hardened']).toEqual([
+      'instances',
+      'profilesChanged',
+      'profilesTotal',
+      'panelsUnreadable',
+      'panelsBusy',
+    ]);
+    const written = Object.values(sources).some((text) =>
+      /\baction:\s*'remnawave\.logging_hardened'/.test(text),
+    );
+    expect(written).toBe(true);
+  });
+
   test('every origin-edge audit action (edge.* / probe.* / origin.* / admin.edge.*) written by the backend has an allowlist entry (the allowlist is fail-closed: a missing entry silently drops the payload)', () => {
     const used = new Set<string>();
     for (const text of Object.values(sources)) {

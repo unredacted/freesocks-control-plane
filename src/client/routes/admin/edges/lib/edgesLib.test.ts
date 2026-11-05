@@ -84,8 +84,8 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     expect(resolveEdgesRoute('/admin/edges/advanced/relays')).toEqual({ page: 'not-found' });
   });
   it('lights the header link of each page', () => {
-    expect(sectionTabOf({ page: 'home' })).toBe('nodes');
-    expect(sectionTabOf({ page: 'node', slug: 'a' })).toBe('nodes');
+    expect(sectionTabOf({ page: 'home' })).toBe('edges');
+    expect(sectionTabOf({ page: 'node', slug: 'a' })).toBe('edges');
     expect(sectionTabOf({ page: 'providers' })).toBe('providers');
     expect(sectionTabOf({ page: 'provider', id: 'x' })).toBe('providers');
     for (const page of [
@@ -245,7 +245,7 @@ describe('attention', () => {
       expect(resolveEdgesRoute(href.split('?')[0]!).page).not.toBe('not-found');
     }
   });
-  it('links an enrolled node to the protect sheet or to its Servers page', () => {
+  it('links an enrolled node to the front sheet or to its Servers page', () => {
     const facts = { serverSlug: 'panel-a', nodeUuid: 'uuid-1', node: 'node-one' };
     expect(attentionTarget(item({ action: 'protect_node', relaySlug: null, facts }))).toBe(
       '/admin/edges?protect=1&server=panel-a&node=uuid-1',
@@ -525,7 +525,7 @@ describe('a failed run in the attention list', () => {
   it('is named by what it was, and its button opens the run', () => {
     expect(attentionHeading(failed({ kind: 'provision', spare: true }), true)).toEqual({
       label: 'Adding a spare failed',
-      explain: 'A new spare address for this protected node could not be created.',
+      explain: 'A new spare address for this fronted node could not be created.',
       final: true,
     });
     // A replacement keeps the kind's own copy (worded by the screen).

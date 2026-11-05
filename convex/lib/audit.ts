@@ -290,6 +290,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Admin enforced the no-client-IP-logging posture on the Remnawave config
   // profiles (Xray log/policy). Counts only — no config content is logged.
   'admin.remnawave.logging_hardened': ['instances', 'profilesChanged', 'profilesTotal'],
+  // The hourly `logging-privacy` cron turned logging off on at least one profile
+  // (system actor; written only when something changed). Counts only.
+  'remnawave.logging_hardened': [
+    'instances',
+    'profilesChanged',
+    'profilesTotal',
+    'panelsUnreadable',
+    'panelsBusy',
+  ],
   // Server management: which switches moved, never a value from a backend.
   'servers.config.update': ['changedKeys'],
   'servers.host.create': ['backendSlug', 'label', 'outcome', 'code'],

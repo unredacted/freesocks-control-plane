@@ -455,7 +455,7 @@ export function nodeAutomationWords(
     : 'FCP does not make new spares on its own (Edges, Settings). Each replacement uses one tested spare; add and test the next one yourself.';
   if (!config.enabled)
     return {
-      line: 'Edge automation is off for every node. Turn on automatic protection from the Edges page for this to act.',
+      line: 'Edge automation is off for every node. Turn on automatic replacement from the Edges page for this to act.',
       spares: null,
     };
   if (!config.autoRotate)
@@ -475,7 +475,7 @@ export function nodeAutomationWords(
     };
   if (!node.autoRotate)
     return {
-      line: 'Off for this node: an address that looks blocked shows under Needs you and waits for you to replace it.',
+      line: 'Off for this node: an address that looks blocked shows under Action needed and waits for you to replace it.',
       spares: null,
     };
   if (config.clientCheck?.enabled)
@@ -493,7 +493,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 const direct = (n: number) => plural(n, 'direct address', 'direct addresses');
 
 /** The button that consents to hiding `n` unsupported direct addresses (Hosts). */
-export const hideButton = (n: number): string => `Protect and hide ${direct(n)}`;
+export const hideButton = (n: number): string => `Front and hide ${direct(n)}`;
 
 /** "N more direct addresses ... cannot carry:", for Hosts found after the review. */
 export function moreDirectWords(n: number): string {
@@ -532,15 +532,15 @@ export function planWords(
           count: unc.length,
           remarks: unc.map((h) => h.remark),
           uuids: unc.map((h) => h.uuid),
-          statement: `${direct(unc.length)} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the new address cannot carry. Protecting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
+          statement: `${direct(unc.length)} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the new address cannot carry. Fronting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
         };
   const others = plan.renderGlobal.affectedRelays;
   const renderGlobal = !plan.renderGlobal.willEnable
     ? null
     : others.length === 0
-      ? 'Going live also turns on protected delivery.'
-      : `Going live also turns on protected delivery for ${plural(others.length, 'other node', 'other nodes')} that ${others.length === 1 ? 'is' : 'are'} ready for it (${others.join(', ')}).`;
-  const button = uncovered ? hideButton(uncovered.count) : 'Protect this node';
+      ? 'Going live also turns on fronted delivery.'
+      : `Going live also turns on fronted delivery for ${plural(others.length, 'other node', 'other nodes')} that ${others.length === 1 ? 'is' : 'are'} ready for it (${others.join(', ')}).`;
+  const button = uncovered ? hideButton(uncovered.count) : 'Front this node';
   // The protected transports only: on a node with more than one run takes, the
   // plan lists every frontable one but the run carries the chosen ones.
   const protectedOnes = plan.inbounds.filter(

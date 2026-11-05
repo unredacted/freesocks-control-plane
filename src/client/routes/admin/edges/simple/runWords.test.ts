@@ -410,9 +410,9 @@ describe('planWords', () => {
       'FCP creates 2 addresses in Main account, checks each one from outside and with you, then moves node-a behind them.',
     );
     expect(w.uncovered).toMatchObject({ count: 1, uuids: ['u2'], remarks: ['B'] });
-    expect(w.button).toBe('Protect and hide 1 direct address');
+    expect(w.button).toBe('Front and hide 1 direct address');
     expect(w.uncovered?.statement).toMatch(/^1 direct address on the backend uses/);
-    expect(hideButton(2)).toBe('Protect and hide 2 direct addresses');
+    expect(hideButton(2)).toBe('Front and hide 2 direct addresses');
     expect(moreDirectWords(1)).toMatch(/^One more direct address on the backend uses/);
     expect(moreDirectWords(3)).toMatch(/^3 more direct addresses on the backend use/);
     expect(w.renderGlobal).toMatch(/1 other node/);
@@ -420,7 +420,7 @@ describe('planWords', () => {
       'Works for link and Clash subscriptions; other formats keep the direct address.',
     );
   });
-  it('judges the formats by the protected transports only (a choice on a busy node)', () => {
+  it('judges the formats by the fronted transports only (a choice on a busy node)', () => {
     const w = planWords(
       {
         nodeName: 'n',
@@ -453,7 +453,7 @@ describe('planWords', () => {
     );
     expect(w.uncovered).toBeNull();
     expect(w.renderGlobal).toBeNull();
-    expect(w.button).toBe('Protect this node');
+    expect(w.button).toBe('Front this node');
     expect(w.formats).toBe('Works for every subscription format.');
   });
 });
@@ -508,7 +508,7 @@ describe('planWords: the fleet-wide sentence', () => {
       'Acct',
       2,
     );
-    expect(w.renderGlobal).toBe('Going live also turns on protected delivery.');
+    expect(w.renderGlobal).toBe('Going live also turns on fronted delivery.');
     expect(w.sentence).toMatch(/^FCP creates 2 addresses in Acct/);
   });
 });

@@ -748,7 +748,7 @@ FCP" (`externallyFronted`) decides for such a node is how it reopens after a mai
 drift) closed it. Either way Approve reopens it on the addresses it has and buys nothing. Off, as
 for an enrolled node (§ A fronted node's activation, "Approve on the addresses it has"), the
 approval first checks that every transport keeps an address whose check is current, so a key
-change refuses it until the addresses are tried again; with none left, **Protect again** (a
+change refuses it until the addresses are tried again; with none left, **Front again** (a
 fresh address on every listener members are served through, tested, the old ones drained) is
 the way back, since a fresh protection is refused (`edge.node_already_bound`). On, the approval
 needs no standbys and checks nothing; the render gate still holds each address whose check went
@@ -987,7 +987,7 @@ mirror). FCP never starts a run by itself.
   cancel keep reading it. A run without a snapshot (a direct node, an older row) commits as
   before. A re-protect of a live node within its approved shape reaches
   go-live and binds without a new approval; outside it, it parks for the review.
-- **Protect again from the node page.** A live node is protected again by its own run kind
+- **Front again from the node page.** A live node is fronted again by its own run kind
   (`POST /api/v1/admin/edges/relays/{id}/reprotect`, a `reprotect` setup run, docs/edges.md
   "Guided setup runs"): new candidate addresses on the listeners members are served through, a
   test link for each, then the admission above (no new approval within the approved shape; the
@@ -1012,15 +1012,15 @@ mirror). FCP never starts a run by itself.
   (`standbys_verified` is recorded, the review card lists them and says nothing new is bought;
   the review's `display.atOnce` is `kept`, `external` for an adopted node whose edge FCP does not
   run, and the Servers node page shows the approval card for either while no protection is open,
-  in place of "Protect again");
+  in place of "Front again");
   an address on the same transport whose check went stale stays published and is not served
   until it is tried again, as on a live node. Nothing publishes, so no run waits at publish: the
   approval commits in its own transaction through `promoteCandidate`, or is refused with nothing
   changed. A transport with no current address refuses `servers.standbys_unverified`: the review
   card says `:key_changed` when only the key moved (a key, short-id or clock-bound change still
-  needs every address tried again, on the node in Edges, or Protect again) and `:retest`
+  needs every address tried again, on the node in Edges, or Front again) and `:retest`
   otherwise (an address or its transport changed since its test). With no published address, an
-  origin that is not bound, or a live node, it stays `servers.standbys_missing`: Protect again is
+  origin that is not bound, or a live node, it stays `servers.standbys_missing`: Front again is
   the way back. The audit row of the approval carries `kept`, the number of addresses reused. An
   address a run of the node committed counts as served even when an older run, superseded before
   a retry that committed it, still lists it among its candidates (the finish of the maintenance
@@ -1281,7 +1281,7 @@ From an empty machine to a member connecting through an edge, for an L4 mode
    never the origin. The client imports it and connects through the edge.
 10. **Afterwards**, as needed: automatic protection (`POST automation {on}`, offered on the
     run's Live card), probes and operator alerts (`docs/edges.md` "Operations safety").
-    "Protect again" on the node's page replaces every address of a live node; "Serve this node
+    "Front again" on the node's page replaces every address of a live node; "Serve this node
     directly again" ends edge-required delivery and gives members the direct address.
 
 ## Admin surface
@@ -1324,9 +1324,11 @@ can share a backend type, and a uuid missing on this backend may live on another
 
 ### The page
 
-Admin -> **Servers** is ONE sidebar leaf (the Servers group has five: Servers, Connection
-modes, Edges, Storage mirrors, Status page) with three tabs, its paths spelled only in
-`src/client/routes/admin/servers/lib/routes.ts`:
+Admin -> **Servers** is ONE sidebar leaf (the Servers group has four: Servers, Connection
+modes, Storage mirrors, Status page) for both the Servers and the Edges pages, which share one
+tab bar, `Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced`
+(`components/ServersNav.svelte`; the Edges tabs are docs/edges.md "Admin section"). The
+Servers tabs, their paths spelled only in `src/client/routes/admin/servers/lib/routes.ts`:
 
 | Tab        | Path                      | What                                                                                                                                    |
 | ---------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1337,7 +1339,7 @@ modes, Edges, Storage mirrors, Status page) with three tabs, its paths spelled o
 The old addresses redirect (`legacyServersRedirect`, pinned by a test): `/admin/backend-servers`
 to Backends and `/admin/remnawave` to Mode pools.
 
-**Nodes** is built like the simple Edges screens: one status sentence, a "Needs you" list only
+**Nodes** is built like the simple Edges screens: one status sentence, an "Action needed" list only
 when something is broken, one row per node, and the leftovers as quiet one-line notes (a
 transport nobody uses on three nodes is one line, not six). **Backend setup** says how a ready
 backend is set up (its modes, the generation, the zone for origin names) and, with changes from
@@ -1358,9 +1360,9 @@ notes, its activation (an enrolled node), its **edges** when an origin protects 
 transports with the addresses members get for each. The edges panel is the Edges section's
 (`edges/simple/NodeEdgesPanel.svelte`, loaded lazily): the origin's status from the server's one
 projection (docs/edges.md "Admin section"), Go live or Replace address, More (a spare address,
-**Protect again**, Origin details, Remove protection), the test card (`?test=<edgeId>`), the
+**Front again**, Origin details, Remove fronting), the test card (`?test=<edgeId>`), the
 addresses in use, the per-node automatic switch and recent activity. `/admin/edges/nodes/<slug>`
-redirects here for a backend node. **Protect again** (an enrolled node live behind edges) starts
+redirects here for a backend node. **Front again** (an enrolled node live behind edges) starts
 a re-protect run ("A fronted node's activation") and opens its progress in the protect sheet; it
 is the primary action while the node waits to be protected again.
 

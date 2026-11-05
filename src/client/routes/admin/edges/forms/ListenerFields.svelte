@@ -335,8 +335,8 @@
               <div>
                 <Label for={`${uid}-bind`}>Bind the backend transport</Label>
                 <p class="text-muted-foreground text-xs">
-                  Needed for FCP to create and flip the backend Host itself. Protecting the node
-                  from Edges fills this in.
+                  Needed for FCP to create and flip the backend Host itself. Fronting the node from
+                  Edges fills this in.
                 </p>
               </div>
               <Switch id={`${uid}-bind`} bind:checked={form.bindPanel} {disabled} />

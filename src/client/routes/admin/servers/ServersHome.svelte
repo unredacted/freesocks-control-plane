@@ -282,7 +282,7 @@
 
     {#if attention.length > 0 || namesRows.length > 0 || holds.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.setUp && !setupRow)}
       <section aria-labelledby="needs-you">
-        <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
+        <h2 id="needs-you" class="mb-3 text-base font-semibold">Action needed</h2>
         <ul class="space-y-2">
           {#each holds as h (h.id)}
             <li

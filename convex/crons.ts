@@ -29,6 +29,13 @@ crons.interval('backend-healthcheck', { minutes: 10 }, internal.backendServers.h
 // donation grant also schedules this immediately; the cron is the backstop).
 crons.interval('donation-bonus-reconcile', { hours: 1 }, internal.donations.applyFreeBonus, {});
 
+// Node logging privacy (docs/privacy.md §5): check every Remnawave config profile
+// and turn logging off on any found logging (the Apply button's safe
+// read-modify-write). Steady state writes nothing and restarts no node; a backend
+// a server change holds is only read and left for the next run. Each run is
+// stored as the card's "last check" (appState `logging:lastCheck`).
+crons.interval('logging-privacy', { hours: 1 }, internal.backendServers.autoHardenLogging, {});
+
 // Deactivate + RETAIN idle free users (reclaim the key, keep the row on the free
 // tier, reactivatable on return); never deletes — manual purgeInactiveFree removes.
 crons.daily(

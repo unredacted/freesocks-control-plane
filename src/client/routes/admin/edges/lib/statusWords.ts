@@ -59,7 +59,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 function runSentence(s: OriginStatus): string {
   const step = s.step ?? 1;
   const again = s.runKind === 'reprotect';
-  const lead = again ? `Protecting again, step ${step} of 4` : `Setting up, step ${step} of 4`;
+  const lead = again ? `Fronting again, step ${step} of 4` : `Setting up, step ${step} of 4`;
   if (s.kind === 'needs-you') {
     if (s.code === 'node_not_approved')
       return 'Every address works. Waiting for you to approve go-live.';
@@ -79,7 +79,7 @@ export function originSentence(s: OriginStatus): string {
   if (s.runId) return runSentence(s);
   switch (s.kind) {
     case 'removing':
-      return s.code === 'restore' ? 'Removing protection.' : 'Being removed.';
+      return s.code === 'restore' ? 'Removing fronting.' : 'Being removed.';
     case 'paused':
       return RUN_NEED_STEP.quarantined;
     case 'needs-you': {
@@ -93,23 +93,23 @@ export function originSentence(s: OriginStatus): string {
       return `${plainWords(codeLabel(code))}. ${nextStep(code)}`;
     }
     case 'off':
-      return 'Protection is switched off (Advanced).';
+      return 'Fronting is switched off (Advanced).';
     case 'not-live':
       // A fronted node has no direct address to fall back on.
       if (s.fronted)
         return s.published > 0
           ? 'Address ready, not live yet. Members get no address for this node until it goes live.'
-          : 'Not protected yet. Members get no address for this node until it goes live.';
+          : 'Not fronted yet. Members get no address for this node until it goes live.';
       return s.published > 0
         ? 'Address ready, not live yet. Members still use the direct address.'
-        : 'Not protected yet. Members use the direct address.';
+        : 'Not fronted yet. Members use the direct address.';
     case 'unprotected':
       return 'No address in use. Members get nothing.';
     case 'setting-up':
       return runSentence(s);
     case 'protected': {
       const spare = s.standbys > 0 ? `, ${plural(s.standbys, 'spare', 'spares')}` : '';
-      return `Protected. ${plural(s.published, 'address', 'addresses')} in use${spare}.`;
+      return `Fronted. ${plural(s.published, 'address', 'addresses')} in use${spare}.`;
     }
   }
 }
@@ -118,7 +118,7 @@ export function fleetSentence(f: FleetStatus | null): string {
   if (!f) return '';
   switch (f.kind) {
     case 'empty':
-      return 'No node is protected yet.';
+      return 'No node is fronted yet.';
     case 'needs-you':
       return `${plural(f.count, 'node needs', 'nodes need')} attention.`;
     case 'setting-up':
@@ -126,9 +126,9 @@ export function fleetSentence(f: FleetStatus | null): string {
     case 'not-live':
       return `${plural(f.count, 'node is', 'nodes are')} not live yet.`;
     case 'protected':
-      return f.total === 1 ? 'Your node is protected.' : `All ${f.total} nodes protected.`;
+      return f.total === 1 ? 'Your node is fronted.' : `All ${f.total} nodes fronted.`;
     case 'partial':
-      return `${f.protected} of ${plural(f.total, 'node', 'nodes')} protected.`;
+      return `${f.protected} of ${plural(f.total, 'node', 'nodes')} fronted.`;
   }
 }
 

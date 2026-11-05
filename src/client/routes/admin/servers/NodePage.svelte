@@ -101,7 +101,7 @@
   const sniTransports = transportsQuery(() => slug);
   let back = $derived({
     href: serversPaths.home({ instance: slug ?? undefined }),
-    label: 'Servers',
+    label: 'Nodes',
   });
 
   let hostOpen = $state(false);

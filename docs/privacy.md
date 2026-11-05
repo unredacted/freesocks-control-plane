@@ -259,6 +259,20 @@ with no transports, key-order-independent check). The node-container logging dri
 and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
 §"Xray logging privacy harden".
 
+FCP also **checks on its own every hour**: the `logging-privacy` cron
+(`backendServers.autoHardenLogging`) runs the same check and turns logging off on any
+profile it finds logging, with the same safe read-modify-write as the Apply button.
+Once every profile is hardened a run writes nothing, so no node restarts in the steady
+state. A backend where a server change is in progress (an open op of the backend-write
+ledger holding a profile or a node there) is only read that hour and left for the next
+run. Each check, automatic or an admin's Check / Apply, is stored as the newest "last
+check" (`appState` key `logging:lastCheck`, read by `GET
+/api/v1/admin/remnawave/logging-last-check`) and shown on the card as one line. The
+record holds counts and a time only (profiles checked, found logging, turned off,
+skipped; backends unreadable or busy), never a profile's config or name, a backend's
+address or a credential. A run that turned logging off anywhere writes a system audit
+row, `remnawave.logging_hardened`, with the same counts.
+
 - **Xray logging OFF.** The Xray access log records `from <client-ip> …` for every
   connection. In the Config Profile's Xray JSON set the `log` block so no client IP
   is ever written:

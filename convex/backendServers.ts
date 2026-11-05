@@ -11,7 +11,10 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { v } from 'convex/values';
-import type { QueryCtx } from './_generated/server';
+import type { ActionCtx, QueryCtx } from './_generated/server';
+import { readStateJson, writeStateJson } from './lib/appStateJson';
+import { writeAuditLog } from './lib/audit';
+import { claimKey } from './lib/backend/ops';
 import type { Id } from './_generated/dataModel';
 import type { BackendConfig, RemnawaveServerConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
@@ -326,66 +329,305 @@ export const healthcheck = internalAction({
     }),
 });
 
+// --- Node logging privacy (docs/privacy.md §5) ------------------------------------------------
+
+/** One instance's row of a logging-privacy run (the `RemnawaveLoggingReport` contract). */
+interface LoggingInstanceReport {
+  serverId: string;
+  name: string;
+  ok: boolean;
+  error?: string;
+  profiles: Array<{
+    uuid: string;
+    name: string;
+    hardened: boolean;
+    changed: boolean;
+    error?: string;
+  }>;
+}
+
+/** An instance's row plus how the run treated it. `wrote`: the run was allowed
+ *  to write there (false for a dry run, and for an instance the automatic run
+ *  only read because a server change holds it, `busy`). */
+interface LoggingRunRow {
+  instance: LoggingInstanceReport;
+  wrote: boolean;
+  busy: boolean;
+}
+
+/**
+ * Whether a server change (an op of the backend-write ledger, convex/backendLedger.ts)
+ * holds a config profile or a node on this backend right now. A profile write
+ * replaces the config wholesale and restarts the profile's nodes, so the ledger's
+ * own profile writes claim `profile:<uuid>` AND every `node:<uuid>` under it; the
+ * automatic logging run respects the same claims and leaves such a backend alone
+ * until the next run. Two indexed range reads, one row each at most. A backend
+ * FCP does not manage never has claims, so this is always false there.
+ */
+export const serverChangeRunning = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }): Promise<boolean> => {
+    for (const prefix of [claimKey.profile(''), claimKey.node('')]) {
+      // Every key starting with `<kind>:` sorts in [`<kind>:`, `<kind>;`).
+      const upper = `${prefix.slice(0, -1)};`;
+      const held = await ctx.db
+        .query('panelClaims')
+        .withIndex('by_server_key', (q) =>
+          q.eq('backendServerId', backendServerId).gte('key', prefix).lt('key', upper),
+        )
+        .first();
+      if (held) return true;
+    }
+    return false;
+  },
+});
+
+/**
+ * The shared run behind the Check / Apply routes and the hourly cron: every
+ * active backend with a `hardenLogging` provider (Outline has no config-profile
+ * concept and is skipped). A per-instance failure is isolated + reported, never
+ * thrown, so one unreachable backend can't block the rest. With
+ * `leaveBusyAlone`, a backend a server change holds (`serverChangeRunning`) is
+ * only READ (a dry run) and left for the next run.
+ */
+async function hardenEveryBackend(
+  ctx: ActionCtx,
+  opts: { dryRun: boolean; leaveBusyAlone: boolean },
+): Promise<LoggingRunRow[]> {
+  const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
+  const rows: LoggingRunRow[] = [];
+  for (const s of servers) {
+    const provider = PROVIDERS[s.backend];
+    if (!provider.hardenLogging) continue; // no config-profile concept (Outline)
+    // Fail safe: a guard that cannot be read counts as busy (read, never write).
+    const busy =
+      opts.leaveBusyAlone && !opts.dryRun
+        ? await ctx
+            .runQuery(internal.backendServers.serverChangeRunning, { backendServerId: s._id })
+            .catch(() => true)
+        : false;
+    const dryRun = opts.dryRun || busy;
+    try {
+      const report = await provider.hardenLogging(s.config as BackendConfig, { dryRun });
+      // This edit is FCP's own but does not go through the ops ledger: read the
+      // backend again as a new baseline so it is not flagged as somebody else's.
+      if (!dryRun && report.profiles.some((p) => p.changed) && provider.observePanel)
+        await ctx
+          .runAction(internal.backendObserve.refresh, { backendServerId: s._id, ownEdit: true })
+          .catch(() => undefined);
+      rows.push({
+        instance: { serverId: s._id as string, name: s.name, ok: true, profiles: report.profiles },
+        wrote: !dryRun,
+        busy,
+      });
+    } catch (err) {
+      rows.push({
+        instance: {
+          serverId: s._id as string,
+          name: s.name,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          profiles: [],
+        },
+        wrote: false,
+        busy,
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * The `appState` key holding the NEWEST logging-privacy check, whoever ran it
+ * (the hourly cron, or an admin's Check / Apply). Counts and a time only: no
+ * profile name or content, no backend name, address or secret.
+ */
+export const LOGGING_CHECK_STATE_KEY = 'logging:lastCheck';
+
+const loggingCheckFields = {
+  /** `automatic` = the `logging-privacy` cron; `manual` = an admin's Check / Apply. */
+  source: v.union(v.literal('automatic'), v.literal('manual')),
+  /** A dry run (the admin's Check) wrote nothing. */
+  dryRun: v.boolean(),
+  /** Backends with config profiles that were looked at. */
+  panels: v.number(),
+  /** Backends whose profiles could not be listed. */
+  panelsUnreadable: v.number(),
+  /** Backends the automatic run only read because a server change held them. */
+  panelsBusy: v.number(),
+  /** Profiles read. */
+  profiles: v.number(),
+  /** Profiles found logging (before this run turned any off). */
+  profilesLogging: v.number(),
+  /** Profiles this run turned logging off on. */
+  profilesTurnedOff: v.number(),
+  /** Profiles that could not be checked or written (malformed, refused). */
+  profilesSkipped: v.number(),
+};
+
+export interface LoggingCheckCounts {
+  source: 'automatic' | 'manual';
+  dryRun: boolean;
+  panels: number;
+  panelsUnreadable: number;
+  panelsBusy: number;
+  profiles: number;
+  profilesLogging: number;
+  profilesTurnedOff: number;
+  profilesSkipped: number;
+}
+
+export interface LoggingCheckRecord extends LoggingCheckCounts {
+  /** When the check finished (epoch ms). */
+  at: number;
+}
+
+/** A run reduced to the counts the card shows (pure). */
+export function summarizeLoggingRun(
+  rows: readonly LoggingRunRow[],
+  source: 'automatic' | 'manual',
+  dryRun: boolean,
+): LoggingCheckCounts {
+  const c: LoggingCheckCounts = {
+    source,
+    dryRun,
+    panels: rows.length,
+    panelsUnreadable: 0,
+    panelsBusy: 0,
+    profiles: 0,
+    profilesLogging: 0,
+    profilesTurnedOff: 0,
+    profilesSkipped: 0,
+  };
+  for (const { instance, wrote, busy } of rows) {
+    if (busy) c.panelsBusy += 1;
+    if (!instance.ok) {
+      c.panelsUnreadable += 1;
+      continue;
+    }
+    for (const p of instance.profiles) {
+      c.profiles += 1;
+      if (p.error) c.profilesSkipped += 1;
+      else if (p.changed) {
+        c.profilesLogging += 1;
+        if (wrote) c.profilesTurnedOff += 1;
+      }
+    }
+  }
+  return c;
+}
+
+/** A stored record read back defensively (an unreadable row reads as never run). */
+function parseLoggingCheck(raw: unknown): LoggingCheckRecord | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.at !== 'number' || !Number.isFinite(r.at)) return null;
+  const n = (k: keyof LoggingCheckCounts): number => {
+    const x = r[k];
+    return typeof x === 'number' && Number.isFinite(x) && x >= 0 ? Math.floor(x) : 0;
+  };
+  return {
+    at: r.at,
+    source: r.source === 'manual' ? 'manual' : 'automatic',
+    dryRun: r.dryRun === true,
+    panels: n('panels'),
+    panelsUnreadable: n('panelsUnreadable'),
+    panelsBusy: n('panelsBusy'),
+    profiles: n('profiles'),
+    profilesLogging: n('profilesLogging'),
+    profilesTurnedOff: n('profilesTurnedOff'),
+    profilesSkipped: n('profilesSkipped'),
+  };
+}
+
+/**
+ * Store a finished check as the newest one (`at` = now, so whoever finished last
+ * is what the card shows). An AUTOMATIC run that turned logging off anywhere
+ * also writes a system audit row, counts only; the admin's Apply is audited by
+ * its route (`admin.remnawave.logging_hardened`).
+ */
+export const recordLoggingCheck = internalMutation({
+  args: loggingCheckFields,
+  handler: async (ctx, c): Promise<LoggingCheckRecord> => {
+    const record: LoggingCheckRecord = {
+      at: Date.now(),
+      source: c.source,
+      dryRun: c.dryRun,
+      panels: c.panels,
+      panelsUnreadable: c.panelsUnreadable,
+      panelsBusy: c.panelsBusy,
+      profiles: c.profiles,
+      profilesLogging: c.profilesLogging,
+      profilesTurnedOff: c.profilesTurnedOff,
+      profilesSkipped: c.profilesSkipped,
+    };
+    await writeStateJson(ctx.db, LOGGING_CHECK_STATE_KEY, record);
+    if (c.source === 'automatic' && c.profilesTurnedOff > 0)
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'remnawave.logging_hardened',
+        targetType: 'backend',
+        payload: {
+          instances: c.panels,
+          profilesChanged: c.profilesTurnedOff,
+          profilesTotal: c.profiles,
+          panelsUnreadable: c.panelsUnreadable,
+          panelsBusy: c.panelsBusy,
+        },
+      });
+    return record;
+  },
+});
+
+/** The newest logging-privacy check, or null when none ever ran. */
+export const getLoggingLastCheck = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<LoggingCheckRecord | null> =>
+    parseLoggingCheck(await readStateJson<unknown>(ctx.db, LOGGING_CHECK_STATE_KEY)),
+});
+
 /**
  * Enforce the no-client-IP-logging posture on every active Remnawave instance's
  * config profiles (docs/privacy.md §5), via each provider's `hardenLogging` — a
  * SAFE read-modify-write that touches only the Xray `log`/`policy`, preserving
  * transports/Reality/routing. `dryRun` reports what WOULD change without writing.
- * Backends with no config-profile concept (Outline) are skipped. A per-instance
- * failure is isolated + reported, never thrown, so one unreachable backend can't
- * block the rest. Writing restarts the affected nodes (Remnawave auto-push).
+ * Writing restarts the affected nodes (Remnawave auto-push). This is the admin's
+ * entry point (the Check / Apply routes): the run is stored as the newest check
+ * (`source: 'manual'`); a failure to store it never fails the admin's request.
  */
 export const hardenRemnawaveLogging = internalAction({
   args: { dryRun: v.boolean() },
-  handler: async (
-    ctx,
-    { dryRun },
-  ): Promise<{
-    instances: Array<{
-      serverId: string;
-      name: string;
-      ok: boolean;
-      error?: string;
-      profiles: Array<{
-        uuid: string;
-        name: string;
-        hardened: boolean;
-        changed: boolean;
-        error?: string;
-      }>;
-    }>;
-  }> => {
-    const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
-    const instances = [];
-    for (const s of servers) {
-      const provider = PROVIDERS[s.backend];
-      if (!provider.hardenLogging) continue; // no config-profile concept (Outline)
-      try {
-        const report = await provider.hardenLogging(s.config as BackendConfig, { dryRun });
-        // This edit is FCP's own but does not go through the ops ledger: read the
-        // backend again as a new baseline so it is not flagged as somebody else's.
-        if (!dryRun && report.profiles.some((p) => p.changed) && provider.observePanel)
-          await ctx
-            .runAction(internal.backendObserve.refresh, { backendServerId: s._id, ownEdit: true })
-            .catch(() => undefined);
-        instances.push({
-          serverId: s._id as string,
-          name: s.name,
-          ok: true as const,
-          profiles: report.profiles,
-        });
-      } catch (err) {
-        instances.push({
-          serverId: s._id as string,
-          name: s.name,
-          ok: false as const,
-          error: err instanceof Error ? err.message : String(err),
-          profiles: [],
-        });
-      }
+  handler: async (ctx, { dryRun }): Promise<{ instances: LoggingInstanceReport[] }> => {
+    const rows = await hardenEveryBackend(ctx, { dryRun, leaveBusyAlone: false });
+    try {
+      await ctx.runMutation(
+        internal.backendServers.recordLoggingCheck,
+        summarizeLoggingRun(rows, 'manual', dryRun),
+      );
+    } catch {
+      /* the report is still the admin's answer; the next run records again */
     }
-    return { instances };
+    return { instances: rows.map((r) => r.instance) };
   },
+});
+
+/**
+ * The `logging-privacy` cron (hourly): check every config profile and turn
+ * logging off on any profile found logging, with the same safe read-modify-write
+ * as the admin's Apply. In the steady state every profile is already hardened,
+ * so nothing is written and no node restarts. A backend a server change holds is
+ * only read and left for the next run (`serverChangeRunning`).
+ */
+export const autoHardenLogging = internalAction({
+  args: {},
+  handler: async (ctx): Promise<LoggingCheckRecord> =>
+    runWithCronOutcome(ctx, 'logging-privacy', async (): Promise<LoggingCheckRecord> => {
+      const rows = await hardenEveryBackend(ctx, { dryRun: false, leaveBusyAlone: true });
+      return ctx.runMutation(
+        internal.backendServers.recordLoggingCheck,
+        summarizeLoggingRun(rows, 'automatic', false),
+      );
+    }),
 });
 
 /**

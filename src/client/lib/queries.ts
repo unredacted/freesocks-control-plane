@@ -33,6 +33,7 @@ import {
   type MirrorCopyState,
   AdminConnectionModesResponse,
   RemnawaveNodeStatsResponse,
+  RemnawaveLoggingLastCheckResponse,
   AdminAlertsConfig,
   AdminCensoredCountries,
   AdminMemberCountry,
@@ -82,6 +83,7 @@ export const queryKeys = {
   adminSettings: ['admin', 'settings'] as const,
   adminBackendServers: ['admin', 'backend-servers'] as const,
   adminNodeStats: ['admin', 'remnawave', 'node-stats'] as const,
+  adminLoggingLastCheck: ['admin', 'remnawave', 'logging-last-check'] as const,
   adminConnectionModes: ['admin', 'connection-modes'] as const,
   adminMirrorProviders: ['admin', 'mirror-providers'] as const,
   adminMirrorSync: ['admin', 'mirror-sync'] as const,
@@ -593,6 +595,20 @@ export const adminNodeStatsQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminNodeStats,
     queryFn: () => apiClient.get('/api/v1/admin/remnawave/node-stats', RemnawaveNodeStatsResponse),
+    staleTime: 60_000,
+  }));
+
+/** The newest Node logging privacy check (the hourly `logging-privacy` cron or an
+ *  admin's Check / Apply), as counts + a time. Shape declared in
+ *  `shared/contracts/admin.ts` (RemnawaveLoggingLastCheckResponse). */
+export const adminLoggingLastCheckQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminLoggingLastCheck,
+    queryFn: () =>
+      apiClient.get(
+        '/api/v1/admin/remnawave/logging-last-check',
+        RemnawaveLoggingLastCheckResponse,
+      ),
     staleTime: 60_000,
   }));
 

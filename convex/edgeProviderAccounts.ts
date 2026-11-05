@@ -1102,7 +1102,7 @@ export const remove = internalMutation({
       if (use.sets > 0 || use.runs > 0)
         throw new ConvexError({
           code: 'edge.account_in_use',
-          message: 'A node still uses or is being protected in a location of this account',
+          message: 'A node still uses or is being fronted in a location of this account',
         });
       if ((await namesInZone(ctx.db, loc._id)) > 0)
         throw new ConvexError({

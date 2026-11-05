@@ -125,7 +125,7 @@ describe('the next step', () => {
     expect(kind(namesStep(transport(), on, NODE))).toBe('done');
   });
 
-  test('a port or a node with no protected address never reads "in use"', () => {
+  test('a port or a node with no fronted address never reads "in use"', () => {
     // A node with no protected address of its own, on its page.
     expect(namesStep(transport(), on, 'n-unprotected')).toEqual({
       kind: 'unprotected',
@@ -275,7 +275,7 @@ describe('a suggestion in one line', () => {
   });
 });
 
-describe('Needs you', () => {
+describe('Action needed', () => {
   test('a send held back, a test to make, suggestions, and names the cover site dropped', () => {
     const t = transport({}, { toSend: 2, failing: 1 });
     t.list!.suggestions = 5;
@@ -523,7 +523,7 @@ describe("FCP's own test of a send", () => {
     expect(autoTestWords(stepOf(t), 'ready')).toMatch(/only through an address that already works/);
   });
 
-  test('the node line and Needs you say when FCP is testing', () => {
+  test('the node line and Action needed say when FCP is testing', () => {
     const t = waiting(test1({ state: 'testing' }));
     expect(nodeLineWords(t.nodes[0]!).text).toBe(
       '4 names in use · 2 waiting for a test · FCP is testing one now',

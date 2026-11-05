@@ -18,7 +18,6 @@
   import { apiClient } from '../../lib/api';
   import { clearSessionKey } from '../../lib/pop';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
-  import Network from '@lucide/svelte/icons/network';
   import ListTree from '@lucide/svelte/icons/list-tree';
   import Palette from '@lucide/svelte/icons/palette';
   import Layers from '@lucide/svelte/icons/layers';
@@ -73,12 +72,19 @@
 
   // Nav items are either a leaf link ({ to, label, icon }) or a collapsible group
   // ({ group, icon, children: [...] }). Everything that configures the fleet
-  // lives under one "Servers" group of five leaves: Servers (its own tabs:
-  // Backends, Nodes, Mode pools), Connection modes, Edges, Storage mirrors and
-  // the status page; the router is unaffected (children keep their flat paths).
-  // A leaf is active on its own path and on any sub-path (`/admin/edges/providers/<id>`
-  // keeps Edges lit); `exact` opts out for a leaf whose path is a prefix of a sibling.
-  type NavLeaf = { to: string; label: string; icon: LucideIcon; exact?: boolean };
+  // lives under one "Servers" group of four leaves: Servers (its own tab bar:
+  // Nodes, Edges, Countries, Backends, Mode pools, Edge providers, Advanced),
+  // Connection modes, Storage mirrors and the status page; the router is
+  // unaffected (children keep their flat paths). A leaf is active on its own
+  // path, on any sub-path, and on the sub-paths of `also` (`/admin/edges/providers/<id>`
+  // keeps Servers lit); `exact` opts out for a leaf whose path is a prefix of a sibling.
+  type NavLeaf = {
+    to: string;
+    label: string;
+    icon: LucideIcon;
+    exact?: boolean;
+    also?: string[];
+  };
   type NavGroup = { group: string; icon: LucideIcon; children: NavLeaf[] };
   const NAV: (NavLeaf | NavGroup)[] = [
     { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -90,16 +96,11 @@
       group: 'Servers',
       icon: Server,
       children: [
-        // One leaf for backends, their nodes (each node's own page: machine,
-        // activation, edges) and the mode pools: tabs inside the section, so
-        // every `/admin/servers/*` path keeps this leaf lit.
-        { to: '/admin/servers', label: 'Servers', icon: ListTree },
+        // One leaf for the nodes, their edges, backends and mode pools: the
+        // Servers and Edges pages share one tab bar (ServersNav), so every
+        // `/admin/servers/*` and `/admin/edges/*` path keeps this leaf lit.
+        { to: '/admin/servers', label: 'Servers', icon: ListTree, also: ['/admin/edges'] },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
-        // One leaf for the whole Edges section: its own pages (providers,
-        // templates, probes, settings, setup, origin and node pages) are reached
-        // from the section's in-page header, so every `/admin/edges/*` path
-        // keeps this leaf lit.
-        { to: '/admin/edges', label: 'Edges', icon: Network },
         { to: '/admin/storage', label: 'Storage mirrors', icon: Cloud },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],
@@ -119,8 +120,12 @@
   /** Is the active route one of this group's children? Derived from the group's OWN
    *  children — a second hand-maintained path list drifted once already (it omitted
    *  /admin/connection-modes, so that page rendered the group collapsed). */
+  const under = (path: string) =>
+    router.pathname === path || router.pathname.startsWith(`${path}/`);
   const leafActive = (leaf: NavLeaf) =>
-    router.pathname === leaf.to || (!leaf.exact && router.pathname.startsWith(`${leaf.to}/`));
+    router.pathname === leaf.to ||
+    (!leaf.exact && router.pathname.startsWith(`${leaf.to}/`)) ||
+    (leaf.also ?? []).some(under);
   const isActive = (leaf: NavLeaf) => leafActive(leaf);
   const holdsActiveRoute = (item: NavGroup) => item.children.some(isActive);
 

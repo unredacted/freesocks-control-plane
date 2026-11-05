@@ -87,7 +87,7 @@
   <Card.Header>
     <Card.Title class="flex flex-wrap items-center gap-2">
       Quarantined
-      <Badge variant="danger">Needs your decision</Badge>
+      <Badge variant="danger">Decision needed</Badge>
     </Card.Title>
     <Card.Description>
       A rotation changed the backend Hosts of this origin and could neither finish nor undo it. FCP
