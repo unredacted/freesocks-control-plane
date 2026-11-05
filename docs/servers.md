@@ -715,10 +715,7 @@ protects it), never from the row, which may hold a private management address. A
 tool made it) is `externallyFronted`: it needs no standbys until Edges protects it, one node
 at a time, through the normal flow; after maintenance its approval commits in its own
 transaction (nothing of FCP's publishes for it, so nothing would wake a run waiting at
-publish), or is refused with nothing changed. An adopted node FCP's Edges do protect is
-approved after a maintenance on the addresses it already has, as an enrolled node is (§ A
-fronted node's activation, "Approve on the addresses it has"): no new address is bought while
-each one's check is current. A WebSocket node is adopted with its **origin
+publish), or is refused with nothing changed. A WebSocket node is adopted with its **origin
 name** (`originHostname`; the dialog's "Origin name"), required
 (`servers.adopt_origin_name_required`): the name its CDN fronts dial, the one its Caddy's
 certificate is for. Edges dials the same name once it protects the node (the node's origin and
@@ -748,11 +745,14 @@ dials it, and the row may hold a private management address), so the origin's ad
 the node's (its public IPv4, or `originAddressOverride` for anything else); a protection made
 again later plans from it, never from the management address. What "Its edge was made outside
 FCP" (`externallyFronted`) decides for such a node is how it reopens after a maintenance (or a
-drift) closed it. Off, as for an enrolled node, the approval waits for an open protection run's
-tested standbys: a fresh protection is refused (`edge.node_already_bound`), so that is **Protect
-again**, which buys a fresh address on every listener members are served through, tests it, and
-drains the old one. On, the approval needs no standbys: Approve reopens it on the addresses it
-has (a key change still sends each of them back to its test).
+drift) closed it. Either way Approve reopens it on the addresses it has and buys nothing. Off, as
+for an enrolled node (§ A fronted node's activation, "Approve on the addresses it has"), the
+approval first checks that every transport keeps an address whose check is current, so a key
+change refuses it until the addresses are tried again; with none left, **Protect again** (a
+fresh address on every listener members are served through, tested, the old ones drained) is
+the way back, since a fresh protection is refused (`edge.node_already_bound`). On, the approval
+needs no standbys and checks nothing; the render gate still holds each address whose check went
+stale (a key change) back from members until it is tested again.
 
 A node is not adopted while the profile carries a change made on the backend outside FCP that
 nobody has seen (`servers.foreign_profile_edit`): its first reconcile would close it as drift.
