@@ -1472,6 +1472,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    // "Skip restoring direct": a node delete whose restore is held at the
+    // direct check goes on to finish without it (only there; edgeRestore.skipDirect).
+    if (c === 'restore' && d === 'skip-direct' && !parts[4])
+      return json(await ctx.runMutation(internal.edgeRestore.skipDirect, { relayId, ...act }));
     switch (c) {
       case 'rebalance':
         // Coverage at the cap: unpublish ONE duplicate back to standby so
