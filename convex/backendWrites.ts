@@ -559,7 +559,7 @@ async function assertNotRelayOrigin(ctx: MutationCtx, sid: Id<'backendServers'>,
   if (relays.length > 0)
     refuse(
       'servers.node_relay_origin',
-      `${relays[0].slug} protects this node. Remove that protection before changing the node itself`,
+      `${relays[0].slug} fronts this node. Remove that fronting before changing the node itself`,
     );
 }
 
@@ -851,7 +851,7 @@ export async function portChangeImpact(
     if (bound)
       refuse(
         'servers.port_edge_bound',
-        `${relay.slug} forwards to this transport at its port. Remove that protection first`,
+        `${relay.slug} forwards to this transport at its port. Remove that fronting first`,
       );
   }
   const inboundsOf = new Map(profiles.map((p) => [p.profileUuid, p.inbounds]));

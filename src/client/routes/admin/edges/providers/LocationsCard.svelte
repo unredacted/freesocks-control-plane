@@ -196,10 +196,10 @@
     <CardDescription>
       {#if zones}
         The DNS zones this account fronts in. Pick one, or any other zone the account reaches, when
-        you protect a node or add an address; each address stays in the zone it was created in.
-        Trust is per zone: a new one is trusted by its first proven front.
+        you front a node or add an address; each address stays in the zone it was created in. Trust
+        is per zone: a new one is trusted by its first proven front.
       {:else}
-        Where this account's edges are created. Pick one when you protect a node or add an address;
+        Where this account's edges are created. Pick one when you front a node or add an address;
         each address stays in the location it was created in. Trust is per location: a new one is
         trusted by its first tested address.
       {/if}
@@ -209,7 +209,7 @@
     {#if account.locations.length === 0}
       <p class="text-muted-foreground text-sm">
         {zones
-          ? 'No zone yet. Add one here, or pick one when you protect a node.'
+          ? 'No zone yet. Add one here, or pick one when you front a node.'
           : 'No location yet. Add one: nothing can be created in this account until it has one.'}
       </p>
     {/if}
@@ -478,7 +478,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove the location ${removing?.label ?? ''}?`}
-  body="Nothing at the provider is touched. FCP refuses while an address still lives here or a protected node uses this location."
+  body="Nothing at the provider is touched. FCP refuses while an address still lives here or a fronted node uses this location."
   confirmLabel="Remove location"
   danger
   onConfirm={async () => {

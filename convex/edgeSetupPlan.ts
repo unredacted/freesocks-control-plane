@@ -909,7 +909,7 @@ function chosenListeners(frontable: SetupPlanInbound[], keys: string[]): SetupPl
   if (out.length !== wanted.size)
     throw new ConvexError({
       code: 'validation',
-      message: 'listenerKeys names a transport the plan cannot protect',
+      message: 'listenerKeys names a transport the plan cannot front',
     });
   return out;
 }
@@ -1263,7 +1263,7 @@ function givenOriginOf(c: PlanContext, raw: string | undefined): string | null {
     throw new ConvexError({
       code: 'edge.origin_address_locked',
       message:
-        'An earlier setup of this node forwards to another address. Remove its protection first to use a new one',
+        'An earlier setup of this node forwards to another address. Remove its fronting first to use a new one',
     });
   }
   const ip = canonicalIp(address);
@@ -1365,7 +1365,7 @@ export const create = internalAction({
     if (plan.originDeleting)
       throw new ConvexError({
         code: 'edge.origin_deleting',
-        message: "The node's earlier protection is still being removed. Try again once it is gone",
+        message: "The node's earlier fronting is still being removed. Try again once it is gone",
       });
     if (planHash !== a.planHash)
       throw new ConvexError({

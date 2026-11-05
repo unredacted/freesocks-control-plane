@@ -1,8 +1,11 @@
 <script lang="ts">
   /**
-   * Where a node's addresses come from: its provider set (docs/edges.md §
-   * "Provider sets"). One line per location: how many addresses are in use and
-   * spare there, whether it cools after a block, whether it is trusted yet.
+   * A node's addresses, by where they come from: its provider set (docs/edges.md §
+   * "Provider sets"). One group per location: its name and provider (once),
+   * how many addresses are in use and spare there, whether it cools after a
+   * block, whether it is trusted yet, and under it that location's address
+   * rows (the `rows` snippet: AddressRow, from NodeEdgesPanel). Addresses of
+   * no listed location close the list.
    * Then what members miss (a transport with no backup at another provider,
    * one whose locations all cool, one no location carries), and the addresses
    * still missing: added by automatic upkeep only when it is on for the node
@@ -10,7 +13,7 @@
    *
    * A location that holds an address of the node outside its set (the spare
    * of a re-protect that failed: the set changes only when a run goes live)
-   * is listed under "Also has addresses at", saying why.
+   * is listed after the set's locations ("Not in its locations"), saying why.
    *
    * Change: "Add a location" lists the locations that carry at least one of
    * the node's transports, the regions a load balancer account reaches that
@@ -33,7 +36,7 @@
    *   upkeepAdds?: boolean     automatic upkeep provisions what the node lacks (upkeepAddsMissing)
    */
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
-  import { tick } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Badge } from '@client/components/ui/badge';
@@ -66,6 +69,7 @@
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
   import { providerLabel } from '../lib/format';
+  import { accountText } from './addressWords';
   import { providerPickWords } from './runWords';
   import PickWantDialog from './PickWantDialog.svelte';
   import { wantLine } from './pickWantWords';
@@ -74,12 +78,17 @@
     relay: { id: string; slug: string };
     busy: boolean;
     onRunStarted: (runId: string) => void;
+    /**
+     * The node's address rows under a location (null: every address of no
+     * location listed here; `known` = the locations listed).
+     */
+    rows?: Snippet<[string | null, string[]]>;
     /** A transport in words, by key. */
     nameOf?: (listenerKey: string) => string;
     /** Automatic upkeep provisions what the node lacks (`upkeepAddsMissing`). */
     upkeepAdds?: boolean;
   }
-  let { relay, busy, onRunStarted, nameOf, upkeepAdds = false }: Props = $props();
+  let { relay, busy, onRunStarted, rows, nameOf, upkeepAdds = false }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
@@ -203,7 +212,7 @@
     onSuccess: (r) => {
       invalidateRelay(qc, relay.slug);
       optionsFor = null;
-      toast.success('Protecting the node again with the new options.');
+      toast.success('Fronting the node again with the new options.');
       onRunStarted(r.runId);
     },
     onError: (e) => toast.error(edgeErrorMessage(e)),
@@ -211,111 +220,9 @@
 </script>
 
 <section aria-labelledby={`${uid}-providers`}>
-  <h3 id={`${uid}-providers`} class="mb-3 text-sm font-semibold">Where its addresses come from</h3>
-  {#if setQ.isPending}
-    <Skeleton class="h-16 w-full" />
-  {:else if setQ.isError || !view || !words}
-    <AdminListState error={setQ.error} onRetry={() => void setQ.refetch()} />
-  {:else}
-    <div class="space-y-3 rounded-lg border p-3">
-      {#if view.picks.length === 0}
-        <p class="text-muted-foreground text-sm">
-          No location is recorded for this node yet: automatic work may use any trusted location.
-        </p>
-      {:else}
-        <ul class="divide-y">
-          {#each view.picks as p (p.locationId)}
-            {@const line = words.picks.find((x) => x.locationId === p.locationId)}
-            {@const o = optionsOf(p)}
-            <li class="flex flex-wrap items-start justify-between gap-2 py-2 first:pt-0 last:pb-0">
-              <div class="min-w-0 space-y-0.5">
-                <p class="flex flex-wrap items-center gap-2 text-sm font-medium">
-                  {p.label}
-                  <span class="text-muted-foreground font-normal"
-                    >{p.accountName}, {providerLabel(p.provider)}</span
-                  >
-                  {#if !p.qualified}<Badge variant="muted">Not trusted yet</Badge>{/if}
-                  {#if !p.usable}<Badge variant="warning">Off</Badge>{/if}
-                  {#if !frontsNode(p.provider, websocketNode)}
-                    <Badge variant="muted" title={codeExplain('l4_not_for_websocket')}
-                      >Not used</Badge
-                    >
-                  {/if}
-                </p>
-                <p class="text-muted-foreground text-xs">{line?.counts}</p>
-                {#if frontsNode(p.provider, websocketNode) && p.carries.length > 0}
-                  <p class="text-muted-foreground text-xs">
-                    {wantLine(p.want, p.carries, nameOf)}
-                    <button
-                      type="button"
-                      class="text-primary min-h-11 underline-offset-2 hover:underline disabled:opacity-50 sm:min-h-0"
-                      disabled={busy}
-                      onclick={() => {
-                        wantFor = p;
-                        wantOpen = true;
-                      }}>Change</button
-                    >
-                  </p>
-                {/if}
-                {#if line?.cooling}<p class="text-xs">{line.cooling}</p>{/if}
-                {#if line?.refused}<p class="text-xs">{line.refused}</p>{/if}
-                {#if o && frontsNode(p.provider, websocketNode)}
-                  {@const said = optionSummary(o.fields, o.chosen)}
-                  <p class="text-muted-foreground text-xs">
-                    {said.length > 0 ? `Options: ${said.join(', ')}.` : "The location's defaults."}
-                    <button
-                      type="button"
-                      class="text-primary min-h-11 underline-offset-2 hover:underline disabled:opacity-50 sm:min-h-0"
-                      disabled={busy || reprotect.isPending}
-                      onclick={() => openOptions(p)}>Change options</button
-                    >
-                  </p>
-                {/if}
-              </div>
-              {#if view.picks.length > 1}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  class="text-destructive h-11 sm:h-8"
-                  disabled={busy || change.isPending}
-                  onclick={() => {
-                    removing = p;
-                    removeOpen = true;
-                  }}
-                >
-                  Remove
-                </Button>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      {#if view.outside.length > 0}
-        <div class="space-y-1 border-t pt-2">
-          <p class="text-sm font-medium">Also has addresses at</p>
-          <ul class="space-y-1">
-            {#each view.outside as o (o.locationId)}
-              {@const line = words.outside.find((x) => x.locationId === o.locationId)}
-              <li class="space-y-0.5">
-                <p class="flex flex-wrap items-center gap-2 text-sm">
-                  {o.label}
-                  <span class="text-muted-foreground"
-                    >{o.accountName}, {providerLabel(o.provider)}</span
-                  >
-                  {#if !o.qualified}<Badge variant="muted">Not trusted yet</Badge>{/if}
-                </p>
-                <p class="text-muted-foreground text-xs">{line?.counts} {line?.why}</p>
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/if}
-      {#each words.notes as note (note)}
-        <p class="text-muted-foreground text-sm">{note}</p>
-      {/each}
-      {#if issue}<CodeNote {issue} />{:else if change.error}<p class="text-destructive text-sm">
-          {edgeErrorMessage(change.error)}
-        </p>{/if}
+  <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <h3 id={`${uid}-providers`} class="text-sm font-semibold">Addresses</h3>
+    {#if view}
       <Button
         size="sm"
         variant="outline"
@@ -325,7 +232,115 @@
       >
         Add a location
       </Button>
+    {/if}
+  </div>
+  {#if setQ.isPending}
+    <Skeleton class="h-16 w-full" />
+  {:else if setQ.isError || !view || !words}
+    <AdminListState error={setQ.error} onRetry={() => void setQ.refetch()} />
+  {:else}
+    {@const known = [...view.picks, ...view.outside].map((x) => x.locationId)}
+    <div class="divide-y rounded-lg border">
+      {#if view.picks.length === 0}
+        <p class="text-muted-foreground px-3 py-2.5 text-sm">
+          No location is recorded for this node yet: automatic work may use any trusted location.
+        </p>
+      {/if}
+      {#each view.picks as p (p.locationId)}
+        {@const line = words.picks.find((x) => x.locationId === p.locationId)}
+        {@const o = optionsOf(p)}
+        {@const used = frontsNode(p.provider, websocketNode)}
+        <div class="px-3 py-2.5">
+          <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+            <div class="min-w-0 space-y-0.5">
+              <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                <span class="font-medium">{p.label}</span>
+                <span class="text-muted-foreground">{accountText(p.accountName, p.provider)}</span>
+                {#if !p.qualified}<Badge variant="muted">Not trusted yet</Badge>{/if}
+                {#if !p.usable}<Badge variant="warning">Off</Badge>{/if}
+                {#if !used}
+                  <Badge variant="muted" title={codeExplain('l4_not_for_websocket')}>Not used</Badge
+                  >
+                {/if}
+                {#if line?.counts}
+                  <span class="text-muted-foreground text-xs">{line.counts}</span>
+                {/if}
+              </p>
+              <p class="text-muted-foreground text-xs">
+                {#if used && p.carries.length > 0}
+                  {wantLine(p.want, p.carries, nameOf)}
+                  <button
+                    type="button"
+                    class="text-primary min-h-11 underline-offset-2 hover:underline disabled:opacity-50 sm:min-h-0"
+                    disabled={busy}
+                    onclick={() => {
+                      wantFor = p;
+                      wantOpen = true;
+                    }}>Change</button
+                  >
+                {/if}
+                {#if o && used}
+                  {@const said = optionSummary(o.fields, o.chosen)}
+                  {#if p.carries.length > 0}<span aria-hidden="true">{' · '}</span>{/if}
+                  {said.length > 0 ? `Options: ${said.join(', ')}.` : "The location's defaults."}
+                  <button
+                    type="button"
+                    class="text-primary min-h-11 underline-offset-2 hover:underline disabled:opacity-50 sm:min-h-0"
+                    disabled={busy || reprotect.isPending}
+                    onclick={() => openOptions(p)}>Change options</button
+                  >
+                {/if}
+              </p>
+              {#if line?.cooling}<p class="text-xs">{line.cooling}</p>{/if}
+              {#if line?.refused}<p class="text-xs">{line.refused}</p>{/if}
+            </div>
+            {#if view.picks.length > 1}
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-destructive h-11 sm:h-8"
+                disabled={busy || change.isPending}
+                onclick={() => {
+                  removing = p;
+                  removeOpen = true;
+                }}
+              >
+                Remove
+              </Button>
+            {/if}
+          </div>
+          {@render rows?.(p.locationId, known)}
+        </div>
+      {/each}
+      {#each view.outside as o (o.locationId)}
+        {@const line = words.outside.find((x) => x.locationId === o.locationId)}
+        <div class="px-3 py-2.5">
+          <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <span class="font-medium">{o.label}</span>
+            <span class="text-muted-foreground">{accountText(o.accountName, o.provider)}</span>
+            <Badge variant="muted">Not in its locations</Badge>
+            {#if !o.qualified}<Badge variant="muted">Not trusted yet</Badge>{/if}
+          </p>
+          <p class="text-muted-foreground text-xs">{line?.counts} {line?.why}</p>
+          {@render rows?.(o.locationId, known)}
+        </div>
+      {/each}
+      {#if rows}
+        <!-- Addresses of no listed location (an import, or one from before locations). -->
+        {@const rest = rows}
+        <div class="px-3 empty:hidden">{@render rest(null, known)}</div>
+      {/if}
     </div>
+    {#if words.notes.length > 0 || issue || change.error}
+      <div class="mt-2 space-y-1">
+        {#each words.notes as note (note)}
+          <p class="text-muted-foreground text-sm">{note}</p>
+        {/each}
+        {#if issue}<CodeNote {issue} />{:else if change.error}<p class="text-destructive text-sm">
+            {edgeErrorMessage(change.error)}
+          </p>{/if}
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -449,9 +464,8 @@
     <Dialog.Header>
       <Dialog.Title>Options at {optionsFor?.label ?? 'this location'}</Dialog.Title>
       <Dialog.Description>
-        What this node's addresses there are built with. Saving protects the node again: every
-        address is replaced and members move at go-live. Addresses that exist keep theirs until
-        then.
+        What this node's addresses there are built with. Saving fronts the node again: every address
+        is replaced and members move at go-live. Addresses that exist keep theirs until then.
       </Dialog.Description>
     </Dialog.Header>
     {#if editing}
@@ -471,7 +485,7 @@
       <Button
         class="h-11 sm:h-8"
         disabled={reprotect.isPending}
-        onclick={() => void askProtectAgain()}>Protect again with these</Button
+        onclick={() => void askProtectAgain()}>Front again with these</Button
       >
       <Button variant="outline" class="h-11 sm:h-8" onclick={() => (optionsFor = null)}
         >Cancel</Button

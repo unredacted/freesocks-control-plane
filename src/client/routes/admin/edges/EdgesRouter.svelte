@@ -5,7 +5,8 @@
    * search-only change (`?tab=`, `?edge=`) does not: pages keep their view state
    * in the query string through `searchParam` (lib/urlState.svelte.ts).
    *
-   * Every page sits under the in-page header (Nodes | Providers | Advanced).
+   * Every page sits under the Servers tab bar (servers/components/ServersNav.svelte:
+   * Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced).
    * Routes: see EDGES_ROUTES in ./lib/routes.ts (the single list of patterns);
    * a moved address (`legacyEdgesRedirect`) is replaced by its new one.
    */
@@ -13,7 +14,7 @@
   import Link from '../../../components/Link.svelte';
   import * as Card from '@client/components/ui/card';
   import { resolveEdgesRoute, edgesPaths, legacyEdgesRedirect, sectionTabOf } from './lib/routes';
-  import SectionNav from './components/SectionNav.svelte';
+  import ServersNav from '../servers/components/ServersNav.svelte';
   import EdgesHome from './simple/EdgesHome.svelte';
   import NodePage from './simple/NodePage.svelte';
   import EdgesAdvanced from './simple/EdgesAdvanced.svelte';
@@ -40,7 +41,7 @@
   });
 </script>
 
-<SectionNav current={sectionTabOf(route)} />
+<ServersNav current={sectionTabOf(route)} />
 
 {#if movedTo}
   <!-- Moved: the $effect above is replacing the URL with the new address. -->
@@ -91,7 +92,7 @@
     </Card.Header>
     <Card.Content>
       <Link href={edgesPaths.home()} class="text-primary text-sm underline underline-offset-4">
-        Back to the nodes
+        Back to Edges
       </Link>
     </Card.Content>
   </Card.Root>

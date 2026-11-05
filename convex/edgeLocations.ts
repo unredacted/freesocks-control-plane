@@ -1358,12 +1358,12 @@ export const remove = internalMutation({
     if (use.sets > 0)
       throw new ConvexError({
         code: 'edge.location_in_use',
-        message: 'A protected node still uses this location; remove it from the node first',
+        message: 'A fronted node still uses this location; remove it from the node first',
       });
     if (use.runs > 0)
       throw new ConvexError({
         code: 'edge.location_in_use',
-        message: 'A node is being protected in this location; finish or cancel that first',
+        message: 'A node is being fronted in this location; finish or cancel that first',
       });
     // Nor a zone that still holds names for addresses: their records are
     // reached only through it.

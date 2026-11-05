@@ -764,7 +764,7 @@
 <ConfirmDialog
   bind:open={retireOpen}
   title={`Retire ${picked.length} ${picked.length === 1 ? 'name' : 'names'}?`}
-  body={`New subscriptions stop presenting ${picked.length === 1 ? 'it' : 'them'} at once, on every origin that presents ${picked.length === 1 ? 'it' : 'them'}. Each node keeps accepting ${picked.length === 1 ? 'it' : 'them'} for ${nameDrain}, so members who already hold ${picked.length === 1 ? 'it' : 'one'} stay connected until their app refreshes. An origin keeps its last active name, and an origin that is busy (replacing an address, removing protection, paused) is skipped. Bring ${picked.length === 1 ? 'it' : 'them'} back any time.`}
+  body={`New subscriptions stop presenting ${picked.length === 1 ? 'it' : 'them'} at once, on every origin that presents ${picked.length === 1 ? 'it' : 'them'}. Each node keeps accepting ${picked.length === 1 ? 'it' : 'them'} for ${nameDrain}, so members who already hold ${picked.length === 1 ? 'it' : 'one'} stay connected until their app refreshes. An origin keeps its last active name, and an origin that is busy (replacing an address, removing fronting, paused) is skipped. Bring ${picked.length === 1 ? 'it' : 'them'} back any time.`}
   confirmLabel="Retire"
   danger
   onConfirm={() => {

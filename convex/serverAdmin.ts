@@ -587,10 +587,10 @@ export async function removalBlocker(
   if (origins.length > 0)
     return {
       code: 'server.has_origins',
-      message: `Edges still protect ${origins.length === 1 ? 'an origin' : 'origins'} on this backend (${origins
+      message: `Edges still front ${origins.length === 1 ? 'an origin' : 'origins'} on this backend (${origins
         .slice(0, 3)
         .map((r) => r.slug)
-        .join(', ')}). Remove ${origins.length === 1 ? 'its' : 'their'} protection in Edges first`,
+        .join(', ')}). Remove ${origins.length === 1 ? 'its' : 'their'} fronting in Edges first`,
     };
   // A removed origin's qualification user is removed after its row, by a
   // scheduled action that needs this backend to reach it.

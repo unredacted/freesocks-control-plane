@@ -643,7 +643,7 @@ const refuseKeepDirect = (): never => {
   throw new ConvexError({
     code: 'edge.keep_direct_enrolled',
     message:
-      'An enrolled node fronted by edges has no direct address to keep members on; remove protection instead',
+      'An enrolled node fronted by edges has no direct address to keep members on; remove fronting instead',
   });
 };
 
@@ -2716,7 +2716,7 @@ async function assertPlanMatchesRelay(
   if (changed.length > 0)
     throw new ConvexError({
       code: 'edge.plan_changed',
-      message: `The node's transports changed since this origin was set up (${[...new Set(changed)].join(', ')}); remove protection and start again`,
+      message: `The node's transports changed since this origin was set up (${[...new Set(changed)].join(', ')}); remove fronting and start again`,
     });
 }
 
@@ -3711,7 +3711,7 @@ export const resume = internalMutation({
         if (hidden.length > 0)
           throw new ConvexError({
             code: 'edge.consent_withdrawn_hidden',
-            message: `${hidden.length} host(s) are already hidden; use Remove protection to put them back`,
+            message: `${hidden.length} host(s) are already hidden; use Remove fronting to put them back`,
           });
       }
       planRevision = r.planRevision + 1;
@@ -3854,7 +3854,7 @@ export const decideCancel = internalMutation({
     if (r.kind === 'reprotect')
       throw new ConvexError({
         code: 'validation',
-        message: 'A re-protect run cancels its own way',
+        message: 'A re-front run cancels its own way',
       });
     assertCancellable(r);
     const parkedAtGoLive = r.stage === 'go_live' && r.state === 'needs_you';
@@ -3983,7 +3983,7 @@ export const cancelReprotect = internalMutation({
     const r = await ctx.db.get(runId);
     if (!r) throw new ConvexError({ code: 'not_found', message: 'Run not found' });
     if (r.kind !== 'reprotect')
-      throw new ConvexError({ code: 'validation', message: 'Not a re-protect run' });
+      throw new ConvexError({ code: 'validation', message: 'Not a re-front run' });
     assertCancellable(r);
     const relay = r.relayId ? await ctx.db.get(r.relayId) : null;
     if (relay) {
@@ -4349,7 +4349,7 @@ export async function startReprotect(
     if (!(await boundToRelay(ctx, relay)))
       throw new ConvexError({
         code: 'edge.reprotect_not_bound',
-        message: 'The node is not live behind this origin yet; protect it or take it live first',
+        message: 'The node is not live behind this origin yet; front it or take it live first',
       });
     const backendServerId = relay.backendServerId;
     const nodeName = relay.origin.kind === 'panel-node' ? relay.origin.nodeName : null;
@@ -4365,7 +4365,7 @@ export async function startReprotect(
     if (!backendServerId || !nodeName || !intent)
       throw new ConvexError({
         code: 'edge.reprotect_not_enrolled',
-        message: 'Only an enrolled node is protected again from here',
+        message: 'Only an enrolled node is fronted again from here',
       });
     if (relay.setupOwned || (await activeRunForOrigin(ctx.db, backendServerId, nodeName)))
       throw new ConvexError({
@@ -4420,7 +4420,7 @@ export async function startReprotect(
     if (pickIds.length > MAX_PROVIDER_PICKS)
       throw new ConvexError({
         code: 'edge.set_too_large',
-        message: `A node is protected from at most ${MAX_PROVIDER_PICKS} locations`,
+        message: `A node is fronted from at most ${MAX_PROVIDER_PICKS} locations`,
       });
     const pickRows: Array<{
       location: Doc<'edgeLocations'>;
@@ -4443,20 +4443,20 @@ export async function startReprotect(
         throw new ConvexError({
           code: 'edge.account_incompatible',
           message:
-            'A location this node is protected from is missing, switched off, or its account is disabled or untested',
+            'A location this node is fronted from is missing, switched off, or its account is disabled or untested',
         });
       if (!frontsAllowed(account))
         throw new ConvexError({
           code: 'edge.account_incompatible',
           message:
-            'A location this node is protected from belongs to a DNS account set to DNS only, which fronts no traffic',
+            'A location this node is fronted from belongs to a DNS account set to DNS only, which fronts no traffic',
         });
       pickRows.push({ location, account });
     }
     if (pickRows.length === 0)
       throw new ConvexError({
         code: 'edge.account_incompatible',
-        message: 'No location to protect this node from',
+        message: 'No location to front this node from',
       });
     // Each pick's provider options: the ones the operator gives now (checked
     // where they build), else what the node's set already holds for it.

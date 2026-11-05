@@ -202,7 +202,7 @@ export function listRows(
 export const LIST_FILTERS = ['needs_you', 'in_use', 'all'] as const;
 export type ListFilter = (typeof LIST_FILTERS)[number];
 export const LIST_FILTER_LABEL: Record<ListFilter, string> = {
-  needs_you: 'Needs you',
+  needs_you: 'Action needed',
   in_use: 'In use',
   all: 'All',
 };

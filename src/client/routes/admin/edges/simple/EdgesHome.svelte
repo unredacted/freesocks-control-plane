@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * Edges home (`/admin/edges`): one status sentence, what needs you, one row
-   * per protected node, "Protect a node". URL state: `?protect=1` opens the
+   * Edges home (`/admin/edges`, the Edges tab of the Servers tab bar): one
+   * status sentence, Action needed, one row per fronted node, "Front a node". URL state: `?protect=1` opens the
    * protect sheet (`&server=<slug>&node=<uuid>` preselect a node, as the Servers
    * page links to it), `?run=<id>` opens a run's progress.
    *
@@ -150,7 +150,7 @@
     automationBusy = true;
     try {
       await setEdgeAutomation(on);
-      toast.success(on ? 'Automatic protection is on.' : 'Automatic protection is off.');
+      toast.success(on ? 'Automatic replacement is on.' : 'Automatic replacement is off.');
       invalidateConfig(qc);
     } catch (e) {
       toast.error(edgeErrorMessage(e));
@@ -169,12 +169,15 @@
   }
 </script>
 
-<SectionHeader title="Nodes">
+<SectionHeader
+  title="Edges"
+  description="The fronted nodes: members reach them through provider addresses that FCP replaces when they stop working."
+>
   {#snippet actions()}
     {#if rows.length > 0}
       <Button onclick={openProtect}>
         <Plus aria-hidden="true" />
-        Protect a node
+        Front a node
       </Button>
     {/if}
   {/snippet}
@@ -199,7 +202,7 @@
     <AdminListState error={attention.error} onRetry={() => void attention.refetch()} />
   {:else if items.length > 0 || testEdgeIds.length > 0}
     <section aria-labelledby="needs-you">
-      <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
+      <h2 id="needs-you" class="mb-3 text-base font-semibold">Action needed</h2>
       <div class="space-y-3">
         {#if testEdgeIds.length > 0}
           <EndpointTestCard
@@ -245,13 +248,13 @@
   {#if summary.data && rows.length === 0}
     <div class="rounded-lg border border-dashed p-8 text-center">
       <p class="text-muted-foreground mx-auto max-w-prose text-sm">
-        A protected node hands members an address at a provider instead of its own, and FCP replaces
+        A fronted node hands members an address at a provider instead of its own, and FCP replaces
         that address when it stops working. Nothing changes for members until the new address has
         been tested.
       </p>
       <Button class="mt-4" onclick={openProtect}>
         <Plus aria-hidden="true" />
-        Protect a node
+        Front a node
       </Button>
     </div>
   {:else if rows.length > 0}
@@ -274,10 +277,10 @@
 
   {#if automation === false && anyLive}
     <section class="rounded-lg border p-4" aria-labelledby="auto-title">
-      <h2 id="auto-title" class="font-semibold">Turn on automatic protection</h2>
+      <h2 id="auto-title" class="font-semibold">Turn on automatic replacement</h2>
       {#if clientCheckReady}
         <p class="text-muted-foreground mt-1 max-w-prose text-sm">
-          FCP watches every protected node. When an address looks blocked, it makes a new one in a
+          FCP watches every fronted node. When an address looks blocked, it makes a new one in a
           location where you have tested an address before, checks it with its own sing-box and Xray
           clients, and moves members to it. Nothing extra is billed while no address is blocked.
         </p>
@@ -288,7 +291,7 @@
         </p>
       {:else}
         <p class="text-muted-foreground mt-1 max-w-prose text-sm">
-          FCP watches every protected node and replaces an address that looks blocked. It keeps one
+          FCP watches every fronted node and replaces an address that looks blocked. It keeps one
           spare address per listener, which your provider bills.
         </p>
         <p class="text-muted-foreground mt-2 max-w-prose text-sm">
@@ -315,7 +318,7 @@
             onCheckedChange={(v) => void setAutomation(v)}
           />
           <Label for="automation-switch" class="font-normal">
-            Automatic protection is {automation ? 'on' : 'off'}
+            Automatic replacement is {automation ? 'on' : 'off'}
           </Label>
         </div>
         {#if autoNote}

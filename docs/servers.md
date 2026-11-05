@@ -983,7 +983,7 @@ mirror). FCP never starts a run by itself.
   cancel keep reading it. A run without a snapshot (a direct node, an older row) commits as
   before. A re-protect of a live node within its approved shape reaches
   go-live and binds without a new approval; outside it, it parks for the review.
-- **Protect again from the node page.** A live node is protected again by its own run kind
+- **Front again from the node page.** A live node is fronted again by its own run kind
   (`POST /api/v1/admin/edges/relays/{id}/reprotect`, a `reprotect` setup run, docs/edges.md
   "Guided setup runs"): new candidate addresses on the listeners members are served through, a
   test link for each, then the admission above (no new approval within the approved shape; the
@@ -1250,7 +1250,7 @@ From an empty machine to a member connecting through an edge, for an L4 mode
    never the origin. The client imports it and connects through the edge.
 10. **Afterwards**, as needed: automatic protection (`POST automation {on}`, offered on the
     run's Live card), probes and operator alerts (`docs/edges.md` "Operations safety").
-    "Protect again" on the node's page replaces every address of a live node; "Serve this node
+    "Front again" on the node's page replaces every address of a live node; "Serve this node
     directly again" ends edge-required delivery and gives members the direct address.
 
 ## Admin surface
@@ -1293,9 +1293,11 @@ can share a backend type, and a uuid missing on this backend may live on another
 
 ### The page
 
-Admin -> **Servers** is ONE sidebar leaf (the Servers group has five: Servers, Connection
-modes, Edges, Storage mirrors, Status page) with three tabs, its paths spelled only in
-`src/client/routes/admin/servers/lib/routes.ts`:
+Admin -> **Servers** is ONE sidebar leaf (the Servers group has four: Servers, Connection
+modes, Storage mirrors, Status page) for both the Servers and the Edges pages, which share one
+tab bar, `Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced`
+(`components/ServersNav.svelte`; the Edges tabs are docs/edges.md "Admin section"). The
+Servers tabs, their paths spelled only in `src/client/routes/admin/servers/lib/routes.ts`:
 
 | Tab        | Path                      | What                                                                                                                                    |
 | ---------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1306,7 +1308,7 @@ modes, Edges, Storage mirrors, Status page) with three tabs, its paths spelled o
 The old addresses redirect (`legacyServersRedirect`, pinned by a test): `/admin/backend-servers`
 to Backends and `/admin/remnawave` to Mode pools.
 
-**Nodes** is built like the simple Edges screens: one status sentence, a "Needs you" list only
+**Nodes** is built like the simple Edges screens: one status sentence, an "Action needed" list only
 when something is broken, one row per node, and the leftovers as quiet one-line notes (a
 transport nobody uses on three nodes is one line, not six). **Backend setup** says how a ready
 backend is set up (its modes, the generation, the zone for origin names) and, with changes from
@@ -1327,9 +1329,9 @@ notes, its activation (an enrolled node), its **edges** when an origin protects 
 transports with the addresses members get for each. The edges panel is the Edges section's
 (`edges/simple/NodeEdgesPanel.svelte`, loaded lazily): the origin's status from the server's one
 projection (docs/edges.md "Admin section"), Go live or Replace address, More (a spare address,
-**Protect again**, Origin details, Remove protection), the test card (`?test=<edgeId>`), the
+**Front again**, Origin details, Remove fronting), the test card (`?test=<edgeId>`), the
 addresses in use, the per-node automatic switch and recent activity. `/admin/edges/nodes/<slug>`
-redirects here for a backend node. **Protect again** (an enrolled node live behind edges) starts
+redirects here for a backend node. **Front again** (an enrolled node live behind edges) starts
 a re-protect run ("A fronted node's activation") and opens its progress in the protect sheet; it
 is the primary action while the node waits to be protected again.
 

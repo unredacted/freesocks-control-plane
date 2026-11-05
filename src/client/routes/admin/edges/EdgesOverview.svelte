@@ -277,8 +277,8 @@
         <p class="text-muted-foreground mx-auto mt-1 max-w-prose text-sm">
           An origin is a place members should never reach directly: a backend node, a backend server
           or an address you enter by hand. The control plane puts provider-managed edges in front of
-          it and replaces them when they stop working. A backend node is protected from Edges with
-          Protect a node.
+          it and replaces them when they stop working. A backend node is fronted from Edges with
+          Front a node.
         </p>
         <Button class="mt-4" onclick={() => (newOpen = true)}>
           <Plus aria-hidden="true" />

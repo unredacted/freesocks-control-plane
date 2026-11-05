@@ -65,7 +65,7 @@
 <ActionConfirm
   bind:open
   title={`Simulate a block of ${name}?`}
-  body={`FCP will act as if this address is blocked in ${country || 'the chosen country'}. With automatic protection on, it replaces the address for real: members move to a spare and this address is removed after its drain. Use it on a test deployment only.`}
+  body={`FCP will act as if this address is blocked in ${country || 'the chosen country'}. With automatic replacement on, it replaces the address for real: members move to a spare and this address is removed after its drain. Use it on a test deployment only.`}
   typed={name}
   confirmLabel="Start test block"
   danger

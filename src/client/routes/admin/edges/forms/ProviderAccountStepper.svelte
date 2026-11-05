@@ -379,11 +379,11 @@
         description:
           meta.layer === 'l7'
             ? compact
-              ? 'Optionally a first zone to front in. Any zone the token reaches can be picked when a node is protected.'
-              : 'Optionally a first zone to front in (any zone the token reaches can be picked when a node is protected), and how many this account may run.'
+              ? 'Optionally a first zone to front in. Any zone the token reaches can be picked when a node is fronted.'
+              : 'Optionally a first zone to front in (any zone the token reaches can be picked when a node is fronted), and how many this account may run.'
             : compact
-              ? 'Optionally where its first addresses are created. Any region the key reaches can be picked when a node is protected.'
-              : 'Optionally where its first addresses are created (any region the key reaches can be picked when a node is protected), and how many this account may run.',
+              ? 'Optionally where its first addresses are created. Any region the key reaches can be picked when a node is fronted.'
+              : 'Optionally where its first addresses are created (any region the key reaches can be picked when a node is fronted), and how many this account may run.',
         status: status('placement'),
         ...(step !== 'placement' ? { note: 'after connecting' } : {}),
       },
@@ -697,7 +697,7 @@
         <p class="text-muted-foreground text-sm">
           {meta.layer === 'l7'
             ? 'A first zone is optional: leave the zone empty to add the account alone.'
-            : 'A first location is optional: leave the region empty to add the account alone. The regions it reaches are offered when you protect a node.'}
+            : 'A first location is optional: leave the region empty to add the account alone. The regions it reaches are offered when you front a node.'}
         </p>
         {#if needsDnsFirst}
           <CodeNote

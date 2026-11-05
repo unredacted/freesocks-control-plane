@@ -16,8 +16,7 @@ export const RUN_NEED_STEP: Record<SetupRunNeed, string> = {
   account_untested: 'The provider account is not tested. Test it again, or choose another.',
   account_incompatible: 'The provider account cannot carry this node. Choose another.',
   maintenance: 'New work is paused for maintenance. Resume new work.',
-  too_many_inbounds:
-    'The node has more transports than one run protects. Pick the ones to protect.',
+  too_many_inbounds: 'The node has more transports than one run fronts. Pick the ones to front.',
   use_manual_setup: 'This node is set up by hand. Give it a first address on its origin page.',
   choose_mode: 'The test account has no connection mode. Choose one.',
   provider_failed: 'The provider could not make the address. Try again, or choose another account.',

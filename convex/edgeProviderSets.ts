@@ -335,12 +335,12 @@ export const change = internalMutation({
     if (remaining.length + add.length > MAX_PROVIDER_PICKS)
       throw new ConvexError({
         code: 'edge.set_too_large',
-        message: `A node is protected from at most ${MAX_PROVIDER_PICKS} locations`,
+        message: `A node is fronted from at most ${MAX_PROVIDER_PICKS} locations`,
       });
     if (remaining.length + add.length === 0)
       throw new ConvexError({
         code: 'validation',
-        message: 'Keep at least one location (remove protection to serve the node directly)',
+        message: 'Keep at least one location (remove fronting to serve the node directly)',
       });
     const now = Date.now();
     let drained = 0;

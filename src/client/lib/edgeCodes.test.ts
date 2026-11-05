@@ -445,7 +445,7 @@ describe('phase, status and step maps', () => {
     expect(auditActionLabel('edge.rotation_failed', spare)).toBe('Standby provision failed');
     expect(auditActionLabel('edge.rotation_failed', { kind: 'replace' })).toBe('Rotation failed');
     expect(failedRunLabel(spare, true)?.explain).toBe(
-      'A new spare address for this protected node could not be created.',
+      'A new spare address for this fronted node could not be created.',
     );
     for (const plain of [true, false])
       for (const f of [spare, { kind: 'provision', spare: false }, { kind: 'publish' }]) {
@@ -469,7 +469,7 @@ describe('phase, status and step maps', () => {
 
 describe('plain words (the simple screens)', () => {
   test('the table maps the technical terms the plan names, without an em-dash or an API path', () => {
-    expect(PLAIN_WORDS.origin).toBe('protected node');
+    expect(PLAIN_WORDS.origin).toBe('fronted node');
     expect(PLAIN_WORDS.edge).toBe('address');
     expect(PLAIN_WORDS.published).toBe('in use');
     expect(PLAIN_WORDS.standby).toBe('spare');
@@ -517,13 +517,13 @@ describe('plain words (the simple screens)', () => {
     expect(plainWords('Every published edge is the template edge.')).toBe(
       'Every address in use is the template address.',
     );
-    expect(plainWords('An origin can carry it.')).toBe('A protected node can carry it.');
+    expect(plainWords('An origin can carry it.')).toBe('A fronted node can carry it.');
     expect(plainWords('A rotation is in progress.')).toBe('An address replacement is in progress.');
     expect(plainWords('Rotate the credentials.')).toBe('Replace the credentials.');
     expect(plainWords('Nothing can provision an edge.')).toBe('Nothing can create an address.');
     // Every worded code, as the simple screens show it (attention rows included).
     const broken =
-      /\b(an? in use|an? paused for safety|(in use|paused for safety) (CDN front|front|protected node|address|spare|transport|slot)|an (protected|spare|retiring|replace|create|trusted|trust|paused|transport|resume|check)\b|a (address|addresses)\b|(replace|create) address (the|this|an?|its)\b|transport of this transport)/i;
+      /\b(an? in use|an? paused for safety|(in use|paused for safety) (CDN front|front|fronted node|address|spare|transport|slot)|an (fronted|spare|retiring|replace|create|trusted|trust|paused|transport|resume|check)\b|a (address|addresses)\b|(replace|create) address (the|this|an?|its)\b|transport of this transport)/i;
     const offenders: string[] = [];
     for (const table of [EDGE_CODE_COPY, SETUP_ACCOUNT_REASON_COPY, SETUP_RUN_NEED_COPY] as Array<
       Record<string, { label: string; explain: string; fix?: string }>
@@ -534,7 +534,7 @@ describe('plain words (the simple screens)', () => {
     expect(offenders).toEqual([]);
   });
   test('rewrites whole words only, keeping the leading capital', () => {
-    expect(plainWords('Origin quarantined')).toBe('Protected node paused for safety');
+    expect(plainWords('Origin quarantined')).toBe('Fronted node paused for safety');
     expect(plainWords('Edge published')).toBe('Address in use');
     expect(plainWords('Standby edge, ready to publish')).toBe('Spare address, ready to publish');
     expect(plainWords('relayed')).toBe('relayed');

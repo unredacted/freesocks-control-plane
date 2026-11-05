@@ -249,7 +249,7 @@ const COPY = {
   no_relay: {
     label: 'No origin yet',
     explain: 'The origin row does not exist: the origin has not been registered.',
-    fix: 'Finish the origin step, or protect the node from Edges.',
+    fix: 'Finish the origin step, or front the node from Edges.',
   },
   relay_deleting: {
     label: 'Origin is deleting',
@@ -259,7 +259,7 @@ const COPY = {
     label: 'No listener',
     explain:
       'The origin has no listener, so nothing says which port and protocol edges should carry.',
-    fix: 'Add a listener, or protect the node from Edges.',
+    fix: 'Add a listener, or front the node from Edges.',
   },
   listener_not_deployed: {
     label: 'Listener not deployed',
@@ -785,7 +785,7 @@ const COPY = {
   origin_transport_missing: {
     label: 'Origin transport missing',
     explain: 'The listener does not declare how a CDN front should dial the origin.',
-    fix: 'Edit the listener and turn on "A CDN front can reach this transport", or protect the node from Edges.',
+    fix: 'Edit the listener and turn on "A CDN front can reach this transport", or front the node from Edges.',
   },
   origin_cert_not_public: {
     label: 'Origin certificate not public',
@@ -986,7 +986,7 @@ const COPY = {
   setup_run_failed: {
     label: 'Setup stopped',
     explain: 'The guided setup for this node stopped before it finished. Its run says why.',
-    fix: 'Open the run and try again, or remove protection to start over.',
+    fix: 'Open the run and try again, or remove fronting to start over.',
   },
   pool_below_desired: {
     label: 'Pool below desired',
@@ -1094,13 +1094,13 @@ const COPY = {
   direct_host_reappeared: {
     label: 'Direct address back in the backend',
     explain:
-      'A backend Host on a protected node hands out the node address itself, or an address FCP cannot tell apart from it, and was re-enabled or added. Until it is hidden, members on the node are refused a body, or get one without that entry.',
-    fix: 'Hide it in the backend, or add it to the protected node so FCP hides it for you.',
+      'A backend Host on a fronted node hands out the node address itself, or an address FCP cannot tell apart from it, and was re-enabled or added. Until it is hidden, members on the node are refused a body, or get one without that entry.',
+    fix: 'Hide it in the backend, or add it to the fronted node so FCP hides it for you.',
   },
   front_host_unused: {
     label: 'Old front no longer used',
     explain:
-      'A backend Host on a protected node dials a front FCP did not build, such as a load balancer made by hand. It is not the node, and members no longer get it in their subscriptions, but an app that has not fetched its subscription since the node went live still connects through it.',
+      'A backend Host on a fronted node dials a front FCP did not build, such as a load balancer made by hand. It is not the node, and members no longer get it in their subscriptions, but an app that has not fetched its subscription since the node went live still connects through it.',
     fix: 'Once its traffic stops, delete that front at its provider, and its Host in the backend. A member whose app stops connecting then updates the subscription in the app.',
   },
   restore_in_progress: {
@@ -1326,7 +1326,7 @@ const COPY = {
     label: 'Front name taken',
     explain:
       'Another CloudFront distribution, in this AWS account or any other, already serves this front name, so CloudFront refused to create one more.',
-    fix: 'Delete this front and protect the node again: the next front gets a new name.',
+    fix: 'Delete this front and front the node again: the next front gets a new name.',
   },
   distribution_disabled: {
     label: 'Distribution disabled',
@@ -1433,7 +1433,7 @@ const COPY = {
     label: 'Not live yet',
     explain:
       'No setup run is working on this origin, but it never went live, so automatic replacement leaves it alone.',
-    fix: 'Go live from the node page, or protect it again.',
+    fix: 'Go live from the node page, or front it again.',
   },
   // A guided run's event: it parked at publish until the enrolled node is approved.
   publish_held: {
@@ -1498,14 +1498,14 @@ const COPY = {
   family_rule_disabled: {
     label: 'App family switched off',
     explain:
-      'A client app family has its render rule off, so members using those apps get nothing from a protected node.',
+      'A client app family has its render rule off, so members using those apps get nothing from a fronted node.',
     fix: 'Turn the family back on under Settings, unless that is intended.',
   },
   node_ready_to_protect: {
-    label: 'Node ready to protect',
+    label: 'Node ready to front',
     explain:
-      'An enrolled node meant to sit behind an edge is ready, and nothing protects it until you start.',
-    fix: 'Start protecting it.',
+      'An enrolled node meant to sit behind an edge is ready, and nothing fronts it until you start.',
+    fix: 'Start fronting it.',
   },
   node_awaiting_approval: {
     label: 'Waiting for your approval',
@@ -1524,37 +1524,37 @@ const COPY = {
       'The member is on a node that is not live yet, or is closed for maintenance, so nothing is handed out for it.',
   },
   node_unprotected: {
-    label: 'Node not protected',
+    label: 'Node not fronted',
     explain:
-      'The member is on a freedom mode and their node is not protected, so nothing is handed out for it.',
-    fix: 'Protect the node.',
+      'The member is on a freedom mode and their node is not fronted, so nothing is handed out for it.',
+    fix: 'Front the node.',
   },
   // --- freedom modes only through edges (a node held back from a freedom mode's members) ---
   freedom_node_withheld: {
     label: 'Freedom node held back',
     explain:
-      'This node of a freedom mode has no live edge in front of it, and freedom members are only given protected nodes, so they are not given this one.',
+      'This node of a freedom mode has no live edge in front of it, and freedom members are only given fronted nodes, so they are not given this one.',
   },
   withheld_unmanaged: {
-    label: 'Not enrolled or protected',
-    explain: 'FCP does not manage this node and nothing protects it.',
-    fix: "Protect the node, or take it out of the freedom mode's groups.",
+    label: 'Not enrolled or fronted',
+    explain: 'FCP does not manage this node and nothing fronts it.',
+    fix: "Front the node, or take it out of the freedom mode's groups.",
   },
   withheld_unprotected: {
-    label: 'Not protected yet',
-    explain: 'The node is enrolled, but nothing protects it.',
-    fix: 'Protect the node.',
+    label: 'Not fronted yet',
+    explain: 'The node is enrolled, but nothing fronts it.',
+    fix: 'Front the node.',
   },
   withheld_no_edge: {
     label: 'No live edge',
-    explain: 'The node is protected, but none of its edges of the kind the mode needs is live.',
+    explain: 'The node is fronted, but none of its edges of the kind the mode needs is live.',
     fix: 'Publish a tested edge on the node.',
   },
   withheld_direct_mode: {
     label: 'Mode set up direct',
     explain:
-      "The node's mode is in the freedom family, but its backend sets it up direct, so nothing protects its nodes.",
-    fix: 'Move the mode to another family, or move its members to a protected mode.',
+      "The node's mode is in the freedom family, but its backend sets it up direct, so nothing fronts its nodes.",
+    fix: 'Move the mode to another family, or move its members to a fronted mode.',
   },
   policy_moved: {
     label: 'Changed while answering',
@@ -1629,7 +1629,7 @@ const COPY = {
   family_disabled: {
     label: 'App family off',
     explain:
-      'The render rule for this client app family is off, so its members get nothing from a protected node.',
+      'The render rule for this client app family is off, so its members get nothing from a fronted node.',
     fix: 'Turn the family on under Settings.',
   },
   // --- settings notices (a save answers with them; nothing was refused) ------------------
@@ -1854,13 +1854,13 @@ const REFUSAL_COPY = {
   no_group_holds_transports: {
     label: 'A transport in no group',
     explain:
-      "A transport this node's protection covers is in no mode group on the panel, so FCP's test account cannot reach it and it could never be tested. Transports in different groups are fine: the test account sits in each of them.",
+      "A transport this node's fronting covers is in no mode group on the panel, so FCP's test account cannot reach it and it could never be tested. Transports in different groups are fine: the test account sits in each of them.",
     fix: 'Put the transport in a mode group on the panel, or choose the mode whose group the test account should use.',
   },
   origin_deleting: {
-    label: 'Old protection still going',
-    explain: "The node's earlier protection is still being removed.",
-    fix: 'Wait until it is gone (the Edges page shows it), then protect the node again.',
+    label: 'Old fronting still going',
+    explain: "The node's earlier fronting is still being removed.",
+    fix: 'Wait until it is gone (the Edges page shows it), then front the node again.',
   },
   test_link_unavailable: {
     label: 'New address could not be tested',
@@ -1897,13 +1897,13 @@ const REFUSAL_COPY = {
     label: 'Node changed since setup',
     explain:
       'The transports on this node are not the ones the earlier setup created listeners for, so the run cannot resume safely.',
-    fix: 'Remove protection from the node, then protect it again.',
+    fix: 'Remove fronting from the node, then front it again.',
   },
   consent_withdrawn_hidden: {
     label: 'Host already hidden',
     explain:
       'A host you removed from the approval was already hidden; the run never re-enables a host on its own.',
-    fix: 'Keep it approved, or remove protection to put every host back.',
+    fix: 'Keep it approved, or remove fronting to put every host back.',
   },
   account_switch_late: {
     label: 'Account fixed after publish',
@@ -1924,7 +1924,7 @@ const REFUSAL_COPY = {
   use_manual_setup: {
     label: 'Set up by hand',
     explain: 'Outline servers with no members have no test credential path.',
-    fix: 'Give its origin a first edge on its Origin details page, or protect it once it has members.',
+    fix: 'Give its origin a first edge on its Origin details page, or front it once it has members.',
   },
   choose_mode: {
     label: 'Choose a connection mode',
@@ -1957,7 +1957,7 @@ const REFUSAL_COPY = {
     label: 'Direct address not kept',
     explain:
       'This node is enrolled in Servers, so it goes live behind its new addresses only. Members cannot stay on the direct one.',
-    fix: 'Protect it and hide the hosts the addresses cannot carry.',
+    fix: 'Front it and hide the hosts the addresses cannot carry.',
   },
   not_edge_required: {
     label: 'Already direct',
@@ -2007,12 +2007,12 @@ const REFUSAL_COPY = {
   },
   reprotect_not_bound: {
     label: 'Not live behind addresses yet',
-    explain: 'Protect again is for a node whose members already connect through its addresses.',
-    fix: 'Use Protect a node, or Go live if its addresses are ready.',
+    explain: 'Front again is for a node whose members already connect through its addresses.',
+    fix: 'Use Front a node, or Go live if its addresses are ready.',
   },
   reprotect_not_enrolled: {
     label: 'Not an enrolled node',
-    explain: 'Only a node the node role enrolled is protected again from here.',
+    explain: 'Only a node the node role enrolled is fronted again from here.',
     fix: 'Use Replace address on its addresses instead.',
   },
   reprotect_mixed_accounts: {
@@ -2023,7 +2023,7 @@ const REFUSAL_COPY = {
   reprotect_no_room: {
     label: 'No room for new addresses',
     explain: 'The node already uses as many addresses as one origin may.',
-    fix: 'Remove an address from Origin details first, then protect it again.',
+    fix: 'Remove an address from Origin details first, then front it again.',
   },
   // provider sets
   pick_switch_late: {
@@ -2075,7 +2075,7 @@ const REFUSAL_COPY = {
   },
   location_in_use: {
     label: 'Location still in use',
-    explain: 'An address still lives in this location, or a protected node uses it.',
+    explain: 'An address still lives in this location, or a fronted node uses it.',
     fix: 'Remove or replace those addresses first.',
   },
   shared_certificate_in_use: {
@@ -2412,7 +2412,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   resolve_quarantine: 'Review the pause',
   resolve_operator: 'Look at the address',
   look_at_host: 'Look at the backend',
-  open_setup: 'Resume protection',
+  open_setup: 'Resume fronting',
   open_relay: 'Open the node',
   open_edge: 'Open the address',
   open_account: 'Open the account',
@@ -2426,7 +2426,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   thaw: 'Resume new work',
   rebalance: 'Make room',
   require_edges: 'Go live',
-  protect_node: 'Protect the node',
+  protect_node: 'Front the node',
   open_node: 'Review go-live',
   open_modes: 'Open Connection modes',
   open_probes: 'See the checks',
@@ -2452,7 +2452,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   thaw: 'Thaw',
   rebalance: 'Make room',
   require_edges: 'Go live',
-  protect_node: 'Protect node',
+  protect_node: 'Front node',
   open_node: 'Open node',
   open_modes: 'Connection modes',
   open_probes: 'Open probes',
@@ -2502,8 +2502,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   too_many_inbounds: {
     label: 'Too many transports',
-    explain: 'The node serves more transports than one run protects.',
-    fix: 'Pick the ones to protect.',
+    explain: 'The node serves more transports than one run fronts.',
+    fix: 'Pick the ones to front.',
   },
   use_manual_setup: {
     label: 'Set up by hand',
@@ -2824,7 +2824,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.edge.limits_raised': 'Account limits raised to the new defaults',
   'edge.pool_expanded': 'Pool expanded for an uncovered listener',
   'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
-  'edge.automation.set': 'Automatic protection switched',
+  'edge.automation.set': 'Automatic replacement switched',
   'edge.setup_run.started': 'Guided setup started',
   'edge.setup_run.needs_operator': 'Guided setup waiting for you',
   'edge.setup_run.go_live': 'Guided setup went live',
@@ -2859,7 +2859,7 @@ export function failedRunLabel(
       ? plain
         ? {
             label: 'Adding an address failed',
-            explain: 'A new address for this protected node could not be created.',
+            explain: 'A new address for this fronted node could not be created.',
           }
         : {
             label: 'Provision failed',
@@ -2868,7 +2868,7 @@ export function failedRunLabel(
       : plain
         ? {
             label: 'Adding a spare failed',
-            explain: 'A new spare address for this protected node could not be created.',
+            explain: 'A new spare address for this fronted node could not be created.',
           }
         : {
             label: 'Standby provision failed',
@@ -2878,7 +2878,7 @@ export function failedRunLabel(
     return plain
       ? {
           label: 'Putting an address in use failed',
-          explain: 'A spare address of this protected node could not be put in use.',
+          explain: 'A spare address of this fronted node could not be put in use.',
         }
       : {
           label: 'Publish failed',
@@ -2916,8 +2916,8 @@ export function auditActionLabel(action: string, payload?: unknown): string {
 // `RESTORE_PHASE_WORDS` the restore workflow's phases in words.
 
 export const PLAIN_WORDS: Record<string, string> = {
-  origin: 'protected node',
-  origins: 'protected nodes',
+  origin: 'fronted node',
+  origins: 'fronted nodes',
   edge: 'address',
   edges: 'addresses',
   published: 'in use',
@@ -2967,12 +2967,12 @@ const VERB_OBJECT = /\b(replace|create) address (the|this|that|an?|its|one)\b/gi
 // use", never "a in use address"): a plain phrase spliced in front of one of
 // these nouns is moved behind it.
 const AFTER_NOUN =
-  /\b(in use|paused for safety) (CDN fronts?|fronts?|address(?:es)?|protected nodes?|spares?|transports?)\b/gi;
+  /\b(in use|paused for safety) (CDN fronts?|fronts?|address(?:es)?|fronted nodes?|spares?|transports?)\b/gi;
 // The article before a plain word whose first sound differs from the word it
 // replaced ("a published edge", "an origin").
 const AN_WORDS = new Set(['address', 'addresses', 'update']);
 const A_WORDS = new Set([
-  'protected',
+  'fronted',
   'spare',
   'spares',
   'retiring',
@@ -3024,7 +3024,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'relay.registered': 'Node registered',
   'relay.upsert': 'Node registered',
   'relay.update': 'Settings changed',
-  'relay.delete': 'Protection removed',
+  'relay.delete': 'Fronting removed',
   'relay.edge_pick': 'Members spread over the addresses',
   'relay.lanes': 'Trusted addresses changed',
   'edge.lane_retired': 'Old open address taken out of use',
@@ -3053,12 +3053,12 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.host.hidden': 'Direct address hidden in the backend',
   'edge.host.restored': 'Direct address restored in the backend',
   'edge.render.withheld': 'Unplaced entry left out for members',
-  'edge.relay.restore_started': 'Removing protection',
-  'edge.setup_run.started': 'Protection started',
-  'edge.setup_run.needs_operator': 'Protection waiting for you',
-  'edge.setup_run.go_live': 'Protection live',
-  'edge.setup_run.finished': 'Protection finished',
-  'edge.setup_run.cancelled': 'Protection cancelled',
+  'edge.relay.restore_started': 'Removing fronting',
+  'edge.setup_run.started': 'Fronting started',
+  'edge.setup_run.needs_operator': 'Fronting waiting for you',
+  'edge.setup_run.go_live': 'Fronting live',
+  'edge.setup_run.finished': 'Fronting finished',
+  'edge.setup_run.cancelled': 'Fronting cancelled',
   'admin.edge.provision': 'Address requested',
   'admin.edge.test_provision': 'Test address requested',
   'admin.edge.rotate': 'Replacement requested',
