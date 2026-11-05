@@ -228,6 +228,9 @@ crons.interval('edge-probe', { minutes: 5 }, internal.probes.run, {});
 // Per-country checks (edgeCountry.ts): decided results past their window lapse,
 // grades and every edge's copied state follow (whether or not probes run).
 crons.interval('edge-country-expiry', { hours: 1 }, internal.edgeCountry.expire, {});
+// Latency ordering (edgeLatency.ts): measured member legs from the probe runs
+// that already happen, committed only when they really move.
+crons.interval('edge-latency', { hours: 1 }, internal.edgeLatency.refresh, {});
 // Settled probe runs are evidence history: keep two weeks, delete in bounded pages.
 crons.daily(
   'retention-edge-probes',

@@ -120,6 +120,18 @@ export function addressWhy(a: CountryViewAddress): string {
 }
 
 /**
+ * Latency ordering on: how far the whole path is from the country through the
+ * address to the node (null: no figure, or latency ordering is off).
+ */
+export function pathLine(a: Pick<CountryViewAddress, 'path'>, country: string): string | null {
+  if (!a.path) return null;
+  const how = a.path.measured
+    ? `timed from ${countryLabel(country)} to the address, the rest from the map`
+    : 'from the map';
+  return `About ${a.path.ms} ms over the whole path to the node (${how}).`;
+}
+
+/**
  * When the country dropped out of the address's probe summary: the sources
  * whose last answer about it from there is too old to count (null: the
  * summary still holds the country, which `probesLine` shows with its age, or

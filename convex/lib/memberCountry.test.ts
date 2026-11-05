@@ -11,6 +11,7 @@ import {
   type CountryFields,
   type MemberFamily,
   steeringCountry,
+  wideGuesses,
 } from './memberCountry';
 
 const NOW = 1_800_000_000_000;
@@ -54,9 +55,11 @@ describe('memberCountryConfig', () => {
       refreshHours: 2,
       ownExitRanges: ['192.0.2.0/24'],
       steer: false,
+      latency: false,
     });
     expect(memberCountryConfig({ 'delivery.country.detect': 'true' }).detect).toBe(false);
     expect(memberCountryConfig({ 'delivery.country.steer': true }).steer).toBe(true);
+    expect(memberCountryConfig({ 'delivery.country.latency': true }).latency).toBe(true);
   });
 });
 
@@ -199,5 +202,126 @@ describe('memberCountryView', () => {
       effective: null,
       source: 'choice',
     });
+  });
+});
+
+describe('wide guesses (latency ordering on: any real country, a day before another takes over)', () => {
+  const WIDE = { ...ON, steer: true, latency: true };
+  const pending = (sub: CountryFields, country: string, ageMs: number): CountryFields => ({
+    ...sub,
+    regionNextCountry: country,
+    regionNextAt: NOW - ageMs,
+  });
+
+  test('only with detection, steering and latency ordering all on', () => {
+    expect(wideGuesses(WIDE)).toBe(true);
+    expect(wideGuesses({ ...WIDE, steer: false })).toBe(false);
+    expect(wideGuesses({ ...WIDE, detect: false })).toBe(false);
+    expect(wideGuesses({ ...WIDE, latency: false })).toBe(false);
+  });
+
+  test('the first guess is any real country, at once; CDN codes are never one', () => {
+    expect(next({}, 'de', { cfg: WIDE })).toEqual({ kind: 'set', country: 'DE' });
+    expect(next({}, 'US', { cfg: WIDE })).toEqual({ kind: 'set', country: 'US' });
+    for (const reading of ['XX', 'T1', 'ZZ', null])
+      expect(next({}, reading, { cfg: WIDE })).toEqual({ kind: 'none' });
+  });
+
+  test('another country is pending first, and replaces the guess only a day after it was first seen', () => {
+    const ir = guessed('IR', H, 30 * D);
+    expect(next(ir, 'DE', { cfg: WIDE })).toEqual({ kind: 'next', country: 'DE' });
+    expect(next(pending(ir, 'DE', 23 * H), 'DE', { cfg: WIDE })).toEqual({ kind: 'none' });
+    expect(next(pending(ir, 'DE', D), 'DE', { cfg: WIDE })).toEqual({ kind: 'set', country: 'DE' });
+    // A third country starts its own day.
+    expect(next(pending(ir, 'DE', 2 * D), 'FR', { cfg: WIDE })).toEqual({
+      kind: 'next',
+      country: 'FR',
+    });
+    // Listed or not, the same rule: Iran to Russia waits a day too.
+    expect(next(ir, 'RU', { cfg: WIDE })).toEqual({ kind: 'next', country: 'RU' });
+  });
+
+  test('a reading of the guess itself drops a pending country; own exits never touch it', () => {
+    const ir = pending(guessed('IR', H), 'DE', 5 * H);
+    expect(next(ir, 'IR', { cfg: WIDE })).toEqual({ kind: 'refresh', dropNext: true });
+    expect(next(ir, 'DE', { cfg: WIDE, ownExit: true })).toEqual({ kind: 'none' });
+    expect(
+      next(pending(guessed('IR', 7 * H), 'DE', 2 * D), 'DE', { cfg: WIDE, ownExit: true }),
+    ).toEqual({
+      kind: 'refresh',
+    });
+  });
+
+  test('an Iranian visiting Germany flips after a day, and back a day after returning', () => {
+    let sub: CountryFields = guessed('IR', H, 60 * D);
+    const step = (reading: string, at: number) => {
+      const u = nextGuess({
+        family: 'freedom',
+        sub,
+        cfg: WIDE,
+        listed: LISTED,
+        now: at,
+        reading,
+        ownExit: false,
+      });
+      if (u.kind === 'set')
+        sub = { regionSeenCountry: u.country, regionSeenFirstAt: at, regionSeenAt: at };
+      if (u.kind === 'next') sub = { ...sub, regionNextCountry: u.country, regionNextAt: at };
+      if (u.kind === 'refresh')
+        sub = {
+          ...sub,
+          regionSeenAt: at,
+          ...(u.dropNext ? { regionNextCountry: null, regionNextAt: null } : {}),
+        };
+      return storedCountry(sub, WIDE, LISTED, at);
+    };
+    const t0 = NOW;
+    expect(step('DE', t0)).toBe('IR');
+    expect(step('DE', t0 + 12 * H)).toBe('IR');
+    expect(step('DE', t0 + D)).toBe('DE');
+    // Back home: still Germany for a day, then Iran again.
+    expect(step('IR', t0 + 10 * D)).toBe('DE');
+    expect(step('IR', t0 + 10 * D + 20 * H)).toBe('DE');
+    expect(step('IR', t0 + 11 * D)).toBe('IR');
+  });
+
+  test('a single fetch through a foreign VPN flips nothing', () => {
+    let sub: CountryFields = guessed('IR', H, 60 * D);
+    const u1 = next(sub, 'DE', { cfg: WIDE });
+    expect(u1.kind).toBe('next');
+    sub = { ...sub, regionNextCountry: 'DE', regionNextAt: NOW };
+    // The next direct fetch is from Iran again: the pending country goes.
+    expect(next(sub, 'IR', { cfg: WIDE })).toEqual({ kind: 'refresh', dropNext: true });
+  });
+
+  test("the member's own choice still wins over any guess", () => {
+    expect(next({ sniRegion: 'IR' }, 'DE', { cfg: WIDE })).toEqual({ kind: 'none' });
+    expect(storedCountry({ sniRegion: 'IR', ...guessed('DE', H) }, WIDE, LISTED, NOW)).toBe('IR');
+    expect(storedCountry({ sniRegion: 'ZZ', ...guessed('DE', H) }, WIDE, LISTED, NOW)).toBeNull();
+  });
+
+  test('a guess off the list counts only while wide, and only where an origin covers the place', () => {
+    const de = guessed('DE', H);
+    expect(liveGuess(de, WIDE, LISTED, NOW)?.country).toBe('DE');
+    expect(liveGuess(de, ON, LISTED, NOW)).toBeNull();
+    const at = (covered?: boolean) =>
+      memberWhere({
+        family: 'freedom',
+        sub: de,
+        cfg: WIDE,
+        listed: LISTED,
+        now: NOW,
+        reading: null,
+        covered,
+      });
+    expect(at()).toMatchObject({ where: { country: 'DE' }, source: 'override' });
+    expect(at(false).source).toBe('none');
+    expect(steeringCountry(WIDE, at())).toBe('DE');
+  });
+
+  test('outside wide mode nothing changes: a listed reading replaces at once, others leave it', () => {
+    expect(next(guessed('IR', H), 'RU')).toEqual({ kind: 'set', country: 'RU' });
+    expect(next(pending(guessed('IR', H), 'RU', 2 * D), 'IR')).toEqual({ kind: 'none' });
+    expect(next(guessed('IR', H), 'DE')).toEqual({ kind: 'none' });
   });
 });

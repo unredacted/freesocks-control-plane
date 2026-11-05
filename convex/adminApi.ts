@@ -58,6 +58,7 @@ import {
   resolveBillingConfig,
   resolveProcessorSecrets,
 } from './lib/billingConfig';
+import { nodePositionMoved } from './edgeLatency';
 
 // Admin resource functions are INTERNAL: the only caller is the admin-gated
 // HTTP layer (convex/http.ts) via ctx.runQuery/runMutation. Keeping them off
@@ -1260,6 +1261,17 @@ function checkLocation(a: { location?: string | null; locationLabel?: string | n
  * clear — a half-set pair would render a dot at a fabricated point.
  * `touched` = the caller addressed the pair at all (patch semantics).
  */
+/** Whether a coordinates patch moves the server's map position (`checkLocationCoords`). */
+function positionMoved(
+  existing: Pick<Doc<'backendServers'>, 'locationLat' | 'locationLng'>,
+  coords: { touched: boolean; locationLat?: number; locationLng?: number },
+): boolean {
+  return (
+    coords.touched &&
+    (coords.locationLat !== existing.locationLat || coords.locationLng !== existing.locationLng)
+  );
+}
+
 function checkLocationCoords(a: { locationLat?: number | null; locationLng?: number | null }): {
   touched: boolean;
   locationLat?: number;
@@ -1459,6 +1471,8 @@ export const updateBackendServer = internalMutation({
     // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
     fields.config = mergeBackendServerConfig(existing.config, patch);
     await ctx.db.patch(id, fields);
+    // The node's position orders steered members' addresses (latency ordering).
+    if (positionMoved(existing, coords)) await nodePositionMoved(ctx, id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -1632,6 +1646,7 @@ export const upsertBackendServerBySlug = internalMutation({
     }
     fields.config = mergeBackendServerConfig(existing.config, a);
     await ctx.db.patch(existing._id, fields);
+    if (positionMoved(existing, coords)) await nodePositionMoved(ctx, existing._id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,

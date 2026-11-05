@@ -204,6 +204,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Origin edges: per-country results past their window lapse; grades follow',
   },
   {
+    name: 'edge-latency',
+    everyMs: HOUR,
+    description: 'Origin edges: measured member legs per location and country for latency ordering',
+  },
+  {
     name: 'edge-block-detector',
     everyMs: 5 * MIN,
     description: 'Origin edges: score reports + load + probes per origin; opt-in auto-rotate',

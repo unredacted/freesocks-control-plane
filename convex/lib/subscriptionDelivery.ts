@@ -119,7 +119,7 @@ export async function locateAt(
           backendServerId: a.backendServerId,
           nodeName: a.node ?? undefined,
         })
-      : { token: null as string | null, curated: [] as string[], sensitive: false },
+      : { token: null as string | null, curated: [] as string[], sensitive: false, covered: false },
     ctx.runQuery(internal.memberCountry.contextFor, {
       subscriptionId: a.subscriptionId,
       nodeName: a.node ?? undefined,
@@ -132,6 +132,7 @@ export async function locateAt(
     listed: place.curated,
     now: Date.now(),
     reading: a.inferred,
+    covered: place.covered,
   });
   return {
     node: a.node,
@@ -164,6 +165,8 @@ export async function locateMember(
     regionSeenCountry: sub.regionSeenCountry ?? null,
     regionSeenFirstAt: sub.regionSeenFirstAt ?? null,
     regionSeenAt: sub.regionSeenAt ?? null,
+    regionNextCountry: sub.regionNextCountry ?? null,
+    regionNextAt: sub.regionNextAt ?? null,
   };
   const country = await ctx.runQuery(internal.memberCountry.contextFor, {
     subscriptionId: sub.subscriptionId,

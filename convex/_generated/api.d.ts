@@ -48,6 +48,7 @@ import type * as edgeHostHides from "../edgeHostHides.js";
 import type * as edgeHostHides from "../edgeHostHides.js";
 import type * as edgeL7Locations from "../edgeL7Locations.js";
 import type * as edgeLanes from "../edgeLanes.js";
+import type * as edgeLatency from "../edgeLatency.js";
 import type * as edgeLocations from "../edgeLocations.js";
 import type * as edgeMaintenance from "../edgeMaintenance.js";
 import type * as edgeNameOps from "../edgeNameOps.js";
@@ -255,6 +256,7 @@ declare const fullApi: ApiFromModules<{
   edgeHostHides: typeof edgeHostHides;
   edgeL7Locations: typeof edgeL7Locations;
   edgeLanes: typeof edgeLanes;
+  edgeLatency: typeof edgeLatency;
   edgeLocations: typeof edgeLocations;
   edgeMaintenance: typeof edgeMaintenance;
   edgeNameOps: typeof edgeNameOps;

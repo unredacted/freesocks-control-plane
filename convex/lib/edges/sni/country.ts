@@ -4,7 +4,7 @@
  *
  * Two sources, in this order:
  *   1. a STORED country (`source: 'override'`): the member's own answer
- *      (`subscriptions.sniRegion`; `ZZ` = "Somewhere else", no country), or on
+ *      (`subscriptions.sniRegion`; `ZZ` = the opt-out, no country), or on
  *      the fronted route the stored guess (lib/memberCountry.ts `memberWhere`);
  *   2. the country the CDN reports for THIS request (`resolveCountry`, only
  *      when the deployment is fronted by that CDN; otherwise it is a header a
@@ -36,7 +36,7 @@ export function resolveWhere(args: {
   const curated = args.curated;
   const norm = (c: string | null | undefined) => (c ? c.trim().toUpperCase() : null);
   const override = norm(args.override);
-  // "Somewhere else" is an answer too: no country, and nothing inferred instead.
+  // The opt-out is an answer too: no country, and nothing inferred instead.
   if (override === 'ZZ') return { where: { country: null, curated }, source: 'override' };
   if (override && curated.includes(override))
     return { where: { country: override, curated }, source: 'override' };

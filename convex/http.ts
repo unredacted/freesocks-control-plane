@@ -1340,6 +1340,8 @@ http.route({
       regionSeenCountry: sub.regionSeenCountry,
       regionSeenFirstAt: sub.regionSeenFirstAt,
       regionSeenAt: sub.regionSeenAt,
+      regionNextCountry: sub.regionNextCountry,
+      regionNextAt: sub.regionNextAt,
       countryRev: sub.countryRev ?? 0,
       deliveryRev: sub.deliveryRev ?? 0,
     };

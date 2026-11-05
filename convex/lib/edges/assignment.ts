@@ -44,6 +44,7 @@
  */
 
 import { hostTargetFor } from './layers';
+import { bandsOf, type LatencyBand } from './latency';
 import type { EdgeLayer } from './providers/capabilities';
 import {
   formatSupported,
@@ -327,6 +328,12 @@ export interface Assignment {
    */
   primaryMeantFor?: true;
   backupMeantFor?: true;
+  /**
+   * With an `edgeCountry` and `pathMs`: the latency band each endpoint was
+   * picked from (0 near, 1 medium, 2 far; lib/edges/latency.ts). Absent otherwise.
+   */
+  primaryBand?: LatencyBand;
+  backupBand?: LatencyBand;
 }
 
 /** 0 = proven in the country, 1 = nothing known, 2 = blocked there. */
@@ -436,13 +443,21 @@ export function pickSni(
 }
 
 /**
- * Where the member is, for name selection. `country` is a CURATED country code
- * (a place where names are known to be blocked selectively), or null when it is
- * unknown, not curated, or there is no request to infer it from (a mirror).
+ * Where the member is, for name selection. `country` is the member's country,
+ * or null when it is unknown or there is no request to infer it from (a
+ * mirror). Names are judged per country only in a CURATED one (a place where
+ * names are known to be blocked selectively, `nameCountry`): any other country
+ * gets the universal pool, exactly as no country does. (A stored country off
+ * the list exists only while latency ordering is on, lib/memberCountry.ts.)
  */
 export interface CountryContext {
   country: string | null;
   curated: readonly string[];
+}
+
+/** The member's country as name selection sees it: a curated one, else none. */
+export function nameCountry(where: CountryContext): string | null {
+  return where.country && where.curated.includes(where.country) ? where.country : null;
 }
 
 /**
@@ -460,9 +475,10 @@ export interface CountryContext {
 export function countryTier(s: AssignableSni, where?: CountryContext): number | null {
   if (!where) return 0;
   const blocked = s.blockedIn ?? [];
-  if (where.country) {
-    if (blocked.includes(where.country)) return null;
-    return (s.provenIn ?? []).includes(where.country) ? 0 : 1;
+  const country = nameCountry(where);
+  if (country) {
+    if (blocked.includes(country)) return null;
+    return (s.provenIn ?? []).includes(country) ? 0 : 1;
   }
   return new Set(blocked.filter((c) => where.curated.includes(c))).size;
 }
@@ -474,7 +490,7 @@ export function countryTier(s: AssignableSni, where?: CountryContext): number | 
  * handed to such a member only when no edge has one.
  */
 function universalNameOn(e: PublishedEdge, where?: CountryContext): boolean {
-  if (!where || where.country) return true;
+  if (!where || nameCountry(where)) return true;
   if (e.sniPick !== 'hrw1' || edgeHostname(e) || !protocolUsesSni(e.proto)) return true;
   return e.serverNames.some((n) => n.status === 'active' && countryTier(n, where) === 0);
 }
@@ -520,7 +536,7 @@ function rankSniHrwTiered(
   );
   // Without a country, a name blocked somewhere is the last resort: offered
   // only when the edge has no universal name at all, never beside one.
-  const lastResort = !!where && !where.country && scored.some((x) => x.tier === 0);
+  const lastResort = !!where && !nameCountry(where) && scored.some((x) => x.tier === 0);
   return scored
     .filter((x) => !lastResort || x.tier === 0)
     .map((x) => ({ sni: x.sni, tier: x.tier }));
@@ -550,6 +566,14 @@ export interface AssignOptions {
    * proven and not-known edges share the first tier.
    */
   minProvenForExclusive?: number;
+  /**
+   * Latency over the whole path (docs/edges.md "Latency over the whole path"),
+   * read only with an `edgeCountry`: each edge's path from the member's country
+   * through it to the node, in ms (lib/edges/latency.ts `pathFigure`). Inside
+   * "not blocked there", the lane and meant for, nearer bands come before the
+   * tier. An edge without an entry ranks with the nearest. Absent = no bands.
+   */
+  pathMs?: ReadonlyMap<string, number>;
   /**
    * Without an `edgeCountry`: edges blocked in ANY of these countries go last
    * (a mirror without the member's own choice: it exists for exactly the
@@ -715,6 +739,11 @@ function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
  * there" and the lane, an edge whose location is meant for the member's
  * country (0) before one that is not (1), then the tier. With no such edge
  * every edge ranks 1 and nothing changes, the exclusivity floor included.
+ *
+ * Latency (`pathMs`, only with an `edgeCountry`): after meant for, the band of
+ * the edge's whole path (0 near, 1 medium, 2 far, against the best path among
+ * the assignable edges not blocked there), then the tier. Without figures
+ * every edge is near and nothing changes.
  */
 function assignByTier(
   subscriberKey: string,
@@ -730,13 +759,25 @@ function assignByTier(
   );
   const country = opts.edgeCountry ?? null;
   const meant = pool.map((e) => (country && (e.meantFor ?? []).includes(country) ? 0 : 1));
-  // The preference acts only when an edge it would put first is there to take.
-  const meantActive = pool.some((e, i) => assignable[i] && ownTier(e) !== 2 && meant[i] === 0);
-  // While it acts, the floor counts the proven edges it puts first (across lanes,
-  // as the floor always has): three proven edges elsewhere must not make one
-  // proven meant-for edge exclusive. While it does not, the count is today's.
+  const open = pool.map((e, i) => assignable[i]! && ownTier(e) !== 2);
+  const paths = country && opts.pathMs ? opts.pathMs : null;
+  const bands: LatencyBand[] = paths
+    ? bandsOf(
+        pool.map((e) => paths.get(e.edgeId)),
+        open,
+      )
+    : pool.map(() => 0);
+  // Meant for and the band act only through an edge they would put first. The
+  // floor counts the proven edges among those (across lanes, as the floor
+  // always has): three proven edges elsewhere must not make one proven
+  // meant-for (or near) edge exclusive. With no meant-for edge and no bands,
+  // every open edge is in that group and the count is today's.
+  const group = (i: number) => 4 * meant[i]! + bands[i]!;
+  let top: number | null = null;
+  for (let i = 0; i < pool.length; i++)
+    if (open[i] && (top === null || group(i) < top)) top = group(i);
   const proven = pool.filter(
-    (e, i) => assignable[i] && ownTier(e) === 0 && (!meantActive || meant[i] === 0),
+    (e, i) => assignable[i] && ownTier(e) === 0 && (top === null || group(i) === top),
   ).length;
   // Fewer proven edges than the exclusivity floor: proven and not-known share tier 1.
   const exclusive = proven >= Math.max(1, opts.minProvenForExclusive ?? 1);
@@ -747,10 +788,10 @@ function assignByTier(
   const tiers = pool.map(tierOf);
   const lanes = pool.map((e) => rule.laneRank?.(e) ?? 0);
   // Not blocked there first; inside that, the lane, then meant for, then the
-  // tier. With every lane 0 and every edge equally meant this orders exactly as
-  // the tier does.
+  // band, then the tier. With every lane 0, every edge equally meant and every
+  // band near this orders exactly as the tier does.
   const rank = (i: number) =>
-    tiers[i] === 2 ? 8 + lanes[i]! : 4 * lanes[i]! + 2 * meant[i]! + tiers[i]!;
+    tiers[i] === 2 ? 32 + lanes[i]! : 16 * lanes[i]! + 2 * group(i) + tiers[i]!;
   let best: number | null = null;
   for (let i = 0; i < pool.length; i++)
     if (assignable[i] && (best === null || rank(i) < best)) best = rank(i);
@@ -777,8 +818,9 @@ function assignByTier(
           tiers[i] === 2 ? 1 : 0,
           lanes[i]!,
           distinct && e.provider === primaryEdge.provider ? 1 : 0,
-          // Meant for counts only among the edges not blocked there.
+          // Meant for and the band count only among the edges not blocked there.
           tiers[i] === 2 ? 1 : meant[i]!,
+          tiers[i] === 2 ? 0 : bands[i]!,
           tiers[i]!,
           distinct && !differentLocation(e, primaryEdge) ? 1 : 0,
           step,
@@ -797,12 +839,15 @@ function assignByTier(
   }
   const out = endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
   const meantHere = (e: PublishedEdge) => !!country && (e.meantFor ?? []).includes(country);
+  const bandHere = (e: PublishedEdge) => bands[pool.indexOf(e)] ?? 0;
   return {
     ...out,
     ...(out.primary ? { primaryTier } : {}),
     ...(out.backup ? { backupTier: ownTier(out.backup.edge) } : {}),
     ...(out.primary && meantHere(out.primary.edge) ? { primaryMeantFor: true as const } : {}),
     ...(out.backup && meantHere(out.backup.edge) ? { backupMeantFor: true as const } : {}),
+    ...(paths && out.primary ? { primaryBand: bandHere(out.primary.edge) } : {}),
+    ...(paths && out.backup ? { backupBand: bandHere(out.backup.edge) } : {}),
   };
 }
 

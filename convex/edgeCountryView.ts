@@ -26,7 +26,7 @@ import { resolveSniConfig, resolveSniVantageConfig, vantageCountries } from './l
 import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { usableSources } from './lib/sniConfig';
 import { resolveMemberCountryConfig } from './memberCountry';
-import { publishedEdgesOf, deliveryStyleOf } from './edgeRender';
+import { publishedEdgesOf, deliveryStyleOf, latencyContextOf } from './edgeRender';
 import { listenersOf } from './relayListeners';
 import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/render';
 import { countryGroupKey, liveCountryState } from './lib/edges/country/group';
@@ -174,6 +174,7 @@ async function load(db: Db): Promise<Loaded> {
         published,
         ...(relay.edgePick ? { edgePick: relay.edgePick } : {}),
         ...(lanesOn(relay) ? { lanes: true } : {}),
+        ...(await latencyContextOf(db, relay, published)),
       },
       edges,
       style: relay.backendServerId

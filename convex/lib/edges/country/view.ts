@@ -34,6 +34,7 @@ import type {
 import { TARGET_ADDS_FLAG_MS, type HandshakeTiming, type PairCounts } from '../sni/realHost';
 import type { SourceCoverage } from './coverage';
 import { firstEndpointOf, firstMeantFor } from '../meantFor';
+import { pathFigure, pathMsOf, type LatencyInputs, type PathFigure } from '../latency';
 
 export type ViewState = 'proven' | 'blocked' | 'unknown';
 
@@ -318,6 +319,11 @@ export interface OriginInput {
   edgePick?: EdgePickVersion;
   /** The node's address lanes are on (convex/edgeLanes.ts). */
   lanes?: boolean;
+  /**
+   * Latency ordering is on: what paths on this node are judged from
+   * (edgeLatency.ts `latencyInputsFor`). Absent = no bands.
+   */
+  latency?: LatencyInputs;
 }
 
 export interface ViewSettings {
@@ -502,7 +508,7 @@ const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1
  * transport), the member's country as their stored one.
  */
 export function handedOn(
-  origin: Pick<OriginInput, 'enabled' | 'published' | 'edgePick'>,
+  origin: Pick<OriginInput, 'enabled' | 'published' | 'edgePick' | 'latency'>,
   listener: Pick<ListenerInput, 'listenerId' | 'sniPick'>,
   s: ViewSettings,
   blockedEdges: ReadonlySet<string>,
@@ -536,6 +542,9 @@ export function handedOn(
   if (!pool.some((e) => e.listenerId === listener.listenerId && e.eligible !== false))
     return { ...base, reason: 'no_published' };
   const where: CountryContext = { country: listed ? s.country : null, curated: s.curated };
+  // Latency ordering, as delivery does it for a steered member there.
+  const pathMs =
+    s.steering && listed && origin.latency ? pathMsOf(pool, s.country, origin.latency) : undefined;
   const primary = new Map<string, number>();
   const backup = new Map<string, number>();
   const names = new Map<string, number>();
@@ -559,6 +568,7 @@ export function handedOn(
       where,
       edgeCountry: s.steering && listed ? s.country : null,
       minProvenForExclusive: s.minProvenForExclusive,
+      ...(pathMs ? { pathMs } : {}),
     });
     if (!a.primary) {
       none++;
@@ -624,6 +634,12 @@ export interface AddressView {
   handed: { primary: number; backup: number };
   /** What this country's watched allowlists say about its addresses. */
   lists: ListMarkInput[];
+  /**
+   * Latency ordering on: the whole path from this country through it to the
+   * node (`measured`: the member's leg was timed from there). Null: no figure
+   * (it ranks with the nearest), or latency ordering is off.
+   */
+  path: PathFigure | null;
 }
 
 export interface NameView {
@@ -741,6 +757,7 @@ function edgeView(
     lists: (e.lists ?? [])
       .filter((l) => l.country === country)
       .map(({ label, family, state, at }) => ({ label, family, state, at })),
+    path: null,
   };
 }
 
@@ -776,6 +793,7 @@ function originAddressView(
     },
     handed: { primary: 0, backup: 0 },
     lists: [],
+    path: null,
   };
 }
 
@@ -864,15 +882,21 @@ export function buildCountryView(
       const primaryShare = new Map(members.primary.map((x) => [x.id, x.share]));
       const backupShare = new Map(members.backup.map((x) => [x.id, x.share]));
       const nameShare = new Map(members.names.map((x) => [x.id, x.share]));
-      const addresses = edges.map((e) =>
-        edgeView(
+      const poolOf = new Map(o.published.map((p) => [p.edgeId, p]));
+      const addresses = edges.map((e) => {
+        const view = edgeView(
           e,
           s.country,
           s.now,
           { primary: primaryShare, backup: backupShare },
           realHostOn(`edge:${e.edgeId}:`, nameViews0),
-        ),
-      );
+        );
+        const inPool = poolOf.get(e.edgeId);
+        return {
+          ...view,
+          path: o.latency && inPool ? pathFigure(inPool, s.country, o.latency) : null,
+        };
+      });
       for (const a of addresses) {
         if (a.publication === 'published') {
           totals.addresses[a.state]++;

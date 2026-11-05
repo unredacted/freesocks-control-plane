@@ -59,6 +59,12 @@ export const SETTINGS_DEFAULTS = {
   // addresses by their STORED country (choice or guess), edges proven there
   // first and blocked ones last. Off: the assignment ignores countries.
   'delivery.country.steer': false,
+  // Latency over the whole path (docs/edges.md): a steered member's addresses
+  // nearer ones first, by the path member -> address -> node (measured where
+  // probes timed it, else from distance). With detection and steering on, a
+  // guess may then be any real country, and another one replaces it only after
+  // a day (lib/memberCountry.ts `wideGuesses`). Off: no bands, listed guesses only.
+  'delivery.country.latency': false,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA
@@ -138,7 +144,9 @@ export const setMany = internalMutation({
   handler: async (ctx, { entries, updatedByAdminId }) => {
     for (const { key, value } of entries) {
       const before =
-        key === 'delivery.country.steer'
+        key === 'delivery.country.steer' ||
+        key === 'delivery.country.latency' ||
+        key === 'delivery.country.detect'
           ? (
               await ctx.db
                 .query('appSettings')
@@ -154,6 +162,19 @@ export const setMany = internalMutation({
         await ctx.scheduler.runAfter(0, internal.edgeRender.steeringChanged, {
           on: value === 'true',
         });
+      // Latency ordering turned on or off: the order members receive changes.
+      if (key === 'delivery.country.latency' && (before === 'true') !== (value === 'true'))
+        await ctx.scheduler.runAfter(0, internal.edgeRender.latencyChanged, {});
+      // Wide guesses ended (one of their switches went off): guesses off the
+      // list and pending countries go.
+      if (
+        (key === 'delivery.country.latency' ||
+          key === 'delivery.country.steer' ||
+          key === 'delivery.country.detect') &&
+        before === 'true' &&
+        value !== 'true'
+      )
+        await ctx.scheduler.runAfter(0, internal.memberCountry.cleanStoredCountries, {});
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: updatedByAdminId ?? undefined,

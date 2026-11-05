@@ -814,17 +814,26 @@ export default defineSchema({
     // subToken, so a URL rotation does not reshuffle a member's endpoints).
     renderKey: v.optional(v.string()),
     // The member's OWN answer to "where are you connecting from?": a country on
-    // the censored-country list, or `ZZ` ("Somewhere else"). Set on the account
-    // page and clearable (Automatic). Freedom-family keys only (lib/memberCountry.ts).
+    // the censored-country list, or `ZZ` (the opt-out: "do not use my location").
+    // Set on the account page and clearable (Automatic). Freedom-family keys
+    // only (lib/memberCountry.ts).
     sniRegion: v.optional(v.string()),
     // On Automatic with `delivery.country.detect` on: the country the CDN
-    // reported, stored only when it is on the censored-country list (a GUESS,
-    // shown to the member), first and last seen. Forgotten `stickyDays` after it
-    // was last seen; cleared with the key, on a switch to a privacy-family mode
-    // and when its country leaves the list. Never in logs, audit or analytics.
+    // reported, stored only when it is on the censored-country list (any real
+    // country while latency ordering is on) (a GUESS, shown to the member),
+    // first and last seen. Forgotten `stickyDays` after it was last seen;
+    // cleared with the key, on a switch to a privacy-family mode and when it may
+    // no longer be a guess (its country left the list, latency ordering went
+    // off). Never in logs, audit or analytics.
     regionSeenCountry: v.optional(v.string()),
     regionSeenFirstAt: v.optional(v.number()),
     regionSeenAt: v.optional(v.number()),
+    // With latency ordering on, another country seen since the guess, and when
+    // it was first seen: it replaces the guess only after a day
+    // (lib/memberCountry.ts `nextGuess`). Never without a guess beside it.
+    // Rollback: `memberCountry:clearWideForRollback`.
+    regionNextCountry: v.optional(v.string()),
+    regionNextAt: v.optional(v.number()),
     // Bumped by every change of the stored country (choice or guess); a request
     // that read an older revision cannot write a country back
     // (subscriptions.ts `setStoredCountry`).
@@ -2986,6 +2995,35 @@ export default defineSchema({
     verdict: relayReachVerdict,
     updatedAt: v.number(),
   }).index('by_target_country', ['targetKind', 'targetRef', 'country']),
+
+  // Measured member legs for latency ordering (edgeLatency.ts, docs/edges.md
+  // "Latency over the whole path"): per L4 location (`<provider>:<placeKey>`)
+  // and country, the median TCP connect time from vantages in that country
+  // over the last week of probe runs. `ms` is what delivery reads (moved only on
+  // a real change); the rest is how the figure stands now. Infrastructure only.
+  // Rollback: `edgeLatency:purgeForRollback`.
+  edgeLatency: defineTable({
+    groupKey: v.string(),
+    country: v.string(),
+    ms: v.number(),
+    samples: v.number(),
+    networks: v.number(),
+    newestAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_group_country', ['groupKey', 'country']),
+  // The samples a figure above is taken from (edgeLatency.ts `keptSamples`): per
+  // L4 location and country, the last week's TCP connect times from vantages in
+  // that country, at most 12 per clock hour, with the vantage's network (a
+  // third party's). Read by the hourly pass only, never by a render.
+  // Rollback: `edgeLatency:purgeForRollback`.
+  edgeLatencySamples: defineTable({
+    groupKey: v.string(),
+    country: v.string(),
+    samples: v.array(
+      v.object({ at: v.number(), ms: v.number(), net: v.union(v.string(), v.null()) }),
+    ),
+    updatedAt: v.number(),
+  }).index('by_group_country', ['groupKey', 'country']),
 
   // Per-country checks of edges (edgeCountry.ts, docs/edges.md "Countries:
   // checks and delivery"). One row per (edge, country): the ADDRESS track
