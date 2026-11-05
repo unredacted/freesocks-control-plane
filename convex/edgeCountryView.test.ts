@@ -444,7 +444,7 @@ describe('the country view', () => {
     expect(c.reports).toEqual({ weight: 4, suspect: false });
   });
 
-  test('the summary of a full country list fits one transaction', async () => {
+  test('every line of a full country list fits a transaction', async () => {
     const t = convexTest({ schema, modules, transactionLimits: true });
     await insertPanelServer(t);
     const codes =
@@ -471,8 +471,13 @@ describe('the country view', () => {
         publish: i === 0,
         verified: true,
       });
-    const s = await t.query(internal.edgeCountryView.summary, {});
-    expect(s.countries).toHaveLength(40);
-    expect(s.countries[0]!.totals.addresses.unknown).toBe(1);
+    const head = await t.query(internal.edgeCountryView.summaryHead, {});
+    expect(head.countries).toHaveLength(40);
+    // Each country's line is a transaction of its own.
+    const rows = [];
+    for (const country of head.countries)
+      rows.push(await t.query(internal.edgeCountryView.summaryRow, { country }));
+    expect(rows.every((r) => r !== null)).toBe(true);
+    expect(rows[0]!.totals.addresses.unknown).toBe(1);
   });
 });

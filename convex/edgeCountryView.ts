@@ -8,9 +8,9 @@
  * (lib/edges/country/coverage.ts). Read only: nothing here writes.
  *
  * Every per-edge, per-location and per-name read covers EVERY country in one
- * index range (`prefetch`), and each country is then built in memory: the
- * summary of a 40-country list costs the reads of one country (a transaction
- * may touch 4,096 index ranges).
+ * index range (`prefetch`), and each country is then built in memory. The
+ * summary reads its frame (`summaryHead`) and then each country in a query of
+ * its own (`summaryRow`): one query for every country ran out of time.
  *
  * Admin only. No member row is read: "handed" is computed over synthetic
  * render keys. The response carries addresses and names (the admin pages
@@ -777,42 +777,59 @@ function listedOf(st: Settings, country: string) {
     : null;
 }
 
-/** Every listed country, in list order, with its totals. */
-export const summary = internalQuery({
+/**
+ * The summary's frame: what no country changes (the switches, how many
+ * origins are enabled) and the listed countries, in list order. Each
+ * country's line is its own query (`summaryRow`), read side by side by the
+ * route: built in one query, every country over every origin ran past a
+ * query's time limit once a deployment had several nodes, and the whole page
+ * failed, while one country stays well inside it.
+ */
+export const summaryHead = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const now = Date.now();
     const st = await settingsOf(ctx.db);
-    const loaded = await load(ctx.db);
-    const pre = await prefetch(ctx.db, loaded);
-    const meant = await meantForLoad(ctx.db);
-    const countries = [];
-    for (const c of st.censored.list) {
-      const { totals, origins } = viewOf(loaded, pre, st, c.code, now, null);
-      const handedBlocked = origins.flatMap((o) =>
-        o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
-      );
-      const listed = listedOf(st, c.code)!;
-      const locations = meantForIn(meant, loaded, c.code, now);
-      countries.push({
-        country: c.code,
-        listed,
-        probes: coverageFor(st, pre, c.code, listed, now),
-        totals,
-        /** The worst share of members holding an address blocked there, over every transport. */
-        worstOnBlocked: handedBlocked.length > 0 ? Math.max(...handedBlocked) : null,
-        meantFor: {
-          locations: locations.length,
-          blocked: locations.filter((l) => l.blocked).length,
-        },
-      });
-    }
+    const enabled = await ctx.db
+      .query('relays')
+      .withIndex('by_enabled', (q) => q.eq('enabled', true))
+      .collect();
     return {
-      generatedAt: now,
+      generatedAt: Date.now(),
       switches: st.switches,
       controls: st.controls,
-      origins: loaded.origins.length,
-      countries,
+      origins: enabled.length,
+      countries: st.censored.list.map((c) => c.code),
+    };
+  },
+});
+
+/** One listed country's line of the summary; null when it is not on the list (any more). */
+export const summaryRow = internalQuery({
+  args: { country: v.string() },
+  handler: async (ctx, a) => {
+    const now = Date.now();
+    const code = a.country.trim().toUpperCase();
+    const st = await settingsOf(ctx.db);
+    const listed = listedOf(st, code);
+    if (!listed) return null;
+    const loaded = await load(ctx.db);
+    const pre = await prefetch(ctx.db, loaded);
+    const { totals, origins } = viewOf(loaded, pre, st, code, now, null);
+    const handedBlocked = origins.flatMap((o) =>
+      o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
+    );
+    const locations = meantForIn(await meantForLoad(ctx.db), loaded, code, now);
+    return {
+      country: code,
+      listed,
+      probes: coverageFor(st, pre, code, listed, now),
+      totals,
+      /** The worst share of members holding an address blocked there, over every transport. */
+      worstOnBlocked: handedBlocked.length > 0 ? Math.max(...handedBlocked) : null,
+      meantFor: {
+        locations: locations.length,
+        blocked: locations.filter((l) => l.blocked).length,
+      },
     };
   },
 });

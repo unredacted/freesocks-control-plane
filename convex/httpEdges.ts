@@ -600,11 +600,25 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   // or one country in full (origins -> transports -> addresses and names), with
   // the probe sources' health (a failing or capped source is why a country goes quiet).
   if (a === 'countries' && b === 'summary' && !c) {
-    const [view, sources] = await Promise.all([
-      ctx.runQuery(internal.edgeCountryView.summary, {}),
+    // The frame, then each listed country in a query of its own, side by side:
+    // one query for every country ran past a query's time limit.
+    const [head, sources] = await Promise.all([
+      ctx.runQuery(internal.edgeCountryView.summaryHead, {}),
       ctx.runQuery(internal.probes.sourceHealthView, {}),
     ]);
-    return json({ ...view, sources: sources.sources });
+    const rows = await Promise.all(
+      head.countries.map((country) =>
+        ctx.runQuery(internal.edgeCountryView.summaryRow, { country }),
+      ),
+    );
+    return json({
+      generatedAt: head.generatedAt,
+      switches: head.switches,
+      controls: head.controls,
+      origins: head.origins,
+      countries: rows.filter((r) => r !== null),
+      sources: sources.sources,
+    });
   }
   if (a === 'countries' && b && /^[A-Za-z]{2}$/.test(b) && !c) {
     const [view, sources] = await Promise.all([
