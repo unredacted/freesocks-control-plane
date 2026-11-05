@@ -309,6 +309,65 @@ describe('test-provision and preflight', () => {
     expect(r?.publishOnDone).toBe(false);
   });
 
+  test('a spare in a named location that is not trusted yet: the preflight waives trust exactly as the provision route does', async () => {
+    const { t, call, relayId, listenerId, accountId } = await seed();
+    await markTested(t, accountId);
+    const location = await t.run(async (c) =>
+      (await c.db.query('edgeLocations').collect()).find((l) => l.accountId === accountId)!,
+    );
+    expect(location.qualified).toBeFalsy();
+    const pre = async (body: Record<string, unknown>) =>
+      PreflightResponse.parse(
+        await (await call('POST', `relays/${relayId}/preflight`, body)).json(),
+      );
+    const blockerCodes = async (body: Record<string, unknown>) =>
+      (await pre(body)).blockers.map((b) => b.code);
+    // The node page's "Add a spare address" with that location picked.
+    const named = { kind: 'provision', trigger: 'manual', listenerKey: 'a', publish: false };
+    const spare = await pre({ ...named, locationId: location._id });
+    expect(spare.blockers).toEqual([]);
+    expect(spare.ok).toBe(true);
+    expect(spare.wouldSelect).toMatchObject({
+      standbyEdgeId: null,
+      accountId,
+      locationId: location._id,
+    });
+    expect(spare.warnings.map((w) => w.code)).toContain('account_unqualified');
+    // Nothing else waives it: no named location, a result that would be
+    // published, or a start that is not the operator's.
+    expect(await blockerCodes(named)).toContain('no_qualified_account');
+    expect(
+      await blockerCodes({ kind: 'provision', listenerKey: 'a', locationId: location._id }),
+    ).toContain('no_qualified_account');
+    expect(await blockerCodes({ ...named, locationId: location._id, publish: true })).toContain(
+      'no_qualified_account',
+    );
+    expect(
+      await blockerCodes({ ...named, locationId: location._id, trigger: 'reconcile' }),
+    ).toContain('no_qualified_account');
+    // The start the dialog then sends agrees: an unpublished spare in that
+    // location, selected although the location is not trusted.
+    const res = await call('POST', `relays/${relayId}/provision`, {
+      listenerId,
+      locationId: location._id,
+      publish: false,
+    });
+    expect(res.status).toBe(200);
+    const { rotationId } = (await res.json()) as { rotationId: string };
+    const r = await t.run((ctx) => ctx.db.get(rotationId as Id<'edgeRotations'>));
+    expect(r).toMatchObject({
+      kind: 'provision',
+      publishOnDone: false,
+      requestedLocationId: location._id,
+      allowUnqualified: true,
+    });
+    const step = await t.query(internal.edgeRotations.stepContext, {
+      rotationId: rotationId as Id<'edgeRotations'>,
+    });
+    expect(step?.selection?.accountFailure).toBeNull();
+    expect(step?.selection?.account?.locationId).toBe(location._id);
+  });
+
   test('preflight property: its first blocker is the code a real start throws, and it writes nothing', async () => {
     const { t, call, relayId, listenerId, accountId } = await seed();
     await markTested(t, accountId);

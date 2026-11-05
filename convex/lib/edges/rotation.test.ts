@@ -4,6 +4,7 @@ import {
   accountsForSlot,
   appendEvent,
   l7SelectionAllowed,
+  namedSpareWaivesTrust,
   nextFailure,
   withProviderAnswer,
   pickAccount,
@@ -488,6 +489,16 @@ describe('pickLocation', () => {
         { onlyLowering: true },
       ),
     ).toEqual({ ok: false, code: 'pool_reserved' });
+  });
+});
+
+describe('namedSpareWaivesTrust', () => {
+  test('only a named location for a spare that waits unpublished', () => {
+    expect(namedSpareWaivesTrust({ locationId: 'loc', publish: false })).toBe(true);
+    expect(namedSpareWaivesTrust({ locationId: 'loc' })).toBe(false);
+    expect(namedSpareWaivesTrust({ locationId: 'loc', publish: true })).toBe(false);
+    expect(namedSpareWaivesTrust({ publish: false })).toBe(false);
+    expect(namedSpareWaivesTrust({ locationId: '', publish: false })).toBe(false);
   });
 });
 

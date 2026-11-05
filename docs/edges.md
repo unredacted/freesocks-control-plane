@@ -5492,7 +5492,9 @@ publishes only spares inside the set and outside a cooling pick, a gap-filling o
 operator may name the spare (`rotate`/`burn {spareEdgeId}`, that one or nothing), a location
 for a new CDN front (`rotate`/`burn {locationId}`) or for a spare (`provision {locationId,
 listenerId, publish: false}`; an untrusted location only for an unpublished spare, its first
-tested address trusts it); `preflight` says what Automatic would use.
+tested address trusts it); `preflight` says what Automatic would use, and waives trust for the
+same request only (`kind: provision`, a named `locationId`, `publish: false`, a manual
+trigger), so the node page's "Add a spare address" in that location is not refused.
 
 **Cooling.** When a detector burn finalizes, the burned address's pick cools on that origin for
 the origin's cooldown (`relays.cooling`). No automatic path allocates, provisions or publishes
