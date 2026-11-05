@@ -402,6 +402,14 @@ export const continueSetupRun = (runId: string, body: SetupRunContinueBody = {})
 export const serveRelayDirect = (relayId: string) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/serve-direct`, {}, EdgeOkResponse);
 /**
+ * "Skip restoring direct": a node removal whose restore is held at the direct
+ * check finishes without it (members on the node then keep no direct entry).
+ * Refused in every other step and while a rotation, a pause or a server
+ * change holds the node.
+ */
+export const skipRestoreDirect = (relayId: string) =>
+  apiClient.post(`${BASE}/relays/${enc(relayId)}/restore/skip-direct`, {}, EdgeOkResponse);
+/**
  * "Protect again": a re-protect run on a live, bound enrolled node (new
  * candidate addresses, Try it, the approval when one is needed). Members keep
  * what they have until it goes live; cancelling drops only its candidates.

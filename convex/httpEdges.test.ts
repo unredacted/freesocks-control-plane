@@ -441,9 +441,16 @@ describe('origin admin routes', () => {
       ['edges', 'e1', 'verification-binding'],
       ['probes'],
       ['attention'],
+      ['countries'],
+      ['countries', 'lists'],
     ]) {
       expect(throttlePolicyForGet(p)).toBeNull();
     }
+    // The country view builds the fleet per country: throttled per actor.
+    expect(throttlePolicyForGet(['countries', 'summary'])).toBe('admin.edges.country-view');
+    expect(throttlePolicyForGet(['countries', 'IR'])).toBe('admin.edges.country-view');
+    expect(throttlePolicyForGet(['countries', 'ir'])).toBe('admin.edges.country-view');
+    expect(throttlePolicyForGet(['countries', 'IR', 'x'])).toBeNull();
   });
 
   test('auth: anonymous 401; a servers:read token reads but cannot write; config needs the settings scope', async () => {
@@ -1054,6 +1061,81 @@ describe('origin admin routes', () => {
     expect(
       edges.every((e) => e.status === 'destroyed' || (e.drainUntil ?? Infinity) <= Date.now()),
     ).toBe(true);
+  });
+
+  test('POST relays/{id}/restore/skip-direct: the write scope only; refused with nothing held; a delete held at the direct check moves on to finish, audited with the operator', async () => {
+    const { t, call, relayId } = await fixture();
+    const parts = ['relays', 'r1', 'restore', 'skip-direct'];
+    expect(scopeFor(parts, 'POST')).toBe('admin:servers:manage');
+    expect(throttlePolicyFor(parts)).toBeNull();
+    expect(routePolicy(`/api/v1/admin/edges/${parts.join('/')}`, 'POST')).toEqual({
+      request: 'seal',
+      response: 'reveal',
+    });
+    const path = `relays/${relayId}/restore/skip-direct`;
+    const rid = relayId as Id<'relays'>;
+    const restoreOf = async () => (await t.run((ctx) => ctx.db.get(rid)))!.restore;
+    // Nothing runs on the node: refused in words.
+    const none = await call('POST', path, {});
+    expect(none.status).toBe(409);
+    expect(await none.json()).toMatchObject({ error: { code: 'edge.restore_not_running' } });
+    // A node delete the driver left held at the direct check.
+    const now = Date.now();
+    await t.run((ctx) =>
+      ctx.db.patch(rid, {
+        restore: {
+          purpose: 'delete_relay',
+          phase: 'verify_direct',
+          startedAt: now,
+          updatedAt: now,
+          attempt: 3,
+          lastError: 'no_direct_entry:group-1',
+        },
+      }),
+    );
+    // The read scope and the fleet scope cannot skip it.
+    const reader = bearerCall(t, await token(t, ['admin:servers:read']));
+    const fleet = bearerCall(t, await token(t, ['admin:servers:read', 'admin:servers:write']));
+    expect((await reader('POST', path, {})).status).toBe(401);
+    expect((await fleet('POST', path, {})).status).toBe(401);
+    expect(await restoreOf()).toMatchObject({ phase: 'verify_direct', attempt: 3 });
+    const skipped = () =>
+      t.run(async (ctx) =>
+        (await ctx.db.query('auditLog').collect()).filter(
+          (a) => a.action === 'edge.restore.direct_skipped',
+        ),
+      );
+    expect(await skipped()).toEqual([]);
+    // The operator skips it.
+    const ok = await call('POST', path, {});
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true, phase: 'finish' });
+    const op = await t.run((ctx) =>
+      ctx.db
+        .query('adminUsers')
+        .filter((q) => q.eq(q.field('username'), 'op'))
+        .first(),
+    );
+    const rows = await skipped();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actorType: 'admin',
+      actorId: op!._id,
+      targetType: 'relay',
+      targetId: relayId,
+      payload: { relaySlug: 'node-one', relayId, attempts: 3, heldFor: 'no_direct_entry' },
+    });
+    // The step it scheduled runs the delete body.
+    for (let i = 0; i < 50 && (await restoreOf()); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      await t.finishInProgressScheduledFunctions();
+    }
+    expect(await restoreOf()).toBeUndefined();
+    expect((await t.run((ctx) => ctx.db.get(rid)))!.deleting).toBe(true);
+    // Nothing held any more: a second skip is refused.
+    const again = await call('POST', path, {});
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ error: { code: 'edge.restore_not_running' } });
   });
 
   test('config: GET returns the sanitized namespace + secret status; PATCH writes are audited as keys only', async () => {

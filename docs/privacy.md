@@ -274,9 +274,11 @@ FCP also **checks on its own every hour**: the `logging-privacy` cron
 (`backendServers.autoHardenLogging`) runs the same check and turns logging off on any
 profile it finds logging, with the same safe read-modify-write as the Apply button.
 Once every profile is hardened a run writes nothing, so no node restarts in the steady
-state. A backend where a server change is in progress (an open op of the backend-write
-ledger holding a profile or a node there) is only read that hour and left for the next
-run. Each check, automatic or an admin's Check / Apply, is stored as the newest "last
+state. Where server changes are on, each write is a backend-write ledger op holding the
+profile and its nodes from before its last read until it is settled, so it never
+overwrites a concurrent transport or REALITY change; a profile another change holds is
+only read that hour and left for the next run (docs/backends.md § "Xray logging privacy
+harden"). Each check, automatic or an admin's Check / Apply, is stored as the newest "last
 check" (`appState` key `logging:lastCheck`, read by `GET
 /api/v1/admin/remnawave/logging-last-check`) and shown on the card as one line. The
 record holds counts and a time only (profiles checked, found logging, turned off,

@@ -1154,6 +1154,65 @@ export const requestProfilePatch = internalMutation({
   handler: (ctx, a) => claimProfilePatch(ctx, { ...a, ops: a.ops as PatchOp[] }),
 });
 
+/**
+ * The logging-privacy write (docs/privacy.md §5) as a ledger op: the hourly
+ * `logging-privacy` cron turns logging off on a profile only under a claim on
+ * the profile and every enabled node on it, held from before its last read
+ * until the write is settled, so no typed edit, rollout or node change can
+ * interleave with its read-modify-write. The send is conditioned on
+ * `baseToken` (`applyLoggingPatch` refuses a profile that moved since the
+ * preview) and `expectedToken` is in the postcondition BEFORE the send, so the
+ * observer counts the new token as FCP's own whenever it first sees it, even
+ * when the immediate look fails.
+ *
+ * It touches no transport: no origin is claimed or re-pointed, nothing is
+ * closed for a shared change. Refusals are the claim's own: changes switched
+ * off, the backend not set up, or another change holding a key.
+ */
+export const requestLoggingPatch = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    baseToken: v.string(),
+    expectedToken: v.string(),
+    inboundUuids: v.record(v.string(), v.string()),
+    /** The admin who pressed Apply; `actorRun` names the run otherwise. */
+    ...actor,
+  },
+  handler: async (ctx, a): Promise<{ opId: Id<'panelOps'> }> => {
+    const sid = a.backendServerId;
+    const cached = await ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server_uuid', (q) =>
+        q.eq('backendServerId', sid).eq('profileUuid', a.profileUuid),
+      )
+      .unique();
+    if (!cached)
+      return refuse('not_found', 'That profile is not on this backend. Refresh and retry');
+    if (a.baseToken === a.expectedToken) refuse('validation', 'Nothing to change');
+    const nodes = (
+      await ctx.db
+        .query('panelNodes')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect()
+    ).filter((n) => !n.isDisabled && n.configProfileUuid === a.profileUuid);
+    const opId = await claimOp(ctx, {
+      backendServerId: sid,
+      kind: 'profile',
+      verb: 'patch',
+      label: cached.name,
+      objectUuid: a.profileUuid,
+      claimKeys: [claimKey.profile(a.profileUuid), ...nodes.map((n) => claimKey.node(n.nodeUuid))],
+      intent: { logging: true, baseToken: a.baseToken },
+      postcondition: { expectedToken: a.expectedToken, inboundUuids: a.inboundUuids },
+      asyncNodeUuids: nodes.map((n) => n.nodeUuid),
+      actorAdminId: a.actorAdminId,
+      actorRun: a.actorAdminId ? undefined : (a.actorRun ?? 'cron:logging-privacy'),
+    });
+    return { opId };
+  },
+});
+
 /** A REALITY template's family, resolved to the target and the names usable today. */
 export const familyForTemplate = internalQuery({
   args: { slug: v.string() },
@@ -1332,31 +1391,35 @@ export const run = internalAction({
     try {
       if (op.kind === 'profile') {
         let mark: { send: boolean; mismatch?: boolean; failed?: boolean } | null = null;
-        const sent = await writes.applyProfilePatch(
-          config,
-          op.objectUuid!,
-          intent.ops,
-          intent.baseToken,
-          (await panelDigestKey()).key,
-          {
-            material: freshMaterial(intent.ops),
-            beforeSend: async (expectedToken) => {
-              try {
-                mark = await ctx.runMutation(internal.backendLedger.markSent, {
-                  opId,
-                  attemptId,
-                  asyncNodes,
-                  expectedToken,
-                });
-              } catch {
-                // Whether the attempt was recorded is unknown: send nothing, and
-                // let the sweep settle it (released as never sent, or looked at).
-                mark = { send: false, failed: true };
-              }
-              return mark.send;
-            },
-          },
-        );
+        const beforeSend = async (expectedToken: string) => {
+          try {
+            mark = await ctx.runMutation(internal.backendLedger.markSent, {
+              opId,
+              attemptId,
+              asyncNodes,
+              expectedToken,
+            });
+          } catch {
+            // Whether the attempt was recorded is unknown: send nothing, and
+            // let the sweep settle it (released as never sent, or looked at).
+            mark = { send: false, failed: true };
+          }
+          return mark.send;
+        };
+        const digestKey = (await panelDigestKey()).key;
+        // The logging-privacy op (`requestLoggingPatch`) names no typed edit.
+        const sent = intent.logging
+          ? await writes.applyLoggingPatch(config, op.objectUuid!, intent.baseToken, digestKey, {
+              beforeSend,
+            })
+          : await writes.applyProfilePatch(
+              config,
+              op.objectUuid!,
+              intent.ops,
+              intent.baseToken,
+              digestKey,
+              { material: freshMaterial(intent.ops), beforeSend },
+            );
         if (!sent.sent) {
           const m = mark as { send: boolean; mismatch?: boolean; failed?: boolean } | null;
           // Another run recorded the attempt first: it is that run's to finish.

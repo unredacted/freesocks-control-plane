@@ -38,7 +38,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { ActionCtx } from './_generated/server';
+import type { ActionCtx, MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
@@ -58,7 +58,11 @@ import {
   type RestorePurpose,
 } from './lib/edges/restore';
 import { applyDeleteBody, deliveryBindingFor } from './relays';
-import { assertNoRelayPanelClaim, scheduleMirrorRefresh } from './lib/edges/relayGuards';
+import {
+  assertNoRelayPanelClaim,
+  assertNotQuarantined,
+  scheduleMirrorRefresh,
+} from './lib/edges/relayGuards';
 import { listenerRemark, listenersOf } from './relayListeners';
 import { listPanelHosts, restoreOne, type HideRow } from './edgeHostHides';
 import { nodeAddressesOf } from './nodeIntents';
@@ -306,6 +310,33 @@ async function restoreCohorts(ctx: ActionCtx, relayId: Id<'relays'>): Promise<Co
   return ctx.runQuery(internal.edgeRestore.cohortRefs, { cohorts });
 }
 
+/**
+ * The fenced transition: move the workflow from `from` to `to`, or (no `to`)
+ * count one more attempt at `from` with its error. A workflow no longer at
+ * `from` (a stale step, a finished workflow) is left as it is: false.
+ */
+async function moveRestore(
+  ctx: MutationCtx,
+  relayId: Id<'relays'>,
+  from: string,
+  to?: string,
+  error?: string,
+): Promise<boolean> {
+  const relay = await ctx.db.get(relayId);
+  if (!relay?.restore || relay.restore.phase !== from) return false;
+  const now = Date.now();
+  await ctx.db.patch(relayId, {
+    restore: {
+      ...relay.restore,
+      ...(to ? { phase: to as RestorePhase, attempt: 0, lastError: undefined } : {}),
+      ...(!to ? { attempt: relay.restore.attempt + 1, lastError: error } : {}),
+      updatedAt: now,
+    },
+    updatedAt: now,
+  });
+  return true;
+}
+
 /** Move the workflow from `from` to `to` (fenced: a stale step changes nothing). */
 export const advance = internalMutation({
   args: {
@@ -314,20 +345,78 @@ export const advance = internalMutation({
     to: v.optional(v.string()),
     error: v.optional(v.string()),
   },
-  handler: async (ctx, { relayId, from, to, error }) => {
+  handler: async (ctx, { relayId, from, to, error }) =>
+    (await moveRestore(ctx, relayId, from, to, error))
+      ? { ok: true as const }
+      : { ok: false as const },
+});
+
+/**
+ * "Skip restoring direct": the operator's way out of a node delete
+ * (`delete_relay`) whose restore is held at `verify_direct`, typically because
+ * the node's direct Host was deleted from the panel after FCP hid it (its hide
+ * row was released `gone`), so no member group's raw body can carry a direct
+ * entry again. The workflow moves to `finish` through the same fenced
+ * transition the driver uses, and the delete body then runs as for any
+ * finished delete. Members on the node keep no direct entry for it.
+ *
+ * Only there, and only once the check held (an attempt was counted): every
+ * earlier phase is a safety FCP keeps (no direct Host is ever re-enabled
+ * while the node is bound), and a cancelled setup or "Serve this node
+ * directly again" keeps the node, which then needs its direct Host. Refused
+ * while a rotation, a quarantine, a server change or a rename holds the node.
+ * Audited `edge.restore.direct_skipped` (who, the node, what held it).
+ */
+export const skipDirect = internalMutation({
+  args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { relayId, actorAdminId }) => {
     const relay = await ctx.db.get(relayId);
-    if (!relay?.restore || relay.restore.phase !== from) return { ok: false as const };
-    const now = Date.now();
-    await ctx.db.patch(relayId, {
-      restore: {
-        ...relay.restore,
-        ...(to ? { phase: to as RestorePhase, attempt: 0, lastError: undefined } : {}),
-        ...(!to ? { attempt: relay.restore.attempt + 1, lastError: error } : {}),
-        updatedAt: now,
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    const restore = relay.restore;
+    if (!restore)
+      throw new ConvexError({
+        code: 'edge.restore_not_running',
+        message: 'No restore is running on this origin',
+      });
+    if (restore.purpose !== 'delete_relay' || restore.phase !== 'verify_direct' || !restore.attempt)
+      throw new ConvexError({
+        code: 'edge.restore_not_held_at_direct',
+        message:
+          restore.purpose !== 'delete_relay'
+            ? `only a removal can skip the direct check (this is a ${restore.purpose.replace(/_/g, ' ')} restore)`
+            : restore.phase !== 'verify_direct'
+              ? `the restore is at ${restore.phase}, not held at the direct check`
+              : 'the direct check has not run yet; wait for it',
+      });
+    assertNotQuarantined(relay);
+    await assertNoRelayPanelClaim(ctx.db, relay);
+    if (relay.activeRotationId) {
+      const rot = await ctx.db.get(relay.activeRotationId);
+      if (rot && !isTerminalPhase(rot.phase))
+        throw new ConvexError({
+          code: 'edge.rotation_running',
+          message: 'A rotation is running on this origin; wait for it to finish',
+        });
+    }
+    // Checked above in this same transaction, so the fence holds.
+    await moveRestore(ctx, relayId, 'verify_direct', 'finish');
+    await writeAuditLog(ctx, {
+      actorType: actorAdminId ? 'admin' : 'system',
+      actorId: actorAdminId,
+      action: 'edge.restore.direct_skipped',
+      targetType: 'relay',
+      targetId: relayId,
+      payload: {
+        relaySlug: relay.slug,
+        relayId,
+        attempts: restore.attempt,
+        // The reason's code only: the group key after the colon stays out.
+        heldFor: restore.lastError?.split(':')[0] ?? null,
       },
-      updatedAt: now,
     });
-    return { ok: true as const };
+    // Finish now rather than at the next reconcile tick (`finish` is fenced too).
+    await ctx.scheduler.runAfter(0, internal.edgeRestore.step, { relayId });
+    return { ok: true as const, phase: 'finish' as const };
   },
 });
 
