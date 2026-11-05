@@ -7,10 +7,12 @@
  * country, and which outside probe sources still answer from each country
  * (lib/edges/country/coverage.ts). Read only: nothing here writes.
  *
- * Every per-edge, per-location and per-name read covers EVERY country in one
- * index range (`prefetch`), and each country is then built in memory. The
- * summary reads its frame (`summaryHead`) and then each country in a query of
- * its own (`summaryRow`): one query for every country ran out of time.
+ * Every per-edge, per-location and per-name read is one index range, narrowed
+ * to the one country being built (`prefetch(..., country)`): the country page
+ * and each line of the summary read that country's rows only. The summary
+ * reads its frame (`summaryHead`) and then each country in a query of its own
+ * (`summaryRow`), a few at a time (httpEdges.ts): one query for every country
+ * ran out of time.
  *
  * Admin only. No member row is read: "handed" is computed over synthetic
  * render keys. The response carries addresses and names (the admin pages
@@ -243,7 +245,7 @@ interface Prefetched {
  * for at most `MAX_ANSWER_TARGETS` of them (probed origins and published
  * addresses first: `answerTargets`).
  */
-async function answersOf(db: Db, p: Prefetched, loaded: Loaded) {
+async function answersOf(db: Db, p: Prefetched, loaded: Loaded, country: string) {
   const targets = loaded.origins.flatMap((o) => [
     ...(o.input.direct ? [{ key: `relay:${o.input.relayId}`, first: true }] : []),
     ...o.edges.map(({ doc }) => ({
@@ -255,14 +257,20 @@ async function answersOf(db: Db, p: Prefetched, loaded: Loaded) {
     const [kind, ref] = key.split(':') as ['edge' | 'relay', string];
     const rows = await db
       .query('probeReachability')
-      .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
+      .withIndex('by_target_country', (q) =>
+        q.eq('targetKind', kind).eq('targetRef', ref).eq('country', country),
+      )
       .collect();
     p.answersByTarget.set(key, newestAnswers(rows));
     newestAnswers(rows, p.answers);
   }
 }
 
-async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
+/**
+ * One country's rows only: every index read here ends in the country, and a
+ * view of one country never looks at another country's rows.
+ */
+async function prefetch(db: Db, loaded: Loaded, country: string): Promise<Prefetched> {
   const p: Prefetched = {
     edgeEvidence: new Map(),
     edgeMarks: new Map(),
@@ -276,19 +284,19 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
     answers: new Map(),
     answersByTarget: new Map(),
   };
-  await answersOf(db, p, loaded);
+  await answersOf(db, p, loaded, country);
   const groups = new Set<string>();
   for (const o of loaded.origins) {
     for (const { doc, groupKey } of o.edges) {
       groups.add(groupKey);
       for (const r of await db
         .query('edgeCountryEvidence')
-        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id))
+        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id).eq('country', country))
         .collect())
         p.edgeEvidence.set(keyOf(doc._id, r.country), r);
       for (const m of await db
         .query('countryMarks')
-        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id))
+        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id).eq('country', country))
         .collect())
         if (m.scope === 'edge') p.edgeMarks.set(keyOf(doc._id, m.country), m);
     }
@@ -296,12 +304,12 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
   for (const g of groups) {
     for (const m of await db
       .query('countryMarks')
-      .withIndex('by_group_country', (q) => q.eq('groupKey', g))
+      .withIndex('by_group_country', (q) => q.eq('groupKey', g).eq('country', country))
       .collect())
       if (m.scope === 'group') p.groupMarks.set(keyOf(g, m.country), m);
     for (const r of await db
       .query('countryGroupGrades')
-      .withIndex('by_group_country', (q) => q.eq('groupKey', g))
+      .withIndex('by_group_country', (q) => q.eq('groupKey', g).eq('country', country))
       .collect())
       p.grades.set(keyOf(g, r.country), r);
   }
@@ -314,12 +322,12 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
     if (n && !p.families.has(n.familyId)) p.families.set(n.familyId, await db.get(n.familyId));
     for (const m of await db
       .query('sniNameCountry')
-      .withIndex('by_name', (q) => q.eq('name', name))
+      .withIndex('by_name_country', (q) => q.eq('name', name).eq('country', country))
       .collect())
       p.nameMarks.set(keyOf(name, m.country), m);
     for (const e of await db
       .query('sniVantageEvidence')
-      .withIndex('by_name_country', (q) => q.eq('name', name))
+      .withIndex('by_name_country', (q) => q.eq('name', name).eq('country', country))
       .collect())
       p.vantage.set(keyOf(name, e.country), e);
   }
@@ -813,7 +821,7 @@ export const summaryRow = internalQuery({
     const listed = listedOf(st, code);
     if (!listed) return null;
     const loaded = await load(ctx.db);
-    const pre = await prefetch(ctx.db, loaded);
+    const pre = await prefetch(ctx.db, loaded, code);
     const { totals, origins } = viewOf(loaded, pre, st, code, now, null);
     const handedBlocked = origins.flatMap((o) =>
       o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
@@ -843,7 +851,7 @@ export const country = internalQuery({
     const st = await settingsOf(ctx.db);
     const loaded = await load(ctx.db);
     await attachListMarks(ctx.db, loaded, code, now);
-    const pre = await prefetch(ctx.db, loaded);
+    const pre = await prefetch(ctx.db, loaded, code);
     const reports = await reportsFor(ctx.db, pre, code, st, now);
     const { origins, totals } = viewOf(loaded, pre, st, code, now, reports);
     const listed = listedOf(st, code);

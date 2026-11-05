@@ -4842,7 +4842,12 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   health) and `GET countries/{CC}` (one country in full; a code off the list answers too,
   `listed: null`). Contracts `CountryViewSummaryResponse` and `CountryViewResponse` in
   `src/shared/contracts/edges.ts`. Times are epoch ms. Unlike `GET countries`, the view carries
-  addresses and names: it is the admin page that shows them.
+  addresses and names: it is the admin page that shows them. Each country is built in its own
+  query from that country's rows only (every per-edge, per-location and per-name read is one
+  index range ending in the country): the summary reads its frame (`summaryHead`) and then one
+  `summaryRow` per listed country, at most `COUNTRY_SUMMARY_PARALLEL` (4) at once, so a long
+  list never fills the backend's query pool. Both routes are throttled per actor
+  (`admin.edges.country-view`, 30 a minute; the page polls once a minute).
 - **Which outside probes answer from there** (`probes`, pure `lib/edges/country/coverage.ts`):
   `asked` (probes on and "Check edges from here" on for the country), and for each outside source
   in use its newest answer from the country over the addresses shown (the `probeReachability`

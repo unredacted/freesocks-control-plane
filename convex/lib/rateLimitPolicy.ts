@@ -173,6 +173,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // about a hundred parts in a row; the finish that starts the parse is a
   // `provider-call`.
   'admin.edges.list-upload': { max: 300, windowMs: MINUTE, enabled: true },
+  // The country view (countries/summary, countries/{CC}): each read builds the
+  // fleet once per country. The page polls once a minute per open tab; this
+  // bounds a hot loop or a leaked read token, not interactive use.
+  'admin.edges.country-view': { max: 30, windowMs: MINUTE, enabled: true },
   // Server management: an on-demand re-read of one backend (several backend GETs
   // per call). The scheduled read rides the healthcheck and is not throttled.
   'admin.servers.panel-read': { max: 30, windowMs: MINUTE, enabled: true },
