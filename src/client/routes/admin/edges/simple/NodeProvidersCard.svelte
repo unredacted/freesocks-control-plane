@@ -184,7 +184,7 @@
   let optionsFor = $state<ProviderSetView['picks'][number] | null>(null);
   let draft = $state<Params>({});
   let confirmOptions = $state(false);
-  // An option out of its bounds: said beside the field, and here on "Protect again".
+  // An option out of its bounds: said beside the field, and here on "Front again".
   let optionsProblem = $state<string | null>(null);
   let optionsEl = $state<HTMLElement | null>(null);
   $effect(() => {
@@ -504,9 +504,9 @@
 
 <ConfirmDialog
   bind:open={confirmOptions}
-  title="Protect the node again?"
+  title="Front the node again?"
   body="Fresh addresses are made everywhere, tested, and reviewed when a review is needed. Members keep what they have until the new addresses go live; the old ones then drain."
-  confirmLabel="Protect again"
+  confirmLabel="Front again"
   onConfirm={async () => {
     if (optionsFor)
       await reprotect.mutateAsync({

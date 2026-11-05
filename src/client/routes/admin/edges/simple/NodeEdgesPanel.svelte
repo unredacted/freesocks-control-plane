@@ -813,7 +813,7 @@
     bind:open={againOpen}
     title={`Front ${name} again?`}
     body="FCP makes a new address for each transport, you try each one from a real app, and you approve go-live if the node needs it. Members keep the addresses they have until the new ones go live, then the new ones take their places. Cancelling drops only the new addresses."
-    confirmLabel="Protect again"
+    confirmLabel="Front again"
     run={async () => {
       const res = await reprotectRelay(relay.id);
       toast.success('Fronting again. The progress opens now.');
@@ -826,7 +826,7 @@
     title={`Remove fronting from ${name}?`}
     body="Members get the node's own address back at their next refresh, the panel is restored one checked step at a time, and the provider addresses are destroyed afterwards. The node's own address becomes visible again."
     typed={relay.slug}
-    confirmLabel="Remove protection"
+    confirmLabel="Remove fronting"
     danger
     run={async () => {
       assertEdgeOk(await deleteRelay(relay.id, 'restore-direct'));

@@ -506,7 +506,7 @@ const ERROR_WORDS: Record<string, string> = {
     'The node is waiting for your approval to go live. Approve it in its fronting progress.',
   'servers.standbys_missing': 'Front this node in Edges first. Its new addresses come from there.',
   'servers.standbys_unverified':
-    'Not every new address of this node is tested yet. Try each one in its fronting progress.',
+    'Not every address of this node has a current test. Try each one in its fronting progress, or on the node in Edges.',
   'servers.credential_unresolved':
     'A test credential of this node has an unknown outcome on the backend. Look at its users.',
   'servers.delete_not_applied': 'An origin record was not removed. It is tried again.',
@@ -831,7 +831,9 @@ const BLOCKER_WORDS: Record<string, string> = {
   'servers.maintenance_required':
     'Approving closes this node for members until it goes live, about a minute: a live node gets a new address only while members are held off it. Members who refresh meanwhile are given another node, or keep their configuration.',
   'servers.standbys_unverified:key_changed':
-    'The node’s REALITY key changed since its new addresses were tried. Try each one again with the new key (its fronting progress, or the node in Edges), then approve.',
+    'The node’s REALITY key changed since its addresses were tried. Try each one again with the new key (its fronting progress, or the node in Edges), then approve.',
+  'servers.standbys_unverified:retest':
+    'A transport of this node has no address with a current test: the address or its transport changed since it was tried. Try one again on the node in Edges, or front it again, then approve.',
 };
 export function blockerWords(code: string): string {
   return BLOCKER_WORDS[code] ?? BLOCKER_WORDS[code.split(':')[0] ?? ''] ?? serverErrorWords(code);

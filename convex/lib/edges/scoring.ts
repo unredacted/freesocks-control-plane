@@ -359,6 +359,9 @@ export type AutoRotateVeto =
   // (`country_wide`). A global burn would act on either.
   | 'country_scoped'
   | 'country_wide'
+  // Addresses only for some countries (docs/edges.md): every country the block
+  // was seen from is outside the address's audience, where nobody is handed it.
+  | 'outside_audience'
   // Lanes (convex/edgeLanes.ts): only open addresses look blocked, and the open
   // lane's own replacement budget is used up for today.
   | 'open_lane_budget';
@@ -415,12 +418,25 @@ export interface SteeringInput {
 export function steeringVeto(
   chosen: Pick<EdgeEvidence, 'edgeId' | 'countries'>,
   s: SteeringInput,
-): 'country_scoped' | 'country_wide' | null {
-  const countries = [...new Set(chosen.countries)].filter((c) => s.checked.includes(c));
-  if (countries.length === 0) return null;
+): 'country_scoped' | 'country_wide' | 'outside_audience' | null {
   const edge = s.published.find((e) => e.edgeId === chosen.edgeId);
+  // A contained address is handed only to members in its audience: a block
+  // seen only from elsewhere touches nobody it serves. Evidence naming no
+  // country (down everywhere) rotates as before.
+  const audience = edge?.audience?.length ? edge.audience : null;
+  const named = [...new Set(chosen.countries)];
+  if (audience && named.length > 0 && named.every((c) => !audience.includes(c)))
+    return 'outside_audience';
+  // In mixed evidence the countries outside the audience are no reason either:
+  // only those it serves are judged below.
+  const countries = named.filter(
+    (c) => s.checked.includes(c) && (!audience || audience.includes(c)),
+  );
+  if (countries.length === 0) return null;
   if (!edge || !s.freedomListeners.includes(edge.listenerKey)) return null;
-  if (s.checked.every((c) => edgeTier(edge, c) === 2)) return null;
+  // Blocked in every checked country it serves: replace it.
+  const served = audience ? s.checked.filter((c) => audience.includes(c)) : s.checked;
+  if (served.length > 0 && served.every((c) => edgeTier(edge, c) === 2)) return null;
   // Each evidence country must be covered on its own: under the country-wide
   // guard (an outage, not a block), or routed around by the steering. A mix is
   // as good as either: neither kind of country justifies a global burn.

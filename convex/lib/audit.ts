@@ -330,7 +330,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.profile.transition_released': ['backendSlug', 'held'],
   'servers.node.settings': ['backendSlug', 'name', 'change'],
   'servers.node.direct_confirmed': ['backendSlug', 'name'],
-  'servers.node.approved': ['backendSlug', 'name', 'mode'],
+  // `kept`: how many addresses it already had the approval took it live on (no setup run).
+  'servers.node.approved': ['backendSlug', 'name', 'mode', 'kept'],
   'servers.node.live': ['backendSlug', 'name', 'mode'],
   'servers.node.drift': ['backendSlug', 'name', 'kind', 'wasLive'],
   'servers.node.maintenance_started': ['backendSlug', 'name'],
@@ -414,11 +415,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   ],
   // An account's locations (docs/edges.md § "Provider accounts and locations").
   'edge.location.created': ['name', 'provider', 'placeKey'],
-  'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled'],
+  // `changed`: the fields that moved (label, enabled, ...), never a value.
+  'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled', 'changed'],
   // Networks (docs/edges.md "Networks"): slugs and counts, never a range or an address.
   'edge.location.network': ['placeKey', 'network'],
   // The countries a location is meant for (an operator setting: listed codes, never a member).
   'edge.location.countries': ['placeKey', 'countries', 'nodes'],
+  'edge.location.only': ['placeKey', 'countries', 'only', 'widened', 'nodes'],
+  'edge.audience_rollback': ['drained', 'destroyed', 'widened'],
+  'edge.audience_retired': ['relaySlug', 'placeKey', 'was', 'now', 'how'],
   // Where members are told a location is: the name members read, as typed for them.
   'edge.location.member_place': ['placeKey', 'memberName', 'nodes'],
   'edge.network.create': ['slug', 'asns'],
@@ -623,7 +628,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Server-name families: slugs and COUNTS only, never a hostname.
   'edge.sni.config.update': ['changedKeys'],
   'edge.sni.family.create': ['slug', 'targetKind', 'network'],
-  'edge.sni.family.update': ['slug', 'network'],
+  // `changed`: the fields that moved (label, enabled, requireH2, network), never the label itself.
+  'edge.sni.family.update': ['slug', 'network', 'changed'],
   'edge.sni.family.delete': ['slug', 'nameCount'],
   'edge.sni.names.import': ['slug', 'added', 'rejected'],
   // Finding names (docs/edges.md "Finding names"): counts and slugs, never a name.

@@ -29,6 +29,9 @@ describe('the preview reason line', () => {
       endpointWhy(1, { meantFor: false, latency: { band: 'near', ms: null, measured: false } }),
     ).toBe('not known there, near (no distance known)');
     expect(endpointWhy(null, null)).toBeNull();
+    expect(endpointWhy(1, { meantFor: true, audience: ['IR', 'RU'] })).toBe(
+      'not known there, at a location meant for it, only for IR, RU',
+    );
   });
 
   it('carries no em-dash', () => {

@@ -198,6 +198,11 @@ export const EdgeLocationAdmin = z.object({
   /** The listed countries this place is meant for (docs/edges.md "Locations meant for a country"). */
   meantFor: z.array(z.string()).default([]),
   /**
+   * Addresses made here from then on are handed only to members in `meantFor`
+   * (docs/edges.md "Addresses only for some countries").
+   */
+  onlyForMeant: z.boolean().default(false),
+  /**
    * Where members are told its addresses are (docs/edges.md "Names in apps"):
    * the place name and country typed for members, null when unset.
    */
@@ -284,6 +289,23 @@ export const EdgeLocationUpdateRequest = z.object({
 });
 export type EdgeLocationUpdateRequest = z.infer<typeof EdgeLocationUpdateRequest>;
 
+/** `POST providers/{id}/locations/{locationId}/only/preview`: what switching would do, or why not. */
+export const EdgeLocationOnlyPreview = z.object({
+  only: z.boolean(),
+  /** Why it may not be switched on now (null: it may), as the save would refuse it. */
+  refusal: z.object({ code: z.string(), message: z.string() }).nullable(),
+  /** Addresses there that are contained now (switching off makes them everyone's). */
+  contained: z.number(),
+});
+export type EdgeLocationOnlyPreview = z.infer<typeof EdgeLocationOnlyPreview>;
+
+export const EdgeLocationOnlyResponse = z.object({
+  ok: z.literal(true),
+  changed: z.boolean(),
+  widened: z.number(),
+  nodes: z.number(),
+});
+export type EdgeLocationOnlyResponse = z.infer<typeof EdgeLocationOnlyResponse>;
 /**
  * POST …/providers/{id}/locations/{locationId}/countries: the countries a
  * location is meant for (listed codes, at most 8; empty clears it).
@@ -1127,6 +1149,11 @@ export const EdgeAdmin = z.object({
   listenerId: z.string(),
   /** Address lanes: `trusted` (handed only to trusted members), or null for an open address. */
   lane: z.literal('trusted').nullable().default(null),
+  /**
+   * Addresses only for some countries (docs/edges.md): the countries it is
+   * handed to; empty for an address everyone may be handed.
+   */
+  audience: z.array(z.string()).default([]),
   accountId: z.string().nullable(),
   /** The location the edge was created in (frozen; null for an import without an account). */
   locationId: z.string().nullable().default(null),
@@ -2354,6 +2381,8 @@ export type RenderClientFamily = z.infer<typeof RenderClientFamily>;
  */
 export const EdgeRenderPreviewWhy = z.object({
   meantFor: z.boolean(),
+  /** The endpoint is only for these countries (docs/edges.md "Addresses only for some countries"). */
+  audience: z.array(z.string()).optional(),
   latency: z
     .object({
       band: z.enum(['near', 'medium', 'far']),

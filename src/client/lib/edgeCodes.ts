@@ -1034,6 +1034,18 @@ const COPY = {
       'This location is meant for a country, but it is blocked from there: a mark on it, its grade, or every address of it in use there. Members in that country are handed other addresses until it works again.',
     fix: 'Pick another location for that country on the account page, or mark this one if the checks are wrong.',
   },
+  audience_only_left: {
+    label: 'Only contained addresses left',
+    explain:
+      'Every address this transport has in use is only for some countries, so members with no country, or in any other country, get none for it.',
+    fix: 'Put an address for everyone in use on this transport, in a location that is not only for some countries.',
+  },
+  audience_idle: {
+    label: 'Contained addresses unused',
+    explain:
+      'This node has addresses only for some countries in use, and ordering by country is off, so nobody is handed them.',
+    fix: 'Turn ordering by country back on under Settings, or switch those locations back to everyone.',
+  },
   location_short: {
     label: 'Location short of addresses',
     explain:
@@ -1243,6 +1255,11 @@ const COPY = {
     label: 'Protocol-level block',
     explain:
       'Every edge suffers alike, which points at the protocol being blocked, not the address.',
+  },
+  outside_audience: {
+    label: 'Blocked only outside its countries',
+    explain:
+      'This address is only for some countries, and every report of a block comes from elsewhere, where nobody is handed it. It is not replaced.',
   },
   country_scoped: {
     label: 'Routed around by country',

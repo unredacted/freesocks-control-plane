@@ -18,6 +18,7 @@
   import { toast } from 'svelte-sonner';
   import { connectionRegionQuery, queryKeys, setConnectionRegion } from '../lib/queries';
   import { countryName } from '../lib/countries';
+  import { ApiCallError } from '../lib/api';
   import { sealingEnabled } from '../lib/hpke';
   import { getLocale, t } from '../lib/i18n/index.svelte';
   import { Button } from './ui/button';
@@ -47,8 +48,12 @@
       qc.setQueryData(queryKeys.connectionRegion, next);
       changing = false;
       toast.success(t('region.saved'));
-    } catch {
-      toast.error(t('region.failed'));
+    } catch (err) {
+      toast.error(
+        err instanceof ApiCallError && err.payload.error.code === 'rate_limit.country_day'
+          ? t('region.tooOften')
+          : t('region.failed'),
+      );
     } finally {
       saving = false;
     }

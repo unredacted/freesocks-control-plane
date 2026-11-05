@@ -173,6 +173,8 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     listenerId: e.listenerId as string,
     // Address lanes (convex/edgeLanes.ts): `trusted`, or null for an open one.
     lane: e.lane ?? null,
+    // Addresses only for some countries (docs/edges.md): the countries it is handed to, or none.
+    audience: e.audience ?? [],
     accountId: (e.accountId as string | undefined) ?? null,
     locationId: (e.locationId as string | undefined) ?? null,
     placeKey: e.placeKey ?? null,

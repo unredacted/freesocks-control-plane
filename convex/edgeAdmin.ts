@@ -70,6 +70,7 @@ import { lanesOn } from './lib/edges/lanes';
 import { locationsOfAccount } from './edgeLocations';
 import { nameViewOf } from './edgeNames';
 import { assertAdmission } from './lib/edges/maintenance';
+import { AUDIENCE_NEEDS_SPREAD, holdsContainment } from './edgeAudiences';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -601,6 +602,9 @@ export const setEdgePick = internalMutation({
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await assertNoRotationOrQuarantine(ctx.db, origin);
+    // Contained addresses need the rendezvous walk (docs/edges.md "Addresses only for some countries").
+    if (version === null && (await holdsContainment(ctx.db, origin)))
+      throw new ConvexError(AUDIENCE_NEEDS_SPREAD);
     const changed = (origin.edgePick ?? null) !== version;
     if (changed) {
       await ctx.db.patch(relayId, { edgePick: version ?? undefined, updatedAt: Date.now() });
@@ -633,6 +637,10 @@ export const clearSeatsForRollback = internalMutation({
   },
   handler: async (ctx, { phase, cursor }) => {
     let cleared = 0;
+    // Run the contained addresses' rollback first: they need the rendezvous walk.
+    if ((phase ?? 'users') === 'users' && !cursor)
+      for (const r of await ctx.db.query('relays').collect())
+        if (await holdsContainment(ctx.db, r)) throw new ConvexError(AUDIENCE_NEEDS_SPREAD);
     if ((phase ?? 'users') === 'users') {
       const page = await ctx.db.query('users').paginate({ cursor: cursor ?? null, numItems: 200 });
       for (const u of page.page)
@@ -647,7 +655,11 @@ export const clearSeatsForRollback = internalMutation({
       );
       return { cleared, done: false };
     }
-    for (const r of await ctx.db.query('relays').collect())
+    // Checked again where the walks change: containment may have begun since the first page.
+    const relays = await ctx.db.query('relays').collect();
+    for (const r of relays)
+      if (await holdsContainment(ctx.db, r)) throw new ConvexError(AUDIENCE_NEEDS_SPREAD);
+    for (const r of relays)
       if (r.edgePick !== undefined) {
         await ctx.db.patch(r._id, { edgePick: undefined });
         cleared++;
@@ -836,14 +848,31 @@ export async function renderPreviewFor(
       // meant for a country", "Latency over the whole path").
       primaryWhy:
         out.meantFor && out.snapshot.primaryEdgeId
-          ? { meantFor: out.meantFor.primary, ...latencyWhy(out.latency?.primary) }
+          ? {
+              meantFor: out.meantFor.primary,
+              ...latencyWhy(out.latency?.primary),
+              ...audienceWhy(published, out.snapshot.primaryEdgeId),
+            }
           : null,
       backupWhy:
         out.meantFor && out.snapshot.backupEdgeId
-          ? { meantFor: out.meantFor.backup, ...latencyWhy(out.latency?.backup) }
+          ? {
+              meantFor: out.meantFor.backup,
+              ...latencyWhy(out.latency?.backup),
+              ...audienceWhy(published, out.snapshot.backupEdgeId),
+            }
           : null,
     };
   }
+}
+
+/** A contained endpoint's countries for the preview; nothing for one everyone may be handed. */
+function audienceWhy(
+  published: readonly { edgeId: string; audience?: string[] }[],
+  edgeId: string,
+): { audience?: string[] } {
+  const a = published.find((e) => e.edgeId === edgeId)?.audience;
+  return a?.length ? { audience: a } : {};
 }
 
 /** An endpoint's band and path for the preview; nothing while latency ordering is off. */
@@ -1000,6 +1029,15 @@ export const resolveOperator = internalMutation({
       });
       if (origin) await dropEdgeFromPool(ctx, origin, e, { reason: 'operator_forget' });
     } else {
+      // A contained address that drains stays gone: kept as a spare, a build
+      // that knows no audience could hand it to everyone (docs/edges.md
+      // "Addresses only for some countries", rollback).
+      if (e.audience?.length)
+        throw new ConvexError({
+          code: 'edge.audience_drain_final',
+          message:
+            'An address only for some countries is not kept as a spare once it drains: make a new one',
+        });
       // Back to an unpublished, selectable standby: a row that came off the
       // drain path still carries `draining` + an expired drainUntil, which
       // would leave it active yet invisible to the standby picker.

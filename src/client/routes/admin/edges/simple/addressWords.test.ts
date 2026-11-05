@@ -55,14 +55,20 @@ describe('an address row', () => {
     );
   });
 
-  test('what it is, with its lane only while lanes are on', () => {
-    expect(addressStateWord({ publication: 'published', lane: null }, false)).toBe('In use');
-    expect(addressStateWord({ publication: 'published', lane: 'trusted' }, true)).toBe(
-      'In use (trusted)',
-    );
-    expect(addressStateWord({ publication: 'published', lane: null }, true)).toBe('In use (open)');
-    expect(addressStateWord({ publication: 'unpublished', lane: null }, true)).toBe('Spare');
-    expect(addressStateWord({ publication: 'draining', lane: null }, false)).toBe('Retiring');
+  test('what it is, with its lane only while lanes are on, and who it is only for', () => {
+    const w = (
+      publication: EdgeAdmin['publication'],
+      lane: EdgeAdmin['lane'],
+      lanes: boolean,
+      audience: string[] = [],
+    ) => addressStateWord({ publication, lane, audience }, lanes);
+    expect(w('published', null, false)).toBe('In use');
+    expect(w('published', 'trusted', true)).toBe('In use (trusted)');
+    expect(w('published', null, true)).toBe('In use (open)');
+    expect(w('unpublished', null, true)).toBe('Spare');
+    expect(w('draining', null, false)).toBe('Retiring');
+    expect(w('published', null, false, ['IR', 'RU'])).toBe('In use (only for Iran, Russia)');
+    expect(w('unpublished', null, false, ['IR'])).toBe('Spare (only for Iran)');
   });
 
   test('whether it is tested, and only when a test is asked of it', () => {

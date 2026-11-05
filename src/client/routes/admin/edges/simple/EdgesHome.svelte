@@ -258,7 +258,7 @@
       </Button>
     </div>
   {:else if rows.length > 0}
-    <section aria-label="Protected nodes">
+    <section aria-label="Fronted nodes">
       <ul class="space-y-2">
         {#each rows as row, i (row.relay.id)}
           <li>

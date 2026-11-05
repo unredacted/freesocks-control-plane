@@ -96,7 +96,7 @@ export const laneOf = internalQuery({
  * provider may give a released address back). Read once, at a first
  * publication on a node with lanes on.
  */
-async function seenBefore(db: DatabaseReader, edge: Edge): Promise<boolean> {
+export async function seenBefore(db: DatabaseReader, edge: Edge): Promise<boolean> {
   const mine = [edge.addresses.v4, edge.addresses.v6, edge.addresses.hostname].filter(
     (a): a is string => !!a,
   );
@@ -132,9 +132,14 @@ export async function laneForPublish(
   origin: Origin,
   edge: Edge,
   replacing?: Edge | null,
+  /** It is contained (docs/edges.md "Addresses only for some countries"): trusted when it may be. */
+  opts: { contained?: boolean } = {},
 ): Promise<{ lane?: 'trusted' }> {
   if (!lanesOn(origin) || edge.publishedAt !== undefined) return {};
   const clean = mayBeTrusted(edge, origin, false) && !(await seenBefore(db, edge));
+  // A contained address is its countries' trusted lane: a new free account
+  // there draws from the open lane of everyone's addresses first.
+  if (opts.contained) return clean ? { lane: 'trusted' } : {};
   const published = await publishedOf(db, origin);
   const onListener = published.filter(
     (e) => e.listenerId === edge.listenerId && e._id !== replacing?._id && e._id !== edge._id,
@@ -326,7 +331,9 @@ export const reconcileLanes = internalMutation({
     const listeners = (await listenersOf(ctx, relayId)).filter(
       (l) => l.deployed && l.enabled && !l.retired,
     );
-    const published = await publishedOf(ctx.db, origin);
+    // Lanes are everyone's addresses: a contained one is its countries' own
+    // (sized by its location's count, never retired by lane cleanup).
+    const published = (await publishedOf(ctx.db, origin)).filter((e) => !e.audience?.length);
     const book = laneBook(
       listeners.map((l) => l._id as string),
       published.map((e) => ({ listenerId: e.listenerId as string, lane: e.lane })),

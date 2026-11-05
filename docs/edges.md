@@ -1266,6 +1266,9 @@ via relay A                         an address whose location has no member-faci
   members, Admin -> Edges -> a provider account -> Locations, "Name in apps"; `POST
 providers/{id}/locations/{locationId}/member-place {name, country}`). The provider's own region
   name (`edgeLocations.label`) is admin-only and never reaches a member: it can name the provider.
+  "Rename" on the location changes it (`PATCH providers/{id}/locations/{locationId} {label}`, up to
+  80 characters; the location keeps its placement and its trust; audited `edge.location.updated`
+  with the fields that moved, `changed`, never a value).
   Without a name the address reads `via relay A` and no flag shows, whatever the country says.
   The place travels on the published pool (`PublishedEdge.memberPlace`, one read per location of
   the pool, as the countries it is meant for do). Saving it moves the epoch of every origin with an
@@ -2571,7 +2574,13 @@ observation; (3) `verify_fcp_raw` (bound origins only): the RAW backend body of 
 cohort (one representative key per placement pinned to the node, `convex/lib/edges/cohorts.ts`:
 the first key of each distinct placement over `subscriptions.by_backend_server_pinned`, a page
 of placements per query, driven from the action) carries an FCP entry and no
-origin entry, fetched through the same path the sub route uses; (4) `release_binding`: the
+origin entry, fetched through the same path the sub route uses. A key whose body is the
+backend's placeholder for an expired or disabled user (every entry names no node, at an
+unusable address, and none names this node) stands for nobody: the cohort is judged by its
+next keys instead (`edgeCohorts.candidates`, active accounts first, as the rehearsal picks its
+representative). A cohort whose every key is a placeholder passes, since nobody there is served
+anything now or after the release; one whose keys run past one read of candidates holds
+(`placeholders_only:<cohort>`), and a fetch that fails holds as before; (4) `release_binding`: the
 delivery binding is released WHILE the origin stays enabled and its edges published, so members
 keep the protected entry in raw delivery. **A direct Host is never re-enabled while the origin
 is bound**: the renderer would answer `leak_detected` for every member, an outage FCP would
@@ -2579,7 +2588,7 @@ have caused itself (pinned by a test that asserts the ordering inside the backen
 (5) `restore`: each `confirmed` row is re-observed; still disabled at the observed tuple →
 re-enabled through a `restore` row, read-back confirmed; changed or removed by an administrator
 → released untouched (audited `edge.host.restored`); (6) `verify_direct`: the raw bodies carry
-the origin entry again; (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
+the origin entry again (placeholder keys skipped the same way); (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
 `bindingDeferred`, edges published, attention `go_live_pending`); `release_requirement` retains
 everything and sets `bindingDeferred` so `require-edges` can re-apply the activation policy;
 `delete_relay` runs the deletion body only now (drain, destroy, remove; an edge that was never
@@ -3357,7 +3366,9 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
 `POST families/{slug}/vantage` and `POST families/{slug}/vantage/apply` (§ Checks from inside a
-country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
+country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**; a change
+to a list (`edge.sni.family.update`) records which fields moved (`changed`: label, enabled,
+requireH2, network), never the label itself.
 
 ### What members' reports say about a name
 
@@ -4129,8 +4140,10 @@ transport's names).
   (`GET sni/families` gives every list its `delivery` counts and `suggestions`: names in use,
   waiting for a test, to send, being checked, checked, failing, suggestions, and how many ports use
   it); "Add a name list" (the cover site is fixed at creation).
-- A name list's page: first where it is used, one block per port (`names/FamilyPort.svelte`) with
-  the node page's status line and next step for every node at once, then each node behind the
+- A name list's page: "Rename" by its title changes its name (`label`, up to 80 characters; only
+  admins see it; `components/NameDialog.svelte`). The slug is the page's link and never changes,
+  and nothing is sent to a node. Then where it is used, one block per port
+  (`names/FamilyPort.svelte`) with the node page's status line and next step for every node at once, then each node behind the
   port with what its members get and, where names wait for a test there, "Test one name". Then
   **one list** of its names and the names found for it (`names/lib/listWords.ts`), each with one
   state on the way to members: Suggested (with Add and Ignore on the row), Being checked, Waiting
@@ -4658,6 +4671,95 @@ location, walk order`, so the backup still leaves the primary's failure domain f
 - **Rollback.** Before deploying a build without it, run
   `edgeLocations:clearCountriesForRollback`: it clears every location's countries and moves the
   affected origins' epochs, so members are ordered by evidence alone again.
+
+### Addresses only for some countries
+
+A location meant for some countries (§ Locations meant for a country) may be **only** for them
+(the location's "Only for these countries"; `edgeLocations.forCountries.only`, since when;
+`convex/edgeAudiences.ts`, pure rules in `convex/lib/edges/audience.ts`). An address made there
+from then on is CONTAINED: when it is first published it takes the location's countries as its
+**audience** (`edges.audience`, frozen from then on), and only a member whose steered country is
+in it is ever handed it.
+
+- **What it buys:** a censor's account sees only the pool of the country it claims or is
+  guessed in, so one country's accounts never learn another country's addresses, and members
+  with no country never draw them. It does not hide a country's pool from that country's
+  censor: lanes and suspicion keep working inside it, and a small pool is easy to see whole
+  (keep at least 4 addresses there where accounts try to collect them).
+- **Who is handed one** (`assignEndpoints`): a member whose `edgeCountry` is in the audience.
+  Anyone else is not, failing closed: no stored country, the opt-out, a privacy-family key, a
+  mirror without the member's choice, and every member while steering is off. It keeps its seat
+  (as a trusted address does for an open member), so nobody else moves. The detector's proof
+  (`steeringAvoids`) counts a way around only where a member there may be handed it.
+- **The taint rule** (`audienceAtPublish`, the address lanes' own): an address takes the
+  audience only when it was made after the switch, was never published, was made by FCP (a
+  resource of its own, none adopted) and was never handed out under another row. A
+  replacement for an address everyone is handed never gets an audience; one for a contained
+  address takes its own location's when that location is only for every country it served.
+- **An only location holds only contained addresses** from then on: every first publication
+  there checks it (`audienceForPublish`: a rotation's publish, upkeep's, the operator's, an
+  adoption), and an address that cannot take the audience is never put in use there
+  (`audience_standby`, `edge.audience_tainted`). Addresses in use when it was switched on stay
+  for everyone. Automatic selection uses an only location only for a contained replacement it
+  covers (ranked first) or for its own count (§ Addresses per location); spares there are no one
+  else's.
+- **Never the template.** A contained address is never a transport's template address (the
+  backend's Host, and every raw body, follow it): `refreshTemplateEdges` skips it, no Host flip
+  follows it, and it is never a transport's first address in use
+  (`edge.audience_first_address`).
+- **The requirement:** an only location carries no basic coverage or diversity, and contained
+  addresses count for neither (nor for the rehearsal's groups); its count (§ Addresses per
+  location) counts only addresses contained to exactly its current countries. Lanes size and
+  clean up only addresses everyone is handed; a contained address that may be trusted is
+  trusted. A name for addresses moves only between addresses with the same audience.
+- **Switching it on** (`POST providers/{id}/locations/{locationId}/only {only: true}`, with
+  `…/only/preview` first) needs steering on (`edge.audience_needs_steering`), the rendezvous
+  walk on every node picking the location (`edge.audience_needs_spread`) and, for every
+  transport it carries for such a node, another location carrying it for everyone
+  (`edge.audience_leaves_none`). From then on such a node keeps the rendezvous walk, and a
+  legacy node may not add the location. **Switching it off** makes every address there
+  everyone's for good (members of every country are handed them from their next refresh);
+  switching on again starts from new addresses. Audited `edge.location.only`. Its countries may
+  change while it is on (not to none): addresses made before keep the audience they were given.
+- **Attention:** `audience_only_left` (critical) when every address of a transport in use is
+  contained; `audience_idle` (info) when contained addresses are in use while steering is off.
+- **The member's choice** of a country is limited to 3 changes a day (`account.country.day`):
+  each one is handed that country's own addresses.
+- **Rollback** (before `edgeLocations:clearCountriesForRollback`, which refuses while a
+  location is only): `edgeAudiences:retireAudiencesForRollback` (refused while a run holds such
+  a node; every location stops being only; addresses in use drain for the burned drain and are
+  destroyed, spares at once; `{widen: true}` makes those in use everyone's instead), then
+  `edgeAudiences:clearAudiencesForRollback` once none is left. A contained address that drains
+  is not kept as a spare (`edge.audience_drain_final`).
+- **The detector** (`steeringVeto`): evidence of a block only from countries outside a
+  contained address's audience is no reason to replace it (veto `outside_audience`: nobody there
+  is handed it). In mixed evidence the countries outside the audience are left out before the
+  rest is judged. Evidence naming no country (down everywhere) rotates as before, and "blocked
+  in every checked country, replace it" counts only the checked countries of its audience.
+- **Probes** check a contained address only from the checked countries of its audience (the
+  controls stay; `probes.runContext`). The round is planned and charged against the Globalping
+  budget for those countries too, so no test is spent where nobody is handed it, and the
+  per-country verdicts and guards see it only there.
+- **Editing the countries** of an only location leaves the addresses made for the old list
+  OUT OF DATE: they keep serving the members they were handed to (nobody is stranded), and
+  each holds its place in the pool and in the location's count until it is renewed, so the pool
+  never grows for that. Upkeep renews one per pass (step 5O,
+  `edgeReconcileMutations.renewOutOfDate`, audited `edge.audience_retired`):
+  - when the location already holds more current addresses of its transport than its count
+    asks for (at least one), it leaves, drained like a replaced one;
+  - otherwise a tested spare there takes its slot, contained to the new list, and it drains
+    (with spares going in use by hand, upkeep only waits);
+  - otherwise upkeep makes one spare there (automatic provisioning on; one at a time, and a
+    spare awaiting its test is waited for).
+
+  Adding a country never widens an existing address to it; removing one never strands the
+  countries that stay.
+
+- **The rehearsal** judges a candidate at an only location with the audience it takes at its
+  first publication, so a body with no country never counts on it and two-group coverage
+  cannot vanish when it becomes contained.
+- **Where it shows:** each address on the node page says "(only for Iran, Russia)", and the
+  preview's reasons say "only for IR, RU" for a contained endpoint.
 
 ### Latency over the whole path
 

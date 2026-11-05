@@ -78,6 +78,8 @@ export const ATTENTION_RANK = [
   'location_refused',
   'meant_for_blocked',
   'location_short',
+  'audience_only_left',
+  'audience_idle',
   'sni_family_thin',
   'health_stale',
   'pool_rebalance',

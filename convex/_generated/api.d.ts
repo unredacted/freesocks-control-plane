@@ -40,6 +40,7 @@ import type * as edgeAdmin from "../edgeAdmin.js";
 import type * as edgeAttribution from "../edgeAttribution.js";
 import type * as edgeClientCheck from "../edgeClientCheck.js";
 import type * as edgeCohorts from "../edgeCohorts.js";
+import type * as edgeAudiences from "../edgeAudiences.js";
 import type * as edgeCountry from "../edgeCountry.js";
 import type * as edgeCountryView from "../edgeCountryView.js";
 import type * as edgeDetector from "../edgeDetector.js";
@@ -249,6 +250,7 @@ declare const fullApi: ApiFromModules<{
   edgeAttribution: typeof edgeAttribution;
   edgeClientCheck: typeof edgeClientCheck;
   edgeCohorts: typeof edgeCohorts;
+  edgeAudiences: typeof edgeAudiences;
   edgeCountry: typeof edgeCountry;
   edgeCountryView: typeof edgeCountryView;
   edgeDetector: typeof edgeDetector;

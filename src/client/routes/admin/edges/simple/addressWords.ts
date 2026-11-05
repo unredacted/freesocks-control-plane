@@ -59,14 +59,23 @@ export function addressHealthLine(e: Pick<EdgeAdmin, 'health' | 'reachability'>)
 
 const STATE_WORD = { published: 'In use', unpublished: 'Spare', draining: 'Retiring' } as const;
 
-/** "In use", "In use (trusted)" while address lanes are on, "Spare", "Retiring". */
+/**
+ * "In use", "In use (trusted)" while address lanes are on, "Spare", "Retiring",
+ * and "(only for Iran, Russia)" for an address handed only to members in some
+ * countries (`audience`, docs/edges.md).
+ */
 export function addressStateWord(
-  e: Pick<EdgeAdmin, 'publication' | 'lane'>,
+  e: Pick<EdgeAdmin, 'publication' | 'lane' | 'audience'>,
   lanes: boolean,
 ): string {
   const word = STATE_WORD[e.publication];
-  if (!lanes || e.publication !== 'published') return word;
-  return `${word} (${e.lane === 'trusted' ? 'trusted' : 'open'})`;
+  const lane =
+    lanes && e.publication === 'published' ? ` (${e.lane === 'trusted' ? 'trusted' : 'open'})` : '';
+  const only =
+    e.audience.length > 0
+      ? ` (only for ${e.audience.map((c) => countryName(c, 'en')).join(', ')})`
+      : '';
+  return `${word}${lane}${only}`;
 }
 
 export const CHECKED_BY_FCP = "checked by FCP's client";

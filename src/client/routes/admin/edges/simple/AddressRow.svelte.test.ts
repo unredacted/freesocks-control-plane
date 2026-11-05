@@ -25,6 +25,7 @@ function edge(over: Record<string, unknown> = {}): EdgeAdmin {
     status: 'active',
     publication: 'published',
     lane: null,
+    audience: [],
     layer: 'l4',
     managed: true,
     health: 'online',

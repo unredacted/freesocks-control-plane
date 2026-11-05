@@ -322,6 +322,7 @@ export function toPublishedEdge(
     ...(blockedIn.length > 0 ? { blockedIn } : {}),
     ...(meantFor.length > 0 ? { meantFor: [...meantFor] } : {}),
     ...(edge.lane === 'trusted' ? { lane: 'trusted' as const } : {}),
+    ...(edge.audience && edge.audience.length > 0 ? { audience: [...edge.audience] } : {}),
     ...((edge.layer ?? 'l4') === 'l7' && edge.frontQualification?.ok
       ? { proofExpiresAt: edge.frontQualification.expiresAt }
       : {}),

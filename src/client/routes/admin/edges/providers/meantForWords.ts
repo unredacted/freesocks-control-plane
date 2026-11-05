@@ -51,3 +51,24 @@ export function estimateLines(
     return `${where}: ${parts.join(', ')} of members get a different first address.`;
   });
 }
+
+/**
+ * The words of a location's "only for these countries" switch (docs/edges.md
+ * "Addresses only for some countries").
+ */
+export function onlyForWords(
+  codes: readonly string[],
+  nameOf: (code: string) => string,
+): { line: (only: boolean) => string; on: string; off: string; caveat: string } {
+  const list = countryList(codes, nameOf);
+  return {
+    line: (only) =>
+      only
+        ? `New addresses here are only for members in ${list}.`
+        : 'Addresses here are for everyone.',
+    on: `Addresses made here from now on are handed only to members in ${list}. Addresses in use now stay for everyone, and spares made before now are never put in use here.`,
+    off: 'Every address here becomes everyone’s again, for good: members anywhere are handed them. Switching it on again starts from new addresses.',
+    caveat:
+      'This keeps other countries’ members, and members with no country, from ever being handed these addresses. It does not hide them from accounts in those countries: keep at least 4 addresses here where accounts try to collect them.',
+  };
+}

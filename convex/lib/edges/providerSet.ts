@@ -44,6 +44,14 @@ export interface SetPick {
    * rule without it: at least one published address of any listener.
    */
   want?: number;
+  /**
+   * The location is ONLY for these countries (lib/edges/audience.ts): it is no
+   * carrier of basic coverage or diversity (its addresses serve some members
+   * only), and its count counts the addresses contained there. One an edit of
+   * the countries left out of date counts too: it holds its place until step 5O
+   * renews it in its own slot, so the pool never grows for that.
+   */
+  onlyCodes?: string[];
 }
 
 export interface SetListener {
@@ -58,7 +66,12 @@ export interface PublishedRef {
   locationId: string | null;
   provider: string | null;
   locationKey: string | null;
+  /** Contained to these countries (`edges.audience`): never covers everyone. */
+  audience?: readonly string[];
 }
+
+/** An address everyone may be handed (the only kind coverage and diversity count). */
+const forEveryone = (p: { audience?: readonly string[] }) => !p.audience || p.audience.length === 0;
 
 export type GroupBy = 'provider' | 'location';
 
@@ -89,7 +102,13 @@ export interface Requirement {
    * Picks with an address count (`SetPick.want`), not cooling: how many each of
    * the listeners it carries needs there. Empty without counts.
    */
-  wants: Array<{ locationId: string; want: number; listenerKeys: string[] }>;
+  wants: Array<{
+    locationId: string;
+    want: number;
+    listenerKeys: string[];
+    /** An only location's countries: only addresses contained to exactly these count. */
+    onlyCodes?: string[];
+  }>;
 }
 
 export interface Target {
@@ -149,7 +168,8 @@ export function requirementOf(
       new Set(all.map((p) => p.provider)).size <= 1 ? 'location' : 'provider';
     const groups = new Map<string, string[]>();
     for (const p of all) {
-      if (cooling.has(p.locationId)) continue;
+      // An only location serves some members only: no carrier of coverage.
+      if (cooling.has(p.locationId) || p.onlyCodes?.length) continue;
       const g = groupBy === 'provider' ? p.provider : p.locationKey;
       groups.set(g, [...(groups.get(g) ?? []), p.locationId]);
       carrying.add(p.locationId);
@@ -173,10 +193,16 @@ export function requirementOf(
   for (const p of picks) {
     const want = pickWant(p.want);
     if (want === undefined || cooling.has(p.locationId)) continue;
-    const listenerKeys = out
-      .filter((l) => [...l.groups.values()].some((ps) => ps.includes(p.locationId)))
+    const listenerKeys = listeners
+      .filter((l) => l.carriers.includes(p.locationId))
       .map((l) => l.listenerKey);
-    if (listenerKeys.length > 0) wants.push({ locationId: p.locationId, want, listenerKeys });
+    if (listenerKeys.length > 0)
+      wants.push({
+        locationId: p.locationId,
+        want,
+        listenerKeys,
+        ...(p.onlyCodes?.length ? { onlyCodes: [...p.onlyCodes].sort() } : {}),
+      });
   }
   return {
     hasSet: true,
@@ -205,8 +231,10 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
   const listenerTargets: Target[] = [];
   const pickTargets: Target[] = [];
   // Per listener: the groups still wanted and how many.
+  // Coverage and diversity count only addresses everyone may be handed.
+  const open = published.filter(forEveryone);
   const need = req.listeners.map((l) => {
-    const pubs = published.filter((p) => p.listenerKey === l.listenerKey);
+    const pubs = open.filter((p) => p.listenerKey === l.listenerKey);
     const have = new Set(
       pubs.map((p) => groupOf(l.groupBy, p)).filter((g): g is string => g !== null),
     );
@@ -218,7 +246,7 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
     return { l, fresh, units, any };
   });
   const coveredPicks = new Set(
-    published.map((p) => p.locationId).filter((id): id is string => id !== null),
+    open.map((p) => p.locationId).filter((id): id is string => id !== null),
   );
   const residualPicks = req.picks.filter((p) => !coveredPicks.has(p));
   // Max flow over listener units x (listener, group) x residual picks.
@@ -264,7 +292,7 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
     );
     const fresh = carried.find((l) => {
       const g = [...l.groups.entries()].find(([, ps]) => ps.includes(p))?.[0];
-      return !published.some((x) => x.listenerKey === l.listenerKey && groupOf(l.groupBy, x) === g);
+      return !open.some((x) => x.listenerKey === l.listenerKey && groupOf(l.groupBy, x) === g);
     });
     const l = fresh ?? carried[0];
     if (!l) continue;
@@ -276,8 +304,10 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
     for (const listenerKey of w.listenerKeys) {
       const here = (t: { listenerKey: string; locationId: string | null }) =>
         t.listenerKey === listenerKey && t.locationId === w.locationId;
+      // At an only location, what is contained there counts (out of date or not).
+      const counts = (p: PublishedRef) => !w.onlyCodes || !forEveryone(p);
       const have =
-        published.filter(here).length +
+        published.filter((p) => here(p) && counts(p)).length +
         listenerTargets.filter(here).length +
         pickTargets.filter(here).length;
       for (let k = have; k < w.want; k++)
@@ -322,8 +352,10 @@ export function keepsCounts(
   // The addresses of its transport at its location, counted as they are: a
   // removal's gap may show up in the cover as another kind of target (the only
   // address of a pick with a count of one), so the count deficit cannot tell.
+  const counted = (p: PublishedRef) => !w.onlyCodes || !forEveryone(p);
+  if (!counted(e)) return true;
   const here = published.filter(
-    (p) => p.listenerKey === e.listenerKey && p.locationId === e.locationId,
+    (p) => p.listenerKey === e.listenerKey && p.locationId === e.locationId && counted(p),
   ).length;
   return here - 1 >= w.want;
 }
@@ -378,6 +410,8 @@ export interface GroupedEdge {
   provider: string;
   locationKey?: string | null;
   eligible?: boolean;
+  /** Contained (`edges.audience`): never in a body with no country. */
+  audience?: readonly string[];
 }
 
 /**
@@ -389,8 +423,9 @@ export function bodyGroups(
   published: readonly GroupedEdge[],
   listenerKeys: readonly string[],
 ): { count: number; groupOf: (e: GroupedEdge) => string | null } {
+  // Only addresses everyone may be handed: a body with no country never holds a contained one.
   const pool = published.filter(
-    (e) => e.eligible !== false && listenerKeys.includes(e.listenerKey),
+    (e) => e.eligible !== false && !e.audience?.length && listenerKeys.includes(e.listenerKey),
   );
   const providers = new Set(pool.map((e) => e.provider));
   if (providers.size >= 2) return { count: providers.size, groupOf: (e) => e.provider };

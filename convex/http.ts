@@ -1665,8 +1665,42 @@ http.route({
     const region = typeof body.region === 'string' && body.region.length <= 2 ? body.region : null;
     if (body.region !== null && body.region !== undefined && region === null)
       return errorJson('validation', 'unknown region', 400);
+    // Choosing another country a few times a day at most: each one is handed
+    // that country's own addresses (docs/edges.md "Addresses only for some
+    // countries"). Clearing it, the opt-out and the same country again are free.
+    const next = region ? region.trim().toUpperCase() : null;
+    let counted = false;
+    if (next && next !== 'ZZ') {
+      const before = await ctx.runQuery(internal.memberCountry.memberView, {
+        userId: member.userId,
+      });
+      if (before.choice !== next) {
+        const day = await ctx.runMutation(internal.rateLimits.enforce, {
+          policyKey: 'account.country.day',
+          subject: member.userId,
+        });
+        if (!day.allowed)
+          return errorJson(
+            'rate_limit.country_day',
+            'You can change your country a few times a day. Try again later.',
+            429,
+            { retryAfterMs: day.retryAfterMs },
+          );
+        counted = true;
+      }
+    }
     try {
-      await ctx.runMutation(internal.memberCountry.setChoice, { userId: member.userId, region });
+      try {
+        await ctx.runMutation(internal.memberCountry.setChoice, { userId: member.userId, region });
+      } catch (err) {
+        // Only a change that lands counts against the day's allowance.
+        if (counted)
+          await ctx.runMutation(internal.rateLimits.release, {
+            policyKey: 'account.country.day',
+            subject: member.userId,
+          });
+        throw err;
+      }
       return json(await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }));
     } catch (err) {
       // Only the mutation's own refusal is the member's mistake; anything else
