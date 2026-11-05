@@ -548,6 +548,7 @@ export type MessageKey =
   | "region.helpDetect"
   | "region.saved"
   | "region.title"
+  | "region.tooOften"
   | "renew.body"
   | "renew.contact"
   | "renew.donate"

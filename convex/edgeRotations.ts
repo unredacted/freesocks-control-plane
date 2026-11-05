@@ -190,6 +190,8 @@ import { replacementPlacement, replacementPolicyOf } from './lib/edges/replaceme
 import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } from './edgeLanes';
 import { edgeLaneOf } from './lib/edges/lanes';
 import { noteBlockedIn } from './edgeTrust';
+import { audienceForPublish } from './edgeAudiences';
+import { locationTakes, onlyCodesOf } from './lib/edges/audience';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -2380,6 +2382,53 @@ export const applyPublish = internalMutation({
       }
       if (approval.kind === 'candidate') await recordCandidateEdge(ctx, approval.run, to._id);
     }
+    // Its audience, fixed now at its first publication (docs/edges.md
+    // "Addresses only for some countries"): at an only location an address that
+    // cannot take it stays a spare, and a replace leaves its target published.
+    const swappingOut =
+      r.kind === 'replace' && r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
+    const audience = await audienceForPublish(ctx.db, to, swappingOut);
+    if ('refused' in audience) {
+      await ctx.db.patch(rotationId, {
+        phase: 'finalizing',
+        stepVersion: next,
+        events: appendEvent(r.events, {
+          at: now,
+          level: 'warn',
+          code: 'audience_standby',
+          detail: audience.refused,
+        }),
+        updatedAt: now,
+      });
+      await ctx.db.patch(r.relayId, {
+        standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id],
+        updatedAt: now,
+      });
+      await scheduleStep(ctx, rotationId, 0);
+      return { ok: true as const, poolIndex: null, needsHostFlip: false };
+    }
+    const contained = !!audience.patch.audience;
+    // Nor is it ever a transport's first address (the backend's Host and every
+    // raw body follow that one): with none in use for everyone it stays a spare.
+    if (contained && !(await ctx.db.get(to.listenerId))?.templateEdgeId) {
+      await ctx.db.patch(rotationId, {
+        phase: 'finalizing',
+        stepVersion: next,
+        events: appendEvent(r.events, {
+          at: now,
+          level: 'warn',
+          code: 'audience_standby',
+          detail: 'audience_first_address',
+        }),
+        updatedAt: now,
+      });
+      await ctx.db.patch(r.relayId, {
+        standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id],
+        updatedAt: now,
+      });
+      await scheduleStep(ctx, rotationId, 0);
+      return { ok: true as const, poolIndex: null, needsHostFlip: false };
+    }
     if (r.kind === 'replace') {
       const target = r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
       if (!target || target.publication !== 'published' || target.poolIndex === undefined)
@@ -2442,11 +2491,12 @@ export const applyPublish = internalMutation({
       poolIndex = alloc.index;
     }
     // Its lane, fixed now at its first publication (before `publishedAt` is set).
-    const lane = await laneForPublish(ctx.db, origin, to, replaced);
+    const lane = await laneForPublish(ctx.db, origin, to, replaced, { contained });
     await ctx.db.patch(to._id, {
       publication: 'published',
       poolIndex,
       ...lane,
+      ...audience.patch,
       publishedAt: now,
       // The re-block guard reads where a replacement came from.
       ...(previousBinding
@@ -2461,6 +2511,7 @@ export const applyPublish = internalMutation({
         from: replaced,
         to,
         toLane: edgeLaneOf({ lane: lane.lane ?? to.lane }),
+        toAudience: audience.patch.audience ?? to.audience,
         now,
         rotationId,
       });
@@ -2497,12 +2548,15 @@ export const applyPublish = internalMutation({
     // the flip decision reads it: a stale pointer (at a drained edge) would
     // otherwise let a replace of the real template edge skip the Host flip.
     await refreshTemplateEdges(ctx, origin);
-    const needsHostFlip = await needsHostFlipFor(
-      ctx,
-      origin,
-      to,
-      r.kind === 'replace' && r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null,
-    );
+    // A contained address never becomes the template: no Host follows it.
+    const needsHostFlip =
+      !contained &&
+      (await needsHostFlipFor(
+        ctx,
+        origin,
+        to,
+        r.kind === 'replace' && r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null,
+      ));
     await ctx.db.patch(rotationId, {
       phase: needsHostFlip ? 'host_flipping' : 'finalizing',
       stepVersion: next,
@@ -3459,6 +3513,8 @@ export async function selectionContext(
     ? new Set(origin.providerSet.map((p) => p.locationId as string))
     : null;
   const skipLocations = new Set<string>();
+  /** Only locations that may take this target (a contained replacement, a count fill). */
+  const fitsAudience = new Set<string>();
   const standbyCandidates = [];
   // A transport scoped to a network takes a spare only from it (docs/edges.md "Networks").
   const rangesOf = new Map<string, NetworkPrefixes | null>();
@@ -3468,10 +3524,29 @@ export async function selectionContext(
     if (!rangesOf.has(key)) rangesOf.set(key, await networkPrefixes(ctx.db, l.networkId));
     return edgeNetworkVerdict(e.addresses, rangesOf.get(key)) === 'on';
   };
+  // An only location takes only a contained replacement it covers, or its own
+  // count's fill (lib/edges/audience.ts `locationTakes`); a spare there is no
+  // one else's, unless the operator named it.
+  const takesAt = new Map<string, boolean>();
+  const locationTakesHere = async (locationId: string): Promise<boolean> => {
+    if (!takesAt.has(locationId)) {
+      const l = await ctx.db.get(locationId as Id<'edgeLocations'>);
+      takesAt.set(
+        locationId,
+        locationTakes(l?.forCountries ?? null, {
+          audience: targetEdge?.audience ?? null,
+          countFillHere: rotation.onlyLocationId === locationId,
+        }),
+      );
+    }
+    return takesAt.get(locationId)!;
+  };
   for (const e of edges) {
     const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
     const loc = (e.locationId as string | undefined) ?? null;
     if (automatic && loc && (cooling.has(loc) || (inSet && !inSet.has(loc))))
+      skipLocations.add(loc);
+    if (loc && !rotation.requestedSpareEdgeId && !(await locationTakesHere(loc)))
       skipLocations.add(loc);
     standbyCandidates.push({
       id: e._id,
@@ -3726,6 +3801,9 @@ export async function selectionContext(
     const spend =
       typeof a.cost?.monthlyCap === 'number' ? await spendOf(ctx, a, managed.edges) : null;
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
+      // An only location takes no address everyone may be handed.
+      if (!(await locationTakesHere(loc._id as string))) continue;
+      if (onlyCodesOf(loc.forCountries)) fitsAudience.add(loc._id as string);
       // A zone where this front could not get its certificate is never picked.
       const certificate = certificateRefusalFor(
         a,
@@ -3859,6 +3937,8 @@ export async function selectionContext(
         }).lowersDeficit,
         providerNew: !mine.some((p) => p.provider === c.provider),
         locationKeyNew: !mine.some((p) => p.locationKey === locationKey),
+        // A contained target's replacement goes to an only location covering its countries first.
+        audienceFit: !!targetEdge?.audience?.length && fitsAudience.has(c.locationId!),
       });
     }
     // Upkeep filling a free slot buys only what can take one: with every free

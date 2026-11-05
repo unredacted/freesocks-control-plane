@@ -417,3 +417,34 @@ describe('addresses per location (a pick count)', () => {
     expect(keepsCounts(one, [...single, pub('a', X)], 0)).toBe(true);
   });
 });
+
+describe('addresses only for some countries in the requirement', () => {
+  const both: SetListener[] = [{ listenerKey: 'a', carriers: ['x', 'y'] }];
+  const onlyX = { ...X, onlyCodes: ['IR'] };
+  const contained = (p: SetPick, audience: string[]): PublishedRef => ({
+    ...pub('a', p),
+    audience,
+  });
+
+  test('an only location is no carrier of coverage or diversity, and asks for nothing without a count', () => {
+    const req = requirementOf(both, [onlyX, Y]);
+    expect(req.picks).toEqual(['y']);
+    expect(req.listeners[0]!.required).toBe(1);
+    // A contained address covers nobody: the transport still needs one for everyone.
+    expect(coverTargets(req, [contained(onlyX, ['IR'])])).toEqual([
+      { listenerKey: 'a', locationId: 'y', coversListener: true },
+    ]);
+  });
+
+  test('its count counts only addresses contained to exactly its countries', () => {
+    const req = requirementOf(both, [{ ...onlyX, want: 2 }, Y]);
+    const published = [pub('a', Y), contained(onlyX, ['IR']), contained(onlyX, ['IR', 'RU'])];
+    // One current, one out of date: one more is asked for.
+    expect(coverTargets(req, published).filter((t) => t.count)).toEqual([
+      { listenerKey: 'a', locationId: 'x', coversListener: false, count: true },
+    ]);
+    // Cleanup keeps the current one; the out-of-date one does not count.
+    expect(keepsCounts(req, published, 1)).toBe(false);
+    expect(keepsCounts(req, published, 2)).toBe(true);
+  });
+});

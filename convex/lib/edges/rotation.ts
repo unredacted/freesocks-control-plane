@@ -277,6 +277,11 @@ export interface SetLocationCandidate extends AccountCandidate {
   providerNew: boolean;
   /** No edge of this location key is published for the listener yet. */
   locationKeyNew: boolean;
+  /**
+   * An only location covering a contained target's countries (its replacement
+   * stays contained): ranked first. Absent = false.
+   */
+  audienceFit?: boolean;
 }
 
 /**
@@ -305,6 +310,7 @@ export function pickLocation(
   // (upkeep then starts nothing) instead of reading as exhausted accounts.
   const usable = (opts.onlyLowering ? withRoom.filter((a) => a.lowersDeficit) : withRoom).sort(
     (a, b) =>
+      Number(b.audienceFit ?? false) - Number(a.audienceFit ?? false) ||
       Number(b.lowersDeficit) - Number(a.lowersDeficit) ||
       Number(b.providerNew) - Number(a.providerNew) ||
       Number(b.locationKeyNew) - Number(a.locationKeyNew) ||

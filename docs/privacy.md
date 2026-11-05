@@ -51,8 +51,10 @@ accidentally regress it).
     (`subscriptions.sniRegion`), a country on the censored-country list (Admin -> Settings) or
     the opt-out, "Opt-out: do not use my location" (`ZZ`). While an answer is set nothing is
     guessed, and any guess is cleared. The opt-out stores no country at all: the key gets the
-    universal server names and the same address spread as a key with no country, and nothing
-    is ordered by where it is. Automatic removes the answer.
+    universal server names and the same address spread as a key with no country, nothing is
+    ordered by where it is, and it is never handed an address only for some countries. A
+    country can be chosen anew at most 3 times a day (`account.country.day`: the count is kept
+    per account in the rate-limit table, never the country). Automatic removes the answer.
   - **The guess.** Only with `delivery.country.detect` on (Admin -> Settings, off by default)
     and only on Automatic: the country the CDN reports (`CF-IPCountry`, read only when
     `CF_FRONTED=true`) is stored on the subscription (`regionSeenCountry`, first and last

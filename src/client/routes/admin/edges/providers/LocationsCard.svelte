@@ -58,7 +58,8 @@
   import { invalidateSni, networksQuery, setLocationNetwork } from '../../../../lib/sniApi';
   import { countryName } from '@client/lib/countries';
   import MeantForDialog from './MeantForDialog.svelte';
-  import { meantForLine } from './meantForWords';
+  import OnlyForDialog from './OnlyForDialog.svelte';
+  import { meantForLine, onlyForWords } from './meantForWords';
   import MemberPlaceDialog from './MemberPlaceDialog.svelte';
   import { CDN_PLACE_LINE, memberPlaceLine } from './memberPlaceWords';
 
@@ -148,6 +149,9 @@
   let adding = $state(false);
   // The countries a location is meant for (docs/edges.md "Locations meant for a country").
   let meantFor = $state<EdgeLocationAdmin | null>(null);
+  /** The location whose "only for these countries" switch is being changed. */
+  let onlyFor = $state<EdgeLocationAdmin | null>(null);
+  let onlyOpen = $state(false);
   let meantOpen = $state(false);
   // Where members are told it is (docs/edges.md "Names in apps").
   let placeFor = $state<EdgeLocationAdmin | null>(null);
@@ -294,6 +298,19 @@
             {/if}
             {#if l.costNote}<p class="text-xs">{l.costNote}</p>{/if}
             <p class="text-xs">{meantForLine(l.meantFor, (c) => countryName(c, 'en'))}</p>
+            {#if !zones && l.meantFor.length > 0}
+              <p class="text-xs">
+                {onlyForWords(l.meantFor, (c) => countryName(c, 'en')).line(l.onlyForMeant)}
+                <button
+                  type="button"
+                  class="text-primary min-h-11 underline-offset-2 hover:underline sm:min-h-0"
+                  onclick={() => {
+                    onlyFor = l;
+                    onlyOpen = true;
+                  }}>{l.onlyForMeant ? 'Back to everyone' : 'Only for these countries'}</button
+                >
+              </p>
+            {/if}
             <p class="text-xs">{zones ? CDN_PLACE_LINE : memberPlaceLine(l.memberPlace)}</p>
             {#if !zones}
               <label class="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
@@ -463,6 +480,7 @@
 <PlanDialog bind:open={planOpen} {account} location={planFor} {sizeKey} />
 
 <MeantForDialog bind:open={meantOpen} {account} location={meantFor} />
+<OnlyForDialog bind:open={onlyOpen} {account} location={onlyFor} />
 
 <MemberPlaceDialog bind:open={placeOpen} {account} location={placeFor} />
 

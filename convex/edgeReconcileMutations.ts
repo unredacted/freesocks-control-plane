@@ -24,6 +24,7 @@ import { isCooling } from './lib/edges/setState';
 import { publicationApproval, startRotation } from './edgeRotations';
 import { recordCandidateEdge } from './nodeActivation';
 import { laneForPublish } from './edgeLanes';
+import { audienceForPublish } from './edgeAudiences';
 
 export const markDestroyed = internalMutation({
   args: { edgeId: v.id('edges') },
@@ -284,10 +285,19 @@ export const publishStandby = internalMutation({
       // stays a spare; one of the node's running activation is its candidate.
       const approval = await publicationApproval(ctx, origin, edge);
       if (approval.kind === 'refused') continue;
+      // Its audience at its first publication: a spare an only location cannot
+      // hand to its countries stays a spare (docs/edges.md "Addresses only for
+      // some countries").
+      const audience = await audienceForPublish(ctx.db, edge);
+      if ('refused' in audience) continue;
+      const listener = await ctx.db.get(edge.listenerId);
+      // A contained address is never a transport's first one: the backend's
+      // Host (and every raw body) would carry it to everyone.
+      if (audience.patch.audience && !listener?.templateEdgeId) continue;
       if (publish === false)
         return { published: false, rotationId: null, awaitingVerification, ready: true };
-      const listener = await ctx.db.get(edge.listenerId);
       const becomesTemplate =
+        !audience.patch.audience &&
         origin.hostMode === 'fcp' &&
         (!listener?.templateEdgeId || listener.templateEdgeId === edge._id);
       if (becomesTemplate) {
@@ -312,7 +322,10 @@ export const publishStandby = internalMutation({
       await ctx.db.patch(edgeId, {
         publication: 'published',
         poolIndex: idx,
-        ...(await laneForPublish(ctx.db, origin, edge)),
+        ...(await laneForPublish(ctx.db, origin, edge, null, {
+          contained: !!audience.patch.audience,
+        })),
+        ...audience.patch,
         publishedAt: now,
         updatedAt: now,
       });

@@ -794,7 +794,8 @@
     "chosenElsewhere": "You opted out: we do not use your location.",
     "change": "Change",
     "saved": "Saved. Refresh your app to pick up the change.",
-    "failed": "That did not save. Try again."
+    "failed": "That did not save. Try again.",
+    "tooOften": "You can change your country a few times a day. Try again tomorrow."
   },
   "delivery": {
     "title": "Connection mode",

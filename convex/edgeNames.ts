@@ -550,6 +550,8 @@ export async function moveNameOnReplace(
     from: Edge;
     to: Edge;
     toLane: 'open' | 'trusted';
+    /** The audience the new address takes at this publication (absent = everyone). */
+    toAudience?: readonly string[];
     now: number;
     rotationId?: Id<'edgeRotations'>;
   },
@@ -563,12 +565,13 @@ export async function moveNameOnReplace(
     eligibleZones: eligible.map((z) => z.locationId as string),
     now: a.now,
     name,
-    from: { listenerId: a.from.listenerId, lane: edgeLaneOf(a.from) },
+    from: { listenerId: a.from.listenerId, lane: edgeLaneOf(a.from), audience: a.from.audience },
     to: {
       listenerId: a.to.listenerId,
       lane: a.toLane,
       layer: a.to.layer ?? 'l4',
       v4: a.to.addresses.v4 ?? null,
+      audience: a.toAudience,
     },
   });
   if (!verdict.move || !name) return verdict;
