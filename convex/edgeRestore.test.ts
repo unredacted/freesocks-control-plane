@@ -551,3 +551,92 @@ describe('acceptance 25: release_requirement', () => {
     expect(await w.step()).toMatchObject({ phase: 'release_binding', advanced: true });
   });
 });
+
+describe('a cohort judged past the placeholder of a disabled key', () => {
+  type World = Awaited<ReturnType<typeof world>>;
+  /** Another active key of the same cohort (placement squad-1, pinned to the node), made later. */
+  async function anotherKey(w: World, n: number) {
+    await w.t.run(async (ctx) => {
+      const tier = (await ctx.db.query('tiers').first())!;
+      const userId = await ctx.db.insert('users', {
+        tierId: tier._id,
+        status: 'active',
+        supportId: `SUP-${n}`,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: `uuid-${n}`,
+        backendShortId: `short-${n}`,
+        backendServerId: w.serverId,
+        subscriptionUrl: `https://panel.example/sub/short-${n}`,
+        subscriptionMirrors: [],
+        subToken: `tok_${n}`,
+        backendPlacement: 'squad-1',
+        state: 'active',
+        pinnedNode: FIXTURE_NODE,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+    });
+  }
+  async function phasesOf(w: World) {
+    await w.t.mutation(internal.edgeRestore.start, {
+      relayId: w.relayId,
+      purpose: 'release_requirement',
+    });
+    const phases: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = await w.step();
+      if (r.done) break;
+      if (!r.advanced) return { phases, held: r.error };
+      phases.push(r.phase!);
+    }
+    return { phases, held: null };
+  }
+  const ALL = ['settle', 'verify_fcp_raw', 'release_binding', 'restore', 'verify_direct', 'finish'];
+
+  test('its oldest key disabled, a later one good: both raw checks pass on the later key', async () => {
+    const w = await world({ bound: true });
+    await anotherKey(w, 2);
+    // The cohort's representative is its oldest key: the backend disabled it.
+    w.panel.disabledKeys.add('short-1');
+    expect(await phasesOf(w)).toEqual({ phases: ALL, held: null });
+    expect((await w.binding())?.state).toBe('released');
+  });
+
+  test('every key disabled: nobody there is served anything, so the cohort passes', async () => {
+    const w = await world({ bound: true });
+    await anotherKey(w, 2);
+    w.panel.disabledKeys.add('short-1');
+    w.panel.disabledKeys.add('short-2');
+    expect(await phasesOf(w)).toEqual({ phases: ALL, held: null });
+  });
+
+  test('a real body without an FCP entry still holds the release, past a disabled key', async () => {
+    const w = await world({ bound: true });
+    await anotherKey(w, 2);
+    w.panel.disabledKeys.add('short-1');
+    // The node's FCP Host now points somewhere FCP does not know, under another name.
+    Object.assign(w.panel.find(FCP_UUID), { remark: 'someone-else', address: '203.0.113.9' });
+    expect(await phasesOf(w)).toEqual({
+      phases: ['settle', 'verify_fcp_raw'],
+      held: 'no_fcp_entry:squad-1',
+    });
+    expect((await w.binding())?.state).toBe('active');
+  });
+
+  test('more disabled keys than one read holds: it holds rather than judge keys it never read', async () => {
+    const w = await world({ bound: true });
+    w.panel.disabledKeys.add('short-1');
+    for (let n = 2; n <= 26; n++) {
+      await anotherKey(w, n);
+      w.panel.disabledKeys.add(`short-${n}`);
+    }
+    expect(await phasesOf(w)).toEqual({
+      phases: ['settle', 'verify_fcp_raw'],
+      held: 'placeholders_only:squad-1',
+    });
+  });
+});
