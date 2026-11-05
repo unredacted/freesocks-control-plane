@@ -537,6 +537,8 @@ describe('buildCountryView', () => {
       names: 2,
       at: NOW - H,
       flagged: true,
+      // Each address's own figure; neither rests on 3 pairs, so none is clear.
+      addresses: { timed: 2, lowMs: 80, highMs: 120, clear: 0 },
     });
     const quiet = buildCountryView(
       [origin()],
@@ -554,6 +556,72 @@ describe('buildCountryView', () => {
       buildCountryView([origin()], (n) => skewed[n] ?? null, SETTINGS).origins[0]!.listeners[0]!
         .targetAdds,
     ).toMatchObject({ ms: 60, oursMs: 65, pairs: 4, names: 2, flagged: true });
+  });
+
+  test('the handshake gap per address: one quick address clears the node’s leg', () => {
+    const timed = (addsMs: number, target: string, pairs = 3): NameFacts => ({
+      family: 'f',
+      qualified: true,
+      mark: null,
+      checks: null,
+      reports: null,
+      realHost: {
+        at: NOW - H,
+        target,
+        realAddress: '192.0.2.50',
+        reading: 'works',
+        counts: {
+          works: 3,
+          nameBlocked: 0,
+          addressBlocked: 0,
+          ipNameMatch: 0,
+          oursOnly: 0,
+          inconclusive: 0,
+        },
+        vantages: 3,
+        networks: 3,
+        timing: { pairs, oursMs: addsMs + 10, realMs: 10, addsMs },
+      },
+    });
+    // A near address (20 ms) and a far one (330 ms): the transport's median
+    // flags, and the near address shows the node's leg to its target is short.
+    const facts: Record<string, NameFacts> = {
+      'n1.example': timed(20, 'edge:a:198.51.100.1:443'),
+      'n2.example': timed(330, 'edge:b:198.51.100.2:443'),
+      'n3.example': timed(334, 'edge:b:198.51.100.2:443'),
+    };
+    const l = buildCountryView([origin()], (n) => facts[n] ?? null, SETTINGS).origins[0]!
+      .listeners[0]!;
+    expect(l.targetAdds).toMatchObject({
+      flagged: true,
+      addresses: { timed: 2, lowMs: 20, highMs: 332, clear: 1 },
+    });
+    const [a, b, spare] = l.addresses;
+    expect(a!.evidence.realHost?.timing).toMatchObject({
+      ms: 20,
+      pairs: 3,
+      names: 1,
+      flagged: false,
+      addresses: null,
+    });
+    expect(b!.evidence.realHost?.timing).toMatchObject({
+      ms: 332,
+      oursMs: 342,
+      pairs: 6,
+      names: 2,
+      flagged: true,
+      addresses: null,
+    });
+    expect(spare!.evidence.realHost).toBeNull();
+    // Every address slow: nothing clears the node's leg.
+    const allFar: Record<string, NameFacts> = {
+      'n1.example': timed(300, 'edge:a:198.51.100.1:443'),
+      'n2.example': timed(330, 'edge:b:198.51.100.2:443'),
+    };
+    expect(
+      buildCountryView([origin()], (n) => allFar[n] ?? null, SETTINGS).origins[0]!.listeners[0]!
+        .targetAdds?.addresses,
+    ).toEqual({ timed: 2, lowMs: 300, highMs: 330, clear: 0 });
   });
 
   test('a retired name still draining is listed; one past its drain is not', () => {

@@ -46,6 +46,7 @@
     reportsLine,
     realHostLine,
     addressRealHostLine,
+    addressTimingLine,
     targetAddsLine,
     TARGET_ADDS_FLAG_WORDS,
     roundLine,
@@ -81,6 +82,7 @@
       probesLine(a, now),
       staleAnswersLine(a, now),
       addressRealHostLine(a, now),
+      addressTimingLine(a, now),
     ].filter((x): x is string => !!x);
   }
   function handedLine(a: CountryViewAddress): string | null {

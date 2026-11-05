@@ -202,9 +202,13 @@ export interface NameRealHost {
 }
 
 /**
- * What the transport's target adds to a handshake from this country, over the
- * timed real-host pairs of the transport's names (the median of the names'
- * medians, each weighted by its timed pairs). `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
+ * How much longer a handshake takes from this country on FCP's addresses than
+ * on the names' real sites, over the timed real-host pairs (the median of the
+ * names' medians, each weighted by its timed pairs). On one address the gap is
+ * its leg to the node (an L4 edge that accepts the connection itself puts that
+ * leg inside the handshake) plus the node's leg to the target; a transport's
+ * figure mixes its addresses, and `addresses` says how they differ.
+ * `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
  * `TARGET_ADDS_FLAG_MS` or more: a proposal, the owner decides.
  */
 export interface TargetAdds {
@@ -215,6 +219,13 @@ export interface TargetAdds {
   names: number;
   at: number;
   flagged: boolean;
+  /**
+   * A transport's figure only (null on one address's): its timed addresses,
+   * the lowest and highest of their own figures, and how many of them rest on
+   * enough pairs and stay under the flag. One such address shows the node's
+   * leg to the target is short, so a flagged gap is the slow addresses' own.
+   */
+  addresses: { timed: number; lowMs: number; highMs: number; clear: number } | null;
 }
 
 /** Timed pairs the flag needs (the name checks' default `minVantages`). A proposal. */
@@ -234,7 +245,11 @@ const medianOf = (xs: readonly number[]) => {
 const pairWeightedMedian = (xs: ReadonlyArray<{ value: number; pairs: number }>) =>
   medianOf(xs.flatMap((x) => Array.from({ length: Math.max(1, x.pairs) }, () => x.value)));
 
-/** The target leg of one transport, from its names' timed real-host pairs on its own addresses. */
+/**
+ * The handshake gap on the addresses with key prefixes `prefixes`, from the
+ * names' timed real-host pairs there. With more than one prefix it is a
+ * transport's figure, and each prefix's own figure feeds `addresses`.
+ */
 function targetAddsOn(
   prefixes: readonly string[],
   names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
@@ -250,6 +265,18 @@ function targetAddsOn(
     pairWeightedMedian(timed.map((r) => ({ value: pick(r.timing), pairs: r.timing.pairs })));
   const ms = weighted((t) => t.addsMs);
   const pairs = timed.reduce((s, r) => s + r.timing.pairs, 0);
+  let addresses: TargetAdds['addresses'] = null;
+  if (prefixes.length > 1) {
+    const each = prefixes
+      .map((p) => targetAddsOn([p], names))
+      .filter((t): t is TargetAdds => t !== null);
+    addresses = {
+      timed: each.length,
+      lowMs: Math.min(...each.map((t) => t.ms)),
+      highMs: Math.max(...each.map((t) => t.ms)),
+      clear: each.filter((t) => t.pairs >= TARGET_ADDS_MIN_PAIRS && !t.flagged).length,
+    };
+  }
   return {
     ms,
     oursMs: weighted((t) => t.oursMs),
@@ -258,6 +285,7 @@ function targetAddsOn(
     names: timed.length,
     at: Math.max(...timed.map((r) => r.at)),
     flagged: pairs >= TARGET_ADDS_MIN_PAIRS && ms >= TARGET_ADDS_FLAG_MS,
+    addresses,
   };
 }
 
@@ -267,6 +295,8 @@ export interface AddressRealHost {
   at: number;
   /** Each name's reading, as checked on this address. */
   names: Array<{ name: string; reading: RealHostReading }>;
+  /** The handshake gap on this address alone (null: no timed pair on it). */
+  timing: TargetAdds | null;
 }
 
 /** The names whose newest real-host batch measured the address with key prefix `prefix`. */
@@ -283,6 +313,7 @@ function realHostOn(
   return {
     at: Math.max(...hits.map((h) => h.at)),
     names: hits.map(({ name, reading }) => ({ name, reading })),
+    timing: targetAddsOn([prefix], names),
   };
 }
 
@@ -672,7 +703,7 @@ export interface ListenerView {
   members: Handed;
   /** With lanes on: what an open member there (a new or suspected account) is handed. */
   openMembers: Handed | null;
-  /** What the transport's target adds to a handshake from there (null: no timed pair). */
+  /** How much longer a handshake takes on its addresses than on the real sites (null: no timed pair). */
   targetAdds: TargetAdds | null;
 }
 

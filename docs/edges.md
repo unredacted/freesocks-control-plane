@@ -3627,10 +3627,12 @@ when, FCP's address measured, the real site's address, the reading, counts per c
 networks), re-read whenever that row is, ages out with the window like the rest of the row, and
 the country view judges the reading again from the stored counts with the floors of the moment.
 
-**Handshake timing (what the target adds).** A REALITY address hands every unauthenticated
+**Handshake timing (what the path adds).** A REALITY address hands every unauthenticated
 handshake through the node to the transport's target, so from one vantage its TLS handshake also
 carries the node-to-target round trip, while the name's real site answers in about one round
-trip. A censor can time that as well as FCP can. The same measurements already report their
+trip. On an L4 edge that accepts the connection itself (a proxying balancer), the connect ends at
+the edge, so the edge's own leg to the node lands inside the handshake too: the gap measured on an
+edge is its leg to the node plus the node's leg to the target. A censor can time that as well as FCP can. The same measurements already report their
 phases, and nothing extra is dialled: Globalping's HTTP result carries `timings.tcp` (the
 connect) and `timings.tls` (the handshake after it); RIPE Atlas `sslcert` carries `ttc` (the
 connect) and `rt` (from starting to connect to the server's answer), so its handshake phase is
@@ -3639,18 +3641,25 @@ dial the address literal, which also keeps DNS poisoning out of the reading). Fo
 which BOTH handshakes completed with both phases, each side's handshake beyond one round trip is
 `tlsMs - tcpMs` (the connect stands in for the round trip), and the target's share is ours minus
 the real site's. `realHost.timing` keeps the medians (`oursMs`, `realMs`, `addsMs`) and the
-pairs they rest on. The country view shows each name's figures and, per transport, "the
-transport's target adds about X ms" (the median of its names' medians, each counted once per
-timed pair behind it, so a name timed from one vantage cannot carry the figure; only names
-measured on that transport's own addresses).
+pairs they rest on. The country view shows each name's figures; under each address's evidence,
+the gap on that address alone (`realHost.timing` of the address view, from the names measured on
+it); and per transport, "a handshake on this transport's addresses takes about X ms longer" (the
+median of its names' medians, each counted once per timed pair behind it, so a name timed from one
+vantage cannot carry the figure; only names measured on that transport's own addresses). The
+transport's figure mixes its addresses, so it also carries their spread (`addresses`: how many are
+timed, the lowest and highest of their own figures, and how many rest on enough pairs and stay
+under the flag), and says the range when it is 50 ms or wider.
 
 Flag (a proposal; the owner decides): `addsMs` of **50 ms or more over at least 3 timed pairs**
 (`TARGET_ADDS_FLAG_MS`, `TARGET_ADDS_MIN_PAIRS`). A real site's own handshake adds a few
 milliseconds of work; a target in the node's metro adds under 10 ms, in its region 10 to 40 ms,
 across an ocean 80 ms or more. 50 ms sits above residential jitter between the paired checks and
-below any cross-continent leg, so a flagged transport is one whose target should move closer to
-its node (or the node to its target). The flag colours the line on the page and changes nothing
-else.
+below any cross-continent leg. Which leg is long follows from the addresses: when one address of
+the transport stays under the flag on enough pairs, the node's leg to its target is short, and the
+page says the slow addresses sit far from the node (move the node closer to them, or point them at
+a nearer node); when none does, it says the node sits far from its target or every address far
+from the node. On the node's own address (an origin that opted in) the gap is the target's leg
+alone. The flag colours the line on the page and changes nothing else.
 
 **Shown, not applied.** The country view shows each name's reading ("Real-site check: ...") and,
 under each address's evidence, what the names measured on it said. Nothing here changes a mark,

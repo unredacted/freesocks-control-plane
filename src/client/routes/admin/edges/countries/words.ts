@@ -10,6 +10,7 @@
  *   probesLine / roundLine / checksLine / reportsLine   one piece of evidence each
  *   staleAnswersLine                 probe sources whose last answer about an address is too old
  *   REAL_HOST_WORDS / realHostLine / addressRealHostLine   the real-host controls
+ *   targetAddsLine / addressTimingLine   the handshake gap per transport and per address
  *   handedWords                      what a member there is handed on one transport
  *   switchNotes                      what is off, and what that leaves the view without
  *   coverageNote / coverageLines     which outside probes answer from there, and why one went quiet
@@ -287,22 +288,58 @@ export function realHostLine(n: CountryViewName, now = Date.now()): string | nul
   return `Real-site check${site}: ${REAL_HOST_WORDS[r.reading].sentence} ${plural(r.vantages, 'vantage')} on ${plural(r.networks, 'network')}, ${relativeTime(r.at, now)}.${timed}`;
 }
 
+/** The flag's threshold in ms (`TARGET_ADDS_FLAG_MS` in convex/lib/edges/sni/realHost.ts; a test keeps them equal). */
+export const TARGET_ADDS_FLAG_MS = 50;
+
 /** The proposed threshold the page states with the figure (the owner decides). */
 export const TARGET_ADDS_FLAG_WORDS =
   'Over 50 ms on at least 3 vantages is flagged: a gap that size is something a censor can measure (a proposed threshold).';
 
 /**
- * What the transport's target adds to a handshake from here, in one line
- * (null: no timed real-host pair yet).
+ * How much longer a handshake takes from here on a transport's addresses than
+ * on its names' real sites, in one line (null: no timed real-host pair yet).
+ * The gap is an address's leg to the node plus the node's leg to the target,
+ * so the flag names the leg the addresses point at: one address under the
+ * flag shows the node's leg is short.
  */
 export function targetAddsLine(l: CountryViewListener, now = Date.now()): string | null {
   const t = l.targetAdds;
   if (!t) return null;
   const head =
     t.ms <= 0
-      ? 'The transport’s target adds nothing measurable to a handshake from here'
-      : `The transport’s target adds about ${t.ms} ms to a handshake from here`;
-  return `${head} (this address ${t.oursMs} ms beyond one round trip, the names’ real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'name')}, ${relativeTime(t.at, now)}).${t.flagged ? ' Flagged: the target sits far from the node.' : ''}`;
+      ? 'A handshake on this transport’s addresses takes no measurably longer from here than on its names’ real sites'
+      : `A handshake on this transport’s addresses takes about ${t.ms} ms longer from here than on its names’ real sites`;
+  const a = t.addresses;
+  const spread =
+    a && a.timed > 1 && a.highMs - a.lowMs >= TARGET_ADDS_FLAG_MS
+      ? ` By address it ranges from ${a.lowMs} to ${a.highMs} ms (see each address’s evidence).`
+      : '';
+  const flag = !t.flagged
+    ? ''
+    : a && a.clear > 0
+      ? ' Flagged: the slow addresses sit far from the node. An address under the threshold shows the node’s own leg to its target is short.'
+      : ' Flagged: the node sits far from its target, or every address measured sits far from the node.';
+  return `${head} (the addresses ${t.oursMs} ms beyond one round trip, the names’ real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'name')}, ${relativeTime(t.at, now)}).${spread}${flag}`;
+}
+
+/**
+ * The handshake gap on one address, in one line (null: no timed pair on it).
+ * On an edge it is the edge's leg to the node plus the node's leg to the
+ * target; on the node itself only the latter.
+ */
+export function addressTimingLine(a: CountryViewAddress, now = Date.now()): string | null {
+  const t = a.evidence.realHost?.timing;
+  if (!t) return null;
+  const head =
+    t.ms <= 0
+      ? 'A handshake on it takes no measurably longer from here than on the names’ real sites'
+      : `A handshake on it takes about ${t.ms} ms longer from here than on the names’ real sites`;
+  const flag = !t.flagged
+    ? ''
+    : a.kind === 'origin'
+      ? ' Flagged: the node sits far from its target.'
+      : ' Flagged: this address sits far from the node (an address that accepts the connection itself puts its leg to the node inside the handshake), or the node far from its target.';
+  return `${head} (it ${t.oursMs} ms beyond one round trip, the real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'name')}, ${relativeTime(t.at, now)}).${flag}`;
 }
 
 /** What the real-host controls of the names checked on an address say about it. */

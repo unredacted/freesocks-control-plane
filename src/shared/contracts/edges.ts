@@ -1703,7 +1703,11 @@ export const CountryViewNameRealHost = z.object({
 });
 export type CountryViewNameRealHost = z.infer<typeof CountryViewNameRealHost>;
 
-/** What a transport's target adds to a handshake from one country (`flagged`: a proposed threshold). */
+/**
+ * How much longer a handshake takes from one country on FCP's addresses than on
+ * the names' real sites (`flagged`: a proposed threshold). `addresses`: a
+ * transport's figure only, how its addresses' own figures differ.
+ */
 export const CountryViewTargetAdds = z.object({
   ms: z.number(),
   oursMs: z.number(),
@@ -1712,6 +1716,10 @@ export const CountryViewTargetAdds = z.object({
   names: z.number(),
   at: z.number(),
   flagged: z.boolean(),
+  addresses: z
+    .object({ timed: z.number(), lowMs: z.number(), highMs: z.number(), clear: z.number() })
+    .nullable()
+    .default(null),
 });
 export type CountryViewTargetAdds = z.infer<typeof CountryViewTargetAdds>;
 
@@ -1719,6 +1727,8 @@ export type CountryViewTargetAdds = z.infer<typeof CountryViewTargetAdds>;
 export const CountryViewAddressRealHost = z.object({
   at: z.number(),
   names: z.array(z.object({ name: z.string(), reading: RealHostReadingZ })),
+  /** The handshake gap on this address alone (null: no timed pair on it). */
+  timing: CountryViewTargetAdds.nullable().default(null),
 });
 export type CountryViewAddressRealHost = z.infer<typeof CountryViewAddressRealHost>;
 const reachVerdict = z.enum(['reachable', 'unreachable', 'mixed', 'unknown']);
