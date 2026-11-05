@@ -240,3 +240,38 @@ describe('with address lanes on', () => {
     expect((await rotations(w)).some((r) => r.onlyLocationId === w.a._id)).toBe(true);
   });
 });
+
+describe('selection for a count (onlyLocationId)', () => {
+  test('picks among the set as always, at that one location only', async () => {
+    const w = await world();
+    const { selectionContext } = await import('./edgeRotations');
+    const { resolveEdgeConfig } = await import('./lib/edgeConfig');
+    const pickAt = (only?: Id<'edgeLocations'>) =>
+      w.t.run(async (ctx) => {
+        const origin = (await ctx.db.get(w.relayId))!;
+        const sel = await selectionContext(
+          ctx,
+          {
+            kind: 'provision',
+            trigger: 'reconcile',
+            publishOnDone: false,
+            listenerId: w.listenerId,
+            ...(only ? { onlyLocationId: only } : {}),
+          },
+          origin,
+          null,
+          await resolveEdgeConfig(ctx.db),
+        );
+        return { location: sel.account?.locationId ?? null, failure: sel.accountFailure ?? null };
+      });
+    expect((await pickAt(w.a._id)).location).toBe(w.a._id);
+    expect((await pickAt(w.b._id)).location).toBe(w.b._id);
+    // A location that cools is never picked, named or not.
+    await w.t.run((c) =>
+      c.db.patch(w.relayId, { cooling: [{ locationId: w.a._id, until: Date.now() + 3_600_000 }] }),
+    );
+    const cooling = await pickAt(w.a._id);
+    expect(cooling.location).toBeNull();
+    expect(cooling.failure).toBe('set_picks_cooling');
+  });
+});
