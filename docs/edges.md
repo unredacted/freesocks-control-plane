@@ -5522,6 +5522,47 @@ cancelled, and `desiredPublished` keeps room for the survivors plus what the set
 The card's **Add a location** also offers the regions a load balancer account reaches that are
 no location yet (§ "Provider accounts and locations", "Picking a region").
 
+**Addresses per location** (`convex/edgePickWants.ts`; `relays.providerSet[].want`). A pick may
+ask for a COUNT: this many published addresses (1 to 8) of EACH transport the location carries
+for the node. Without one a pick asks, as before, for at least one address of any transport, so
+"1" and "none" differ: 1 asks for one of each transport.
+
+- **The requirement** (`requirementOf` `wants`, `coverTargets`): basic coverage and diversity
+  are unchanged. After the cover, a pick with a count gets one more target for each address of
+  a transport it still lacks there, beyond what is published and what the cover already puts
+  there (`Target.count`); a cooling pick asks for none while it cools. A set without counts gets
+  exactly the targets it got before. Admission, sizing, rebalance (`removableUnder`) and the
+  floor of "Published edges wanted" (`edge.pool_below_coverage`) read the deficit, so they follow.
+- **Sizing.** `ensurePoolCapacity` holds the deficit as before. With lanes on, the lanes'
+  size is their own need plus what the counts still ask for (`countDeficit`), so the two never
+  fight over a count.
+- **Filling it** (the reconcile's step 5W, after the lanes' step, lanes on or off): the first
+  transport of a counted pick short of its count gets a spare of it there put in use, else a
+  provision for it at that location only (`edgeRotations.start {onlyLocationId}`: the set's
+  usual selection, limited to that location, so cooling, a refused location, trust and the
+  account's cap still apply). Nothing is bought where the pick cools, the location refused a
+  create for this node, no address there was tested yet, or one more would pass the account's
+  monthly cap, nor while the pool has no room left (`blocked`). It needs
+  `edge.autoProvisionToDesired` to buy; one start per pass, as every step.
+- **Retirement keeps the counts.** Lane cleanup (`openToRetire`) takes only an address whose
+  removal keeps every count where it is (`keepsCounts`); rebalance only a removable one.
+  Lowering a count retires nothing: the pool never shrinks by itself.
+- **Saving** (`POST relays/{id}/providers/{locationId}/want {want}`, null clears it): refused
+  while a setup run, a rotation or a restore owns the node, and when the set would then ask for
+  more addresses in use than one node publishes (`edge.set_too_large`). Audited
+  `edge.relay.pick_want`. Before saving, `…/want/preview` (read only) says how many addresses it
+  adds, what one there costs a month, and how many of them fit under the account's monthly
+  cap (a warning, not a refusal: the operator may raise the cap). The node's card shows each
+  pick's count with **Change**. A count is kept when a run goes live (`providerSetAfter`);
+  setup and re-protect runs build the cover without counts, upkeep fills them afterwards.
+- **Attention** `location_short` (warning, per node and location): the fewest addresses in use
+  of a transport there, of the count, and what holds new ones back, as the code that already
+  says it: `pick_cooling`, `locations_refused`, `location_untrusted`,
+  `account_spend_cap_reached`; none while upkeep can fill it.
+- **Rollback.** Before deploying a build without counts, run
+  `edgePickWants:clearPickWantsForRollback`: every count goes, the addresses they made stay
+  published (rebalance frees what is no longer needed).
+
 **Addresses outside the set.** The set changes only when a run goes live (`providerSetAfter`),
 so a re-protect that fails leaves the set as it was, and a spare it made in a location the set
 never took stays there (a retry reuses it). This is by design: the node's committed delivery

@@ -1371,7 +1371,7 @@ async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Pr
 /**
  * The provider set a run leaves the node with: its picks in order, an `add`
  * re-protect's after the picks the node already had. A pick already in the
- * set keeps its `addedAt`.
+ * set keeps its `addedAt` and its address count (`want`).
  */
 function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay['providerSet']> {
   const before = relay.providerSet ?? [];
@@ -1387,6 +1387,7 @@ function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay[
       locationId: p.locationId,
       addedAt: kept?.addedAt ?? now,
       ...(options !== undefined ? { options } : {}),
+      ...(kept?.want !== undefined ? { want: kept.want } : {}),
     };
     const at = out.findIndex((x) => x.locationId === p.locationId);
     if (at >= 0) out[at] = entry;

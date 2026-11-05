@@ -28,7 +28,7 @@ import { edgeLayerOf, frontsAllowed } from './lib/edges/providers/capabilities';
 import { L4_NOT_FOR_WEBSOCKET, l4BarredForAll, websocketNodeOf } from './lib/edges/websocketNode';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
-import { coverTargets, MAX_PROVIDER_PICKS, requirementOf } from './lib/edges/providerSet';
+import { coverTargets, MAX_PROVIDER_PICKS, pickWant, requirementOf } from './lib/edges/providerSet';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { checkPickOptions } from './edgeTemplates';
 
@@ -125,6 +125,18 @@ export const view = internalQuery({
         // The provider options this node's addresses here are built with (null:
         // a pick from before options: the template and the account's defaults).
         options: optionsOfPick(relay, p.location._id),
+        // Addresses per transport asked for here (null: at least one of any).
+        want:
+          pickWant(relay.providerSet?.find((x) => x.locationId === p.location._id)?.want) ?? null,
+        // The transports this location carries for the node (what a count counts).
+        carries: state.listeners
+          .filter((l) =>
+            carries(p, l, {
+              websocketNode: state.websocketNode,
+              originAddress: relay.originAddress,
+            }),
+          )
+          .map((l) => l.listenerKey),
       };
     });
     const available = [];

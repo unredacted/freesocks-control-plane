@@ -534,6 +534,8 @@ describe('providerPickWords', () => {
             refusedUntil: '2026-10-18T14:40:00Z',
             addedAt: '2026-10-01T00:00:00Z',
             options: null,
+            want: null,
+            carries: ['main'],
           },
         ],
         reduced: [{ listenerKey: 'main', reason: 'one_group' }],

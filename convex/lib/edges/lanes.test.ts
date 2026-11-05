@@ -281,6 +281,9 @@ describe('the lane rules', () => {
     // Oldest first, never the template address.
     expect(openToRetire(b1, filled, new Set())!.edgeId).toBe('b');
     expect(openToRetire(b1, filled, new Set(['b']))!.edgeId).toBe('c');
+    // An address a location's count needs is kept: the next oldest goes instead.
+    expect(openToRetire(b1, filled, new Set(), (id) => id !== 'b')!.edgeId).toBe('c');
+    expect(openToRetire(b1, filled, new Set(), () => false)).toBeNull();
     const done = laneBook(
       ['l'],
       filled.filter((e) => e.edgeId === 'a' || e.lane),

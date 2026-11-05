@@ -353,6 +353,11 @@ export const ATTENTION_KINDS = [
   // A location meant for a country (docs/edges.md "Locations meant for a country") is
   // blocked there: members there are handed other addresses until another is picked.
   'meant_for_blocked',
+  // A pick of a node's provider set holds fewer addresses of a transport than
+  // its count asks for (docs/edges.md "Addresses per location"); the code says
+  // what holds new ones back (`pick_cooling`, `locations_refused`,
+  // `location_untrusted`, `account_spend_cap_reached`), none while upkeep can buy them.
+  'location_short',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

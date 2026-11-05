@@ -125,6 +125,15 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 4 && parts[0] === 'sni' && parts[1] === 'bindings' && parts[3] === 'plan')
     return true;
   if (parts.length === 3 && parts[0] === 'relays' && parts[2] === 'preflight') return true;
+  // What a pick's address count would add and cost: nothing written.
+  if (
+    parts.length === 6 &&
+    parts[0] === 'relays' &&
+    parts[2] === 'providers' &&
+    parts[4] === 'want' &&
+    parts[5] === 'preview'
+  )
+    return true;
   // Asks the client-check service how it is; stores nothing but that answer.
   if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
   // Which country lists hold some names or addresses: a read over stored versions.
@@ -1398,6 +1407,18 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     }
     // Automatic replacement held for a transport (a replacement blocked again
     // soon after going into use): the operator resumes it, one transport or all.
+    // Addresses per location (edgePickWants.ts): one pick's count (null clears
+    // it), and first what saving it adds and costs (read only).
+    if (c === 'providers' && d && parts[4] === 'want' && (!parts[5] || parts[5] === 'preview')) {
+      const want =
+        body.want === null ? null : typeof body.want === 'number' ? body.want : undefined;
+      if (want === undefined) return errorJson('validation', 'want must be a number or null', 400);
+      const args = { relayId, locationId: id<'edgeLocations'>(d), want };
+      if (parts[5] === 'preview' && !parts[6])
+        return json(await ctx.runQuery(internal.edgePickWants.wantPreview, args));
+      if (!parts[5])
+        return json(await ctx.runMutation(internal.edgePickWants.setPickWant, { ...args, ...act }));
+    }
     if (c === 'auto-replace' && d === 'resume' && !parts[4])
       return json(
         await ctx.runMutation(internal.edgeRotations.resumeAutoReplace, {

@@ -137,6 +137,7 @@ import { isTerminalRunState } from './lib/edges/setupRuns';
 import { setupRunLiveOn } from './lib/edges/relayGuards';
 import { spendOf } from './edgePlans';
 import { atCap } from './lib/edges/pricing';
+import { countGapsOf } from './edgePickWants';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -1867,6 +1868,35 @@ export const attention = internalQuery({
             },
             action: acct ? 'open_account' : 'open_relay',
             since: isoN(h.at),
+          });
+        }
+      }
+      // Addresses per location (edgePickWants.ts): a pick that holds fewer
+      // addresses of a transport than its count asks for, one item per
+      // location, with what holds new ones back there (the code). While nothing
+      // does, upkeep fills it (it also needs `edge.autoProvisionToDesired` to buy).
+      if (relay.enabled) {
+        const gaps = await countGapsOf(ctx.db, relay, now, setState);
+        for (const locationId of [...new Set(gaps.map((g) => g.locationId))]) {
+          const mine = gaps.filter((g) => g.locationId === locationId);
+          const first = mine[0]!;
+          items.push({
+            ...base(relay),
+            id: `location_short:${relay._id}:${locationId}`,
+            kind: 'location_short',
+            severity: 'warning',
+            listenerKey: first.listenerKey,
+            accountId: first.accountId as string,
+            code: mine.find((g) => g.cause !== null)?.cause ?? null,
+            facts: {
+              name: first.accountName,
+              location: first.label,
+              wanted: first.want,
+              inUse: Math.min(...mine.map((g) => g.inUse)),
+              count: mine.length,
+            },
+            action: 'open_relay',
+            since: null,
           });
         }
       }

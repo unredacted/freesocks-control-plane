@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import {
   bodyGroups,
+  countDeficit,
   coverTargets,
   coverageDeficit,
   groupOf,
+  keepsCounts,
   resilienceExpectation,
   removableUnder,
   requirementOf,
@@ -326,5 +328,86 @@ describe('resilienceExpectation and bodyGroups', () => {
     expect(bodyGroups(edges, ['a', 'b']).count).toBe(2);
     expect(bodyGroups(edges, ['a', 'b']).groupOf(edges[0]!)).toBe('acme');
     expect(bodyGroups(edges, ['b']).count).toBe(1);
+  });
+});
+
+describe('addresses per location (a pick count)', () => {
+  const both: SetListener[] = [
+    { listenerKey: 'a', carriers: ['x', 'y'] },
+    { listenerKey: 'b', carriers: ['x', 'y'] },
+  ];
+  const counted = (want: number | undefined, at = X) => [{ ...at, want }, Y];
+
+  test('without a count the targets are exactly the ones before', () => {
+    const plain = requirementOf(both, [X, Y]);
+    const absent = requirementOf(both, counted(undefined));
+    expect(absent.wants).toEqual([]);
+    for (const published of [[], [pub('a', X)], [pub('a', X), pub('b', Y)]])
+      expect(coverTargets(absent, published)).toEqual(coverTargets(plain, published));
+  });
+
+  test('a count asks for that many of each transport the pick carries, after the cover', () => {
+    const req = requirementOf(both, counted(2));
+    expect(req.wants).toEqual([{ locationId: 'x', want: 2, listenerKeys: ['a', 'b'] }]);
+    const published = [pub('a', X), pub('b', Y)];
+    const plain = coverTargets(requirementOf(both, [X, Y]), published);
+    const targets = coverTargets(req, published);
+    // The cover first, unchanged (it already puts one `b` at x for diversity);
+    // then the count: one more `a` and one more `b` at x.
+    expect(targets.slice(0, plain.length)).toEqual(plain);
+    expect(plain).toContainEqual({ listenerKey: 'b', locationId: 'x', coversListener: true });
+    expect(targets.slice(plain.length)).toEqual([
+      { listenerKey: 'a', locationId: 'x', coversListener: false, count: true },
+      { listenerKey: 'b', locationId: 'x', coversListener: false, count: true },
+    ]);
+    // Met: no count target is left, and the deficit is what the plain cover says.
+    const met = [...published, pub('a', X), pub('b', X), pub('b', X)];
+    expect(coverTargets(req, met).filter((t) => t.count)).toEqual([]);
+  });
+
+  test('targets the cover already puts at the pick count toward it', () => {
+    const req = requirementOf(both, counted(1));
+    // Nothing published: the cover asks for `a` and `b` somewhere, one of them at x.
+    const targets = coverTargets(req, []);
+    for (const key of ['a', 'b'])
+      expect(targets.filter((t) => t.listenerKey === key && t.locationId === 'x').length).toBe(1);
+  });
+
+  test('a cooling pick asks for nothing; a transport the pick does not carry is not counted', () => {
+    expect(requirementOf(both, counted(3), new Set(['x'])).wants).toEqual([]);
+    const narrow = requirementOf(
+      [
+        { listenerKey: 'a', carriers: ['x', 'y'] },
+        { listenerKey: 'b', carriers: ['y'] },
+      ],
+      counted(2),
+    );
+    expect(narrow.wants).toEqual([{ locationId: 'x', want: 2, listenerKeys: ['a'] }]);
+  });
+
+  test('out-of-range counts are none', () => {
+    for (const want of [0, 9, 1.5, -1])
+      expect(requirementOf(both, counted(want)).wants).toEqual([]);
+  });
+
+  test('lane cleanup keeps what a count needs; rebalance too', () => {
+    const req = requirementOf(both, counted(2));
+    const published = [
+      pub('a', X),
+      pub('a', X),
+      pub('b', X),
+      pub('b', X),
+      pub('a', Y),
+      pub('b', Y),
+    ];
+    expect(countDeficit(req, published)).toBe(0);
+    // An address at x is counted: removing it raises the count deficit.
+    expect(keepsCounts(req, published, 0)).toBe(false);
+    expect(removableUnder(req, published, 0)).toBe(false);
+    // One more than the count at x is free to go.
+    const extra = [...published, pub('a', X)];
+    expect(keepsCounts(req, extra, 6)).toBe(true);
+    // Without counts nothing is held.
+    expect(keepsCounts(requirementOf(both, [X, Y]), published, 0)).toBe(true);
   });
 });

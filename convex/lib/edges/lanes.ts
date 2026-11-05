@@ -156,8 +156,9 @@ export function laneDesired(
 /**
  * The next open address to take out of use: on a transport whose trusted lane
  * is full, the OLDEST open one above the open target that is not its
- * transport's template address (the backend's Host points at that one). Null
- * when none should go.
+ * transport's template address (the backend's Host points at that one), and,
+ * with `removable`, only one whose removal keeps what the node's locations ask
+ * for (their address counts). Null when none should go.
  */
 export function openToRetire<
   E extends { edgeId: string; listenerId: string; lane?: 'trusted'; publishedAt?: number },
@@ -165,12 +166,17 @@ export function openToRetire<
   book: ReadonlyMap<string, LaneBookEntry>,
   published: readonly E[],
   templateIds: ReadonlySet<string>,
+  removable: (edgeId: string) => boolean = () => true,
 ): E | null {
   for (const [listenerId, e] of book) {
     if (e.trustedDeficit > 0 || e.openExcess === 0) continue;
     const pick = published
       .filter(
-        (x) => x.listenerId === listenerId && x.lane !== 'trusted' && !templateIds.has(x.edgeId),
+        (x) =>
+          x.listenerId === listenerId &&
+          x.lane !== 'trusted' &&
+          !templateIds.has(x.edgeId) &&
+          removable(x.edgeId),
       )
       .sort((a, b) => (a.publishedAt ?? 0) - (b.publishedAt ?? 0))[0];
     if (pick) return pick;
