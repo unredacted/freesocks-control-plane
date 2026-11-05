@@ -470,6 +470,251 @@ describe('nothing to restore', () => {
   });
 });
 
+describe('"Skip restoring direct": a node delete held at the direct check', () => {
+  /**
+   * world() + a `restore-direct` delete whose node lost both direct Hosts from
+   * the panel after FCP hid them: one reconcile pass runs every phase up to
+   * `verify_direct`, which then holds (no member group can get a direct entry).
+   */
+  async function heldAtDirect() {
+    const w = await world({ bound: true });
+    const adminId = await w.t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'op',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    await w.t.mutation(internal.relays.requestDelete, {
+      id: w.relayId,
+      disposition: 'restore-direct',
+      actorAdminId: adminId,
+    });
+    const direct = new Set([D1, D2]);
+    w.panel.hosts.splice(
+      0,
+      w.panel.hosts.length,
+      ...w.panel.hosts.filter((h) => !direct.has(h.uuid)),
+    );
+    await w.t.action(internal.edgeRestore.reconcilePass, {});
+    expect((await w.relay()).restore).toMatchObject({
+      purpose: 'delete_relay',
+      phase: 'verify_direct',
+      attempt: 1,
+      lastError: 'no_direct_entry:squad-1',
+    });
+    // The hidden Hosts are gone, so nothing was re-enabled and nothing will be.
+    expect(w.panel.patches.filter((p) => !p.isDisabled)).toEqual([]);
+    expect((await w.rows()).every((r) => r.state === 'released')).toBe(true);
+    // A second pass holds again: the driver never gets out of it by itself.
+    await w.t.action(internal.edgeRestore.reconcilePass, {});
+    expect((await w.relay()).restore).toMatchObject({ phase: 'verify_direct', attempt: 2 });
+    return { ...w, adminId };
+  }
+
+  const skip = (w: Awaited<ReturnType<typeof heldAtDirect>>) =>
+    w.t.mutation(internal.edgeRestore.skipDirect, { relayId: w.relayId, actorAdminId: w.adminId });
+
+  const skipAudits = (w: Awaited<ReturnType<typeof heldAtDirect>>) =>
+    w.t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).filter(
+        (a) => a.action === 'edge.restore.direct_skipped',
+      ),
+    );
+
+  test('held at verify_direct -> skip -> finish runs the delete body; audited with the operator and the node', async () => {
+    const w = await heldAtDirect();
+    // Members already get the raw body: the protected entry, no direct one.
+    const before = await w.download();
+    expect(before.status).toBe(200);
+    expect(before.body).toContain(EDGE_A);
+    expect(before.body).not.toContain(FIXTURE_ORIGIN);
+
+    vi.useFakeTimers();
+    expect(await skip(w)).toEqual({ ok: true, phase: 'finish' });
+    // The skip moved the workflow through the fenced transition; nothing else changed yet.
+    let relay = await w.relay();
+    expect(relay.restore).toMatchObject({ phase: 'finish', attempt: 0 });
+    expect(relay.restore?.lastError).toBeUndefined();
+    expect(relay.deleting).toBeUndefined();
+    // The step it scheduled finishes the delete without waiting for the next tick.
+    await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    relay = await w.relay();
+    expect(relay.restore).toBeUndefined();
+    expect(relay).toMatchObject({ deleting: true, enabled: false, publishedEdgeIds: [] });
+    expect((await w.edge()).status).toBe('destroyed'); // observe-only import: forgotten at once
+    expect((await w.binding())?.state).toBe('released');
+    // No direct Host was written on the way out.
+    expect(w.panel.patches.filter((p) => !p.isDisabled)).toEqual([]);
+
+    const audits = await skipAudits(w);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      actorType: 'admin',
+      actorId: w.adminId,
+      targetType: 'relay',
+      targetId: w.relayId,
+      payload: {
+        relaySlug: 'node-one',
+        relayId: w.relayId,
+        attempts: 2,
+        heldFor: 'no_direct_entry',
+      },
+    });
+    // The group key after the reason's code never reaches the audit row.
+    expect(JSON.stringify(audits[0]!.payload)).not.toContain('squad-1');
+    const actions = (await w.t.run((ctx) => ctx.db.query('auditLog').collect())).map(
+      (a) => a.action,
+    );
+    expect(actions).toContain('edge.relay.restore_finished');
+    expect(actions.filter((a) => a === 'relay.delete')).toHaveLength(1);
+    // The reconcile cron removes the node as after any finished delete.
+    await w.t.action(internal.edgeReconcile.run, {});
+    expect(await w.t.run((ctx) => ctx.db.get(w.relayId))).toBeNull();
+    // A second skip finds nothing to skip.
+    await expect(skip(w)).rejects.toThrow(/not_found/);
+  });
+
+  test('refused in every other phase, before the check has held, and for a restore that keeps the node', async () => {
+    const w = await world({ bound: true });
+    const go = () => w.t.mutation(internal.edgeRestore.skipDirect, { relayId: w.relayId });
+    await expect(go()).rejects.toThrow(/restore_not_running/);
+    await w.t.mutation(internal.relays.requestDelete, {
+      id: w.relayId,
+      disposition: 'restore-direct',
+    });
+    // freeze, settle, verify_fcp_raw, release_binding, restore: each refused.
+    for (const phase of ['freeze', 'settle', 'verify_fcp_raw', 'release_binding', 'restore']) {
+      expect((await w.relay()).restore?.phase).toBe(phase);
+      await expect(go()).rejects.toThrow(/restore_not_held_at_direct/);
+      expect((await w.relay()).restore?.phase).toBe(phase);
+      expect(await w.step()).toMatchObject({ advanced: true });
+    }
+    // Just arrived at verify_direct: the check has not run, so it has not held.
+    expect((await w.relay()).restore).toMatchObject({ phase: 'verify_direct', attempt: 0 });
+    await expect(go()).rejects.toThrow(/restore_not_held_at_direct/);
+    // A held verify_fcp_raw is no way out either (a direct Host while bound is the outage it guards).
+    const w2 = await world({ bound: true });
+    await w2.t.mutation(internal.relays.requestDelete, {
+      id: w2.relayId,
+      disposition: 'restore-direct',
+    });
+    w2.panel.find(D1).isDisabled = false;
+    await w2.t.action(internal.edgeRestore.reconcilePass, {});
+    expect((await w2.relay()).restore).toMatchObject({ phase: 'verify_fcp_raw', attempt: 1 });
+    await expect(
+      w2.t.mutation(internal.edgeRestore.skipDirect, { relayId: w2.relayId }),
+    ).rejects.toThrow(/restore_not_held_at_direct/);
+    // "Serve this node directly again" held at the direct check keeps the node: no skip.
+    const w3 = await world({ bound: true });
+    await w3.t.mutation(internal.edgeRestore.serveDirect, { relayId: w3.relayId });
+    w3.panel.hosts.splice(
+      0,
+      w3.panel.hosts.length,
+      ...w3.panel.hosts.filter((h) => h.uuid !== D1 && h.uuid !== D2),
+    );
+    await w3.t.action(internal.edgeRestore.reconcilePass, {});
+    expect((await w3.relay()).restore).toMatchObject({
+      purpose: 'release_requirement',
+      phase: 'verify_direct',
+      attempt: 1,
+    });
+    await expect(
+      w3.t.mutation(internal.edgeRestore.skipDirect, { relayId: w3.relayId }),
+    ).rejects.toThrow(/restore_not_held_at_direct/);
+    expect((await w3.relay()).restore).toMatchObject({ phase: 'verify_direct' });
+    // No refusal wrote an audit row.
+    for (const x of [w, w2, w3])
+      expect(
+        (await x.t.run((ctx) => ctx.db.query('auditLog').collect())).filter(
+          (a) => a.action === 'edge.restore.direct_skipped',
+        ),
+      ).toEqual([]);
+  });
+
+  test('refused while a rotation, a quarantine or a server change holds the node', async () => {
+    const w = await heldAtDirect();
+    const held = async () =>
+      expect((await w.relay()).restore).toMatchObject({ phase: 'verify_direct' });
+    const rotation = (phase: 'verifying' | 'quarantined') =>
+      w.t.run((ctx) =>
+        ctx.db.insert('edgeRotations', {
+          relayId: w.relayId,
+          kind: 'replace',
+          trigger: 'manual',
+          burn: false,
+          force: false,
+          phase,
+          stepVersion: 1,
+          cancelRequested: false,
+          hostPlan: [],
+          flipAttempts: 0,
+          rollbackAttempts: 0,
+          pollAttempts: 0,
+          events: [],
+          startedAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+      );
+    // A rotation still running.
+    const running = await rotation('verifying');
+    await w.t.run((ctx) => ctx.db.patch(w.relayId, { activeRotationId: running }));
+    await expect(skip(w)).rejects.toThrow(/rotation_running/);
+    await held();
+    await w.t.run((ctx) => ctx.db.patch(w.relayId, { activeRotationId: undefined }));
+    // A quarantine.
+    const paused = await rotation('quarantined');
+    await w.t.run((ctx) =>
+      ctx.db.patch(w.relayId, {
+        quarantine: { rotationId: paused, since: Date.now(), reason: 'test' },
+      }),
+    );
+    await expect(skip(w)).rejects.toThrow(/quarantined/);
+    await held();
+    await w.t.run((ctx) => ctx.db.patch(w.relayId, { quarantine: undefined }));
+    // A server change claims the node.
+    const claimId = await w.t.run(async (ctx) => {
+      const now = Date.now();
+      const opId = await ctx.db.insert('panelOps', {
+        backendServerId: w.serverId,
+        kind: 'profile',
+        verb: 'update',
+        generation: 1,
+        claimKeys: [`relay:${w.relayId}`],
+        label: 'profile',
+        intent: '{}',
+        postcondition: '{}',
+        request: 'acknowledged',
+        panelState: 'unobserved',
+        asyncEffect: 'none',
+        open: true,
+        quietLooks: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return ctx.db.insert('panelClaims', {
+        backendServerId: w.serverId,
+        key: `relay:${w.relayId}`,
+        opId,
+        generation: 1,
+        claimedAt: now,
+      });
+    });
+    await expect(skip(w)).rejects.toThrow(/panel_op_running/);
+    await held();
+    await w.t.run((ctx) => ctx.db.delete(claimId));
+    expect(await skipAudits(w)).toEqual([]);
+    // Nothing holds it any more: the skip goes through.
+    vi.useFakeTimers();
+    expect(await skip(w)).toEqual({ ok: true, phase: 'finish' });
+    await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await skipAudits(w)).toHaveLength(1);
+    expect((await w.relay()).deleting).toBe(true);
+  });
+});
+
 describe('acceptance 25: release_requirement', () => {
   test('retains everything (origin enabled, edges published), releases the binding after the raw FCP check, restores the Hosts and leaves the origin re-activatable', async () => {
     const w = await world({ bound: true });

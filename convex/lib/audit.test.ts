@@ -163,6 +163,22 @@ describe('AUDIT_PAYLOAD_ALLOWLIST coverage', () => {
       'fromDailyAllocationBudget',
       'dailyAllocationBudget',
     ]);
+    // "Skip restoring direct": the node and what held it, never the group key.
+    expect(AUDIT_PAYLOAD_ALLOWLIST['edge.restore.direct_skipped']).toEqual([
+      'relaySlug',
+      'relayId',
+      'attempts',
+      'heldFor',
+    ]);
+    expect(
+      sanitizeAuditPayload('edge.restore.direct_skipped', {
+        relaySlug: 'node-one',
+        relayId: 'r1',
+        attempts: 2,
+        heldFor: 'no_direct_entry',
+        lastError: 'no_direct_entry:group-1',
+      }),
+    ).toEqual({ relaySlug: 'node-one', relayId: 'r1', attempts: 2, heldFor: 'no_direct_entry' });
     // The rotation audit from the provider-adapter work survived the merge.
     expect(AUDIT_PAYLOAD_ALLOWLIST['edge.provider_account.credentials_rotated']).toEqual(
       expect.arrayContaining(['credentialsChanged', 'identifiersChanged', 'qualifiedKept']),

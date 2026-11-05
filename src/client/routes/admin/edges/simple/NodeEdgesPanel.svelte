@@ -35,6 +35,12 @@
    * address would stay a spare and for which location the slot is held, and
    * offers Replace address instead of a publish that ends as a spare.
    *
+   * While a removal runs, its step is shown under the status. A removal held
+   * at the direct check (no member can get the node's direct address back,
+   * e.g. its direct Host was deleted from the backend) says why and offers
+   * "Skip restoring direct": its confirm says members on the node then keep no
+   * direct entry, and the removal finishes now.
+   *
    * Recent activity names a failed run by what it was (adding a spare is no
    * replacement) with the provider's words, and links it to the run.
    *
@@ -77,6 +83,9 @@
     plainAuditActionLabel,
     plainWords,
     restorePhaseWords,
+    SKIP_DIRECT,
+    skipDirectHeldWords,
+    skipDirectOffered,
   } from '@client/lib/edgeCodes';
   import {
     attentionQuery,
@@ -98,6 +107,7 @@
     resumeAutoReplace,
     retrySetupRun,
     setRelayEdgePick,
+    skipRestoreDirect,
     updateRelay,
   } from '@client/lib/edgesApi';
   import { originBusy } from '@client/lib/livePoll';
@@ -303,6 +313,8 @@
   let spareOpen = $state(false);
   let renewing = $state<{ edgeId: string; listenerId: string; listenerKey: string } | null>(null);
   let removeOpen = $state(false);
+  // "Skip restoring direct": a removal held at the direct check.
+  let skipDirectOpen = $state(false);
   let againOpen = $state(false);
   // "Spread members": the estimate is read when the dialog opens.
   let spreadOpen = $state(false);
@@ -418,6 +430,14 @@
           <p class="text-muted-foreground mt-1 text-sm">
             Removing protection: {restorePhaseWords(relay.restore.phase)}.
           </p>
+          {#if skipDirectOffered(relay.restore)}
+            <p class="mt-1 max-w-prose text-sm">{skipDirectHeldWords(relay.restore.lastError)}</p>
+            <div class="mt-2">
+              <Button size="sm" variant="outline" onclick={() => (skipDirectOpen = true)}>
+                {SKIP_DIRECT.button}
+              </Button>
+            </div>
+          {/if}
         {/if}
         <UpdatedAgo at={updatedAt} onRefresh={refreshNow} />
       {:else if !relayQ.error}
@@ -803,6 +823,18 @@
     run={async () => {
       assertEdgeOk(await deleteRelay(relay.id, 'restore-direct'));
       toast.success('Removing protection. The node page shows each step.');
+      invalidateRelay(qc, slug);
+    }}
+  />
+  <ActionConfirm
+    bind:open={skipDirectOpen}
+    title={SKIP_DIRECT.title}
+    body={SKIP_DIRECT.body}
+    confirmLabel={SKIP_DIRECT.confirm}
+    danger
+    run={async () => {
+      assertEdgeOk(await skipRestoreDirect(relay.id));
+      toast.success(SKIP_DIRECT.done);
       invalidateRelay(qc, slug);
     }}
   />

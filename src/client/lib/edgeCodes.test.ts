@@ -60,6 +60,9 @@ import {
   providerAnswerWords,
   RESTORE_PHASE_WORDS,
   restorePhaseWords,
+  SKIP_DIRECT,
+  skipDirectHeldWords,
+  skipDirectOffered,
 } from './edgeCodes';
 
 const EVERY_CODE = [
@@ -145,6 +148,8 @@ describe('EDGE_REFUSAL_COPY', () => {
     'server_already_bound',
     'throttled',
     'restore_in_progress',
+    'restore_not_running',
+    'restore_not_held_at_direct',
     'plan_changed',
     'consent_withdrawn_hidden',
     'account_switch_late',
@@ -542,5 +547,65 @@ describe('plain words (the simple screens)', () => {
     expect(plainAuditActionLabel('edge.destroy_failed')).toBe('Address destroy failed');
     expect(restorePhaseWords('release_binding')).toBe('Handing members the direct address');
     expect(restorePhaseWords('brand_new')).toBe('Brand new');
+  });
+});
+
+describe('"Skip restoring direct"', () => {
+  const held = { purpose: 'delete_relay', phase: 'verify_direct', attempt: 2 };
+  test('offered only for a removal held at the direct check', () => {
+    expect(skipDirectOffered(held)).toBe(true);
+    expect(skipDirectOffered(null)).toBe(false);
+    expect(skipDirectOffered(undefined)).toBe(false);
+    // The check has not run yet.
+    expect(skipDirectOffered({ ...held, attempt: 0 })).toBe(false);
+    // Every other step.
+    for (const phase of [
+      'freeze',
+      'settle',
+      'verify_fcp_raw',
+      'release_binding',
+      'restore',
+      'finish',
+    ])
+      expect(skipDirectOffered({ ...held, phase })).toBe(false);
+    // A restore that keeps the node.
+    expect(skipDirectOffered({ ...held, purpose: 'release_requirement' })).toBe(false);
+    expect(skipDirectOffered({ ...held, purpose: 'cancel_setup' })).toBe(false);
+  });
+
+  test('the confirm says members keep no direct entry; the note says why it holds; plain copy', () => {
+    expect(SKIP_DIRECT.button).toBe('Skip restoring direct');
+    expect(SKIP_DIRECT.body).toContain('Members on this node then keep no direct entry');
+    expect(skipDirectHeldWords('no_direct_entry:group-1')).toContain(
+      'no direct address, so this check cannot pass',
+    );
+    expect(skipDirectHeldWords('fetch_failed:group-1')).toContain('could not be read');
+    expect(skipDirectHeldWords('unreadable_body:group-1')).toContain('could not be read');
+    expect(skipDirectHeldWords('brand_new:group-1')).toMatch(/^Held: Brand new\. /);
+    expect(skipDirectHeldWords(null)).toMatch(/^Held: the check did not pass\. /);
+    const texts = [
+      ...Object.values(SKIP_DIRECT),
+      ...['no_direct_entry:g', 'fetch_failed:g', 'x:g', null].map(skipDirectHeldWords),
+      codeLabel('restore_not_held_at_direct'),
+      codeExplain('restore_not_held_at_direct'),
+      codeFix('restore_not_held_at_direct') ?? '',
+      codeLabel('restore_not_running'),
+      codeExplain('restore_not_running'),
+    ];
+    for (const text of texts) {
+      expect(text.includes(EM_DASH), text).toBe(false);
+      expect(text.includes('/api/'), text).toBe(false);
+      // The group key after the code never reaches the page.
+      expect(text.includes('group-1'), text).toBe(false);
+    }
+    expect(plainAuditActionLabel('edge.restore.direct_skipped')).toBe(
+      'Removal finished without restoring direct',
+    );
+    expect(plainAuditActionLabel('edge.relay.restore_finished')).toBe(
+      'Direct address steps finished',
+    );
+    expect(auditActionLabel('edge.restore.direct_skipped')).toBe(
+      'Direct check skipped to finish the delete',
+    );
   });
 });

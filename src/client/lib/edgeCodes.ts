@@ -1893,6 +1893,17 @@ const REFUSAL_COPY = {
       'This node is putting its direct addresses back, so a second workflow, a new hide and pool changes wait.',
     fix: 'Let the restore finish (the node page shows its phase), then try again.',
   },
+  restore_not_running: {
+    label: 'Nothing to skip',
+    explain: 'No removal is running on this node any more, so there is no direct check to skip.',
+    fix: 'Refresh the node page to see where it stands.',
+  },
+  restore_not_held_at_direct: {
+    label: 'Not held at the direct check',
+    explain:
+      'Only a removal held at the direct check can skip it: every earlier step keeps members from losing the node, and a restore that keeps the node needs its direct address.',
+    fix: 'Let the removal reach the direct check (the node page shows its step), then try again.',
+  },
   plan_changed: {
     label: 'Node changed since setup',
     explain:
@@ -2758,6 +2769,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.update': 'Origin settings changed',
   'relay.delete': 'Origin deleted',
   'relay.delivery.released': 'Delivery binding released',
+  'edge.restore.direct_skipped': 'Direct check skipped to finish the delete',
   'relay.listener.upsert': 'Listener registered',
   'relay.listener.update': 'Listener changed',
   'relay.listener.retire': 'Listener retired',
@@ -3054,6 +3066,8 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.host.restored': 'Direct address restored in the backend',
   'edge.render.withheld': 'Unplaced entry left out for members',
   'edge.relay.restore_started': 'Removing protection',
+  'edge.restore.direct_skipped': 'Removal finished without restoring direct',
+  'edge.relay.restore_finished': 'Direct address steps finished',
   'edge.setup_run.started': 'Protection started',
   'edge.setup_run.needs_operator': 'Protection waiting for you',
   'edge.setup_run.go_live': 'Protection live',
@@ -3088,3 +3102,40 @@ export const RESTORE_PHASE_WORDS: Record<string, string> = {
 };
 export const restorePhaseWords = (phase: string): string =>
   RESTORE_PHASE_WORDS[phase] ?? humanizeCode(phase);
+
+/**
+ * "Skip restoring direct" (`POST relays/{id}/restore/skip-direct`): a node
+ * removal held at the direct check. Offered only there, once the check has
+ * held (an attempt counted), and never for a restore that keeps the node.
+ */
+export function skipDirectOffered(
+  restore: { purpose: string; phase: string; attempt: number } | null | undefined,
+): boolean {
+  return (
+    !!restore &&
+    restore.purpose === 'delete_relay' &&
+    restore.phase === 'verify_direct' &&
+    restore.attempt > 0
+  );
+}
+
+/** The note under the step, the button and its confirm. */
+export const SKIP_DIRECT = {
+  button: 'Skip restoring direct',
+  title: 'Skip restoring direct?',
+  body: "The removal finishes without the node's direct address. Members on this node then keep no direct entry for it: their apps stop reaching this node until the backend gives them a direct address again. The node's provider addresses are retired as in any removal.",
+  confirm: 'Skip and finish removal',
+  done: 'Direct check skipped. The removal finishes now.',
+} as const;
+
+/** Why the direct check holds, from the restore's last error (`<code>:<group>`). */
+export function skipDirectHeldWords(lastError: string | null | undefined): string {
+  const code = (lastError ?? '').split(':')[0] ?? '';
+  const goneForGood =
+    "It is checked again every few minutes. If the node's direct address is gone for good, skip restoring direct.";
+  if (code === 'no_direct_entry')
+    return 'Held: the backend gives members of this node no direct address, so this check cannot pass. Put a direct address for the node back in the backend and the removal finishes by itself, or skip restoring direct.';
+  if (code === 'fetch_failed' || code === 'unreadable_body')
+    return `Held: a member's subscription could not be read from the backend. ${goneForGood}`;
+  return `Held: ${code ? humanizeCode(code) : 'the check did not pass'}. ${goneForGood}`;
+}

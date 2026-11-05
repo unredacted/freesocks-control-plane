@@ -483,6 +483,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.edge.name.dismiss': ['relaySlug', 'edgeId', 'nameId'],
   'edge.relay.restore_started': ['relaySlug', 'purpose'],
   'edge.relay.restore_finished': ['relaySlug', 'purpose', 'hidesRestored'],
+  // "Skip restoring direct" on a node delete held at the direct check: the node,
+  // how many checks held and the reason's code (never the group key after it).
+  'edge.restore.direct_skipped': ['relaySlug', 'relayId', 'attempts', 'heldFor'],
   'relay.upsert': ['slug', 'created', 'changed'],
   // Coverage: a full pool expanded (within the cap) for an uncovered listener; a
   // rebalance unpublished a duplicate back to standby. Counts and ids only.
