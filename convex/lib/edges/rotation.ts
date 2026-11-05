@@ -131,6 +131,17 @@ export function isSpareProvision(r: {
   return r.kind === 'provision' && r.publishOnDone !== true && !r.setupRun;
 }
 
+/**
+ * An operator's provision may go to a location that is not trusted yet only
+ * when it names that location and asks for a spare that waits unpublished:
+ * the first tested address there is what trusts it. Nothing else waives trust
+ * (automatic work never does). The provision route and its preflight both ask
+ * this, so the dry run and the start agree.
+ */
+export function namedSpareWaivesTrust(r: { locationId?: unknown; publish?: unknown }): boolean {
+  return !!r.locationId && r.publish === false;
+}
+
 /** What an edge records about why it stopped (`edges.failure`). */
 export interface EdgeFailure {
   step: string;

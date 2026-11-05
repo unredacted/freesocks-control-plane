@@ -21,6 +21,7 @@ import { makeFail, notFound, throttle, unauth } from './lib/adminHttp';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
 import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
+import { namedSpareWaivesTrust } from './lib/edges/rotation';
 import { parseTargetKey } from './probes';
 import { findLegacyField, LEGACY } from './lib/legacyFields';
 import { SniBindRequest, SniManageRequest } from '../src/shared/contracts/sni';
@@ -1553,7 +1554,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
                 ? id<'relayListeners'>(body.listenerId)
                 : undefined,
             ...(locationId ? { requestedLocationId: locationId } : {}),
-            ...(locationId && body.publish === false ? { allowUnqualified: true } : {}),
+            ...(namedSpareWaivesTrust({ locationId, publish: body.publish })
+              ? { allowUnqualified: true }
+              : {}),
             ...optionsOf(body),
             ...act,
           }),

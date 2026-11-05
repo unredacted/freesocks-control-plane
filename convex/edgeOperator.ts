@@ -36,6 +36,7 @@ import {
   createdEdgeIdOf,
   isSpareProvision,
   isTerminalPhase,
+  namedSpareWaivesTrust,
   providerAnswerOf,
 } from './lib/edges/rotation';
 import { accountsForSlot } from './lib/edges/rotation';
@@ -2548,7 +2549,14 @@ export const preflight = internalQuery({
       requestedLocationId: a.locationId,
       requestedSpareEdgeId: a.kind === 'replace' ? a.spareEdgeId : undefined,
       requestedTemplateId: a.templateId,
-      allowUnqualified: isTest,
+      // As the start routes waive trust: the explicit test provision, and the
+      // operator's provision of a spare in a named location (the manual
+      // provision route). Automatic work never does.
+      allowUnqualified:
+        isTest ||
+        (a.kind === 'provision' &&
+          (a.trigger ?? 'manual') === 'manual' &&
+          namedSpareWaivesTrust(a)),
     };
     if (isTest && !a.accountId && !a.locationId)
       blockers.push({ code: 'validation', detail: 'accountId is required' });
