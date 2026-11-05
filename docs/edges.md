@@ -3646,9 +3646,12 @@ the gap on that address alone (`realHost.timing` of the address view, from the n
 it); and per transport, "a handshake on this transport's addresses takes about X ms longer" (the
 median of its names' medians, each counted once per timed pair behind it, so a name timed from one
 vantage cannot carry the figure; only names measured on that transport's own addresses). The
-transport's figure mixes its addresses, so it also carries their spread (`addresses`: how many are
-timed, the lowest and highest of their own figures, and how many rest on enough pairs and stay
-under the flag), and says the range when it is 50 ms or wider.
+transport's figure mixes its addresses, so it also carries their spread (`addresses`: how many
+endpoints are timed, address and port as measured, so an edge that moved counts its old and new
+endpoints apart; the lowest and highest of their own figures; and how many rest on enough pairs
+and stay under the flag), and says the range when it is 50 ms or wider. An address's own row shows
+its newest endpoint only; the node's own address shows a figure only when the names measured one
+port on it (two ports are two transports and two targets).
 
 Flag (a proposal; the owner decides): `addsMs` of **50 ms or more over at least 3 timed pairs**
 (`TARGET_ADDS_FLAG_MS`, `TARGET_ADDS_MIN_PAIRS`). A real site's own handshake adds a few

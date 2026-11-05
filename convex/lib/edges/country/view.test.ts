@@ -624,6 +624,67 @@ describe('buildCountryView', () => {
     ).toEqual({ timed: 2, lowMs: 300, highMs: 330, clear: 0 });
   });
 
+  test('the handshake gap by measured endpoint: moved edges and the node’s own address', () => {
+    const timed = (addsMs: number, target: string, at = NOW - H): NameFacts => ({
+      family: 'f',
+      qualified: true,
+      mark: null,
+      checks: null,
+      reports: null,
+      realHost: {
+        at,
+        target,
+        realAddress: '192.0.2.50',
+        reading: 'works',
+        counts: {
+          works: 3,
+          nameBlocked: 0,
+          addressBlocked: 0,
+          ipNameMatch: 0,
+          oursOnly: 0,
+          inconclusive: 0,
+        },
+        vantages: 3,
+        networks: 3,
+        timing: { pairs: 3, oursMs: addsMs + 10, realMs: 10, addsMs },
+      },
+    });
+    // Edge a moved: its old endpoint (300 ms) and its new one (20 ms) count apart,
+    // and its row shows only the newest.
+    const moved: Record<string, NameFacts> = {
+      'n1.example': timed(300, 'edge:a:198.51.100.1:443', NOW - 3 * H),
+      'n3.example': timed(20, 'edge:a:198.51.100.7:443'),
+    };
+    const l = buildCountryView([origin()], (n) => moved[n] ?? null, SETTINGS).origins[0]!
+      .listeners[0]!;
+    expect(l.targetAdds?.addresses).toEqual({ timed: 2, lowMs: 20, highMs: 300, clear: 1 });
+    expect(l.addresses[0]!.evidence.realHost?.timing).toMatchObject({ ms: 20, names: 1 });
+
+    // A transport measured only on the node's own address still carries its spread.
+    const direct = { address: '198.51.100.9', reachability: [] };
+    const alone = origin({ edges: [], published: [], direct });
+    const one: Record<string, NameFacts> = {
+      'n1.example': timed(90, 'relay:r1:198.51.100.9:443'),
+    };
+    const v = buildCountryView([alone], (n) => one[n] ?? null, SETTINGS).origins[0]!;
+    expect(v.listeners[0]!.targetAdds).toMatchObject({
+      ms: 90,
+      flagged: true,
+      addresses: { timed: 1, lowMs: 90, highMs: 90, clear: 0 },
+    });
+    expect(v.direct!.evidence.realHost?.timing).toMatchObject({ ms: 90, flagged: true });
+
+    // Two ports on the node's own address are two targets: its row gives no
+    // single figure (each transport's line keeps its own).
+    const two: Record<string, NameFacts> = {
+      'n1.example': timed(20, 'relay:r1:198.51.100.9:443'),
+      'n2.example': timed(300, 'relay:r1:198.51.100.9:8443'),
+    };
+    const w = buildCountryView([alone], (n) => two[n] ?? null, SETTINGS).origins[0]!;
+    expect(w.direct!.evidence.realHost?.names).toHaveLength(2);
+    expect(w.direct!.evidence.realHost?.timing).toBeNull();
+  });
+
   test('a retired name still draining is listed; one past its drain is not', () => {
     const o = origin();
     const l = o.listeners[0]!;
