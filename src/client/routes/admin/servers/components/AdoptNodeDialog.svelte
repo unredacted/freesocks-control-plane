@@ -5,7 +5,8 @@
    * with its current addresses, nothing a member holds changes. A direct node's
    * addresses are found by its name or address unless the operator ticks them.
    * A fronted node whose edge FCP does not run yet is marked so; Edges takes
-   * over later. A WebSocket node is given its origin name (what its CDN
+   * over later. A node Edges already protect keeps its tested addresses
+   * (their confirmations carry over) and the address its edges dial. A WebSocket node is given its origin name (what its CDN
    * fronts dial) here, since an adopted machine's settings never change
    * afterwards and Edges dials that name. A REALITY transport that refuses sing-box or Mihomo clients
    * (no minClientVer on an Xray that then refuses them) is named with its fix.
@@ -97,10 +98,14 @@
           ? { originHostname: originHostname.trim() }
           : {}),
       });
+      const kept =
+        r.carried > 0
+          ? ` Its ${r.carried} tested edge address${r.carried === 1 ? '' : 'es'} keep${r.carried === 1 ? 's' : ''} serving members.`
+          : '';
       toast.success(
-        r.addresses > 0
+        (r.addresses > 0
           ? `${node.name} adopted with ${r.addresses} address${r.addresses === 1 ? '' : 'es'}.`
-          : `${node.name} adopted.`,
+          : `${node.name} adopted.`) + kept,
       );
       open = false;
     } catch (e) {

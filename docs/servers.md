@@ -731,14 +731,25 @@ machine, which is also why its retirement is closed by an admin rather than by a
 name is refused (`servers.node_adopted`).
 
 A node Edges already protect while FCP does not manage it (docs/edges.md § "Protecting a node
-FCP does not manage") is refused while an L4 address its members are handed now (published and
-active, on a switched-on origin and listener) holds a confirmation that is current and would not
-be once the node is enrolled (`servers.adopt_edges_retest`): such a confirmation was taken with
-no REALITY authentication component, enrolling the node adds one
-(`panelNodeIntents.authRevision`), and the render gate would withhold each of those addresses
-from the node's members until it is tested again. A spare no member holds does not refuse it; it
-needs its test again before a rotation uses it. Nothing needs the adoption: the node's server
-names are sent and proven, and its edges rotate, as they are.
+FCP does not manage") keeps what its members hold. Each L4 address of its origin whose
+confirmation is current when it is adopted (in use or a spare) keeps it: the confirmation was
+taken with no REALITY authentication component, enrolling the node adds one
+(`panelNodeIntents.authRevision`), and the render gate would otherwise withhold each of those
+addresses from members until it was tested again. Adoption changes nothing on the node (its key,
+transport and edges are what they were tested with), so each such record is bound to the auth
+revision the node is adopted with, keeping who confirmed it, how and when (`carryConfirmations`;
+the result's and the audit's `carried`). From then on a key change stales it as for any enrolled
+node (`reality_key_changed`). A record that was not current stays as it is. The adoption also
+keeps the address its edges dial: an L4-fronted node has no address of its own to read (no Host
+dials it, and the row may hold a private management address), so the origin's address becomes
+the node's (its public IPv4, or `originAddressOverride` for anything else); a protection made
+again later plans from it, never from the management address. Such a node is adopted with
+"Its edge was made outside FCP" off: its edges are FCP's, so after a maintenance its approval
+waits for a protection run's tested standbys like an enrolled node's.
+
+A node is not adopted while the profile carries a change made on the backend outside FCP that
+nobody has seen (`servers.foreign_profile_edit`): its first reconcile would close it as drift.
+Press **Seen it** on Servers first.
 
 An adopted node is **reconciled as it was adopted**, so the reconciles a rename, a settled port
 change, Finish maintenance or a settings change schedule leave what members hold alone: its row
