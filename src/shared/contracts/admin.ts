@@ -436,6 +436,34 @@ export const RemnawaveLoggingReport = z.object({
 });
 export type RemnawaveLoggingReport = z.infer<typeof RemnawaveLoggingReport>;
 
+/** The newest logging-privacy check, whoever ran it: the hourly `logging-privacy`
+ *  cron (`automatic`) or an admin's Check / Apply (`manual`). Counts + a time
+ *  only: no profile name or content, no backend name, address or secret. */
+export const RemnawaveLoggingLastCheck = z.object({
+  at: z.number(),
+  source: z.enum(['automatic', 'manual']),
+  /** The admin's Check (a dry run) wrote nothing. */
+  dryRun: z.boolean(),
+  panels: z.number().int().nonnegative(),
+  /** Backends whose profiles could not be listed. */
+  panelsUnreadable: z.number().int().nonnegative(),
+  /** Backends the automatic run only read because a server change held them. */
+  panelsBusy: z.number().int().nonnegative(),
+  profiles: z.number().int().nonnegative(),
+  /** Profiles found logging (before this run turned any off). */
+  profilesLogging: z.number().int().nonnegative(),
+  profilesTurnedOff: z.number().int().nonnegative(),
+  /** Profiles that could not be checked or written. */
+  profilesSkipped: z.number().int().nonnegative(),
+});
+export type RemnawaveLoggingLastCheck = z.infer<typeof RemnawaveLoggingLastCheck>;
+
+/** Response of GET /api/v1/admin/remnawave/logging-last-check (null = never run). */
+export const RemnawaveLoggingLastCheckResponse = z.object({
+  lastCheck: RemnawaveLoggingLastCheck.nullable(),
+});
+export type RemnawaveLoggingLastCheckResponse = z.infer<typeof RemnawaveLoggingLastCheckResponse>;
+
 // --- Remnawave: node placement (per-mode squad pools) ---
 
 /** Per-mode bound-pool size. Pool SIZES only — the squad UUIDs are write-only
