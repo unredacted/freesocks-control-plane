@@ -10,11 +10,14 @@
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import type { ActionCtx, QueryCtx } from './_generated/server';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
 import { writeAuditLog } from './lib/audit';
 import { claimKey } from './lib/backend/ops';
+import { panelDigestKey } from './lib/backend/key';
+import { capabilitiesOf } from './lib/backends/capabilities';
+import { resolveServerConfig } from './lib/serverConfig';
 import type { Id } from './_generated/dataModel';
 import type { BackendConfig, RemnawaveServerConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
@@ -383,34 +386,210 @@ export const serverChangeRunning = internalQuery({
 });
 
 /**
+ * Whether a backend's logging write goes through the backend-write ledger:
+ * server changes are on and FCP has set the backend up (`assertWritable`'s
+ * gates), so typed edits, rollouts and node changes can be writing its profiles.
+ * There the write is a ledger op under a claim (`requestLoggingPatch`). Anywhere
+ * else no ledger op can be admitted, so nothing can interleave with a direct write.
+ */
+export const loggingThroughLedger = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }): Promise<boolean> => {
+    const server = await ctx.db.get(backendServerId);
+    if (!server || !capabilitiesOf(server.backend).backendWrites) return false;
+    if (!(await resolveServerConfig(ctx.db)).manage.enabled) return false;
+    const setup = await ctx.db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .unique();
+    return !!setup;
+  },
+});
+
+type ServerWithSecret = {
+  _id: Id<'backendServers'>;
+  name: string;
+  backend: keyof typeof PROVIDERS;
+  config: unknown;
+};
+type LoggingProfile = LoggingInstanceReport['profiles'][number];
+/** Who a logging write is attributed to: the admin who pressed Apply, else the run. */
+type LoggingActor = { actorAdminId?: Id<'adminUsers'>; actorRun?: string };
+
+/** A ledger refusal that means "another change holds it": left for the next run. */
+const HELD_CODES = new Set(['servers.op_running', 'servers.op_uncertain']);
+const codeOf = (err: unknown): string | null =>
+  err instanceof ConvexError ? ((err.data as { code?: string })?.code ?? null) : null;
+
+/**
+ * One backend through the ledger: list the profiles (a read), and turn logging
+ * off on each one that logs as its own ledger op: preview the tokens, claim the
+ * profile and its nodes, then the ledger's `run` re-reads, refuses a profile that
+ * moved since the preview, records the token and sends once. A profile another
+ * change holds, or one that moved under the preview, is left for the next run.
+ */
+async function hardenThroughLedger(
+  ctx: ActionCtx,
+  s: ServerWithSecret,
+  writes: NonNullable<(typeof PROVIDERS)[keyof typeof PROVIDERS]['backendWrites']>,
+  actor: LoggingActor,
+): Promise<LoggingRunRow> {
+  const provider = PROVIDERS[s.backend];
+  const config = s.config as BackendConfig;
+  const listed = await provider.hardenLogging!(config, { dryRun: true });
+  const digestKey = (await panelDigestKey()).key;
+  const profiles: LoggingProfile[] = [];
+  let wrote = false;
+  let busy = false;
+  const leftAlone = (p: LoggingProfile) => {
+    busy = true;
+    profiles.push({ uuid: p.uuid, name: p.name, hardened: false, changed: true });
+  };
+  for (const p of listed.profiles) {
+    if (p.error || !p.changed) {
+      profiles.push(p);
+      continue;
+    }
+    try {
+      const preview = await writes.previewLoggingPatch(config, p.uuid, digestKey);
+      if (!preview.changed) {
+        profiles.push({ uuid: p.uuid, name: p.name, hardened: true, changed: false });
+        continue;
+      }
+      const claim = {
+        backendServerId: s._id,
+        profileUuid: p.uuid,
+        baseToken: preview.baseToken,
+        expectedToken: preview.expectedToken,
+        inboundUuids: preview.inboundUuids,
+        ...actor,
+      };
+      let opId: Id<'panelOps'>;
+      try {
+        ({ opId } = await ctx.runMutation(internal.backendWrites.requestLoggingPatch, claim));
+      } catch (err) {
+        if (HELD_CODES.has(codeOf(err) ?? '')) {
+          leftAlone(p);
+          continue;
+        }
+        // A profile FCP has not read yet: read the backend once, then claim again.
+        if (codeOf(err) !== 'not_found') throw err;
+        await ctx.runAction(internal.backendObserve.refresh, { backendServerId: s._id });
+        ({ opId } = await ctx.runMutation(internal.backendWrites.requestLoggingPatch, claim));
+      }
+      await ctx.runAction(internal.backendWrites.run, { opId });
+      const op = await ctx.runQuery(internal.backendLedger.getForRun, { opId });
+      // Hardened only once the ledger SAW the expected profile (its token): a
+      // write whose answer was lost, or whose read-back failed or still shows
+      // the old config, is not reported as done. Its op stays open and holds
+      // the profile; a later look settles it and the next run reads it again.
+      if (op?.request === 'acknowledged' && op.panelState === 'observed') {
+        wrote = true;
+        profiles.push({ uuid: p.uuid, name: p.name, hardened: true, changed: true });
+      } else if (
+        (op?.attemptId && op.request !== 'rejected_pre_mutation') ||
+        op?.errorCode === 'servers.profile_changed'
+      )
+        leftAlone(p);
+      else
+        profiles.push({
+          uuid: p.uuid,
+          name: p.name,
+          hardened: false,
+          changed: true,
+          error: 'The write was not admitted',
+        });
+    } catch (err) {
+      if (HELD_CODES.has(codeOf(err) ?? '')) {
+        leftAlone(p);
+        continue;
+      }
+      profiles.push({
+        uuid: p.uuid,
+        name: p.name,
+        hardened: false,
+        changed: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return {
+    instance: { serverId: s._id as string, name: s.name, ok: true, profiles },
+    wrote,
+    busy,
+  };
+}
+
+/**
  * The shared run behind the Check / Apply routes and the hourly cron: every
  * active backend with a `hardenLogging` provider (Outline has no config-profile
  * concept and is skipped). A per-instance failure is isolated + reported, never
- * thrown, so one unreachable backend can't block the rest. With
- * `leaveBusyAlone`, a backend a server change holds (`serverChangeRunning`) is
- * only READ (a dry run) and left for the next run.
+ * thrown, so one unreachable backend can't block the rest.
+ *
+ * A write goes through the ledger where ledger ops can run (`loggingThroughLedger`);
+ * elsewhere it is direct, and the token each profile will have is recorded
+ * BEFORE the write (`backendObserve.noteOwnProfileTokens`) so a later observation
+ * attributes the change to FCP even when the immediate re-read fails. A
+ * direct-path backend an older server change still holds (`serverChangeRunning`),
+ * and any backend whose ledger eligibility cannot be read, is only READ and left
+ * for the next run.
  */
 async function hardenEveryBackend(
   ctx: ActionCtx,
-  opts: { dryRun: boolean; leaveBusyAlone: boolean },
+  opts: { dryRun: boolean; actor: LoggingActor },
 ): Promise<LoggingRunRow[]> {
   const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
   const rows: LoggingRunRow[] = [];
   for (const s of servers) {
     const provider = PROVIDERS[s.backend];
     if (!provider.hardenLogging) continue; // no config-profile concept (Outline)
-    // Fail safe: a guard that cannot be read counts as busy (read, never write).
-    const busy =
-      opts.leaveBusyAlone && !opts.dryRun
+    // Fail closed: an eligibility read that fails (null) is never permission to
+    // bypass the ledger; that backend is only read this time.
+    const ledger: boolean | null =
+      !opts.dryRun && !!provider.backendWrites
         ? await ctx
-            .runQuery(internal.backendServers.serverChangeRunning, { backendServerId: s._id })
-            .catch(() => true)
+            .runQuery(internal.backendServers.loggingThroughLedger, { backendServerId: s._id })
+            .catch(() => null)
         : false;
+    // Off the ledger, an older op may still hold a profile or a node: left alone
+    // (a guard that cannot be read counts as held). Admin Apply and cron alike.
+    const busy =
+      ledger === null ||
+      (!opts.dryRun &&
+        ledger === false &&
+        (await ctx
+          .runQuery(internal.backendServers.serverChangeRunning, { backendServerId: s._id })
+          .catch(() => true)));
     const dryRun = opts.dryRun || busy;
     try {
-      const report = await provider.hardenLogging(s.config as BackendConfig, { dryRun });
-      // This edit is FCP's own but does not go through the ops ledger: read the
-      // backend again as a new baseline so it is not flagged as somebody else's.
+      if (ledger === true && provider.backendWrites) {
+        rows.push(await hardenThroughLedger(ctx, s, provider.backendWrites, opts.actor));
+        continue;
+      }
+      // Without the key (a deployment missing ACCOUNT_ID_PEPPER) nothing is
+      // recorded first; the immediate re-read below still re-baselines.
+      const digestKey = dryRun
+        ? undefined
+        : await panelDigestKey()
+            .then((k) => k.key)
+            .catch(() => undefined);
+      const report = await provider.hardenLogging(s.config as BackendConfig, {
+        dryRun,
+        digestKey,
+        // Recorded before the write: the observer counts it as FCP's own.
+        beforeWrite: async (profileUuid, token) => {
+          try {
+            await ctx.runMutation(internal.backendObserve.noteOwnProfileTokens, {
+              backendServerId: s._id,
+              tokens: [{ profileUuid, token }],
+            });
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      });
+      // A new baseline at once (the recorded token covers a failed re-read).
       if (!dryRun && report.profiles.some((p) => p.changed) && provider.observePanel)
         await ctx
           .runAction(internal.backendObserve.refresh, { backendServerId: s._id, ownEdit: true })
@@ -510,7 +689,8 @@ export function summarizeLoggingRun(
       if (p.error) c.profilesSkipped += 1;
       else if (p.changed) {
         c.profilesLogging += 1;
-        if (wrote) c.profilesTurnedOff += 1;
+        // Written: the direct path (every profile it read) or a ledger op that sent.
+        if (wrote && p.hardened) c.profilesTurnedOff += 1;
       }
     }
   }
@@ -596,9 +776,19 @@ export const getLoggingLastCheck = internalQuery({
  * (`source: 'manual'`); a failure to store it never fails the admin's request.
  */
 export const hardenRemnawaveLogging = internalAction({
-  args: { dryRun: v.boolean() },
-  handler: async (ctx, { dryRun }): Promise<{ instances: LoggingInstanceReport[] }> => {
-    const rows = await hardenEveryBackend(ctx, { dryRun, leaveBusyAlone: false });
+  args: {
+    dryRun: v.boolean(),
+    /** The admin who pressed Apply: its ledger ops are theirs (absent: an API token). */
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (
+    ctx,
+    { dryRun, actorAdminId },
+  ): Promise<{ instances: LoggingInstanceReport[] }> => {
+    const rows = await hardenEveryBackend(ctx, {
+      dryRun,
+      actor: actorAdminId ? { actorAdminId } : { actorRun: 'admin:logging-apply' },
+    });
     try {
       await ctx.runMutation(
         internal.backendServers.recordLoggingCheck,
@@ -622,7 +812,10 @@ export const autoHardenLogging = internalAction({
   args: {},
   handler: async (ctx): Promise<LoggingCheckRecord> =>
     runWithCronOutcome(ctx, 'logging-privacy', async (): Promise<LoggingCheckRecord> => {
-      const rows = await hardenEveryBackend(ctx, { dryRun: false, leaveBusyAlone: true });
+      const rows = await hardenEveryBackend(ctx, {
+        dryRun: false,
+        actor: { actorRun: 'cron:logging-privacy' },
+      });
       return ctx.runMutation(
         internal.backendServers.recordLoggingCheck,
         summarizeLoggingRun(rows, 'automatic', false),

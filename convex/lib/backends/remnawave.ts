@@ -45,6 +45,7 @@ import type {
   PanelInboundTestParams,
   PanelSubscriptionTemplate,
   PanelSubscriptionTemplateRef,
+  LoggingPatchPreview,
   ProfilePatchPreview,
   ProfilePatchSendOptions,
 } from './types';
@@ -388,7 +389,16 @@ const ConfigProfilesList = z.union([
  */
 export async function remnawaveHardenLogging(
   cfg: RemnawaveConfig,
-  opts: { dryRun: boolean },
+  opts: {
+    dryRun: boolean;
+    /**
+     * With `beforeWrite`: the token each profile will have once written
+     * (`changeToken` under this key) is handed to `beforeWrite` BEFORE its PATCH;
+     * `false` skips that profile (nothing is sent for it).
+     */
+    digestKey?: string;
+    beforeWrite?: (profileUuid: string, expectedToken: string) => Promise<boolean>;
+  },
 ): Promise<RemnawaveLoggingReport> {
   const listed = await call(cfg, {
     method: 'GET',
@@ -412,6 +422,12 @@ export async function remnawaveHardenLogging(
       });
       const merged = hardenXrayLoggingConfig(full.config);
       if (merged.changed && !opts.dryRun) {
+        if (
+          opts.beforeWrite &&
+          opts.digestKey &&
+          !(await opts.beforeWrite(p.uuid, await changeToken(merged.config, opts.digestKey)))
+        )
+          throw new RemnawaveApiError('the write could not be recorded first; not sent');
         await call(cfg, {
           method: 'PATCH',
           path: '/api/config-profiles',
@@ -2066,6 +2082,62 @@ export async function remnawaveApplyProfilePatch(
 
 /** How long a profile PATCH may take before it is given up on (never below the instance's own). */
 const PROFILE_WRITE_TIMEOUT_MS = 30_000;
+
+/**
+ * What turning logging off on one profile WOULD do, from a fresh read: the
+ * token of the config as it is and the token it would have afterwards (the
+ * same field-by-field merge as `hardenXrayLoggingConfig`). Writes nothing.
+ * The logging-privacy cron conditions its ledger op on these tokens.
+ */
+export async function remnawavePreviewLoggingPatch(
+  cfg: RemnawaveConfig,
+  profileUuid: string,
+  digestKey: string,
+): Promise<LoggingPatchPreview> {
+  const full = await readFullProfile(cfg, profileUuid);
+  const merged = hardenXrayLoggingConfig(full.config);
+  const baseToken = await changeToken(full.config, digestKey);
+  return {
+    profileName: full.name,
+    baseToken,
+    expectedToken: merged.changed ? await changeToken(merged.config, digestKey) : baseToken,
+    changed: merged.changed,
+    inboundUuids: Object.fromEntries((full.inbounds ?? []).map((i) => [i.tag, i.uuid])),
+  };
+}
+
+/**
+ * Turn logging off on one profile, guarded like a typed edit: re-read as late as
+ * possible, refuse unless the config still has `baseToken` (someone else changed
+ * it: nothing is sent), merge ONLY the logging keys, let `beforeSend` record the
+ * token the profile will have, then send ONCE.
+ */
+export async function remnawaveApplyLoggingPatch(
+  cfg: RemnawaveConfig,
+  profileUuid: string,
+  baseToken: string,
+  digestKey: string,
+  opts: Pick<ProfilePatchSendOptions, 'beforeSend'> = {},
+): Promise<
+  { sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' | 'not_admitted' }
+> {
+  const full = await readFullProfile(cfg, profileUuid);
+  if ((await changeToken(full.config, digestKey)) !== baseToken)
+    return { sent: false, reason: 'profile_changed' };
+  const merged = hardenXrayLoggingConfig(full.config);
+  if (!merged.changed) return { sent: false, reason: 'nothing_to_change' };
+  if (opts.beforeSend && !(await opts.beforeSend(await changeToken(merged.config, digestKey))))
+    return { sent: false, reason: 'not_admitted' };
+  await call(cfg, {
+    method: 'PATCH',
+    path: '/api/config-profiles',
+    body: { uuid: profileUuid, config: merged.config },
+    schema: z.unknown(),
+    sensitive: true,
+    timeoutMs: Math.max(cfg.timeoutMs ?? 8000, PROFILE_WRITE_TIMEOUT_MS),
+  });
+  return { sent: true };
+}
 
 // --- Backend setup (bootstrap contract v2) -------------------------------------------------------
 //

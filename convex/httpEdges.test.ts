@@ -441,9 +441,16 @@ describe('origin admin routes', () => {
       ['edges', 'e1', 'verification-binding'],
       ['probes'],
       ['attention'],
+      ['countries'],
+      ['countries', 'lists'],
     ]) {
       expect(throttlePolicyForGet(p)).toBeNull();
     }
+    // The country view builds the fleet per country: throttled per actor.
+    expect(throttlePolicyForGet(['countries', 'summary'])).toBe('admin.edges.country-view');
+    expect(throttlePolicyForGet(['countries', 'IR'])).toBe('admin.edges.country-view');
+    expect(throttlePolicyForGet(['countries', 'ir'])).toBe('admin.edges.country-view');
+    expect(throttlePolicyForGet(['countries', 'IR', 'x'])).toBeNull();
   });
 
   test('auth: anonymous 401; a servers:read token reads but cannot write; config needs the settings scope', async () => {

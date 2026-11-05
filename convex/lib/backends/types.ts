@@ -467,6 +467,17 @@ export interface ProfilePatchPreview {
   inboundUuids: Record<string, string>;
 }
 
+/** What turning logging off on one profile would do (the logging-privacy cron's ledger op). */
+export interface LoggingPatchPreview {
+  profileName: string;
+  baseToken: string;
+  /** The token the profile has once logging is off (= `baseToken` when it already is). */
+  expectedToken: string;
+  changed: boolean;
+  /** tag -> inbound uuid as read: a settled write must leave every one of them as it was. */
+  inboundUuids: Record<string, string>;
+}
+
 /** How the one attempt of a profile edit is made (the ledger's `run`). */
 export interface ProfilePatchSendOptions {
   /** Key material for the transports the edit creates, made for this attempt only. */
@@ -646,6 +657,26 @@ export interface PanelWrites<C> {
     baseToken: string,
     digestKey: string,
     opts?: ProfilePatchSendOptions,
+  ): Promise<
+    | { sent: true }
+    | { sent: false; reason: 'profile_changed' | 'nothing_to_change' | 'not_admitted' }
+  >;
+  /**
+   * The logging-privacy write as a ledger op (docs/privacy.md §5): the preview
+   * reads both tokens, the apply re-reads, refuses unless `baseToken` still
+   * holds, turns logging off (only the `log` + `policy` keys) and sends once.
+   */
+  previewLoggingPatch(
+    config: C,
+    profileUuid: string,
+    digestKey: string,
+  ): Promise<LoggingPatchPreview>;
+  applyLoggingPatch(
+    config: C,
+    profileUuid: string,
+    baseToken: string,
+    digestKey: string,
+    opts?: Pick<ProfilePatchSendOptions, 'beforeSend'>,
   ): Promise<
     | { sent: true }
     | { sent: false; reason: 'profile_changed' | 'nothing_to_change' | 'not_admitted' }

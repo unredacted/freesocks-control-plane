@@ -4520,6 +4520,7 @@ http.route({
     try {
       const report = await ctx.runAction(internal.backendServers.hardenRemnawaveLogging, {
         dryRun: false,
+        actorAdminId: admin.adminUserId ?? undefined,
       });
       const profilesTotal = report.instances.reduce((n, i) => n + i.profiles.length, 0);
       const profilesChanged = report.instances.reduce(

@@ -70,6 +70,8 @@ import {
   remnawaveReadHosts,
   remnawavePreviewProfilePatch,
   remnawaveApplyProfilePatch,
+  remnawaveApplyLoggingPatch,
+  remnawavePreviewLoggingPatch,
   remnawaveReadProfile,
   remnawaveReadSquads,
   remnawaveReadNodeStatus,
@@ -150,7 +152,14 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: enforce the no-client-IP-logging posture on the backend's config
   // (Remnawave config profiles: Xray log/policy). Absent for backends with no
   // such config surface (Outline). `dryRun` reports what would change, no write.
-  hardenLogging?(config: C, opts: { dryRun: boolean }): Promise<RemnawaveLoggingReport>;
+  hardenLogging?(
+    config: C,
+    opts: {
+      dryRun: boolean;
+      digestKey?: string;
+      beforeWrite?: (profileUuid: string, expectedToken: string) => Promise<boolean>;
+    },
+  ): Promise<RemnawaveLoggingReport>;
   // Optional: the backend's client-facing connection entries (Remnawave Hosts)
   // and an address/port repoint of ONE of them — the origin-edge flip. Absent for
   // backends whose endpoint is the server itself (Outline).
@@ -237,6 +246,8 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
     deleteNode: remnawaveDeleteNode,
     previewProfilePatch: remnawavePreviewProfilePatch,
     applyProfilePatch: remnawaveApplyProfilePatch,
+    previewLoggingPatch: remnawavePreviewLoggingPatch,
+    applyLoggingPatch: remnawaveApplyLoggingPatch,
     readProfile: remnawaveReadProfile,
     readHosts: remnawaveReadHosts,
     readSquads: remnawaveReadSquads,

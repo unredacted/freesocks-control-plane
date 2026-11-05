@@ -11,6 +11,7 @@
  * actor (`admin.edges.provider-call` / `admin.edges.probe`).
  * Responses are the shapes in src/shared/contracts/edges.ts.
  */
+import { mapBounded } from './lib/boundedMap';
 import type { HttpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
@@ -309,8 +310,16 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
 export function throttlePolicyForGet(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c] = parts;
   if (a === 'relays' && b === 'inbound-candidates' && !c) return 'admin.edges.provider-call';
+  // The country view reads the whole fleet once per country it builds (the summary
+  // a few queries at a time): bounded per actor so a loop or a leaked read token
+  // cannot keep the backend's query pool busy.
+  if (a === 'countries' && b && (b === 'summary' || /^[A-Za-z]{2}$/.test(b)) && !c)
+    return 'admin.edges.country-view';
   return null;
 }
+
+/** Countries of the summary built at once: each is one query (a few of the backend's pool). */
+export const COUNTRY_SUMMARY_PARALLEL = 4;
 
 function wrap(handler: Handler, sealedRoute: boolean) {
   const inner = async (ctx: ActionCtx, req: Request): Promise<Response> => {
@@ -609,16 +618,15 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   // or one country in full (origins -> transports -> addresses and names), with
   // the probe sources' health (a failing or capped source is why a country goes quiet).
   if (a === 'countries' && b === 'summary' && !c) {
-    // The frame, then each listed country in a query of its own, side by side:
-    // one query for every country ran past a query's time limit.
+    // The frame, then each listed country in a query of its own, at most
+    // COUNTRY_SUMMARY_PARALLEL at once: one query for every country ran past a
+    // query's time limit, and one per country all at once could fill the pool.
     const [head, sources] = await Promise.all([
       ctx.runQuery(internal.edgeCountryView.summaryHead, {}),
       ctx.runQuery(internal.probes.sourceHealthView, {}),
     ]);
-    const rows = await Promise.all(
-      head.countries.map((country) =>
-        ctx.runQuery(internal.edgeCountryView.summaryRow, { country }),
-      ),
+    const rows = await mapBounded(head.countries, COUNTRY_SUMMARY_PARALLEL, (country) =>
+      ctx.runQuery(internal.edgeCountryView.summaryRow, { country }),
     );
     return json({
       generatedAt: head.generatedAt,
