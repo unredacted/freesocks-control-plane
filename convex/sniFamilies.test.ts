@@ -541,6 +541,31 @@ describe('audit and scopes', () => {
     expect(rows[1].payload).toEqual({ slug: 'fam-a', added: 1, rejected: 0 });
   });
 
+  test('a rename keeps the slug and audits what changed, never the name', async () => {
+    const { t, call } = await seed();
+    await call('POST', 'families', family);
+    expect((await call('PATCH', 'families/fam-a', { label: '  Shared cover A  ' })).status).toBe(
+      200,
+    );
+    const listed = await (await call('GET', 'families')).json();
+    expect(listed.families).toEqual([
+      expect.objectContaining({ slug: 'fam-a', label: 'Shared cover A' }),
+    ]);
+    // The same name again, then switched off: only what moved is recorded.
+    await call('PATCH', 'families/fam-a', { label: 'Shared cover A', enabled: false });
+    // An empty name falls back to the slug.
+    await call('PATCH', 'families/fam-a', { label: '   ' });
+    const detail = await (await call('GET', 'families/fam-a')).json();
+    expect(detail.family).toMatchObject({ slug: 'fam-a', label: 'fam-a' });
+    const rows = (await auditRows(t)).filter((r) => r.action === 'edge.sni.family.update');
+    expect(rows.map((r) => r.payload)).toEqual([
+      { slug: 'fam-a', changed: ['label'] },
+      { slug: 'fam-a', changed: ['enabled'] },
+      { slug: 'fam-a', changed: ['label'] },
+    ]);
+    expect(JSON.stringify(rows.map((r) => r.payload))).not.toContain('Shared cover');
+  });
+
   test('the switches are a settings-scope surface', async () => {
     const { scopeFor } = await import('./httpEdges');
     expect(scopeFor(['sni', 'config'], 'PATCH')).toBe('admin:settings:write');

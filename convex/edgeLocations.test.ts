@@ -333,6 +333,36 @@ describe('trust is per location', () => {
   });
 });
 
+describe('a rename', () => {
+  test('changes the name only, keeps the qualification, and audits which fields moved', async () => {
+    const t = convexTest(schema, modules);
+    const accountId = await createAccount(t, { provider: 'gcore', name: 'g' });
+    const loc = (await defaultLocationRow(t, accountId))!;
+    await t.mutation(internal.edgeLocations.setQualified, { id: loc._id, qualified: true });
+    await t.mutation(internal.edgeLocations.update, { id: loc._id, label: '  Shared   place  ' });
+    // The same name again moves nothing; an empty one keeps the name it has.
+    await t.mutation(internal.edgeLocations.update, { id: loc._id, label: 'Shared place' });
+    await t.mutation(internal.edgeLocations.update, { id: loc._id, label: '   ' });
+    const after = (await t.run((c) => c.db.get(loc._id)))!;
+    expect(after).toMatchObject({
+      label: 'Shared place',
+      placeKey: loc.placeKey,
+      qualified: true,
+    });
+    const rows = await t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).filter(
+        (r) => r.action === 'edge.location.updated',
+      ),
+    );
+    expect(rows.map((r) => (r.payload as { changed: string[] }).changed)).toEqual([
+      ['label'],
+      [],
+      [],
+    ]);
+    expect(JSON.stringify(rows.map((r) => r.payload))).not.toContain('Shared');
+  });
+});
+
 describe('every edge freezes its location', () => {
   test("describe and destroy act in the edge's own region, never the account's default", async () => {
     const t = convexTest(schema, modules);

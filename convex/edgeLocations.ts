@@ -947,6 +947,11 @@ export const update = internalMutation({
           regionalParams: 'regionalParams' in patch ? patch.regionalParams : row.regionalParams,
         }),
       );
+    // What actually moved, for the audit row (the field names, never a value).
+    const changed: string[] = (Object.keys(patch) as (keyof Location)[]).filter(
+      (k) => k !== 'updatedAt' && JSON.stringify(patch[k]) !== JSON.stringify(row[k]),
+    );
+    if (a.makeDefault && account.defaultLocationId !== row._id) changed.push('default');
     await ctx.db.patch(row._id, patch);
     if (templateMoved && row.qualified)
       await untrustLocation(ctx, account, row, { actorAdminId: a.actorAdminId });
@@ -962,6 +967,7 @@ export const update = internalMutation({
         provider: account.provider,
         placeKey: row.placeKey,
         enabled: patch.enabled ?? row.enabled,
+        changed,
       },
     });
     return { ok: true as const };
