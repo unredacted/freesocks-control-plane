@@ -4442,9 +4442,15 @@ with `delivery.country.steer` on (next section).
 - **Budget and failing sources.** `edge.probe.globalpingTestsPerHour` (default 400) is every
   Globalping test FCP asks in an hour. The checks of names from inside a country (§ "Checks from
   inside a country", candidates' real-site checks included) and the hunt's timing keep their
-  share of it: when they are on, `edge.sni.vantage.hourlyBudget` x `perCountryLimit` plus
-  `edge.sni.hunt.timingPerHour` x 2 (`probes.ts globalpingNamesShare`), so a busy probe hour never
-  takes the tests the name checks are allowed. The probe rounds count the vantage points they
+  share of it, so a busy probe hour never takes the tests the name checks are allowed: when they
+  are on, the Globalping rows `edge.sni.vantage.hourlyBudget` allows times `perCountryLimit`
+  (with RIPE Atlas usable too, a batch puts one row per source on each name, so Globalping gets
+  its part of each batch; with finding names on, the candidates' Globalping-only checks may fill
+  the whole budget), plus `edge.sni.hunt.timingPerHour` x 2
+  (lib/edges/probes/globalpingShare.ts, `namesShare`). A cap below that share shrinks the name
+  checks to fit, the checks first and the timing with what is left; a cap that leaves them no
+  Globalping test runs their batches without it (RIPE Atlas, if usable, keeps the whole budget),
+  so the setting bounds every Globalping test FCP asks. The probe rounds count the vantage points they
   ask (`probeRuns.tests`: countries x vantages, plus one per control) against the rest; a round
   that would pass it runs without Globalping, and the executor asks Globalping's
   `GET /v1/limits` first and does not start a measurement that would not fit

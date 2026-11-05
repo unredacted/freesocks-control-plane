@@ -213,16 +213,60 @@ describe('the account row', () => {
 });
 
 describe("the name checks' share", () => {
-  test('their budgets times the vantages each, only while they are on', () => {
-    const on = {
-      vantage: { on: true, hourlyBudget: 12, perCountryLimit: 3 },
-      huntTiming: { on: true, perHour: 6 },
-    };
-    expect(namesShare(on)).toBe(36 + 12);
-    expect(namesShare({ ...on, huntTiming: { on: false, perHour: 6 } })).toBe(36);
-    expect(namesShare({ ...on, vantage: { ...on.vantage, on: false } })).toBe(12);
+  const base = {
+    perHour: 1000,
+    vantage: { on: true, hourlyBudget: 12, perCountryLimit: 3, sources: 1 },
+    huntChecks: false,
+    huntTiming: { on: true, perHour: 6 },
+  };
+
+  test('uncapped: their budgets times the vantages each, only while they are on', () => {
+    expect(namesShare(base)).toEqual({
+      reserved: 36 + 12,
+      vantageBudget: 12,
+      vantageWithoutGlobalping: false,
+      timingPerHour: 6,
+    });
+    expect(namesShare({ ...base, huntTiming: { on: false, perHour: 6 } }).reserved).toBe(36);
+    expect(namesShare({ ...base, vantage: { ...base.vantage, on: false } }).reserved).toBe(12);
     expect(probeShare(500, 48)).toBe(452);
-    expect(probeShare(40, 48)).toBe(0);
     expect(probeShare(400, 0)).toBe(400);
+  });
+
+  test('a second source takes its rows of each batch, unless the hunt may fill the budget', () => {
+    const two = { ...base, vantage: { ...base.vantage, sources: 2 } };
+    // Each name of a batch is one row per source: 6 of the 12 rows go to Globalping.
+    expect(namesShare(two)).toMatchObject({ reserved: 18 + 12, vantageBudget: 12 });
+    // The hunt's real-site checks are Globalping only and may use the whole budget.
+    expect(namesShare({ ...two, huntChecks: true })).toMatchObject({ reserved: 36 + 12 });
+  });
+
+  test('a cap below their share shrinks the name checks first, then the timing', () => {
+    // 40: the checks keep their 36, the timing gets 2 of its 6 measurements.
+    expect(namesShare({ ...base, perHour: 40, huntChecks: true })).toEqual({
+      reserved: 40,
+      vantageBudget: 12,
+      vantageWithoutGlobalping: false,
+      timingPerHour: 2,
+    });
+    // 30: 10 rows of 3 vantages, nothing left for timing.
+    expect(namesShare({ ...base, perHour: 30, huntChecks: true })).toEqual({
+      reserved: 30,
+      vantageBudget: 10,
+      vantageWithoutGlobalping: false,
+      timingPerHour: 0,
+    });
+    // With a second source a row of Globalping comes with a row of the other.
+    expect(
+      namesShare({ ...base, perHour: 12, vantage: { ...base.vantage, sources: 2 } }),
+    ).toMatchObject({ reserved: 12, vantageBudget: 8, timingPerHour: 0 });
+    // 0: no Globalping at all; the other sources keep the whole budget.
+    expect(namesShare({ ...base, perHour: 0, vantage: { ...base.vantage, sources: 2 } })).toEqual({
+      reserved: 0,
+      vantageBudget: 12,
+      vantageWithoutGlobalping: true,
+      timingPerHour: 0,
+    });
+    expect(probeShare(40, 40)).toBe(0);
   });
 });

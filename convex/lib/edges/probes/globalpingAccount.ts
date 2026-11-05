@@ -7,7 +7,8 @@
  *  - FCP's cap, `probe.globalpingTestsPerHour`: every Globalping test FCP asks
  *    in an hour (probe rounds, in-country name checks, the hunt's timing).
  *    The probe rounds may use it less the name checks' share, so a busy probe
- *    hour never takes the tests the name checks are allowed.
+ *    hour never takes the tests the name checks are allowed; a cap below that
+ *    share shrinks the name checks' own budgets to fit (`namesShare`).
  *  - Globalping's allowance: the free tests of its hour window (500 with a
  *    token) and then credits, one per test. Read from its own answers (the
  *    `/v1/limits` preflight and every create's headers) into one `appState`
@@ -117,21 +118,69 @@ export function accountView(a: GlobalpingAccount, now: number): GlobalpingAccoun
 }
 
 export interface NamesShareInputs {
-  /** In-country name checks (candidates' real-site checks included) run through Globalping. */
-  vantage: { on: boolean; hourlyBudget: number; perCountryLimit: number };
-  /** The hunt's timing from a network's place. */
+  /** `probe.globalpingTestsPerHour`: every Globalping test FCP asks in an hour. */
+  perHour: number;
+  /**
+   * The checks of names from inside countries: `on` when they run with
+   * Globalping among their usable sources; their hourly budget (measurement
+   * rows, every source), the vantages each, and how many sources a batch asks.
+   */
+  vantage: { on: boolean; hourlyBudget: number; perCountryLimit: number; sources: number };
+  /**
+   * The hunt's checks of candidates' real sites from inside countries: they
+   * use Globalping only and may fill whatever the vantage budget leaves.
+   */
+  huntChecks: boolean;
+  /** The hunt's timing from a network's place (`TIMING_PROBES` vantages each). */
   huntTiming: { on: boolean; perHour: number };
 }
 
+export interface NamesShare {
+  /** Globalping tests an hour kept for the name checks: out of the probe rounds' part. */
+  reserved: number;
+  /** The name checks' hourly budget under the cap (measurement rows, every source). */
+  vantageBudget: number;
+  /**
+   * The cap leaves the name checks no Globalping test: their batches run
+   * without it (the other sources keep the whole budget).
+   */
+  vantageWithoutGlobalping: boolean;
+  /** Timing measurements an hour under the cap. */
+  timingPerHour: number;
+}
+
 /**
- * Globalping tests an hour the name checks may ask: the most their own
- * budgets allow (measurements x vantages each). Kept out of what the probe
- * rounds may use of `probe.globalpingTestsPerHour`.
+ * What the name checks may ask of Globalping within `perHour`, and the
+ * budgets that keeps them to it. Uncapped, the most their own budgets allow:
+ * a batch asks every source, so only its Globalping rows count (all of the
+ * budget once the hunt's Globalping-only checks may fill it), each row
+ * `perCountryLimit` vantages, then the hunt's timing. A cap below that
+ * shrinks the checks first and the timing with what is left, so the setting
+ * bounds every Globalping test FCP asks.
  */
-export function namesShare(i: NamesShareInputs): number {
-  const vantage = i.vantage.on ? i.vantage.hourlyBudget * i.vantage.perCountryLimit : 0;
-  const timing = i.huntTiming.on ? i.huntTiming.perHour * TIMING_PROBES : 0;
-  return vantage + timing;
+export function namesShare(i: NamesShareInputs): NamesShare {
+  const cap = Math.max(0, i.perHour);
+  const pcl = Math.max(1, i.vantage.perCountryLimit);
+  const sources = Math.max(1, i.vantage.sources);
+  const budget = i.vantage.hourlyBudget;
+  // Globalping rows an hour at most: a batch puts one row per source on each
+  // name; the hunt's own rows are Globalping only.
+  const rowsMax = !i.vantage.on ? 0 : i.huntChecks ? budget : Math.ceil(budget / sources);
+  const rows = Math.min(rowsMax, Math.floor(cap / pcl));
+  const vantageWithoutGlobalping = i.vantage.on && rowsMax > 0 && rows === 0;
+  let vantageBudget = budget;
+  if (i.vantage.on && rows < rowsMax && !vantageWithoutGlobalping)
+    vantageBudget = i.huntChecks ? rows : rows * sources;
+  const left = cap - rows * pcl;
+  const timingPerHour = i.huntTiming.on
+    ? Math.min(i.huntTiming.perHour, Math.floor(left / TIMING_PROBES))
+    : i.huntTiming.perHour;
+  return {
+    reserved: rows * pcl + (i.huntTiming.on ? timingPerHour * TIMING_PROBES : 0),
+    vantageBudget,
+    vantageWithoutGlobalping,
+    timingPerHour,
+  };
 }
 
 /** What the probe rounds may use of the hourly cap. */

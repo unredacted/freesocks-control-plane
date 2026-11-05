@@ -69,17 +69,11 @@ import {
   GLOBALPING_ACCOUNT_KEY,
   accountView,
   mergeReading,
-  namesShare,
   probeShare,
   type GlobalpingAccount,
 } from './lib/edges/probes/globalpingAccount';
+import { resolveGlobalpingShare } from './lib/edges/probes/globalpingShare';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
-import {
-  resolveSniConfig,
-  resolveSniHuntConfig,
-  resolveSniVantageConfig,
-  vantageCountries,
-} from './lib/sniConfig';
 import { shapeProtocolFor } from './lib/edges/verifyRung';
 import { hostSniOf } from './relayListeners';
 import { refreshPartialRung } from './edgeVerification';
@@ -624,31 +618,9 @@ async function roundsWithoutGlobalping(
   };
 }
 
-/**
- * The name checks' share of `probe.globalpingTestsPerHour`: the Globalping
- * tests an hour the in-country name checks (candidates' real-site checks
- * included) and the hunt's timing may ask when they are on
- * (lib/edges/probes/globalpingAccount.ts `namesShare`). The probe rounds may
- * use the rest, so a busy probe hour never takes what the name checks are allowed.
- */
+/** The name checks' share of `probe.globalpingTestsPerHour` (lib/edges/probes/globalpingShare.ts). */
 export async function globalpingNamesShare(db: QueryCtx['db']): Promise<number> {
-  const [sni, vantage, hunt] = await Promise.all([
-    resolveSniConfig(db),
-    resolveSniVantageConfig(db),
-    resolveSniHuntConfig(db),
-  ]);
-  return namesShare({
-    vantage: {
-      on:
-        sni.enabled &&
-        vantage.enabled &&
-        vantage.sources.globalping &&
-        vantageCountries(vantage, sni.curatedCountries).length > 0,
-      hourlyBudget: vantage.hourlyBudget,
-      perCountryLimit: vantage.perCountryLimit,
-    },
-    huntTiming: { on: hunt.enabled, perHour: hunt.timingPerHour },
-  });
+  return (await resolveGlobalpingShare(db)).reserved;
 }
 
 /**

@@ -693,6 +693,10 @@ describe('sourceWords', () => {
     expect(
       accountWords(capWith(account({ remaining: 0, credits: 0, runwayDays: 0 })), NOW),
     ).toContain('Globalping refuses new tests until its hour resets.');
+    // A balance older than the window it is shown with says when it was given.
+    expect(accountWords(capWith(account({ creditsAt: at(3 * H) })), NOW)).toContain(
+      '59,812 credits left as of 3 h ago.',
+    );
     expect(
       accountWords(capWith(account({ type: 'ip', limit: 250, credits: null })), NOW),
     ).toContain('No token is set, so there are no credits');

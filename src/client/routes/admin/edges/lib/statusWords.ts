@@ -587,7 +587,13 @@ export function accountWords(c: GlobalpingCap | null | undefined, now: number): 
         spent += `: at that pace they last about ${fmt(a.runwayDays)} ${a.runwayDays === 1 ? 'day' : 'days'}`;
       spent += '.';
     }
-    parts.push(`${fmt(a.credits)} credits left.${spent}`);
+    // A create within the free tests carries no balance: the one shown may be
+    // older than the window above, so it says when Globalping last gave it.
+    const asOf =
+      a.creditsAt && Date.parse(a.at) - Date.parse(a.creditsAt) > 60_000
+        ? ` as of ${relativeTime(a.creditsAt, now)}`
+        : '';
+    parts.push(`${fmt(a.credits)} credits left${asOf}.${spent}`);
     if (a.remaining === 0 && a.credits === 0)
       parts.push('Globalping refuses new tests until its hour resets.');
   } else if (a.type === 'ip') {
