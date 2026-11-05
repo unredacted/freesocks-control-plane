@@ -351,10 +351,24 @@ Admin → Servers → Backends has a fleet-wide **no-log enforcement** card back
 
 The hourly `logging-privacy` cron (`backendServers.autoHardenLogging`) runs the same apply on its
 own, so a profile that starts logging again is turned off within the hour. It writes nothing
-while every profile is compliant (no node restart), skips a backend while a server change holds
-one of its profiles or nodes (the backend-write ledger's claims; it is read, counted busy, and
-tried the next hour), records the result in `appState` `logging:lastCheck`, and audits
-`remnawave.logging_hardened` (counts only) when it turned logging off somewhere.
+while every profile is compliant (no node restart), records the result in `appState`
+`logging:lastCheck`, and audits `remnawave.logging_hardened` (counts only) when it turned logging
+off somewhere. How a write is made (the cron's and the Apply button's alike):
+
+- **Where ledger ops can run** (server changes on and the backend set up,
+  `backendServers.loggingThroughLedger`), each profile that logs is its own backend-write
+  ledger op (`backendWrites.requestLoggingPatch`): a claim on the profile and every enabled node
+  on it, taken before the last read and held until the write is settled, so no typed edit,
+  rollout or node change interleaves with the read-modify-write; the send re-reads and refuses a
+  profile that moved since the preview (`servers.profile_changed`: left for the next run), and
+  the token the profile will have is in the op's postcondition before the send, so the observer
+  counts it as FCP's own. A profile another change holds is read, counted busy, and tried the
+  next hour. It touches no transport: no origin is claimed and nothing closes.
+- **Elsewhere** no ledger op can be admitted, so the write is direct; a backend an older op
+  still holds is left alone. Before each PATCH the token the profile will have is recorded
+  (`backendObserve.noteOwnProfileTokens`, appState `panel:ownProfileTokens:<id>`, the newest 64
+  for 30 days), so a later observation attributes the change to FCP even when the re-read right
+  after the write fails, and no node is closed for a `servers.foreign_profile_edit`.
 
 This covers the backend-config half of the no-log posture; the node-container logging driver and
 the Reality/transport settings remain the province of `ansible-role-freesocks` (see

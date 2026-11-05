@@ -19,6 +19,9 @@ import type { Id } from './_generated/dataModel';
 import { LOGGING_CHECK_STATE_KEY } from './backendServers';
 import { hardenXrayLoggingConfig, PRIVACY_XRAY_LOG } from './lib/backends/remnawave';
 import { jsonRes, mockFetch, type FetchStub } from './lib/edges/testing/mockFetch';
+import { markBackendSetUp } from './lib/edges/testing/fixtures';
+import { panelDigestKey } from './lib/backend/key';
+import { changeToken } from './lib/backend/digest';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -149,6 +152,11 @@ function fakeProfiles(
       patches.push(body.uuid);
       return jsonRes({ response: p });
     }
+    // The node clocks the ledger reads around a profile write.
+    if (call.method === 'GET' && call.path === '/api/nodes')
+      return jsonRes({
+        response: [{ uuid: 'n-1', name: 'node-one', isDisabled: false, lastStatusChange: 't0' }],
+      });
     // Anything else (the post-write observe refresh) is not served here.
     return jsonRes({ message: 'not found' }, 404);
   });
@@ -352,5 +360,173 @@ describe('logging-privacy run', () => {
     const rec = await t.action(internal.backendServers.autoHardenLogging, {});
     expect(rec).toMatchObject({ panels: 1, panelsUnreadable: 1, profiles: 0 });
     expect(await auditRows(t)).toHaveLength(0);
+  });
+});
+
+describe('logging-privacy write under the backend-write ledger', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** A backend FCP set up with server changes on: its writes go through the ledger. */
+  async function managed(t: T) {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const sid = await seedPanel(t);
+    await markBackendSetUp(t, sid);
+    await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert('panelProfiles', {
+        backendServerId: sid,
+        profileUuid: 'p-log',
+        name: 'Profile logging',
+        shapeHash: 'shape',
+        changeToken: 'cached',
+        digestKeyId: 'k',
+        inbounds: [],
+        observedAt: now,
+      });
+      await ctx.db.insert('panelNodes', {
+        backendServerId: sid,
+        nodeUuid: 'n-1',
+        name: 'node-one',
+        online: true,
+        isDisabled: false,
+        usersOnline: 0,
+        configProfileUuid: 'p-log',
+        activeInboundUuids: [],
+        tags: [],
+        observedAt: now,
+      });
+    });
+    expect(
+      await t.query(internal.backendServers.loggingThroughLedger, { backendServerId: sid }),
+    ).toBe(true);
+    return sid;
+  }
+
+  const ops = (t: T) => t.run((ctx) => ctx.db.query('panelOps').collect());
+
+  test('the write is a claimed ledger op whose token is recorded before the send', async () => {
+    const t = convexTest(schema, modules);
+    await managed(t);
+    const profiles = [{ uuid: 'p-log', name: 'Profile logging', config: baseConfig() as unknown }];
+    const panel = fakeProfiles(profiles);
+
+    const rec = await t.action(internal.backendServers.autoHardenLogging, {});
+    expect(panel.patches).toEqual(['p-log']);
+    expect(rec).toMatchObject({ profilesLogging: 1, profilesTurnedOff: 1, panelsBusy: 0 });
+
+    const [op] = await ops(t);
+    expect(op).toMatchObject({ kind: 'profile', verb: 'patch', objectUuid: 'p-log' });
+    expect(op!.claimKeys).toEqual(['profile:p-log', 'node:n-1']);
+    expect(JSON.parse(op!.intent)).toMatchObject({ logging: true });
+    // The token the observer will see is the op's expected one: never a foreign edit.
+    const key = (await panelDigestKey()).key;
+    expect(JSON.parse(op!.postcondition).expectedToken).toBe(
+      await changeToken(profiles[0]!.config, key),
+    );
+    expect(op!.attemptId).toBeTruthy();
+  });
+
+  test('a change that holds the profile or a node leaves it for the next run', async () => {
+    const t = convexTest(schema, modules);
+    const sid = await managed(t);
+    const panel = fakeProfiles([{ uuid: 'p-log', name: 'Profile logging', config: baseConfig() }]);
+    await holdClaim(t, sid, 'node:n-1');
+
+    const rec = await t.action(internal.backendServers.autoHardenLogging, {});
+    expect(panel.patches).toEqual([]);
+    expect(rec).toMatchObject({ panelsBusy: 1, profilesLogging: 1, profilesTurnedOff: 0 });
+    expect((await ops(t)).filter((o) => JSON.parse(o.intent).logging)).toEqual([]);
+  });
+
+  test('a profile that moves between the preview and the send is never written', async () => {
+    const t = convexTest(schema, modules);
+    await managed(t);
+    const profiles = [{ uuid: 'p-log', name: 'Profile logging', config: baseConfig() as unknown }];
+    // Another writer lands right after the preview read: a new transport appears.
+    let reads = 0;
+    const panel = mockFetch((call) => {
+      if (call.method === 'GET' && call.path === '/api/config-profiles')
+        return jsonRes({ response: { configProfiles: profiles } });
+      if (call.method === 'GET' && call.path === '/api/config-profiles/p-log') {
+        reads++;
+        if (reads === 3) {
+          const c = profiles[0]!.config as { inbounds: unknown[] };
+          profiles[0]!.config = { ...c, inbounds: [...c.inbounds, { tag: 'new', port: 8443 }] };
+        }
+        return jsonRes({ response: profiles[0] });
+      }
+      if (call.method === 'GET' && call.path === '/api/nodes')
+        return jsonRes({
+          response: [{ uuid: 'n-1', name: 'node-one', isDisabled: false, lastStatusChange: 't0' }],
+        });
+      return jsonRes({ message: 'not found' }, 404);
+    });
+
+    const rec = await t.action(internal.backendServers.autoHardenLogging, {});
+    expect(panel.calls.some((c) => c.method === 'PATCH')).toBe(false);
+    expect(rec).toMatchObject({ panelsBusy: 1, profilesTurnedOff: 0 });
+    const [op] = await ops(t);
+    expect(op).toMatchObject({ request: 'rejected_pre_mutation', open: false });
+    expect(op!.errorCode).toBe('servers.profile_changed');
+  });
+});
+
+describe('logging-privacy write outside the ledger: attribution survives a failed re-read', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('the token is recorded first, and a later observation counts it as FCP’s', async () => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const t = convexTest(schema, modules);
+    const sid = await seedPanel(t);
+    const profiles = [{ uuid: 'p-log', name: 'Profile logging', config: baseConfig() as unknown }];
+    // The fake serves no observation routes: the re-read after the write fails.
+    const panel = fakeProfiles(profiles);
+    const { key, keyId } = await panelDigestKey();
+    await t.run((ctx) =>
+      ctx.db.insert('panelProfiles', {
+        backendServerId: sid,
+        profileUuid: 'p-log',
+        name: 'Profile logging',
+        shapeHash: 'shape',
+        changeToken: 'before',
+        digestKeyId: keyId,
+        inbounds: [],
+        observedAt: Date.now(),
+      }),
+    );
+
+    await t.action(internal.backendServers.autoHardenLogging, {});
+    expect(panel.patches).toEqual(['p-log']);
+    const written = await changeToken(profiles[0]!.config, key);
+
+    const observe = (changeToken: string) =>
+      t.mutation(internal.backendObserve.record, {
+        backendServerId: sid,
+        digestKeyId: keyId,
+        nodes: [],
+        profiles: [
+          {
+            profileUuid: 'p-log',
+            name: 'Profile logging',
+            shapeHash: 'shape',
+            changeToken,
+            inbounds: [],
+          },
+        ],
+        hosts: [],
+        squads: [],
+      });
+    const foreign = () =>
+      t.run(async (ctx) =>
+        (await ctx.db.query('panelProfiles').collect()).find((p) => p.profileUuid === 'p-log'),
+      );
+
+    // The next ordinary observation sees FCP's own token: not a foreign edit.
+    await observe(written);
+    expect((await foreign())!.foreignEditAt).toBeUndefined();
+    // Somebody else's later edit still is one.
+    await observe('somebody-else');
+    expect((await foreign())!.foreignEditAt).toBeTypeOf('number');
   });
 });

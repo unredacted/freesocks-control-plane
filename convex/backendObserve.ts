@@ -11,7 +11,8 @@
  */
 import { writeAuditLog } from './lib/audit';
 import { ConvexError, v } from 'convex/values';
-import type { ActionCtx } from './_generated/server';
+import type { ActionCtx, DatabaseReader } from './_generated/server';
+import { readStateJson, writeStateJson } from './lib/appStateJson';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -171,6 +172,45 @@ export async function upsertObservedSquads(
   for (const gone of by.values()) await ctx.db.delete(gone._id);
 }
 
+/**
+ * Profile tokens FCP itself is about to leave behind OUTSIDE the ledger (the
+ * logging-privacy write on a backend no ledger op can reach): recorded BEFORE
+ * the write, read by `record` like a ledger op's expected token, so a later
+ * observation attributes the change to FCP even when the immediate re-read
+ * after the write failed. Bounded: the newest OWN_TOKENS_MAX per backend, none
+ * older than OWN_TOKENS_TTL_MS.
+ */
+const ownTokensKey = (sid: Id<'backendServers'>) => `panel:ownProfileTokens:${sid}`;
+type OwnToken = { profileUuid: string; token: string; at: number };
+const OWN_TOKENS_MAX = 64;
+const OWN_TOKENS_TTL_MS = 30 * 86_400_000;
+
+async function ownTokensOf(db: DatabaseReader, sid: Id<'backendServers'>): Promise<OwnToken[]> {
+  const now = Date.now();
+  const raw = await readStateJson<unknown>(db, ownTokensKey(sid));
+  return (Array.isArray(raw) ? raw : []).filter(
+    (t): t is OwnToken =>
+      !!t &&
+      typeof t === 'object' &&
+      typeof (t as OwnToken).token === 'string' &&
+      typeof (t as OwnToken).at === 'number' &&
+      now - (t as OwnToken).at < OWN_TOKENS_TTL_MS,
+  );
+}
+
+export const noteOwnProfileTokens = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    tokens: v.array(v.object({ profileUuid: v.string(), token: v.string() })),
+  },
+  handler: async (ctx, { backendServerId, tokens }) => {
+    const now = Date.now();
+    const kept = await ownTokensOf(ctx.db, backendServerId);
+    const next = [...kept, ...tokens.map((t) => ({ ...t, at: now }))].slice(-OWN_TOKENS_MAX);
+    await writeStateJson(ctx.db, ownTokensKey(backendServerId), next);
+  },
+});
+
 export const record = internalMutation({
   args: {
     backendServerId: v.id('backendServers'),
@@ -269,6 +309,8 @@ export const record = internalMutation({
           // An unreadable postcondition expects nothing.
         }
       }
+    // ...and every token FCP recorded before a write outside the ledger.
+    if (!a.ownEdit) for (const t of await ownTokensOf(ctx.db, sid)) expectedTokens.add(t.token);
     for (const p of a.profiles) {
       const prev = profileBy.get(p.profileUuid);
       // A token made with another key is a new baseline, not a change.
