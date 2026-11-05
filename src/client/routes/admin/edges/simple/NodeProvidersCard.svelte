@@ -5,7 +5,8 @@
    * how many addresses are in use and spare there, whether it cools after a
    * block, whether it is trusted yet, and under it that location's address
    * rows (the `rows` snippet: AddressRow, from NodeEdgesPanel). Addresses of
-   * no listed location close the list.
+   * no listed location close the list. While the locations load, or when they
+   * cannot be read, the rows are listed ungrouped so no address or action hides.
    * Then what members miss (a transport with no backup at another provider,
    * one whose locations all cool, one no location carries), and the addresses
    * still missing: added by automatic upkeep only when it is on for the node
@@ -234,10 +235,20 @@
       </Button>
     {/if}
   </div>
-  {#if setQ.isPending}
-    <Skeleton class="h-16 w-full" />
-  {:else if setQ.isError || !view || !words}
-    <AdminListState error={setQ.error} onRetry={() => void setQ.refetch()} />
+  {#if setQ.isPending || setQ.isError || !view || !words}
+    <!-- The addresses never wait for the locations: while those load, or when
+         they cannot be read, every address is listed ungrouped with its actions. -->
+    {#if setQ.isPending}
+      <p class="text-muted-foreground mb-2 text-xs" role="status">Loading the locations…</p>
+    {:else}
+      <AdminListState error={setQ.error} onRetry={() => void setQ.refetch()} />
+    {/if}
+    {#if rows}
+      {@const all = rows}
+      <div class="mt-2 rounded-lg border px-3">{@render all(null, [])}</div>
+    {:else if setQ.isPending}
+      <Skeleton class="h-16 w-full" />
+    {/if}
   {:else}
     {@const known = [...view.picks, ...view.outside].map((x) => x.locationId)}
     <div class="divide-y rounded-lg border">
