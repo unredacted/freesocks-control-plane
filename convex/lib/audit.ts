@@ -406,7 +406,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   ],
   // An account's locations (docs/edges.md § "Provider accounts and locations").
   'edge.location.created': ['name', 'provider', 'placeKey'],
-  'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled'],
+  // `changed`: the fields that moved (label, enabled, ...), never a value.
+  'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled', 'changed'],
   // Networks (docs/edges.md "Networks"): slugs and counts, never a range or an address.
   'edge.location.network': ['placeKey', 'network'],
   // The countries a location is meant for (an operator setting: listed codes, never a member).
@@ -618,7 +619,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Server-name families: slugs and COUNTS only, never a hostname.
   'edge.sni.config.update': ['changedKeys'],
   'edge.sni.family.create': ['slug', 'targetKind', 'network'],
-  'edge.sni.family.update': ['slug', 'network'],
+  // `changed`: the fields that moved (label, enabled, requireH2, network), never the label itself.
+  'edge.sni.family.update': ['slug', 'network', 'changed'],
   'edge.sni.family.delete': ['slug', 'nameCount'],
   'edge.sni.names.import': ['slug', 'added', 'rejected'],
   // Finding names (docs/edges.md "Finding names"): counts and slugs, never a name.

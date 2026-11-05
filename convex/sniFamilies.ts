@@ -532,13 +532,23 @@ export const update = internalMutation({
   handler: async (ctx, a) => {
     const f = await familyBySlug(ctx, a.slug);
     const patch: Partial<Doc<'sniFamilies'>> = { updatedAt: Date.now() };
-    if (a.label !== undefined) patch.label = a.label.trim().slice(0, 80) || f.slug;
-    if (a.enabled !== undefined) patch.enabled = a.enabled;
+    // What actually moved, for the audit row (the field names, never the label:
+    // it can name the cover site).
+    const changed: string[] = [];
+    if (a.label !== undefined) {
+      patch.label = a.label.trim().slice(0, 80) || f.slug;
+      if (patch.label !== f.label) changed.push('label');
+    }
+    if (a.enabled !== undefined) {
+      patch.enabled = a.enabled;
+      if (a.enabled !== f.enabled) changed.push('enabled');
+    }
     let recheck = false;
     let networkMoved = false;
     if (a.requireH2 !== undefined && a.requireH2 !== f.requireH2) {
       patch.requireH2 = a.requireH2;
       recheck = true;
+      changed.push('requireH2');
     }
     if (a.network !== undefined) {
       const networkId = await networkIdOfSlug(ctx.db, a.network);
@@ -555,6 +565,7 @@ export const update = internalMutation({
         patch.networkId = networkId ?? undefined;
         recheck = true;
         networkMoved = true;
+        changed.push('network');
       }
     }
     // The bar moved: every name is judged again. A new network is a new claim
@@ -592,6 +603,7 @@ export const update = internalMutation({
     await audit(ctx, 'edge.sni.family.update', a.actorAdminId, {
       slug: f.slug,
       ...(a.network !== undefined ? { network: a.network ?? 'none' } : {}),
+      changed,
     });
     return { ok: true as const };
   },

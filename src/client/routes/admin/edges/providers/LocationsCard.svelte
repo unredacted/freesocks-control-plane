@@ -49,6 +49,7 @@
   import { codeLabel } from '../../../../lib/edgeCodes';
   import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
+  import NameDialog from '../components/NameDialog.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { relativeTime } from '../lib/time';
   import LocationPicker from '../forms/LocationPicker.svelte';
@@ -160,6 +161,8 @@
   let trustOpen = $state(false);
   let removing = $state<EdgeLocationAdmin | null>(null);
   let removeOpen = $state(false);
+  let renaming = $state<EdgeLocationAdmin | null>(null);
+  let renameOpen = $state(false);
 
   const patch = createMutation(() => ({
     mutationFn: (a: { id: string; patch: Parameters<typeof updateProviderLocation>[2] }) =>
@@ -414,6 +417,17 @@
                 size="sm"
                 variant="outline"
                 class="h-11 sm:h-8"
+                onclick={() => {
+                  renaming = l;
+                  renameOpen = true;
+                }}
+              >
+                Rename
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                class="h-11 sm:h-8"
                 disabled={patch.isPending}
                 onclick={() => patch.mutate({ id: l.id, patch: { enabled: !l.enabled } })}
               >
@@ -492,6 +506,23 @@
   tested={!!account.lastTestOkAt && !account.lastTestError}
   onQualify={qualify}
 />
+
+{#if renaming}
+  {@const r = renaming}
+  <NameDialog
+    bind:open={renameOpen}
+    name={r.label}
+    title={`Rename ${r.label}`}
+    description={zones
+      ? 'Only admins see this name. Nothing changes at the provider or in DNS.'
+      : 'Only admins see this name. Members read the one under Name in apps, and nothing changes at the provider.'}
+    empty={`Give the ${zones ? 'zone' : 'location'} a name.`}
+    saved={zones ? 'Zone renamed' : 'Location renamed'}
+    save={(label) =>
+      updateProviderLocation(account.id, r.id, { label }).then(() => invalidateProviders(qc))}
+    errorWords={edgeErrorMessage}
+  />
+{/if}
 
 <ConfirmDialog
   bind:open={removeOpen}

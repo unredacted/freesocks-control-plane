@@ -1266,6 +1266,9 @@ via relay A                         an address whose location has no member-faci
   members, Admin -> Edges -> a provider account -> Locations, "Name in apps"; `POST
 providers/{id}/locations/{locationId}/member-place {name, country}`). The provider's own region
   name (`edgeLocations.label`) is admin-only and never reaches a member: it can name the provider.
+  "Rename" on the location changes it (`PATCH providers/{id}/locations/{locationId} {label}`, up to
+  80 characters; the location keeps its placement and its trust; audited `edge.location.updated`
+  with the fields that moved, `changed`, never a value).
   Without a name the address reads `via relay A` and no flag shows, whatever the country says.
   The place travels on the published pool (`PublishedEdge.memberPlace`, one read per location of
   the pool, as the countries it is meant for do). Saving it moves the epoch of every origin with an
@@ -3344,7 +3347,9 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
 `POST families/{slug}/vantage` and `POST families/{slug}/vantage/apply` (§ Checks from inside a
-country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
+country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**; a change
+to a list (`edge.sni.family.update`) records which fields moved (`changed`: label, enabled,
+requireH2, network), never the label itself.
 
 ### What members' reports say about a name
 
@@ -4116,8 +4121,10 @@ transport's names).
   (`GET sni/families` gives every list its `delivery` counts and `suggestions`: names in use,
   waiting for a test, to send, being checked, checked, failing, suggestions, and how many ports use
   it); "Add a name list" (the cover site is fixed at creation).
-- A name list's page: first where it is used, one block per port (`names/FamilyPort.svelte`) with
-  the node page's status line and next step for every node at once, then each node behind the
+- A name list's page: "Rename" by its title changes its name (`label`, up to 80 characters; only
+  admins see it; `components/NameDialog.svelte`). The slug is the page's link and never changes,
+  and nothing is sent to a node. Then where it is used, one block per port
+  (`names/FamilyPort.svelte`) with the node page's status line and next step for every node at once, then each node behind the
   port with what its members get and, where names wait for a test there, "Test one name". Then
   **one list** of its names and the names found for it (`names/lib/listWords.ts`), each with one
   state on the way to members: Suggested (with Add and Ignore on the row), Being checked, Waiting
