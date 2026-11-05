@@ -195,4 +195,14 @@ describe("the detector's veto for a contained address", () => {
     ).toBeNull();
     expect(steeringVeto({ edgeId: 'only-ir', countries: [] }, steering([only]))).toBeNull();
   });
+
+  test('in mixed evidence, the countries outside its audience are left out', () => {
+    const both = edge('only-ir-ru', 0, { audience: ['IR', 'RU'], blockedIn: ['IR', 'CN'] });
+    // Iran is routed around (another address for Iran); nobody in China is handed it.
+    const published = [both, edge('x', 1, { audience: ['IR'] })];
+    const s = { ...steering(published), checked: ['IR', 'RU', 'CN'], curated: ['IR', 'RU', 'CN'] };
+    expect(steeringVeto({ edgeId: 'only-ir-ru', countries: ['IR', 'CN'] }, s)).toBe(
+      'country_scoped',
+    );
+  });
 });

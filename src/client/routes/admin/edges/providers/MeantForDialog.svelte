@@ -110,8 +110,8 @@
     {#if location?.onlyForMeant}
       <p class="text-muted-foreground text-xs">
         This location is only for its countries. Addresses made for the old list keep serving the
-        members they were handed to; upkeep makes addresses for the new list (with a count), then
-        retires the old ones one at a time.
+        members they were handed to until upkeep replaces them, one at a time, each in its own
+        place: the node keeps the same number of addresses.
       </p>
     {/if}
     {#if list.isPending}

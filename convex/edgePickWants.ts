@@ -86,11 +86,10 @@ export async function countGapsOf(
     const listeners = s.listeners.filter((l) =>
       carries(row, l, { websocketNode: s.websocketNode, originAddress: relay.originAddress }),
     );
-    // At an only location, only addresses contained to its current countries count.
+    // At an only location, the addresses contained there count: one an edit of
+    // the countries left out of date holds its place until step 5O renews it.
     const only = row.pick.onlyCodes;
-    const counts = (x: { audience?: readonly string[] }) =>
-      !only ||
-      ((x.audience ?? []).length === only.length && only.every((c) => x.audience!.includes(c)));
+    const counts = (x: { audience?: readonly string[] }) => !only || !!x.audience?.length;
     for (const l of listeners) {
       const inUse = s.published.filter(
         (x) =>

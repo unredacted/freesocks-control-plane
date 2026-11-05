@@ -4681,18 +4681,28 @@ in it is ever handed it.
   is not kept as a spare (`edge.audience_drain_final`).
 - **The detector** (`steeringVeto`): evidence of a block only from countries outside a
   contained address's audience is no reason to replace it (veto `outside_audience`: nobody there
-  is handed it); evidence naming no country (down everywhere) rotates as before, and "blocked in
-  every checked country, replace it" counts only the checked countries of its audience.
+  is handed it). In mixed evidence the countries outside the audience are left out before the
+  rest is judged. Evidence naming no country (down everywhere) rotates as before, and "blocked
+  in every checked country, replace it" counts only the checked countries of its audience.
 - **Probes** check a contained address only from the checked countries of its audience (the
-  controls stay; `probes.runContext`), so no test is spent where nobody is handed it, and the
+  controls stay; `probes.runContext`). The round is planned and charged against the Globalping
+  budget for those countries too, so no test is spent where nobody is handed it, and the
   per-country verdicts and guards see it only there.
 - **Editing the countries** of an only location leaves the addresses made for the old list
-  OUT OF DATE: they keep serving the members they were handed to (nobody is stranded) and no
-  longer count toward the location's count. Upkeep makes addresses for the new list (step 5W),
-  and once the location holds as many current ones of a transport as its count asks for (at
-  least one), one out-of-date address leaves per pass, drained like a replaced one (step 5O,
-  `edgeAudiences.retireOutOfDate`, audited `edge.audience_retired`). Adding a country never
-  widens an existing address to it; removing one never strands the countries that stay.
+  OUT OF DATE: they keep serving the members they were handed to (nobody is stranded), and
+  each holds its place in the pool and in the location's count until it is renewed, so the pool
+  never grows for that. Upkeep renews one per pass (step 5O,
+  `edgeReconcileMutations.renewOutOfDate`, audited `edge.audience_retired`):
+  - when the location already holds more current addresses of its transport than its count
+    asks for (at least one), it leaves, drained like a replaced one;
+  - otherwise a tested spare there takes its slot, contained to the new list, and it drains
+    (with spares going in use by hand, upkeep only waits);
+  - otherwise upkeep makes one spare there (automatic provisioning on; one at a time, and a
+    spare awaiting its test is waited for).
+
+  Adding a country never widens an existing address to it; removing one never strands the
+  countries that stay.
+
 - **The rehearsal** judges a candidate at an only location with the audience it takes at its
   first publication, so a body with no country never counts on it and two-group coverage
   cannot vanish when it becomes contained.

@@ -345,30 +345,122 @@ describe('review fixes', () => {
 });
 
 describe('part 2', () => {
-  test('after an edit of the countries, an out-of-date address leaves once a current one is in use', async () => {
-    const w = await world({ onlyA: true });
+  const renew = (w: World, publish = true) =>
+    w.t.mutation(internal.edgeReconcileMutations.renewOutOfDate, { relayId: w.relayId, publish });
+  const relayOf = (w: World) => w.t.run(async (c) => (await c.db.get(w.relayId))!);
+  /** An address for Iran in use at A, then A made for Iran and Russia: it is out of date. */
+  async function outOfDate(w: World): Promise<Id<'edges'>> {
     const old = await freshSpareAtA(w, '198.51.100.40');
     await publish(w, old);
-    // Iran and Russia now: the address made for Iran alone is out of date.
     await w.t.mutation(internal.edgeLocations.setForCountries, {
       id: w.a._id,
       codes: ['IR', 'RU'],
     });
-    expect(
-      await w.t.mutation(internal.edgeAudiences.retireOutOfDate, { relayId: w.relayId }),
-    ).toEqual({
-      retired: null,
+    return old;
+  }
+
+  test('an out-of-date address is renewed in its own slot: the pool keeps its size', async () => {
+    const w = await world({ onlyA: true });
+    const old = await outOfDate(w);
+    const slot = (await edgeOf(w, old)).poolIndex;
+    // Nothing there to take its place: upkeep is asked for one spare there.
+    expect(await renew(w)).toEqual({
+      kind: 'needs_spare',
+      listenerId: w.listenerId,
+      locationId: w.a._id,
     });
+    const spare = await freshSpareAtA(w, '198.51.100.41');
+    const before = await relayOf(w);
+    // Spares going in use by hand: it only waits.
+    expect(await renew(w, false)).toEqual({ kind: 'waiting' });
+    expect((await edgeOf(w, old)).publication).toBe('published');
+    expect(await renew(w)).toEqual({ kind: 'renewed', edgeId: old, by: spare });
+    const after = await relayOf(w);
+    expect((await edgeOf(w, old)).publication).toBe('draining');
+    const taken = await edgeOf(w, spare);
+    expect(taken).toMatchObject({ publication: 'published', poolIndex: slot });
+    expect(taken.audience).toEqual(['IR', 'RU']);
+    expect(after.desiredPublished).toBe(before.desiredPublished);
+    expect(after.publishedEdgeIds.filter(Boolean).length).toBe(
+      before.publishedEdgeIds.filter(Boolean).length,
+    );
+    expect(after.standbyEdgeIds).not.toContain(spare);
+    expect(await renew(w)).toEqual({ kind: 'none' });
+  });
+
+  test('with more current addresses there than the count, the out-of-date one just leaves', async () => {
+    const w = await world({ onlyA: true });
+    const old = await outOfDate(w);
     const current = await freshSpareAtA(w, '198.51.100.41');
     await publish(w, current);
     expect((await edgeOf(w, current)).audience).toEqual(['IR', 'RU']);
-    expect(
-      await w.t.mutation(internal.edgeAudiences.retireOutOfDate, { relayId: w.relayId }),
-    ).toEqual({
-      retired: old,
-    });
+    expect(await renew(w)).toEqual({ kind: 'retired', edgeId: old });
     expect((await edgeOf(w, old)).publication).toBe('draining');
     expect((await edgeOf(w, current)).publication).toBe('published');
+  });
+
+  test('the pool never grows for a renewal: the out-of-date address holds its count', async () => {
+    const w = await world({ onlyA: true });
+    await outOfDate(w);
+    await w.t.run(async (c) => {
+      const r = (await c.db.get(w.relayId))!;
+      await c.db.patch(w.relayId, {
+        desiredPublished: r.publishedEdgeIds.filter(Boolean).length,
+        providerSet: [
+          { locationId: w.a._id, addedAt: 1, want: 1 },
+          { locationId: w.b._id, addedAt: 1 },
+        ],
+      });
+    });
+    const full = (await relayOf(w)).desiredPublished;
+    const capacity = await w.t.mutation(internal.relays.ensureCapacity, { relayId: w.relayId });
+    expect(capacity?.to).toBe(full);
+    expect(await w.t.query(internal.edgePickWants.nextCountGap, { relayId: w.relayId })).toBeNull();
+  });
+
+  test('nothing is renewed while the node is held (guided setup, restore)', async () => {
+    const w = await world({ onlyA: true });
+    const old = await outOfDate(w);
+    await freshSpareAtA(w, '198.51.100.41');
+    await w.t.run((c) => c.db.patch(w.relayId, { setupOwned: true }));
+    expect(await renew(w)).toEqual({ kind: 'none' });
+    const now = Date.now();
+    await w.t.run((c) =>
+      c.db.patch(w.relayId, {
+        setupOwned: undefined,
+        restore: {
+          purpose: 'cancel_setup',
+          phase: 'freeze',
+          startedAt: now,
+          updatedAt: now,
+          attempt: 0,
+        } as never,
+      }),
+    );
+    expect(await renew(w)).toEqual({ kind: 'none' });
+    expect((await edgeOf(w, old)).publication).toBe('published');
+  });
+
+  test("a contained address's probe round is planned and charged for its countries only", async () => {
+    const w = await world({ onlyA: true });
+    const spare = await freshSpareAtA(w, '198.51.100.43');
+    await publish(w, spare);
+    const testsOf = async (edgeId: Id<'edges'>) => {
+      await w.t.mutation(internal.probes.requestProbes, {
+        target: { kind: 'edge', ref: edgeId },
+        trigger: 'manual',
+        sources: ['globalping'],
+      });
+      const runs = await w.t.run((c) => c.db.query('probeRuns').collect());
+      const mine = runs.filter((r) => r.targetRef === edgeId && r.source === 'globalping');
+      return mine.map((r) => r.tests);
+    };
+    const contained = await testsOf(spare);
+    const everyone = await testsOf(w.everyone);
+    // Iran only against Iran and Russia: half the vantages (no controls here).
+    expect(contained.length).toBe(1);
+    expect(contained[0]).toBeGreaterThan(0);
+    expect(everyone).toEqual([contained[0]! * 2]);
   });
 
   test('a contained address is probed only from its countries (the controls stay)', async () => {

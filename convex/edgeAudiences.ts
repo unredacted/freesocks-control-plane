@@ -26,7 +26,7 @@ import { carries, setPicksOf } from './lib/edges/setState';
 import { websocketNodeOf } from './lib/edges/websocketNode';
 import { ACCOUNT_EDGE_SCAN_LIMIT } from './lib/edges/pool';
 import { bumpEpochAndRefresh, scheduleMirrorRefresh } from './lib/edges/relayGuards';
-import { edgeMs, originPolicy, resolveEdgeConfig } from './lib/edgeConfig';
+import { edgeMs, resolveEdgeConfig } from './lib/edgeConfig';
 import { unpublishFromPool } from './relays';
 
 type Edge = Doc<'edges'>;
@@ -358,65 +358,5 @@ export const clearAudiencesForRollback = internalMutation({
     if (page.length === 500)
       await ctx.scheduler.runAfter(0, internal.edgeAudiences.clearAudiencesForRollback, {});
     return { cleared: page.length, done: page.length < 500 };
-  },
-});
-
-// --- addresses an edit of the countries left out of date ------------------------------------
-
-/**
- * One pass of the reconcile (edgeReconcile.ts, after the count fill): at an
- * only location of the node's set, an address contained to other countries
- * than the location's current ones is OUT OF DATE. It keeps serving the
- * members it was handed to (nobody is stranded) until the location holds, on
- * its transport, as many current addresses as its count asks for (at least
- * one); then one such address leaves per pass, drained like a replaced one.
- * Adding a country therefore never widens an existing address to it, and
- * removing one never strands the members of the countries that stay.
- */
-export const retireOutOfDate = internalMutation({
-  args: { relayId: v.id('relays') },
-  handler: async (ctx, { relayId }): Promise<{ retired: Id<'edges'> | null }> => {
-    const origin = await ctx.db.get(relayId);
-    if (!origin?.providerSet || origin.activeRotationId) return { retired: null };
-    const published: Edge[] = [];
-    for (const id of origin.publishedEdgeIds) {
-      if (!id) continue;
-      const e = await ctx.db.get(id);
-      if (e && e.publication === 'published' && e.status === 'active') published.push(e);
-    }
-    const same = (a: readonly string[] = [], b: readonly string[]) =>
-      a.length === b.length && a.every((c) => b.includes(c));
-    for (const pick of origin.providerSet) {
-      const location = await ctx.db.get(pick.locationId);
-      const codes = onlyCodesOf(location?.forCountries);
-      if (!codes) continue;
-      const here = published.filter((e) => e.locationId === pick.locationId);
-      for (const listenerId of new Set(here.map((e) => e.listenerId))) {
-        const mine = here.filter((e) => e.listenerId === listenerId);
-        const stale = mine.filter((e) => e.audience?.length && !same(e.audience, codes));
-        if (stale.length === 0) continue;
-        const current = mine.filter((e) => same(e.audience, codes)).length;
-        if (current < Math.max(1, pick.want ?? 1)) continue;
-        const oldest = stale.sort((a, b) => (a.publishedAt ?? 0) - (b.publishedAt ?? 0))[0]!;
-        const cfg = await resolveEdgeConfig(ctx.db);
-        await unpublishFromPool(ctx, origin, oldest, {
-          drainMs: originPolicy(origin, cfg).drainMs,
-        });
-        await writeAuditLog(ctx, {
-          actorType: 'system',
-          action: 'edge.audience_retired',
-          targetType: 'edge',
-          targetId: oldest._id,
-          payload: {
-            relaySlug: origin.slug,
-            placeKey: location!.placeKey,
-            was: (oldest.audience ?? []).join(' '),
-            now: codes.join(' '),
-          },
-        });
-        return { retired: oldest._id };
-      }
-    }
-    return { retired: null };
   },
 });

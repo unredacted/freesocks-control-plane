@@ -665,15 +665,22 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           continue;
         }
       }
-      // 5O. Addresses only for some countries (convex/edgeAudiences.ts): after an
-      // edit of an only location's countries, an address contained to the old
-      // ones leaves once current ones there meet the count (one per pass).
+      // 5O. Addresses only for some countries (edgeReconcileMutations.renewOutOfDate):
+      // after an edit of an only location's countries, an address contained to
+      // the old ones is renewed in its own slot (the pool never grows for it):
+      // it leaves when current ones there are more than the count, else a tested
+      // spare there takes its slot, else one spare is made there (one per pass).
       if (origin.providerSet) {
-        const out = await ctx.runMutation(internal.edgeAudiences.retireOutOfDate, {
+        const out = await ctx.runMutation(internal.edgeReconcileMutations.renewOutOfDate, {
           relayId: origin._id,
+          publish: cfg.autoPublishStandby,
         });
-        if (out.retired) {
+        if (out.kind === 'retired' || out.kind === 'renewed') {
           report.published++;
+          continue;
+        }
+        if (out.kind === 'needs_spare' && cfg.autoProvisionToDesired) {
+          await provision(out.listenerId, false, out.locationId);
           continue;
         }
       }

@@ -427,7 +427,11 @@ export function steeringVeto(
   const named = [...new Set(chosen.countries)];
   if (audience && named.length > 0 && named.every((c) => !audience.includes(c)))
     return 'outside_audience';
-  const countries = named.filter((c) => s.checked.includes(c));
+  // In mixed evidence the countries outside the audience are no reason either:
+  // only those it serves are judged below.
+  const countries = named.filter(
+    (c) => s.checked.includes(c) && (!audience || audience.includes(c)),
+  );
   if (countries.length === 0) return null;
   if (!edge || !s.freedomListeners.includes(edge.listenerKey)) return null;
   // Blocked in every checked country it serves: replace it.

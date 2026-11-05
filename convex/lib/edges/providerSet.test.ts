@@ -436,15 +436,18 @@ describe('addresses only for some countries in the requirement', () => {
     ]);
   });
 
-  test('its count counts only addresses contained to exactly its countries', () => {
+  test('its count counts the addresses contained there, an out-of-date one too', () => {
     const req = requirementOf(both, [{ ...onlyX, want: 2 }, Y]);
+    // One current, one out of date: it holds its place until it is renewed in
+    // its own slot, so nothing more is asked for (the pool never grows for it).
     const published = [pub('a', Y), contained(onlyX, ['IR']), contained(onlyX, ['IR', 'RU'])];
-    // One current, one out of date: one more is asked for.
-    expect(coverTargets(req, published).filter((t) => t.count)).toEqual([
+    expect(coverTargets(req, published).filter((t) => t.count)).toEqual([]);
+    expect(keepsCounts(req, published, 1)).toBe(false);
+    expect(keepsCounts(req, published, 2)).toBe(false);
+    // An address there for everyone (in use before the switch) does not count.
+    const withEveryone = [pub('a', Y), contained(onlyX, ['IR']), pub('a', onlyX)];
+    expect(coverTargets(req, withEveryone).filter((t) => t.count)).toEqual([
       { listenerKey: 'a', locationId: 'x', coversListener: false, count: true },
     ]);
-    // Cleanup keeps the current one; the out-of-date one does not count.
-    expect(keepsCounts(req, published, 1)).toBe(false);
-    expect(keepsCounts(req, published, 2)).toBe(true);
   });
 });

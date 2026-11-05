@@ -47,7 +47,9 @@ export interface SetPick {
   /**
    * The location is ONLY for these countries (lib/edges/audience.ts): it is no
    * carrier of basic coverage or diversity (its addresses serve some members
-   * only), and its count counts only addresses contained to exactly these.
+   * only), and its count counts the addresses contained there. One an edit of
+   * the countries left out of date counts too: it holds its place until step 5O
+   * renews it in its own slot, so the pool never grows for that.
    */
   onlyCodes?: string[];
 }
@@ -302,8 +304,8 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
     for (const listenerKey of w.listenerKeys) {
       const here = (t: { listenerKey: string; locationId: string | null }) =>
         t.listenerKey === listenerKey && t.locationId === w.locationId;
-      // At an only location, only what is contained to its current countries counts.
-      const counts = (p: PublishedRef) => !w.onlyCodes || sameCodes(p.audience ?? [], w.onlyCodes);
+      // At an only location, what is contained there counts (out of date or not).
+      const counts = (p: PublishedRef) => !w.onlyCodes || !forEveryone(p);
       const have =
         published.filter((p) => here(p) && counts(p)).length +
         listenerTargets.filter(here).length +
@@ -322,10 +324,6 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
 /** How many targets the requirement still asks for (cooling-only shortfalls excluded). */
 export function coverageDeficit(req: Requirement, published: readonly PublishedRef[]): number {
   return coverTargets(req, published).length;
-}
-
-function sameCodes(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((c) => b.includes(c));
 }
 
 /** The targets only a pick's address count asks for (`Target.count`). */
@@ -354,7 +352,7 @@ export function keepsCounts(
   // The addresses of its transport at its location, counted as they are: a
   // removal's gap may show up in the cover as another kind of target (the only
   // address of a pick with a count of one), so the count deficit cannot tell.
-  const counted = (p: PublishedRef) => !w.onlyCodes || sameCodes(p.audience ?? [], w.onlyCodes);
+  const counted = (p: PublishedRef) => !w.onlyCodes || !forEveryone(p);
   if (!counted(e)) return true;
   const here = published.filter(
     (p) => p.listenerKey === e.listenerKey && p.locationId === e.locationId && counted(p),
