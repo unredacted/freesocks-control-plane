@@ -16,6 +16,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
@@ -183,12 +184,30 @@ async function wantEffect(
   const next = (relay.providerSet ?? []).map((p) =>
     p.locationId === locationId ? { ...p, want: want ?? undefined } : p,
   );
-  const before = await setStateOf(db, relay, now);
-  const after = await setStateOf(db, { ...relay, providerSet: next }, now);
+  // Judged as the set will stand once nothing cools: a count saved while its
+  // pick cools must not overflow the pool when the cooling ends.
+  const eventual = (providerSet: NonNullable<Doc<'relays'>['providerSet']>) =>
+    setStateOf(db, { ...relay, providerSet, cooling: [] }, now);
+  const before = await eventual(relay.providerSet ?? []);
+  const after = await eventual(next);
   const row = after.picks?.find((r) => r.pick.locationId === (locationId as string));
   const here = (s: SetState) => s.targets.filter((t) => t.locationId === (locationId as string));
   const adds = Math.max(0, here(after).length - here(before).length);
-  const total = after.published.length + after.deficit;
+  let total = after.published.length + after.deficit;
+  // A location that cannot take an address now (switched off, its account
+  // untested) asks for nothing yet; it will once it can: counted as if it could.
+  if (row && !row.usable && want !== null)
+    for (const l of after.listeners)
+      if (
+        carries(row, l, { websocketNode: after.websocketNode, originAddress: relay.originAddress })
+      )
+        total += Math.max(
+          0,
+          want -
+            after.published.filter(
+              (x) => x.listenerKey === l.listenerKey && x.locationId === (locationId as string),
+            ).length,
+        );
   let monthly: ReturnType<typeof costAdmin> | null = null;
   let fits = adds;
   if (row) {
@@ -297,14 +316,15 @@ export const setPickWant = internalMutation({
 /**
  * Before deploying a build older than counts: every pick's count goes. The
  * requirement is back to one address per pick; addresses a count made stay
- * published (the pool never shrinks by itself; rebalance makes room). Safe to
- * run again.
+ * published (the pool never shrinks by itself; rebalance makes room). Pages
+ * until done; safe to run again.
  */
 export const clearPickWantsForRollback = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, a) => {
+    const page = await ctx.db.query('relays').paginate({ cursor: a.cursor ?? null, numItems: 100 });
     let cleared = 0;
-    for (const relay of await ctx.db.query('relays').collect()) {
+    for (const relay of page.page) {
       if (!relay.providerSet?.some((p) => p.want !== undefined)) continue;
       await ctx.db.patch(relay._id, {
         providerSet: relay.providerSet.map(({ want: _w, ...p }) => {
@@ -315,6 +335,11 @@ export const clearPickWantsForRollback = internalMutation({
       });
       cleared++;
     }
-    return { cleared };
+    // Page after page in transactions of their own, until every node is clean.
+    if (!page.isDone)
+      await ctx.scheduler.runAfter(0, internal.edgePickWants.clearPickWantsForRollback, {
+        cursor: page.continueCursor,
+      });
+    return { cleared, done: page.isDone };
   },
 });

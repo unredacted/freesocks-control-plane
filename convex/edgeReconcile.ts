@@ -636,7 +636,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // pick whose count a transport is short of gets a spare of it there, else
       // a provision for it at that location only (selection keeps every rule:
       // cooling, a refused location, trust, the account's cap; nothing is
-      // bought where one of them holds it back, or with no room left for it).
+      // bought where one of them holds it back, or with no free slot for it).
       if (uncovered.length === 0 && origin.providerSet?.some((p) => p.want !== undefined)) {
         const gap = await ctx.runQuery(internal.edgePickWants.nextCountGap, {
           relayId: origin._id,
@@ -658,7 +658,9 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           }
           if (res.awaitingVerification || res.ready) continue;
         }
-        if (gap?.mayProvision && cfg.autoProvisionToDesired && (capacity?.blocked ?? 0) === 0) {
+        // A free slot is what it needs: at the cap part of the deficit may be
+        // blocked while one more address still fits.
+        if (gap?.mayProvision && cfg.autoProvisionToDesired && free > 0) {
           await provision(gap.listenerId, true, gap.locationId);
           continue;
         }

@@ -409,5 +409,11 @@ describe('addresses per location (a pick count)', () => {
     expect(keepsCounts(req, extra, 6)).toBe(true);
     // Without counts nothing is held.
     expect(keepsCounts(requirementOf(both, [X, Y]), published, 0)).toBe(true);
+    // A count of one: the location's only address of a transport is kept, though
+    // the cover would name its gap as a pick target rather than a count one.
+    const one = requirementOf(both, counted(1));
+    const single = [pub('a', X), pub('b', X), pub('a', Y), pub('b', Y)];
+    expect(keepsCounts(one, single, 0)).toBe(false);
+    expect(keepsCounts(one, [...single, pub('a', X)], 0)).toBe(true);
   });
 });

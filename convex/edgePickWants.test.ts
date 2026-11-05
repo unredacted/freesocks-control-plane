@@ -128,6 +128,12 @@ describe('saving a count', () => {
     expect(p).toMatchObject({ want: 3, adds: 2, fits: 2, tooLarge: false });
     expect(p.carries).toHaveLength(1);
     expect((await preview(1)).adds).toBe(0);
+    // A pick that cools asks for nothing now, but the count is judged as it will stand.
+    await w.t.run((c) =>
+      c.db.patch(w.relayId, { cooling: [{ locationId: w.a._id, until: Date.now() + 3_600_000 }] }),
+    );
+    expect(await preview(3)).toMatchObject({ adds: 2, total: 4 });
+    await w.t.run((c) => c.db.patch(w.relayId, { cooling: [] }));
     // A cap the account is already at: none of them fits.
     await w.t.run((c) =>
       c.db.patch(w.accountA, {
@@ -198,6 +204,7 @@ describe('rollback', () => {
     const before = (await relayOf(w)).publishedEdgeIds.filter(Boolean).length;
     expect(await w.t.mutation(internal.edgePickWants.clearPickWantsForRollback, {})).toEqual({
       cleared: 1,
+      done: true,
     });
     const relay = await relayOf(w);
     expect(relay.providerSet!.every((p) => p.want === undefined)).toBe(true);

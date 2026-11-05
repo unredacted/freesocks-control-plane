@@ -303,18 +303,29 @@ export function countDeficit(req: Requirement, published: readonly PublishedRef[
 }
 
 /**
- * Whether removing published edge `index` keeps every pick's address count
- * where it is (lane cleanup: an open address above target leaves only when no
- * count needs it). Always true without counts.
+ * Whether removing published edge `index` keeps every pick's address count met
+ * (lane cleanup: an open address above target leaves only when no count needs
+ * it): its location still holds as many of its transport as the count asks
+ * for. Always true without counts.
  */
 export function keepsCounts(
   req: Requirement,
   published: readonly PublishedRef[],
   index: number,
 ): boolean {
-  if (req.wants.length === 0) return true;
-  const without = published.filter((_, i) => i !== index);
-  return countDeficit(req, without) <= countDeficit(req, published);
+  const e = published[index];
+  if (!e || !e.locationId) return true;
+  const w = req.wants.find(
+    (x) => x.locationId === e.locationId && x.listenerKeys.includes(e.listenerKey),
+  );
+  if (!w) return true;
+  // The addresses of its transport at its location, counted as they are: a
+  // removal's gap may show up in the cover as another kind of target (the only
+  // address of a pick with a count of one), so the count deficit cannot tell.
+  const here = published.filter(
+    (p) => p.listenerKey === e.listenerKey && p.locationId === e.locationId,
+  ).length;
+  return here - 1 >= w.want;
 }
 
 /**
