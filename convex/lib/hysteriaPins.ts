@@ -114,10 +114,8 @@ function scanClash(doc: Obj, pins: ExpectedPins): HysteriaScan {
       address: p.server,
       port: Number(p.port),
       sni: typeof p.sni === 'string' ? p.sni : null,
-      trust:
-        p['skip-cert-verify'] === true && !fp
-          ? 'insecure'
-          : pinVerdict(fp ? [fp] : [], pins.pinHex),
+      // Verification switched off is never a pin, whatever else the entry says.
+      trust: p['skip-cert-verify'] === true ? 'insecure' : pinVerdict(fp ? [fp] : [], pins.pinHex),
     });
   }
   return { format: 'clash', entries, unreadable };

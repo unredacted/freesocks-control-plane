@@ -1671,7 +1671,15 @@ export const switchServer = internalAction({
             placement: oldSub.backendPlacement,
           })
         : null;
-    const hasOtherNode = groupHasOtherNode(placementStats, Date.now());
+    // A key in two groups pins only among its mode's tier (lib/extraModeNodes.ts):
+    // the group's count overstates where its pin can go.
+    const otherTargets =
+      canPinBackend && placementStats
+        ? await ctx.runQuery(internal.subscriptions.otherPinTargets, {
+            subscriptionId: oldSub._id,
+          })
+        : null;
+    const hasOtherNode = groupHasOtherNode(placementStats, Date.now(), otherTargets);
     const leftNode = hasOtherNode
       ? await ctx.runMutation(internal.subscriptions.rotateNodePin, {
           subscriptionId: oldSub._id,
@@ -1803,6 +1811,8 @@ export const moveToCountryExit = internalAction({
         })
       : null;
     if (!target.placement || server?.location !== offer.code) return nothing;
+    // A mode whose backup group is not bound there: never a key without it.
+    if (target.fallbackUnresolved) return nothing;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {

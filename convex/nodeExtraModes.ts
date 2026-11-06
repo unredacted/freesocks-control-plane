@@ -62,6 +62,7 @@ import {
 import { REHEARSAL_USER_AGENTS, type RehearsalFamily } from './lib/backend/rehearsal';
 import { hysteriaEndpointVerified, scanHysteria } from './lib/hysteriaPins';
 import { decodeLinkList } from './lib/edges/render/links';
+import { ownsAddress } from './lib/backend/hostRemark';
 import { clientCheckService, runEngineCheck } from './lib/edges/clientCheck/client';
 import { outboundsForLink } from './lib/edges/clientCheck/outbound';
 import { QUALIFICATION_TRAFFIC_LIMIT_BYTES } from './relayQualification';
@@ -139,6 +140,7 @@ async function problemOf(
     primary,
     extra,
     served: (intent.extraModes ?? []).map((m) => m.slug),
+    otherOpenings: (intent.extraModes ?? []).map((m) => m.firewall),
     primaryOpening: opening(pIn),
     extraOpening: xIn?.hysteriaAuth?.pinHex ? opening(xIn) : null,
     primaryNames: pIn?.reality?.serverNames ?? primary.transport.serverNames ?? [],
@@ -309,6 +311,9 @@ export const remove = internalMutation({
         ...e,
         state: 'removing',
         code: undefined,
+        // A run holding the mode now may end on what it read before: it runs
+        // again when it releases, so the removal is never left waiting.
+        rerun: e.lease && e.lease.expiresAt > now ? true : e.rerun,
         updatedAt: now,
       });
     await audit(ctx, intent, 'admin.servers.extra_mode.remove', { mode: a.slug }, a.actorAdminId);
@@ -360,8 +365,29 @@ export const claim = internalMutation({
   },
 });
 
+/** The longest a failed run waits before the next try (backoff doubles up to it). */
+const RETRY_MAX_MS = 60 * 60_000;
+
 const recordPatch = v.object({
-  state: v.optional(v.union(v.literal('activating'), v.literal('serving'), v.literal('removing'))),
+  state: v.optional(
+    v.union(
+      v.literal('waiting_firewall'),
+      v.literal('activating'),
+      v.literal('serving'),
+      v.literal('removing'),
+    ),
+  ),
+  // The opening the node's firewall must let in now (the transport moved).
+  firewall: v.optional(
+    v.object({
+      port: v.number(),
+      protocol: v.union(v.literal('tcp'), v.literal('udp')),
+      confirmedBy: v.union(v.literal('role'), v.literal('operator')),
+    }),
+  ),
+  // The run failed: try again after a backoff (no role report or reconcile
+  // may ever come for an adopted node).
+  retry: v.optional(v.boolean()),
   code: v.optional(v.union(v.string(), v.null())),
   hostUuid: v.optional(v.union(v.string(), v.null())),
   evidence: v.optional(
@@ -397,9 +423,21 @@ export const record = internalMutation({
       await patchEntry(ctx, intent, a.slug, null);
     } else {
       const p = a.patch;
+      const retries = p.retry ? (e.retries ?? 0) + 1 : state === 'serving' ? undefined : e.retries;
+      // A write still settling or a look that lags clears in seconds; anything
+      // else (a refused rehearsal, the node offline) is tried a minute on.
+      const settling = p.code === 'servers.op_running' || p.code === 'servers.observe_lag';
+      if (p.retry && retries)
+        await ctx.scheduler.runAfter(
+          Math.min(RETRY_MAX_MS, (settling ? 5_000 : 60_000) * 2 ** Math.min(retries - 1, 10)),
+          internal.nodeExtraModes.run,
+          { intentId: intent._id },
+        );
       await patchEntry(ctx, intent, a.slug, {
         ...e,
         state,
+        ...(p.firewall ? { firewall: { ...p.firewall } } : {}),
+        retries,
         code: p.code === undefined ? e.code : (p.code ?? undefined),
         hostUuid: p.hostUuid === undefined ? e.hostUuid : (p.hostUuid ?? undefined),
         evidence: p.evidence === undefined ? e.evidence : (p.evidence ?? undefined),
@@ -608,8 +646,21 @@ async function rehearse(
   if (failed.length > 0) return { ok: false, detail: failed.join(',') };
   const svc = clientCheckService(process.env);
   if (!svc) return { ok: true, checked: 'rehearsal' };
+  // The entry of THIS address (every node of the group shares the certificate
+  // and the port): a check through another node proves nothing about this one.
   const scan = scanHysteria(linksBody, expected);
-  const entry = scan.entries.find((x) => x.trust === 'pinned' && x.port === e.port);
+  const bare = (a: string) =>
+    a
+      .trim()
+      .toLowerCase()
+      .replace(/^\[|\]$/g, '');
+  const entry = scan.entries.find(
+    (x) =>
+      x.trust === 'pinned' &&
+      x.port === e.port &&
+      bare(x.address) === bare(e.address) &&
+      bare(x.sni ?? '') === bare(e.sni),
+  );
   const line = entry ? decodeLinkList(linksBody)?.lines[Number(entry.ref)] : undefined;
   const outbound = line
     ? outboundsForLink(line, { hysteriaSpkiB64: [pins.spkiB64] })?.outbounds['sing-box']
@@ -629,10 +680,16 @@ async function step(
 ) {
   const rec = (
     patch: {
-      state?: 'activating' | 'serving' | 'removing';
+      state?: 'waiting_firewall' | 'activating' | 'serving' | 'removing';
       code?: string | null;
       hostUuid?: string | null;
       evidence?: { revision: string; at: number; checked: 'client' | 'rehearsal' } | null;
+      firewall?: {
+        port: number;
+        protocol: 'tcp' | 'udp';
+        confirmedBy: 'role' | 'operator';
+      };
+      retry?: boolean;
       drop?: boolean;
     },
     auditAction?: { action: string; detail?: string },
@@ -659,7 +716,8 @@ async function step(
     const uuid = entry().hostUuid;
     return uuid ? (c!.hosts.find((h) => h.hostUuid === uuid) ?? null) : null;
   };
-  const actorRun = `node:${intentId}:${slug}`;
+  // The node's own actor: the retirement waits for every open write under it.
+  const actorRun = `node:${intentId}`;
   const setDisabled = (hostUuid: string, isDisabled: boolean) =>
     write(ctx, () =>
       ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
@@ -669,11 +727,27 @@ async function step(
         actorRun,
       }),
     );
+  /** Turn an address off and SEE it off: a refused write is never taken for one. */
+  const close = async (hostUuid: string) => {
+    await setDisabled(hostUuid, true);
+    await reload();
+    const h = c!.hosts.find((x) => x.hostUuid === hostUuid);
+    if (h && !h.isDisabled) throw new Stop('servers.extra_mode_close_failed');
+  };
+  // The address FCP keeps on the mode's transport: by the uuid recorded, or (a
+  // create whose answer was lost) under FCP's remark for this node.
+  const transportOf = () => c!.modes[slug]?.transport?.uuid ?? '';
+  const ownHost = () =>
+    hostOf() ??
+    c!.hosts.find(
+      (h) => h.configProfileInboundUuid === transportOf() && ownsAddress(c!.intent.name, h.remark),
+    ) ??
+    null;
 
   if (entry().state === 'removing') {
-    const host = hostOf();
+    const host = ownHost();
     if (host) {
-      if (!host.isDisabled) await setDisabled(host.hostUuid, true);
+      if (!host.isDisabled) await close(host.hostUuid);
       await write(ctx, () =>
         ctx.runMutation(internal.backendWrites.requestAddressDelete, {
           backendServerId: c!.server._id,
@@ -682,7 +756,7 @@ async function step(
         }),
       );
       await reload();
-      if (hostOf()) throw new Stop('servers.observe_lag');
+      if (c.hosts.some((h) => h.hostUuid === host.hostUuid)) throw new Stop('servers.observe_lag');
     }
     await rec({ drop: true }, { action: 'servers.node.extra_mode_removed' });
     return;
@@ -711,7 +785,7 @@ async function step(
   if (missing) {
     const open = hostOf();
     if (entry().state === 'serving') {
-      if (open && !open.isDisabled) await setDisabled(open.hostUuid, true);
+      if (open && !open.isDisabled) await close(open.hostUuid);
       await rec(
         { state: 'activating', evidence: null, code: missing },
         { action: 'servers.node.extra_mode_closed', detail: missing },
@@ -729,6 +803,25 @@ async function step(
     !auth.digest
   )
     throw new Stop('servers.extra_mode_certificate');
+  // The firewall was confirmed for one (port, protocol): a transport that moved
+  // since needs the new one let in first. The mode waits for it again, its
+  // address off, before anything is turned on there.
+  const opening = { port: inbound.port, protocol: inboundPortProtocol(inbound) };
+  const confirmed = entry().firewall;
+  if (confirmed.port !== opening.port || confirmed.protocol !== opening.protocol) {
+    const open = ownHost();
+    if (open && !open.isDisabled) await close(open.hostUuid);
+    await rec(
+      {
+        state: 'waiting_firewall',
+        evidence: null,
+        code: 'servers.extra_mode_port_moved',
+        firewall: { ...opening, confirmedBy: confirmed.confirmedBy },
+      },
+      { action: 'servers.node.extra_mode_closed', detail: 'servers.extra_mode_port_moved' },
+    );
+    return;
+  }
   const want = desiredExtraHost({
     nodeName: c.intent.name,
     originAddress: c.originAddress,
@@ -753,7 +846,7 @@ async function step(
   }
   // Serving, but something it was proven under moved: this mode alone closes.
   if (serving) {
-    if (host && !host.isDisabled) await setDisabled(host.hostUuid, true);
+    if (host && !host.isDisabled) await close(host.hostUuid);
     await rec(
       { state: 'activating', evidence: null, code: 'servers.extra_mode_drifted' },
       { action: 'servers.node.extra_mode_closed', detail: 'servers.extra_mode_drifted' },
@@ -789,7 +882,7 @@ async function step(
   } else {
     const diff = extraHostDiff(host, want);
     if (diff) {
-      if (!host.isDisabled) await setDisabled(host.hostUuid, true);
+      if (!host.isDisabled) await close(host.hostUuid);
       await write(ctx, () =>
         ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
           backendServerId: c!.server._id,
@@ -818,10 +911,10 @@ async function step(
     { pinHex: auth.pinHex, spkiB64: auth.spkiB64 },
   );
   if (!verdict.ok) {
-    // Never left on unproven: the address goes off again.
-    await setDisabled(host.hostUuid, true);
+    // Never left on unproven: the address goes off again, seen off.
+    await close(host.hostUuid);
     await rec(
-      { code: 'servers.rehearsal_failed' },
+      { code: 'servers.rehearsal_failed', retry: true },
       { action: 'servers.node.extra_mode_rehearsal_failed', detail: verdict.detail.slice(0, 120) },
     );
     return;
@@ -859,7 +952,7 @@ export const run = internalAction({
             intentId,
             slug: m.slug,
             attemptId,
-            patch: { code },
+            patch: { code, retry: true },
           })
           .catch(() => undefined);
       } finally {

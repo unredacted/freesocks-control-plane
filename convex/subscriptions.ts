@@ -21,6 +21,7 @@ import {
   type MirrorPage,
 } from './mirrorCopies';
 import { randomHex } from './lib/crypto';
+import { otherPinTargetsOf } from './lib/extraModeNodes';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
@@ -656,6 +657,15 @@ export const rotateNodePin = internalMutation({
     const sub = await ctx.db.get(subscriptionId);
     if (!sub?.pinnedNode) return null;
     return invalidateDelivery(ctx, sub, { excludePin: true, refreshMirrors: true });
+  },
+});
+
+/** Where "Switch server" may move a two-group key's pin (lib/extraModeNodes.ts). */
+export const otherPinTargets = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<string[] | null> => {
+    const sub = await ctx.db.get(subscriptionId);
+    return sub ? otherPinTargetsOf(ctx.db, sub) : null;
   },
 });
 

@@ -33,6 +33,8 @@ export function extraModeProblem(a: {
   primary: ExtraModeSetup;
   extra: ExtraModeSetup | undefined;
   served: readonly string[];
+  /** What the node's other extra modes listen on. */
+  otherOpenings?: readonly { port: number; protocol: 'tcp' | 'udp' }[];
   primaryOpening: { port: number; protocol: 'tcp' | 'udp' } | null;
   extraOpening: { port: number; protocol: 'tcp' | 'udp' } | null;
   primaryNames: readonly string[];
@@ -48,10 +50,11 @@ export function extraModeProblem(a: {
   if (a.fallbackModeSlug && a.fallbackModeSlug !== a.primary.slug)
     return 'servers.extra_mode_fallback_missing';
   if (!a.extraOpening || !a.extraName) return 'servers.extra_mode_certificate';
+  const x = a.extraOpening;
   if (
-    a.primaryOpening &&
-    a.primaryOpening.port === a.extraOpening.port &&
-    a.primaryOpening.protocol === a.extraOpening.protocol
+    [a.primaryOpening, ...(a.otherOpenings ?? [])].some(
+      (o) => !!o && o.port === x.port && o.protocol === x.protocol,
+    )
   )
     return 'servers.port_taken';
   if (a.primaryNames.some((n) => n.toLowerCase() === a.extraName!.toLowerCase()))

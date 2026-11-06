@@ -616,8 +616,13 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   away from it: the target's own) and switch-server, and every restore after a
   failed PATCH. Such a mode is **available** only where its backup is too and a node
   serves the mode beside the backup (`nodeExtraModes.ts`, `serving`); the pinner keeps
-  its keys on those nodes (`freedomDelivery.pinRules`), and while none serves it right
-  now a key pins as its backup mode would (the member keeps REALITY).
+  its keys on those nodes (`freedomDelivery.pinRules`, `lib/extraModeNodes.ts`), and
+  while none serves it right now a key pins among its backup mode's nodes (the member
+  keeps REALITY). Under the freedom edge rule too, each tier is narrowed to the
+  edge-covered nodes. "Switch server" rotates the pin only when the tier has another
+  node, not merely the group. A key with no mode chosen takes the default mode's
+  backup, and a pick on a backend without the backup's group retries the backends
+  that have one.
 
 Operator sizing: one mode group per node, add them all to the mode's pool, and FCP fills
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for

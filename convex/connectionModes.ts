@@ -33,6 +33,7 @@ import {
   freedomDirectRefusal,
   freedomEdgesOnly,
 } from './lib/edges/freedomDelivery';
+import { poolFromConfig } from './lib/remnawavePlacement';
 
 // --- reads --------------------------------------------------------------------
 
@@ -197,7 +198,27 @@ export const resolveIssueTarget = internalQuery({
       excludePlacement: excludePlacement ?? null,
       rand: typeof rand === 'number' ? () => rand : undefined,
     });
-    return { ...t, ...(await fallbackPlacementOf(ctx.db, backend, modeId, t)) };
+    const withBackup = { ...t, ...(await fallbackPlacementOf(ctx.db, backend, modeId, t)) };
+    if (!withBackup.fallbackUnresolved || onlyServerId) return withBackup;
+    // The pick landed on a backend that does not host the backup group: try,
+    // in turn, the backends that do, so a valid target is never missed.
+    const slug = await modeSlugFor(ctx.db, backend, modeId);
+    const backup = slug ? (await modeRowOf(ctx.db, slug))?.fallbackModeSlug : null;
+    if (!backup) return withBackup;
+    for (const sid of await backendsHosting(ctx.db, backup)) {
+      if (sid === t.serverId) continue;
+      const alt = await resolverFor(backend).resolveTarget(ctx.db, modeId, {
+        location: location ?? null,
+        ...(exitLocations?.length ? { exitLocations } : {}),
+        onlyServerId: sid,
+        excludePlacement: excludePlacement ?? null,
+        rand: typeof rand === 'number' ? () => rand : undefined,
+      });
+      if (!alt.placement) continue;
+      const f = await fallbackPlacementOf(ctx.db, backend, modeId, alt);
+      if (!f.fallbackUnresolved) return { ...alt, ...f };
+    }
+    return withBackup;
   },
 });
 
@@ -213,11 +234,10 @@ async function fallbackPlacementOf(
   modeId: string | null,
   target: { placement: string | null; serverId: string | null },
 ): Promise<{ extraPlacements: string[]; fallbackUnresolved: boolean }> {
-  if (!modeId || !target.placement) return { extraPlacements: [], fallbackUnresolved: false };
-  const row = await db
-    .query('connectionModes')
-    .withIndex('by_slug', (q) => q.eq('slug', modeId))
-    .unique();
+  if (!target.placement) return { extraPlacements: [], fallbackUnresolved: false };
+  // No choice: the mode the key issues into is the effective default.
+  const slug = await modeSlugFor(db, backend, modeId);
+  const row = slug ? await modeRowOf(db, slug) : null;
   const fallback = row?.fallbackModeSlug;
   if (!fallback) return { extraPlacements: [], fallbackUnresolved: false };
   if (!target.serverId) return { extraPlacements: [], fallbackUnresolved: true };
@@ -229,6 +249,38 @@ async function fallbackPlacementOf(
   return f.placement && f.placement !== target.placement
     ? { extraPlacements: [f.placement], fallbackUnresolved: false }
     : { extraPlacements: [], fallbackUnresolved: true };
+}
+
+/** The mode a key issues into: the chosen one, else the effective default on `backend`. */
+async function modeSlugFor(
+  db: DatabaseReader,
+  backend: BackendId,
+  modeId: string | null,
+): Promise<string | null> {
+  return modeId ?? effectiveDefaultFor(await resolveCatalogWithAvailability(db), backend);
+}
+
+const modeRowOf = (db: DatabaseReader, slug: string) =>
+  db
+    .query('connectionModes')
+    .withIndex('by_slug', (q) => q.eq('slug', slug))
+    .unique();
+
+/** The backends a mode's pool has a group on (attributed through the node stats). */
+async function backendsHosting(db: DatabaseReader, slug: string): Promise<string[]> {
+  const row = await db
+    .query('modePlacements')
+    .withIndex('by_mode_backend', (q) => q.eq('modeSlug', slug).eq('backend', 'remnawave'))
+    .unique();
+  const out = new Set<string>();
+  for (const placement of row ? poolFromConfig(row.config) : []) {
+    const stats = await db
+      .query('remnawaveNodeStats')
+      .withIndex('by_placement', (q) => q.eq('placement', placement))
+      .unique();
+    if (stats) out.add(stats.backendServerId as string);
+  }
+  return [...out];
 }
 
 /** The re-issue anti-downgrade gate for `backend` (see PlacementResolver). */
@@ -714,6 +766,21 @@ export const updateMode = internalMutation({
     }
     if (a.order !== undefined) patch.order = a.order;
     if (a.fallbackModeSlug !== undefined) patch.fallbackModeSlug = a.fallbackModeSlug ?? undefined;
+    // This mode may be another one's backup: it must stay in that mode's family
+    // and keep offering every backend that mode does.
+    if (a.family !== undefined || a.backends !== undefined) {
+      const family = patch.familySlug ?? row.familySlug;
+      const backends = patch.backends ?? row.backends;
+      for (const r of await ctx.db.query('connectionModes').collect()) {
+        if (r.fallbackModeSlug !== row.slug) continue;
+        if (r.familySlug !== family)
+          validationError(`"${r.slug}" uses this mode as its backup: it must stay in its family`);
+        if (!r.backends.every((b) => backends.includes(b)))
+          validationError(
+            `"${r.slug}" uses this mode as its backup: it must keep every backend that mode offers`,
+          );
+      }
+    }
     const fallback = a.fallbackModeSlug === undefined ? row.fallbackModeSlug : a.fallbackModeSlug;
     if (
       fallback &&
