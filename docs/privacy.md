@@ -469,7 +469,9 @@ Freedom XHTTP`, `profile-title`, `docs/backends.md`).
   every group and default that named it, and refuses the body (a 503, never the body as it
   came) when a reference cannot be removed, a group would be left empty, nothing would be
   left to connect with, or the body names Hysteria in a way it cannot read. Drops are
-  counted (`hysteria_dropped`) with the delivery refusals.
+  counted (`hysteria_dropped`) with the delivery refusals. A cached or stale body passes the
+  guard again each time it is served, against the pins the backend serves then, so a
+  certificate change never leaves an old pin in a member's hands.
 
 ## 6. Analytics (optional self-hosted Umami origin)
 

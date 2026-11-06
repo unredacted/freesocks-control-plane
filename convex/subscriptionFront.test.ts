@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import YAML from 'yaml';
 import schema from './schema';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { addressRemark } from './lib/backend/hostRemark';
 import { defaultRouteFaults } from './lib/backend/subscriptionTemplates/defaultRoute';
 import { decodeBase64Loose, encodeBase64 } from './lib/edges/render/base64';
@@ -1050,6 +1050,69 @@ describe('GET /api/v1/sub/<token>: Hysteria entries verify the node by pin, or g
     await seedWithPin(t);
     mockBody = YAML.stringify({ proxies: [hy({ 'skip-cert-verify': true })] });
     const res = await get(t);
+    expect(res.status).toBe(503);
+    expect(await res.text()).not.toContain('hysteria2');
+  });
+
+  /** The node's certificate changes after a body was cached. */
+  const rotatePin = (t: ReturnType<typeof convexTest>) =>
+    t.run(async (ctx) => {
+      const row = (await ctx.db.query('panelProfiles').collect())[0]!;
+      await ctx.db.patch(row._id, {
+        inbounds: row.inbounds.map((ib: Doc<'panelProfiles'>['inbounds'][number]) => ({
+          ...ib,
+          hysteriaAuth: { ...ib.hysteriaAuth!, pinHex: 'cd'.repeat(32) },
+        })),
+      });
+    });
+  /** Ages every cached body past its TTL, then takes the backend down. */
+  async function staleOnly(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      const entries = JSON.parse(sub.subCache!) as Array<{ at: number }>;
+      for (const e of entries) e.at -= 24 * 3600_000;
+      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+  }
+  const names = async (res: Response) =>
+    (YAML.parse(await res.text()) as { proxies: { name: string }[] }).proxies.map((p) => p.name);
+
+  test('a cached body is guarded again against the pin the backend serves now', async () => {
+    const t = convexTest(schema, modules);
+    await seedWithPin(t);
+    mockBody = body({ fingerprint: PIN });
+    expect(await names(await get(t))).toEqual(['r', 'h']); // cached with the entry pinned
+    await rotatePin(t);
+    const res = await get(t); // a cache hit
+    expect(res.status).toBe(200);
+    expect(await names(res)).toEqual(['r']);
+  });
+
+  test('so is a stale body served while the backend is down; one with nothing left is refused', async () => {
+    const t = convexTest(schema, modules);
+    await seedWithPin(t);
+    const subId = (await t.run((ctx) => ctx.db.query('subscriptions').first()))!._id;
+    mockBody = body({ fingerprint: PIN });
+    await get(t);
+    await rotatePin(t);
+    await staleOnly(t, subId);
+    expect(await names(await get(t))).toEqual(['r']);
+
+    const t2 = convexTest(schema, modules);
+    await seedWithPin(t2);
+    const subId2 = (await t2.run((ctx) => ctx.db.query('subscriptions').first()))!._id;
+    stubFrontFetch();
+    mockBody = YAML.stringify({ proxies: [hy({ fingerprint: PIN })] });
+    await get(t2);
+    await rotatePin(t2);
+    await staleOnly(t2, subId2);
+    const res = await get(t2);
     expect(res.status).toBe(503);
     expect(await res.text()).not.toContain('hysteria2');
   });
