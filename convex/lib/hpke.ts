@@ -206,14 +206,21 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       });
       bodyObj = (opened.plaintext ?? {}) as Record<string, unknown>;
     } else {
-      // The account number rides the REQUEST on the login route.
-      if (hpkeRequired) return sealedRequired();
       bodyObj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+      // The account number rides the REQUEST on the login route. A route that
+      // was reveal-only keeps an older client's plaintext shape (it carries the
+      // response ephemeral; the handler refuses the sealed-only fields).
+      const olderRevealShape =
+        policy.plainWithReveal === true && typeof bodyObj[RESP_EPH_FIELD] === 'string';
+      if (hpkeRequired && !olderRevealShape) return sealedRequired();
     }
     if (policy.response === 'reveal') {
       const eph = bodyObj[RESP_EPH_FIELD];
       if (typeof eph === 'string') respEphPubB64 = eph;
       delete bodyObj[RESP_EPH_FIELD];
+      // A sealed request with no response ephemeral would get its answer back
+      // in plaintext: refused like the reveal-only routes are.
+      if (hpkeRequired && !respEphPubB64) return sealedRequired();
     }
     handlerReq = proxyReq(req, bodyObj, raw, wasSealed);
   } else if (policy.response === 'reveal') {

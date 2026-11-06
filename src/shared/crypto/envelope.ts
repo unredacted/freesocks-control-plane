@@ -247,6 +247,13 @@ export interface RoutePolicy {
    * data must never cross the CDN in the clear (a member's country).
    */
   required?: true;
+  /**
+   * A seal-both route that used to be reveal-only: a PLAINTEXT body that carries
+   * a response ephemeral is still accepted when sealing is required (a cached
+   * older client sends that shape), and its response is still sealed. The
+   * handler refuses any field that may only travel sealed (`requestWasSealed`).
+   */
+  plainWithReveal?: true;
 }
 
 const SEAL_REQ: RoutePolicy = { request: 'seal', response: 'plain' };
@@ -259,6 +266,8 @@ const SEAL_BOTH: RoutePolicy = { request: 'seal', response: 'reveal' };
 /** Where a member connects from (convex/memberCountry.ts): sealed, never plaintext. */
 const REVEAL_REQUIRED: RoutePolicy = { ...REVEAL, required: true };
 const SEAL_BOTH_REQUIRED: RoutePolicy = { ...SEAL_BOTH, required: true };
+/** Seal-both, keeping an older client's reveal-only request shape (`plainWithReveal`). */
+const SEAL_BOTH_FROM_REVEAL: RoutePolicy = { ...SEAL_BOTH, plainWithReveal: true };
 
 /**
  * Keyed by `"METHOD /path"` (method-aware): several admin paths serve BOTH a GET
@@ -285,7 +294,7 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/account': REVEAL,
   // SEAL_BOTH: the first key may carry the member's answer to "Where are you
   // connecting from?" (`region`), which the handler refuses in plaintext.
-  'POST /api/v1/account/regenerate': SEAL_BOTH,
+  'POST /api/v1/account/regenerate': SEAL_BOTH_FROM_REVEAL,
   'POST /api/v1/account/switch-backend': REVEAL,
   'POST /api/v1/account/switch-mode': REVEAL,
   'POST /api/v1/account/switch-server': REVEAL,
@@ -308,7 +317,7 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // The response carries the mirror URL: a public capability URL to the config.
   // The request may carry the member's country (`region`) or a host hint
   // (`countryCode`); the handler refuses either in plaintext.
-  'POST /api/v1/mirror/request': SEAL_BOTH,
+  'POST /api/v1/mirror/request': SEAL_BOTH_FROM_REVEAL,
   // Admin secret reveals (server returns a fresh secret once).
   'POST /api/v1/admin/tokens': REVEAL,
   'POST /api/v1/admin/membership-codes': REVEAL,

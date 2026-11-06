@@ -89,7 +89,7 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
     const path = '/api/v1/mirror/request';
     const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify({ region: 'IR' }));
     expect(out).toBeDefined();
-    expect(out!.policy).toEqual({ request: 'seal', response: 'reveal' });
+    expect(out!.policy).toEqual({ request: 'seal', response: 'reveal', plainWithReveal: true });
     expect(out!.header).toBeUndefined();
     expect(out!.body).not.toContain('"region"');
     const wire = JSON.parse(out!.body!);
