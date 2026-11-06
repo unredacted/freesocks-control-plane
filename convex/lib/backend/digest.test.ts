@@ -1,4 +1,5 @@
 import { x25519 } from '@noble/curves/ed25519.js';
+import { generateHysteriaCertificate } from './hysteriaCert';
 import { describe, expect, test } from 'vitest';
 import {
   REDACTED,
@@ -6,6 +7,7 @@ import {
   changeToken,
   isSecretKey,
   normalizeForToken,
+  hysteriaAuthDigest,
   realityAuthDigest,
   realityPublicKey,
   redactConfig,
@@ -189,5 +191,59 @@ describe('realityAuthDigest', () => {
     expect(out).not.toContain(SK);
     expect(out).not.toContain('seed-1');
     expect(out).not.toContain('ab12');
+  });
+});
+
+describe('hysteriaAuthDigest', () => {
+  const cert = generateHysteriaCertificate('quic.example');
+  const stream = (over: Record<string, unknown> = {}, fm: Record<string, unknown> = {}) => ({
+    network: 'hysteria',
+    security: 'tls',
+    tlsSettings: {
+      serverName: 'quic.example',
+      alpn: ['h3'],
+      certificates: [{ certificate: cert.certificate, key: cert.key }],
+      ...over,
+    },
+    finalmask: { quicParams: { congestion: 'bbr' }, ...fm },
+  });
+
+  test('carries the pins of the certificate, the name and the ALPN, never the key', async () => {
+    const a = await hysteriaAuthDigest(stream(), 'k1');
+    expect(a).toMatchObject({
+      pinHex: cert.pinHex,
+      spkiB64: cert.spkiB64,
+      serverName: 'quic.example',
+      alpn: ['h3'],
+      obfs: false,
+    });
+    expect(JSON.stringify(a)).not.toContain(cert.key[1]!.slice(0, 20));
+  });
+
+  test('moves on a new certificate, name, ALPN, Salamander or Salamander password', async () => {
+    const base = (await hysteriaAuthDigest(stream(), 'k1')).digest;
+    const other = generateHysteriaCertificate('quic.example');
+    const changed = [
+      stream({ certificates: [{ certificate: other.certificate, key: other.key }] }),
+      stream({ serverName: 'other.example' }),
+      stream({ alpn: ['h3', 'h2'] }),
+      stream({}, { udp: [{ type: 'salamander', settings: { password: 'one' } }] }),
+    ];
+    const digests = await Promise.all(changed.map((s) => hysteriaAuthDigest(s, 'k1')));
+    for (const d of digests) expect(d.digest).not.toBe(base);
+    const two = await hysteriaAuthDigest(
+      stream({}, { udp: [{ type: 'salamander', settings: { password: 'two' } }] }),
+      'k1',
+    );
+    expect(two.obfs).toBe(true);
+    expect(two.digest).not.toBe(digests[3]!.digest);
+    // Keyed: another key gives another digest of the same settings.
+    expect((await hysteriaAuthDigest(stream(), 'k2')).digest).not.toBe(base);
+  });
+
+  test('no readable certificate: no pins and no digest', async () => {
+    const a = await hysteriaAuthDigest(stream({ certificates: [] }), 'k1');
+    expect(a).toMatchObject({ digest: null, pinHex: null, spkiB64: null });
+    expect(await hysteriaAuthDigest(null, 'k1')).toMatchObject({ digest: null, alpn: [] });
   });
 });

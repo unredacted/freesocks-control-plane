@@ -39,5 +39,8 @@ describe('capability record ⇔ provider methods', () => {
     expect(caps.userLookupByUsername).toBe(!!provider.findUserByUsername);
     // Hiding a Host is only meaningful where FCP manages Hosts at all.
     if (caps.hostDisable) expect(caps.hostManagement).toBe(true);
+    // A UDP transport is set up through the profile template, so only a
+    // backend FCP sets up can carry one.
+    if (caps.udpTransports) expect(caps.backendSetup).toBe(true);
   });
 });

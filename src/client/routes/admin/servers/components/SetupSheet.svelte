@@ -71,6 +71,7 @@
   const rowOf = (m: ModeSetupInput, kept = false): Row => ({
     ...m,
     ws: m.ws ? { ...m.ws } : undefined,
+    hysteria: m.hysteria ? { ...m.hysteria } : undefined,
     key: seq++,
     kept,
   });
@@ -198,7 +199,8 @@
   );
 
   const shapeKey = (s: { transport: string; fronting: string }) => `${s.transport}/${s.fronting}`;
-  const isReality = (r: Row) => r.shape.transport !== 'ws';
+  const isReality = (r: Row) =>
+    r.shape.transport === 'reality' || r.shape.transport === 'xhttp-reality';
   const knownModes = $derived(catalog.data?.modes ?? []);
   const familyRows = $derived((families.data?.families ?? []).filter((f) => f.enabled));
 
@@ -210,6 +212,10 @@
       r.familySlug = undefined;
       r.ws ??= { path: '/ws', port: 8443 };
     } else r.ws = undefined;
+    if (s.transport === 'hysteria') {
+      r.familySlug = undefined;
+      r.hysteria ??= { serverName: '', salamander: false };
+    } else r.hysteria = undefined;
   }
   function addRow() {
     rows = [
@@ -233,6 +239,13 @@
         name: m.name.trim(),
         familySlug: isReality(m as Row) ? m.familySlug || undefined : undefined,
         ws: m.shape.transport === 'ws' ? m.ws : undefined,
+        hysteria:
+          m.shape.transport === 'hysteria' && m.hysteria
+            ? {
+                serverName: m.hysteria.serverName.trim().toLowerCase(),
+                salamander: m.hysteria.salamander,
+              }
+            : undefined,
       })),
       originDns: originAccountId ? { accountId: originAccountId, zoneId: originZoneId } : null,
       adopt,
@@ -245,6 +258,8 @@
     for (const r of rows)
       if (isReality(r) && !r.familySlug)
         return `Pick a server-name family for ${r.name || r.slug || 'each REALITY mode'}.`;
+      else if (r.shape.transport === 'hysteria' && !r.hysteria?.serverName.trim())
+        return `Give ${r.name || r.slug || 'each Hysteria mode'} the server name its certificate is made for.`;
     if (originAccountId && !originZoneId)
       return 'Pick the zone for origin names, or no managed zone.';
     return null;
@@ -463,6 +478,25 @@
                           >
                         </div>
                       {/if}
+                    {:else if r.hysteria}
+                      <div class="space-y-1 sm:col-span-2">
+                        <Label for={`${uid}-sni-${r.key}`} class="text-xs"
+                          >Server name of its certificate</Label
+                        >
+                        <Input
+                          id={`${uid}-sni-${r.key}`}
+                          bind:value={r.hysteria.serverName}
+                          placeholder="quic.example"
+                          autocomplete="off"
+                          spellcheck={false}
+                        />
+                      </div>
+                      <div class="flex items-center gap-2 self-end pb-1.5">
+                        <Switch id={`${uid}-obfs-${r.key}`} bind:checked={r.hysteria.salamander} />
+                        <Label for={`${uid}-obfs-${r.key}`} class="text-xs font-normal"
+                          >Salamander</Label
+                        >
+                      </div>
                     {:else if r.ws}
                       <div class="space-y-1">
                         <Label for={`${uid}-path-${r.key}`} class="text-xs">Path</Label>

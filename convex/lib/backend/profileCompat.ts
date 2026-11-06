@@ -31,7 +31,8 @@ export interface CompatIssue {
     | 'server_names'
     | 'target'
     | 'reality_key'
-    | 'public_key_mismatch';
+    | 'public_key_mismatch'
+    | 'certificate';
 }
 
 export interface EffectiveWsTransport {
@@ -52,7 +53,22 @@ export interface EffectiveRealityTransport {
   target: { address: string; port: number };
   publicKey: string;
 }
-export type EffectiveTransport = EffectiveWsTransport | EffectiveRealityTransport;
+/**
+ * A Hysteria 2 transport as found: its server name and its certificate's two
+ * pins (what members verify the node by), and whether Salamander is on.
+ */
+export interface EffectiveHysteriaTransport {
+  kind: 'hysteria';
+  tag: string;
+  uuid: string;
+  port: number;
+  serverName: string;
+  pinHex: string;
+  spkiB64: string;
+  obfs: boolean;
+}
+export type EffectiveTransport =
+  EffectiveWsTransport | EffectiveRealityTransport | EffectiveHysteriaTransport;
 
 export type CompatResult =
   { ok: true; effective: Record<string, EffectiveTransport> } | { ok: false; issue: CompatIssue };
@@ -141,6 +157,37 @@ function checkReality(
 }
 
 /**
+ * Xray's Hysteria 2 inbound on a public address, under TLS with a readable
+ * inline certificate (its pins are what members verify) and `h3`. A
+ * certificate FCP cannot read is refused: a member's client would have no pin
+ * to check, and FCP never hands out an unverified Hysteria entry.
+ */
+function checkHysteria(
+  slug: string,
+  ib: ObservedTransport,
+): EffectiveHysteriaTransport | CompatIssue {
+  const tag = ib.tag;
+  if (ib.protocol !== 'hysteria') return { slug, tag, field: 'protocol' };
+  if (ib.network !== 'hysteria') return { slug, tag, field: 'network' };
+  if (ib.security !== 'tls') return { slug, tag, field: 'security' };
+  if (isLoopback(ib.listen)) return { slug, tag, field: 'listen' };
+  if (ib.port === null) return { slug, tag, field: 'port' };
+  const auth = ib.hysteriaAuth;
+  if (!auth?.serverName) return { slug, tag, field: 'server_names' };
+  if (!auth.pinHex || !auth.spkiB64 || !auth.digest) return { slug, tag, field: 'certificate' };
+  return {
+    kind: 'hysteria',
+    tag,
+    uuid: ib.configProfileInboundUuid,
+    port: ib.port,
+    serverName: auth.serverName,
+    pinHex: auth.pinHex,
+    spkiB64: auth.spkiB64,
+    obfs: auth.obfs,
+  };
+}
+
+/**
  * The observed transport a mode adopts: the one a previous setup of this mode
  * already bound (by uuid, then by the tag it recorded, since a backend never
  * renames a transport), else the tag this mode's group name gives, else a tag
@@ -183,7 +230,9 @@ export function checkProfileCompatibility(
     const r =
       m.shape.transport === 'ws'
         ? checkWs(m.slug, ib)
-        : checkReality(m.slug, ib, m.shape.transport);
+        : m.shape.transport === 'hysteria'
+          ? checkHysteria(m.slug, ib)
+          : checkReality(m.slug, ib, m.shape.transport);
     if ('field' in r) return { ok: false, issue: r };
     out[m.slug] = r;
   }

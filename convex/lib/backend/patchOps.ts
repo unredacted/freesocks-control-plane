@@ -38,6 +38,7 @@ import {
   PROFILE_DEFAULTS,
   buildTransport,
   checkModes,
+  type HysteriaMaterial,
   type ModeTemplateInput,
 } from './profileTemplate';
 
@@ -55,7 +56,13 @@ export type TransportTemplate =
       serverNames: string[];
       acceptProxyProtocol: boolean;
     }
-  | { kind: 'ws'; port: number; path: string };
+  | { kind: 'ws'; port: number; path: string }
+  /**
+   * Hysteria 2 (QUIC, UDP) on a direct node: the server name its certificate
+   * is made for, and whether Salamander obfuscation is on. The certificate is
+   * made in the attempt, like a REALITY key.
+   */
+  | { kind: 'hysteria'; port: number; serverName: string; salamander: boolean };
 
 export type PatchOp =
   | { op: 'setRealityServerNames'; inboundTag: string; names: string[] }
@@ -63,20 +70,24 @@ export type PatchOp =
   | { op: 'setInboundPort'; inboundTag: string; port: number }
   | { op: 'addInboundFromTemplate'; inboundTag: string; template: TransportTemplate };
 
+/** A REALITY transport's key material. */
+export interface RealityKeyMaterial {
+  privateKey: string;
+  shortIds: readonly string[];
+}
+
 /**
- * Key material for the REALITY transports an edit creates, by tag: generated in
- * the attempt immediately before the write, held in memory only, never stored,
- * logged or returned.
+ * Secret material for the transports an edit creates, by tag (a REALITY key, a
+ * Hysteria certificate and its key): generated in the attempt immediately
+ * before the write, held in memory only, never stored, logged or returned.
  */
-export type PatchMaterial = Readonly<
-  Record<string, { privateKey: string; shortIds: readonly string[] }>
->;
+export type PatchMaterial = Readonly<Record<string, RealityKeyMaterial | HysteriaMaterial>>;
 
 /** Whether an op list makes a node listen on a port it may not listen on yet. */
 export const opensPort = (ops: readonly PatchOp[]): boolean =>
   ops.some((o) => o.op === 'setInboundPort');
 
-/** Whether an op list creates a REALITY transport, whose key is made in the attempt. */
+/** Whether an op list creates a REALITY or Hysteria transport, whose secrets are made in the attempt. */
 export const needsFreshKeys = (ops: readonly PatchOp[]): boolean =>
   ops.some((o) => o.op === 'addInboundFromTemplate' && o.template.kind !== 'ws');
 
@@ -139,6 +150,20 @@ function checkTemplate(tag: string, raw: unknown): TransportTemplate {
       return refuse('servers.template_invalid', 'A loopback WebSocket port is 1024 or higher');
     return { kind: 'ws', port: t.port, path };
   }
+  if (t.kind === 'hysteria') {
+    const serverName = normalizeName(t.serverName);
+    if (!serverName)
+      return refuse('servers.template_invalid', 'A Hysteria transport needs a server name');
+    const out: TransportTemplate = {
+      kind: 'hysteria',
+      port: t.port,
+      serverName,
+      salamander: t.salamander === true,
+    };
+    const bad = checkModes([templateMode(tag, out)]);
+    if (bad) refuse('servers.template_invalid', `The template does not fit: ${bad.split(':')[1]}`);
+    return out;
+  }
   if (t.kind !== 'reality' && t.kind !== 'xhttp-reality')
     return refuse('servers.template_invalid', 'Unknown transport template');
   const target = typeof t.target === 'string' ? t.target.trim().toLowerCase() : '';
@@ -178,6 +203,13 @@ function templateMode(tag: string, t: TransportTemplate): ModeTemplateInput {
       shape: { transport: 'ws', fronting: 'edge-l7' },
       ws: { path: t.path, port: t.port },
     };
+  if (t.kind === 'hysteria')
+    return {
+      slug: 'added',
+      name: tag.slice(0, 20),
+      shape: { transport: 'hysteria', fronting: 'direct' },
+      hysteria: { serverName: t.serverName, salamander: t.salamander },
+    };
   const target = parseRealityTarget(t.target)!;
   return {
     slug: 'added',
@@ -188,13 +220,24 @@ function templateMode(tag: string, t: TransportTemplate): ModeTemplateInput {
   };
 }
 
-/** The transport JSON of a template, its tag and port as asked; key material injected. */
+/** The transport JSON of a template, its tag and port as asked; secret material injected. */
 export function templateTransport(
   tag: string,
   t: TransportTemplate,
-  keys: { privateKey: string; shortIds: readonly string[] } | undefined,
+  material: RealityKeyMaterial | HysteriaMaterial | undefined,
 ): Record<string, unknown> {
-  const built = buildTransport(templateMode(tag, t), t.kind === 'ws' ? undefined : keys);
+  const mode = templateMode(tag, t);
+  const built =
+    t.kind === 'hysteria'
+      ? buildTransport(
+          mode,
+          undefined,
+          material && 'certificate' in material ? material : undefined,
+        )
+      : buildTransport(
+          mode,
+          t.kind === 'ws' || !material || 'certificate' in material ? undefined : material,
+        );
   return { ...built, tag, port: t.port };
 }
 
@@ -280,15 +323,23 @@ export function applyPatchOps(
     if (op.op === 'addInboundFromTemplate') {
       if (next.some((ib) => isObj(ib) && ib.tag === op.inboundTag))
         refuse('servers.tag_taken', `A transport is already tagged ${op.inboundTag}`);
-      let keys: { privateKey: string; shortIds: readonly string[] } | undefined;
+      let keys: RealityKeyMaterial | HysteriaMaterial | undefined;
       if (op.template.kind !== 'ws') {
-        keys = material?.[op.inboundTag];
+        const given = material?.[op.inboundTag];
+        const fits = !!given && (op.template.kind === 'hysteria') === 'certificate' in given;
+        keys = fits ? given : undefined;
         if (!keys) {
           needsMaterial = true;
-          keys = {
-            privateKey: 'material-made-in-the-attempt',
-            shortIds: PROFILE_DEFAULTS.shortIds,
-          };
+          keys =
+            op.template.kind === 'hysteria'
+              ? {
+                  certificate: ['material-made-in-the-attempt'],
+                  key: ['material-made-in-the-attempt'],
+                  ...(op.template.salamander
+                    ? { obfsPassword: 'material-made-in-the-attempt' }
+                    : {}),
+                }
+              : { privateKey: 'material-made-in-the-attempt', shortIds: PROFILE_DEFAULTS.shortIds };
         }
       }
       next.push(templateTransport(op.inboundTag, op.template, keys));

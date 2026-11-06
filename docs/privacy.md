@@ -335,6 +335,12 @@ row, `remnawave.logging_hardened`, with the same counts.
   FCP's node-placement loses its `usersOnline` signal (it degrades to
   declaration-order — keys still issue).
 
+- **Hysteria 2 (QUIC, UDP) transports log nothing more.** A Hysteria transport is an
+  inbound of the same Xray process under the same `log` and `policy` blocks, so it writes
+  no client address either. Its self-signed certificate's private key and its Salamander
+  password exist only in the config profile: FCP makes them inside the setup attempt and
+  keeps only the certificate's public pins (docs/servers.md "Setting up a backend"). Its
+  answer to anyone without a password is a fixed 404, never a fetch of another site.
 - **Node host retains nothing.** With `access:"none"` Xray emits no connection
   lines for `docker logs` / journald to capture; as belt-and-suspenders, set the
   node container's logging driver to `none`.

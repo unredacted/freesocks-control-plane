@@ -386,8 +386,23 @@ export interface PanelRealityAuth {
   publicKeyMismatch: boolean;
 }
 
+/**
+ * The authentication identity of one Hysteria 2 inbound: the certificate's two
+ * pins (public), the server name and ALPN it presents, whether Salamander is
+ * on, and a keyed digest that also covers the Salamander password.
+ */
+export interface PanelHysteriaAuth {
+  digest: string | null;
+  pinHex: string | null;
+  spkiB64: string | null;
+  serverName: string | null;
+  alpn: string[];
+  obfs: boolean;
+}
+
 export type ObservedTransport = Omit<BackendTransport, 'active'> & {
   realityAuth?: PanelRealityAuth;
+  hysteriaAuth?: PanelHysteriaAuth;
   /** A REALITY transport's `minClientVer` / `maxClientVer` (version numbers, never key material). */
   realityClients?: RealityClientBounds;
 };

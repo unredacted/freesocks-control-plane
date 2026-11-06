@@ -3473,6 +3473,20 @@ export default defineSchema({
             maxClientVer: v.union(v.string(), v.null()),
           }),
         ),
+        // A Hysteria 2 transport's identity: its certificate's two pins (public:
+        // members verify the node by them), the server name and ALPN it
+        // presents, whether Salamander is on, and a keyed digest that also
+        // covers the Salamander password. Never the private key.
+        hysteriaAuth: v.optional(
+          v.object({
+            digest: v.union(v.string(), v.null()),
+            pinHex: v.union(v.string(), v.null()),
+            spkiB64: v.union(v.string(), v.null()),
+            serverName: v.union(v.string(), v.null()),
+            alpn: v.array(v.string()),
+            obfs: v.boolean(),
+          }),
+        ),
       }),
     ),
     observedAt: v.number(),
@@ -4409,12 +4423,20 @@ export default defineSchema({
         slug: v.string(),
         name: v.string(),
         shape: v.object({
-          transport: v.union(v.literal('reality'), v.literal('xhttp-reality'), v.literal('ws')),
+          transport: v.union(
+            v.literal('reality'),
+            v.literal('xhttp-reality'),
+            v.literal('ws'),
+            v.literal('hysteria'),
+          ),
           fronting: v.union(v.literal('direct'), v.literal('edge-l4'), v.literal('edge-l7')),
         }),
         familySlug: v.optional(v.string()),
         acceptProxyProtocol: v.boolean(),
         ws: v.optional(v.object({ path: v.string(), port: v.number() })),
+        // A Hysteria 2 transport: the one server name its certificate is for,
+        // and whether Salamander obfuscation is on.
+        hysteria: v.optional(v.object({ serverName: v.string(), salamander: v.boolean() })),
         // The transport tag: the group name's, or the tag an adopted profile
         // already carried (a backend keys transports by tag; never renamed).
         tag: v.string(),

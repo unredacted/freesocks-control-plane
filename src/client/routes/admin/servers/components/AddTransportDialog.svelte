@@ -3,7 +3,9 @@
    * Add a transport to a profile from the catalogue the nodes are built for
    * (the same shapes as "Set up this backend"): write, preview, apply. A
    * REALITY transport takes its target and names from a server-name family,
-   * and its key is made when the change is sent, never shown or stored.
+   * and its key is made when the change is sent, never shown or stored. A
+   * Hysteria 2 transport (QUIC, UDP) takes one server name; its self-signed
+   * certificate is made when the change is sent, and members verify it by pin.
    *
    * No node serves a new transport until one is assigned to it (measured), so
    * the add opens no port anywhere and closes no node. Setting the backend up
@@ -39,11 +41,13 @@
   const families = familiesQuery();
 
   let tag = $state('');
-  let kind = $state<'reality' | 'xhttp-reality' | 'ws'>('reality');
+  let kind = $state<'reality' | 'xhttp-reality' | 'ws' | 'hysteria'>('reality');
   let port = $state('443');
   let familySlug = $state('');
   let path = $state('/ws');
   let proxyProtocol = $state(false);
+  let serverName = $state('');
+  let salamander = $state(false);
   let preview = $state<ProfilePatchPreview | null>(null);
   let busy = $state(false);
 
@@ -55,6 +59,8 @@
     familySlug = '';
     path = '/ws';
     proxyProtocol = false;
+    serverName = '';
+    salamander = false;
     preview = null;
   });
   // A loopback WebSocket sits behind the node proxy on a high port.
@@ -69,16 +75,21 @@
   let valid = $derived(
     tagOk &&
       portOk &&
-      (kind === 'ws' ? /^\/\S*$/.test(path.trim()) && +port >= 1024 : familySlug !== ''),
+      (kind === 'ws'
+        ? /^\/\S*$/.test(path.trim()) && +port >= 1024
+        : kind === 'hysteria'
+          ? /^[a-z0-9.-]{1,253}$/i.test(serverName.trim())
+          : familySlug !== ''),
   );
   let added = $derived(
     preview?.ops[0]?.op === 'addInboundFromTemplate' ? preview.ops[0].template : null,
   );
 
   function template(): TransportTemplateOp {
-    return kind === 'ws'
-      ? { kind, port: Number(port), path: path.trim() }
-      : { kind, port: Number(port), familySlug, acceptProxyProtocol: proxyProtocol };
+    if (kind === 'ws') return { kind, port: Number(port), path: path.trim() };
+    if (kind === 'hysteria')
+      return { kind, port: Number(port), serverName: serverName.trim().toLowerCase(), salamander };
+    return { kind, port: Number(port), familySlug, acceptProxyProtocol: proxyProtocol };
   }
 
   async function doPreview() {
@@ -130,6 +141,7 @@
             <option value="reality">{templateWords('reality')}</option>
             <option value="xhttp-reality">{templateWords('xhttp-reality')}</option>
             <option value="ws">{templateWords('ws')}</option>
+            <option value="hysteria">{templateWords('hysteria')}</option>
           </select>
         </div>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -156,6 +168,27 @@
           <div class="space-y-1.5">
             <Label for={`${uid}-path`}>Path</Label>
             <Input id={`${uid}-path`} bind:value={path} autocomplete="off" spellcheck={false} />
+          </div>
+        {:else if kind === 'hysteria'}
+          <div class="space-y-1.5">
+            <Label for={`${uid}-sni`}>Server name</Label>
+            <Input
+              id={`${uid}-sni`}
+              bind:value={serverName}
+              placeholder="quic.example"
+              autocomplete="off"
+              spellcheck={false}
+            />
+            <p class="text-muted-foreground text-xs">
+              The name its certificate is made for and apps present when they connect. Apps check
+              the certificate by its fingerprint, never by a certificate authority.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <Checkbox id={`${uid}-obfs`} bind:checked={salamander} />
+            <Label for={`${uid}-obfs`} class="font-normal">
+              Obfuscate the packets (Salamander). Off, it looks like ordinary HTTP/3.
+            </Label>
           </div>
         {:else}
           <div class="space-y-1.5">
@@ -194,7 +227,13 @@
           <div class="bg-muted/30 space-y-1 rounded-md border p-3">
             <p class="font-medium break-all">{preview.ops[0]?.transportTag}</p>
             <p>{templateWords(added.kind)}, port {added.port}</p>
-            {#if added.kind !== 'ws'}
+            {#if added.kind === 'hysteria'}
+              <p class="text-muted-foreground break-all">
+                UDP port {added.port}, server name {added.serverName}{added.salamander
+                  ? ', Salamander on'
+                  : ''}
+              </p>
+            {:else if added.kind !== 'ws'}
               <p class="text-muted-foreground break-all">
                 {added.serverNames?.length ?? 0}
                 {added.serverNames?.length === 1 ? 'server name' : 'server names'}, from {added.target}
@@ -204,7 +243,12 @@
             {/if}
           </div>
         {/if}
-        {#if added && added.kind !== 'ws'}
+        {#if added && added.kind === 'hysteria'}
+          <p class="text-muted-foreground">
+            Its certificate and key are made when the change is sent. The key is never shown or
+            stored here. Nodes need UDP {added.port} open before they serve it.
+          </p>
+        {:else if added && added.kind !== 'ws'}
           <p class="text-muted-foreground">
             Its REALITY key is made when the change is sent. It is never shown or stored here.
           </p>

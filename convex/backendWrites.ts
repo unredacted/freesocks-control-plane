@@ -48,7 +48,8 @@ import {
 import { generateRealityKey } from './lib/backend/realityKeys';
 import { patchOp } from './lib/backend/patchOpArgs';
 import { currentNodeName } from './lib/backend/nodeAliases';
-import { PROFILE_DEFAULTS } from './lib/backend/profileTemplate';
+import { PROFILE_DEFAULTS, generateObfsPassword } from './lib/backend/profileTemplate';
+import { generateHysteriaCertificate } from './lib/backend/hysteriaCert';
 import { addressTransportsOf, addressesOf, closeForSharedChange } from './nodeIntents';
 import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
 import { assertClaimable, claimOp } from './backendLedger';
@@ -1260,13 +1261,23 @@ async function writesFor(ctx: ActionCtx, backendServerId: Id<'backendServers'>) 
  */
 function freshMaterial(ops: readonly PatchOp[]): PatchMaterial | undefined {
   if (!needsFreshKeys(ops)) return undefined;
-  const out: Record<string, { privateKey: string; shortIds: readonly string[] }> = {};
-  for (const op of ops)
-    if (op.op === 'addInboundFromTemplate' && op.template.kind !== 'ws')
+  const out: Record<string, PatchMaterial[string]> = {};
+  for (const op of ops) {
+    if (op.op !== 'addInboundFromTemplate' || op.template.kind === 'ws') continue;
+    if (op.template.kind === 'hysteria') {
+      const cert = generateHysteriaCertificate(op.template.serverName);
       out[op.inboundTag] = {
-        privateKey: generateRealityKey().privateKey,
-        shortIds: PROFILE_DEFAULTS.shortIds,
+        certificate: cert.certificate,
+        key: cert.key,
+        ...(op.template.salamander ? { obfsPassword: generateObfsPassword() } : {}),
       };
+      continue;
+    }
+    out[op.inboundTag] = {
+      privateKey: generateRealityKey().privateKey,
+      shortIds: PROFILE_DEFAULTS.shortIds,
+    };
+  }
   return out;
 }
 

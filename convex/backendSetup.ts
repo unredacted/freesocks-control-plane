@@ -44,12 +44,14 @@ import {
   PROFILE_DEFAULTS,
   buildProfile,
   checkModeDefinitions,
+  isHysteria,
   isReality,
   transportTagOf,
   type ModeShape,
   type ModeTemplateInput,
 } from './lib/backend/profileTemplate';
 import { generateRealityKey } from './lib/backend/realityKeys';
+import { hysteriaMaterialFor } from './lib/backend/hysteriaCert';
 import {
   SUBSCRIPTION_TEMPLATES,
   TEMPLATE_FAMILIES,
@@ -72,7 +74,12 @@ const refuse = (code: string, message: string): never => {
 };
 
 const shapeValidator = v.object({
-  transport: v.union(v.literal('reality'), v.literal('xhttp-reality'), v.literal('ws')),
+  transport: v.union(
+    v.literal('reality'),
+    v.literal('xhttp-reality'),
+    v.literal('ws'),
+    v.literal('hysteria'),
+  ),
   fronting: v.union(v.literal('direct'), v.literal('edge-l4'), v.literal('edge-l7')),
 });
 const modeInput = v.object({
@@ -82,6 +89,7 @@ const modeInput = v.object({
   familySlug: v.optional(v.string()),
   acceptProxyProtocol: v.boolean(),
   ws: v.optional(v.object({ path: v.string(), port: v.number() })),
+  hysteria: v.optional(v.object({ serverName: v.string(), salamander: v.boolean() })),
 });
 export const setupInput = v.object({
   profileName: v.string(),
@@ -96,6 +104,7 @@ type ModeInput = {
   familySlug?: string;
   acceptProxyProtocol: boolean;
   ws?: { path: string; port: number };
+  hysteria?: { serverName: string; salamander: boolean };
 };
 type SetupInput = {
   profileName: string;
@@ -148,6 +157,7 @@ const definitionOf = (m: {
   familySlug?: string;
   acceptProxyProtocol: boolean;
   ws?: { path: string; port: number };
+  hysteria?: { serverName: string; salamander: boolean };
 }) =>
   JSON.stringify([
     m.name,
@@ -157,6 +167,9 @@ const definitionOf = (m: {
     m.acceptProxyProtocol,
     m.ws?.path ?? null,
     m.ws?.port ?? null,
+    // Appended only for a Hysteria mode, so every other mode's definition is
+    // the string it always was.
+    ...(m.hysteria ? [m.hysteria.serverName.trim().toLowerCase(), m.hysteria.salamander] : []),
   ]);
 
 /**
@@ -176,6 +189,7 @@ function freshModes(input: SetupInput, prev: readonly SetupMode[] = []): SetupMo
       familySlug: m.familySlug,
       acceptProxyProtocol: m.acceptProxyProtocol,
       ws: m.ws,
+      hysteria: m.hysteria,
       tag: before?.tag ?? transportTagOf(m.name),
       groupUuid: before?.groupUuid,
       renamedFrom: before?.renamedFrom,
@@ -387,6 +401,11 @@ export const start = internalMutation({
       refuse('validation', 'A profile name is 1 to 60 plain characters');
     const bad = checkModeDefinitions(input.modes);
     if (bad) refuse('servers.modes_invalid', `The modes are not usable (${bad})`);
+    if (
+      input.modes.some((m) => isHysteria(m.shape)) &&
+      !capabilitiesOf(server.backend).udpTransports
+    )
+      refuse('servers.unsupported_transport', 'This backend type cannot serve a UDP transport');
     const { modes: catalog } = await resolveModeCatalog(ctx.db);
     const known = new Set(catalog.map((m) => m.id));
     for (const m of input.modes) {
@@ -783,6 +802,9 @@ async function loadForRunHandler(ctx: ActionCtx, f: Fence): Promise<Loaded | nul
 
 /** The transport entry a setup row records for an effective transport. */
 function transportRecord(e: EffectiveTransport): NonNullable<SetupMode['transport']> {
+  // A Hysteria transport's one server name; its pins stay on the observed
+  // profile (`panelProfiles.inbounds[].hysteriaAuth`), the one place they are read.
+  if (e.kind === 'hysteria') return { uuid: e.uuid, port: e.port, serverNames: [e.serverName] };
   return e.kind === 'ws'
     ? { uuid: e.uuid, listen: e.listen, port: e.port, path: e.path }
     : {
@@ -924,19 +946,26 @@ export const run = internalAction({
                 shape: m.shape as { transport: 'ws'; fronting: ModeShape['fronting'] },
                 ws: m.ws ?? { path: PROFILE_DEFAULTS.ws.path, port: PROFILE_DEFAULTS.ws.port },
               }
-            : {
-                slug: m.slug,
-                name: m.name,
-                shape: m.shape as {
-                  transport: 'reality' | 'xhttp-reality';
-                  fronting: ModeShape['fronting'];
+            : m.shape.transport === 'hysteria'
+              ? {
+                  slug: m.slug,
+                  name: m.name,
+                  shape: m.shape as { transport: 'hysteria'; fronting: ModeShape['fronting'] },
+                  hysteria: m.hysteria!,
+                }
+              : {
+                  slug: m.slug,
+                  name: m.name,
+                  shape: m.shape as {
+                    transport: 'reality' | 'xhttp-reality';
+                    fronting: ModeShape['fronting'];
+                  },
+                  acceptProxyProtocol: m.acceptProxyProtocol,
+                  reality: {
+                    target: c.snapshot.families[m.familySlug!]!.target,
+                    serverNames: c.snapshot.families[m.familySlug!]!.names,
+                  },
                 },
-                acceptProxyProtocol: m.acceptProxyProtocol,
-                reality: {
-                  target: c.snapshot.families[m.familySlug!]!.target,
-                  serverNames: c.snapshot.families[m.familySlug!]!.names,
-                },
-              },
         );
         const outcome = await createProfile(
           writes,
@@ -1188,13 +1217,13 @@ async function createProfile(
   ) => ctx.runMutation(internal.backendObligations.mark, { id: obligationId, state, ...extra });
   const keys = Object.fromEntries(
     modes
-      .filter((m) => m.shape.transport !== 'ws')
+      .filter((m) => isReality(m.shape))
       .map((m) => [
         m.slug,
         { privateKey: generateRealityKey().privateKey, shortIds: PROFILE_DEFAULTS.shortIds },
       ]),
   );
-  const body = buildProfile(modes, keys);
+  const body = buildProfile(modes, keys, hysteriaMaterialFor(modes));
   await mark('sent');
   try {
     const made = await writes.createProfile(config, { name: profileName, config: body });
@@ -1453,6 +1482,7 @@ export const view = internalQuery({
         familySlug: m.familySlug ?? null,
         acceptProxyProtocol: m.acceptProxyProtocol,
         ws: m.ws ?? null,
+        hysteria: m.hysteria ?? null,
         tag: m.tag,
         group: { uuid: m.groupUuid ?? null, renamedFrom: m.renamedFrom ?? null },
         placement: m.placement,

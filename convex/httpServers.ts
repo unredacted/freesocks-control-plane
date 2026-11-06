@@ -315,6 +315,8 @@ async function toPatchOps(ctx: ActionCtx, ops: readonly ProfilePatchOp[]): Promi
 
 async function toTemplate(ctx: ActionCtx, t: TransportTemplateOp): Promise<TransportTemplate> {
   if (t.kind === 'ws') return { kind: 'ws', port: t.port, path: t.path };
+  if (t.kind === 'hysteria')
+    return { kind: 'hysteria', port: t.port, serverName: t.serverName, salamander: t.salamander };
   let target = t.target;
   let serverNames = t.serverNames;
   if (target === undefined || serverNames === undefined) {

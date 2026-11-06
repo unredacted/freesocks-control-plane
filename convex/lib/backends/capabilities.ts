@@ -68,6 +68,10 @@ export interface BackendCapabilities {
   /** A user FCP created can be re-found by its username (the persisted mint
    *  operations settle a crashed create through it). */
   userLookupByUsername: boolean;
+  /** Transports over UDP (Hysteria 2, QUIC) can be set up and served: the
+   *  backend's config profile carries them and its nodes listen on UDP. Only
+   *  meaningful where FCP sets the backend up. */
+  udpTransports: boolean;
 }
 
 export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
@@ -89,6 +93,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     backendWrites: true,
     backendSetup: true,
     userLookupByUsername: true,
+    udpTransports: true,
   },
   outline: {
     placement: false,
@@ -108,6 +113,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     backendWrites: false,
     backendSetup: false,
     userLookupByUsername: false,
+    udpTransports: false,
   },
 };
 

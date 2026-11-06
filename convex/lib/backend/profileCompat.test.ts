@@ -187,3 +187,65 @@ describe('checkProfileCompatibility', () => {
     expect(r.issue).toEqual({ slug, tag, field });
   });
 });
+
+describe('a Hysteria 2 transport', () => {
+  const auth = {
+    digest: 'd',
+    pinHex: 'ab'.repeat(32),
+    spkiB64: 'c3BraQ==',
+    serverName: 'quic.example',
+    alpn: ['h3'],
+    obfs: false,
+  };
+  const hy = (over: Partial<ObservedTransport>) =>
+    base({
+      tag: 'PRIVACY_HYSTERIA',
+      configProfileInboundUuid: 'i-hy',
+      protocol: 'hysteria',
+      network: 'hysteria',
+      security: 'tls',
+      reality: undefined,
+      realityAuth: undefined,
+      hysteriaAuth: auth,
+      ...over,
+    });
+  const mode = [
+    { slug: 'privacy-hysteria', name: 'Privacy-Hysteria', shape: shape('hysteria', 'direct') },
+  ];
+
+  test('is adopted with its server name and both pins', () => {
+    expect(checkProfileCompatibility({ inbounds: [hy({})] }, mode)).toEqual({
+      ok: true,
+      effective: {
+        'privacy-hysteria': {
+          kind: 'hysteria',
+          tag: 'PRIVACY_HYSTERIA',
+          uuid: 'i-hy',
+          port: 443,
+          serverName: 'quic.example',
+          pinHex: auth.pinHex,
+          spkiB64: auth.spkiB64,
+          obfs: false,
+        },
+      },
+    });
+  });
+
+  test.each([
+    ['protocol', { protocol: 'vless' }],
+    ['network', { network: 'raw' }],
+    ['security', { security: 'reality' }],
+    ['listen', { listen: '127.0.0.1' }],
+    ['port', { port: null }],
+    ['server_names', { hysteriaAuth: { ...auth, serverName: null } }],
+    // No readable certificate: members would have nothing to pin.
+    ['certificate', { hysteriaAuth: { ...auth, pinHex: null, spkiB64: null, digest: null } }],
+  ] as const)('refused: %s', (field, over) => {
+    expect(
+      checkProfileCompatibility({ inbounds: [hy(over as Partial<ObservedTransport>)] }, mode),
+    ).toEqual({
+      ok: false,
+      issue: { slug: 'privacy-hysteria', tag: 'PRIVACY_HYSTERIA', field },
+    });
+  });
+});

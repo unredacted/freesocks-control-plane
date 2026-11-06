@@ -46,6 +46,16 @@ const observedInbound = v.object({
   realityClients: v.optional(
     v.object({ minClientVer: nullableString, maxClientVer: nullableString }),
   ),
+  hysteriaAuth: v.optional(
+    v.object({
+      digest: nullableString,
+      pinHex: nullableString,
+      spkiB64: nullableString,
+      serverName: nullableString,
+      alpn: v.array(v.string()),
+      obfs: v.boolean(),
+    }),
+  ),
 });
 
 /** One Host as the provider reads it (`ObservedAddress`). */
@@ -89,6 +99,7 @@ export function toStoredInbound(i: ObservedTransport): StoredInbound {
   if (i.grpc) out.serviceName = i.grpc.serviceName;
   if (i.realityAuth) out.realityAuth = i.realityAuth;
   if (i.realityClients) out.realityClients = i.realityClients;
+  if (i.hysteriaAuth) out.hysteriaAuth = i.hysteriaAuth;
   return out;
 }
 
