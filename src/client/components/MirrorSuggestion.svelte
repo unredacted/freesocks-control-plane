@@ -6,7 +6,11 @@
   import { apiErrorMessage } from '../lib/errors';
   import { t, getLocale } from '../lib/i18n/index.svelte';
   import { COUNTRY_CODES, countryName } from '../lib/countries';
-  import { queryKeys } from '../lib/queries';
+  import { connectionRegionQuery, queryKeys } from '../lib/queries';
+  import { sealingEnabled } from '../lib/hpke';
+  import { asksCountry, isAnswer, mirrorCountry, prefillAnswer } from '../lib/countryQuestion';
+  import CountryQuestion from './CountryQuestion.svelte';
+  import MirrorSetFor from './MirrorSetFor.svelte';
   import { MIRROR_REQUEST_KEY, withMirror } from '../lib/mirrorSuggestion';
   import { MirrorRequestResponse } from '../../shared/contracts/mirror';
   import type { AccountResponse } from '../../shared/contracts/account';
@@ -28,6 +32,12 @@
    * download, QR) and the app list (import buttons); `link` is what it resolved.
    * A mirror serves one fixed format, so sing-box and Clash apps keep importing
    * the main link (ConnectClient `linkListUrl`), and the copy says so.
+   *
+   * With the country question on (`askCountry`, lib/countryQuestion.ts) the
+   * mirror is shaped for the key's own answer: a key with one says what it is
+   * set up for and asks nothing (the server picks the host from it); a key
+   * without one asks (prefilled from `geoCountry`) and the answer travels sealed
+   * with the request, saved to the key before the mirror is made.
    */
   interface Props {
     /** The key's mirror links (lib/mirrorSuggestion `mirrorLinks`). */
@@ -39,8 +49,40 @@
     /** The link the app gets now (lib/mirrorSuggestion `chosenLink`). */
     link: string;
     onPick: (url: string) => void;
+    /** The deployment asks where the member connects from (publicConfig.countryQuestion). */
+    askCountry?: boolean;
   }
-  let { mirrors, geoCountry, subscriptionUrl, link, onPick }: Props = $props();
+  let { mirrors, geoCountry, subscriptionUrl, link, onPick, askCountry = false }: Props = $props();
+
+  const canSeal = sealingEnabled();
+  const region = connectionRegionQuery(() => canSeal && askCountry);
+  const asking = $derived(asksCountry({ countryQuestion: askCountry, canSeal, view: region.data }));
+  const setFor = $derived(mirrorCountry(region.data));
+  let changing = $state(false);
+  const needsAnswer = $derived(asking && (setFor.kind === 'unset' || changing));
+  let answer = $state('');
+  let answerInvalid = $state(false);
+  $effect(() => {
+    if (!needsAnswer || answer) return;
+    answer = prefillAnswer(region.data?.options ?? [], region.data?.guess?.country, geoCountry);
+  });
+  $effect(() => {
+    if (answer) answerInvalid = false;
+  });
+
+  /** The request body: the answer (sealed), nothing (the stored answer picks the host), or a host hint. */
+  function requestBody(): Record<string, string | null> {
+    if (needsAnswer) return { region: answer };
+    if (asking) return {};
+    return { countryCode: selected || null };
+  }
+  function create() {
+    if (needsAnswer && !isAnswer(answer, region.data?.options ?? [])) {
+      answerInvalid = true;
+      return;
+    }
+    request.mutate();
+  }
 
   const qc = useQueryClient();
   const locale = getLocale();
@@ -55,12 +97,13 @@
   const request = createMutation(() => ({
     mutationKey: MIRROR_REQUEST_KEY,
     mutationFn: () =>
-      apiClient.post(
-        '/api/v1/mirror/request',
-        { countryCode: selected || null },
-        MirrorRequestResponse,
-      ),
+      apiClient.post('/api/v1/mirror/request', requestBody(), MirrorRequestResponse),
     onSuccess: (res) => {
+      // An answer sent with the request is the key's answer now.
+      if (needsAnswer) {
+        changing = false;
+        void qc.invalidateQueries({ queryKey: queryKeys.connectionRegion });
+      }
       if (res.status === 'ok' && res.publicUrl) {
         const added = { provider: res.provider ?? '', publicUrl: res.publicUrl };
         qc.setQueryData<AccountResponse>(queryKeys.account, (old) => withMirror(old, added));
@@ -104,8 +147,25 @@
   </div>
 
   {#if mirrors.length === 0}
-    <MirrorRegionSelect id="mirror-suggest-region" bind:value={selected} />
-    <Button onclick={() => request.mutate()} disabled={busy} class="min-h-11">
+    {#if needsAnswer}
+      <CountryQuestion
+        id="mirror-suggest-country"
+        options={region.data?.options ?? []}
+        bind:value={answer}
+        help={t('mirror.countryHelp')}
+        invalid={answerInvalid}
+        disabled={busy}
+      />
+    {:else if asking}
+      <MirrorSetFor
+        country={setFor.kind === 'country' ? setFor.country : null}
+        onChange={() => (changing = true)}
+        disabled={busy}
+      />
+    {:else}
+      <MirrorRegionSelect id="mirror-suggest-region" bind:value={selected} />
+    {/if}
+    <Button onclick={create} disabled={busy} class="min-h-11">
       {busy ? t('mirror.working') : t('mirrorSuggest.create')}
     </Button>
     {#if status === 'capped'}

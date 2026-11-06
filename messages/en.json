@@ -759,7 +759,13 @@
     "removedToast": "Mirrors removed",
     "quickLabel": "First, try moving servers",
     "quickHint": "A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key.",
-    "pickLocation": "Pick a different location"
+    "pickLocation": "Pick a different location",
+    "countryHelp": "A mirror link is a fixed copy of your settings, so it can't tell where you are. Tell us, and we'll set it up for that country.",
+    "setFor": "Your mirror links are set up for {country}.",
+    "setForNone": "Your mirror links aren't set up for any country.",
+    "notSetPrompt": "Your mirror links aren't set up for a country. Pick yours so they work better there.",
+    "willUpdate": "Your mirror links will update in a few minutes. Your app picks it up at its next refresh.",
+    "saveCountry": "Save"
   },
   "mirrorSuggest": {
     "title": "The main link may be blocked in {country}",
@@ -788,7 +794,7 @@
     "help": "Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses, the addresses it connects to first, the connection mode we suggest and, if you pick a country, the server location of a new key. It is kept with your key, deleted with it, and never shared.",
     "helpDetect": "On Automatic we keep the country you connect from, guessed from your connection, and forget it {days} days after we last see you there.",
     "automatic": "Automatic",
-    "elsewhere": "Opt-out: do not use my location",
+    "elsewhere": "Somewhere else, or I'd rather not say",
     "guessed": "We think you're connecting from {country}.",
     "chosen": "You told us you're connecting from {country}.",
     "chosenElsewhere": "You opted out: we do not use your location.",
@@ -801,7 +807,13 @@
     "exitConfirm": "Your key moves there once. Your link stays the same, so there is nothing to import again, and you stay on Automatic.",
     "exitMoveNow": "Move it",
     "exitMoved": "Your key moved. Refresh your app to pick up the change.",
-    "exitFailed": "Your key did not move. Try again later."
+    "exitFailed": "Your key did not move. Try again later.",
+    "signupHelp": "We use this to give you server names and addresses that work in your country. It's saved with your key, never shared, and you can change it any time on your account page.",
+    "choose": "Choose one",
+    "prefilled": "We filled this in from your connection. Change it if it's wrong.",
+    "required": "Choose where you're connecting from, or pick Somewhere else.",
+    "alsoMirrors": "This also shapes your mirror links.",
+    "automaticMirrorWarn": "Automatic doesn't apply to mirror links. They won't be set up for any country."
   },
   "delivery": {
     "title": "Connection mode",
