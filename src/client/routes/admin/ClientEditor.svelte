@@ -47,6 +47,8 @@
     xhttp: c?.xhttp === true ? 'yes' : c?.xhttp === false ? 'no' : '',
     // And for Hysteria 2, where only 'yes' is offered to members.
     hysteria2: c?.hysteria2 === true ? 'yes' : c?.hysteria2 === false ? 'no' : '',
+    // '' = from the app's name.
+    format: c?.format ?? '',
     description: c?.description ?? '',
     enabled: c?.enabled ?? true,
     priority: c?.priority ?? 0,
@@ -65,6 +67,7 @@
   let ipv6 = $state(init.ipv6);
   let xhttp = $state(init.xhttp);
   let hysteria2 = $state(init.hysteria2);
+  let format = $state<string>(init.format);
   let description = $state(init.description);
   let enabled = $state(init.enabled);
   let priority = $state(init.priority);
@@ -91,6 +94,7 @@
       ipv6: ipv6 === 'yes' ? true : ipv6 === 'no' ? false : null,
       xhttp: xhttp === 'yes' ? true : xhttp === 'no' ? false : null,
       hysteria2: hysteria2 === 'yes' ? true : hysteria2 === 'no' ? false : null,
+      format: format || null,
       description: description.trim() || null,
       enabled,
       priority,
@@ -254,6 +258,25 @@
           recorded test of this app's version: it imported the raw config, connected over UDP, and
           refused to connect once one character of the entry's pin was changed. An app that ignores
           the pin would send the member's password to any server.
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-format"
+          >Subscription format</label
+        >
+        <select
+          id="cl-format"
+          bind:value={format}
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="">From the app's name</option>
+          <option value="links">Share-link list (base64)</option>
+          <option value="clash">Clash / Mihomo YAML</option>
+          <option value="singbox">sing-box JSON</option>
+        </select>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          What the app imports, so members get the mirror link in that format. Set it when the name
+          doesn't say (a renamed or translated label); left blank, it follows the name.
         </p>
       </div>
       <div>

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MIRROR_FORMATS } from '../mirrorFormats';
 import { UserStatus } from './common';
 import { BackendId } from './backends';
 
@@ -385,6 +386,9 @@ export const ClientAdmin = z.object({
    *  recorded evidence (offered on a Hysteria mode) / false can't / null
    *  untested (hidden there too). Defaulted for skew. */
   hysteria2: z.boolean().nullable().optional().default(null),
+  /** The subscription format the app reads (which mirror object it imports);
+   *  null = from its name. Defaulted for skew. */
+  format: z.enum(MIRROR_FORMATS).nullable().optional().default(null),
   /** Admin-set member-facing blurb (verbatim in every locale); null = the SPA's
    *  built-in translated copy for known default apps. */
   description: z.string().nullable().optional().default(null),
@@ -410,6 +414,7 @@ export const ClientUpsert = z.object({
   ipv6: z.boolean().nullable().optional(),
   xhttp: z.boolean().nullable().optional(),
   hysteria2: z.boolean().nullable().optional(),
+  format: z.enum(MIRROR_FORMATS).nullable().optional(),
   description: z.string().max(280).nullable().optional(),
   enabled: z.boolean().default(true),
   priority: z.number().int().default(0),

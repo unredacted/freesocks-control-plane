@@ -141,6 +141,32 @@ describe('uploadToProviders', () => {
     ).rejects.toThrow(/All S3 mirror uploads failed/);
   });
 
+  test('a failed write waits for its siblings before the provider is judged', async () => {
+    const landed: string[] = [];
+    const send: S3Send = async (_p, op) => {
+      if (op.kind !== 'put') return;
+      if (op.key.endsWith('.yaml')) throw new Error('nope');
+      await new Promise((r) => setTimeout(r, 20));
+      landed.push(op.key);
+    };
+    await expect(
+      uploadToProviders(
+        [provider(1)],
+        {
+          objectPath: 'mirrors/ab',
+          objects: [
+            { format: 'links', content: 'b64' },
+            { format: 'clash', content: 'proxies: []' },
+            { format: 'singbox', content: '{}' },
+          ],
+        },
+        send,
+      ),
+    ).rejects.toThrow();
+    // Nothing is still in flight when the caller hears of the failure.
+    expect(landed.sort()).toEqual(['mirrors/ab', 'mirrors/ab.json']);
+  });
+
   test('deletes the formats a copy no longer keeps with the upload', async () => {
     const { send, calls } = recorder();
     await uploadToProviders(
@@ -217,6 +243,25 @@ describe('reading a copy back (realFetch + verifyCopy)', () => {
       vi.fn(async () => new Response('gone', { status: 404 })),
     );
     expect(await verifyCopy(realFetch, 'https://cdn.example/m', 'h')).toEqual({ kind: 'missing' });
+  });
+
+  test("one format's 404 is missing even while another format's read fails", async () => {
+    const fetchFn = async (url: string) => {
+      if (url.endsWith('.json')) throw new Error('timeout');
+      if (url.endsWith('.yaml')) return { status: 404, body: null };
+      return { status: 200, body: 'b64' };
+    };
+    expect(
+      await verifyCopy(fetchFn, 'https://cdn.example/m', 'h', ['links', 'clash', 'singbox']),
+    ).toEqual({ kind: 'missing' });
+    // With nothing definite, a failed read decides nothing.
+    const flaky = async (url: string) => {
+      if (url.endsWith('.json')) throw new Error('timeout');
+      return { status: 200, body: 'b64' };
+    };
+    expect(
+      await verifyCopy(flaky, 'https://cdn.example/m', 'h', ['links', 'clash', 'singbox']),
+    ).toEqual({ kind: 'unreachable' });
   });
 
   test('a copy of several formats reads each URL and compares the set hash', async () => {

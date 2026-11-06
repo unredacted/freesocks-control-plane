@@ -213,32 +213,41 @@ interface MirrorSource {
 /**
  * The backend body of every format a key's mirror is kept in
  * (`mirrorFormatsFor`), `links` first, each fetched as the main link fetches
- * it for an app of that format: its User-Agent and the same node exclusion
- * (so each is pinned by the same rules; a body a format cannot carry all of
- * may resolve to another node, as the main link's would). Throws when any
- * fetch fails: a mirror's objects are written together or not at all.
+ * it for an app of that format: its User-Agent and the same node exclusion.
+ * The other formats are pinned to the `links` body's node whenever their body
+ * names it (`preferNode`), so the recorded pin describes every format; only a
+ * format that cannot carry that node at all resolves to another. Throws when
+ * any fetch fails: a mirror's objects are written together or not at all.
  */
 async function fetchMirrorBodies(
   ctx: ActionCtx,
   src: MirrorSource,
 ): Promise<{ format: MirrorFormat; fetched: FetchedBody }[]> {
-  const formats = mirrorFormatsFor(src.backend);
-  return Promise.all(
-    formats.map(async (format) => ({
+  const fetchOne = (format: MirrorFormat, preferNode?: string) =>
+    ctx.runAction(internal.backends.fetchSubscriptionContent, {
+      backend: src.backend,
+      backendServerId: src.backendServerId ?? undefined,
+      backendShortId: src.backendShortId,
+      subscriptionUrl: src.subscriptionUrl,
+      // The same exclusion the live /sub route applies. Node pinning is
+      // deterministic, so fetching without it regenerates the node the
+      // member just switched away from.
+      excludeNode: src.excludeNode ?? undefined,
+      ...(MIRROR_FETCH_UA[format] ? { userAgent: MIRROR_FETCH_UA[format] } : {}),
+      ...(preferNode ? { preferNode } : {}),
+    });
+  const [first, ...rest] = mirrorFormatsFor(src.backend);
+  const links = { format: first!, fetched: await fetchOne(first!) };
+  // The other formats serve the node the plain list landed on (the one the
+  // key's pin records, so a switch moves every format off it) wherever their
+  // body carries it.
+  const others = await Promise.all(
+    rest.map(async (format) => ({
       format,
-      fetched: await ctx.runAction(internal.backends.fetchSubscriptionContent, {
-        backend: src.backend,
-        backendServerId: src.backendServerId ?? undefined,
-        backendShortId: src.backendShortId,
-        subscriptionUrl: src.subscriptionUrl,
-        // The same exclusion the live /sub route applies. Node pinning is
-        // deterministic, so fetching without it regenerates the node the
-        // member just switched away from.
-        excludeNode: src.excludeNode ?? undefined,
-        ...(MIRROR_FETCH_UA[format] ? { userAgent: MIRROR_FETCH_UA[format] } : {}),
-      }),
+      fetched: await fetchOne(format, links.fetched.pinnedNode ?? undefined),
     })),
   );
+  return [links, ...others];
 }
 
 /** Every format of a mirror, rendered. */
@@ -487,7 +496,9 @@ export async function uploadToProviders(
   if (providers.length === 0) return [];
   const results = await Promise.allSettled(
     providers.map(async (p): Promise<SubscriptionMirror> => {
-      await Promise.all([
+      // Every write settles before the provider is judged: a failed one must
+      // not leave a sibling still in flight behind the caller's bookkeeping.
+      const writes = await Promise.allSettled([
         ...objects.map((o) =>
           send(p, {
             kind: 'put',
@@ -501,6 +512,8 @@ export async function uploadToProviders(
           .filter((f) => !objects.some((o) => o.format === f))
           .map((f) => send(p, { kind: 'delete', key: mirrorFormatPath(objectPath, f) })),
       ]);
+      const failed = writes.find((w) => w.status === 'rejected');
+      if (failed) throw (failed as PromiseRejectedResult).reason;
       return {
         provider: p.name,
         publicUrl: `${p.publicUrl.replace(/\/$/, '')}/${objectPath}`,
@@ -650,29 +663,27 @@ export async function verifyCopy(
   objectHash: string | null,
   formats: readonly MirrorFormat[] = ['links'],
 ): Promise<VerifyOutcome> {
-  try {
-    const reads = await Promise.all(
-      formats.map(async (format) => ({
-        format,
-        res: await fetchFn(mirrorFormatPath(url, format)),
-      })),
-    );
-    if (reads.some((r) => r.res.status === 404 || r.res.status === 403)) return { kind: 'missing' };
-    // Far larger than any mirror body: not the object FCP wrote.
-    if (reads.some((r) => r.res.oversize)) return { kind: 'mismatch', observedHash: 'oversize' };
-    if (reads.some((r) => r.res.status !== 200 || r.res.body === null))
-      return { kind: 'unreachable' };
-    const observed = await mirrorSetHash(
-      await Promise.all(
-        reads.map(async (r) => ({ format: r.format, hash: await sha256Hex(r.res.body!) })),
-      ),
-    );
-    return observed === objectHash
-      ? { kind: 'match' }
-      : { kind: 'mismatch', observedHash: observed };
-  } catch {
+  // Each read settles on its own: one that times out must not hide another
+  // format's definite answer (a 404 is `missing` whatever its sibling did).
+  const reads = await Promise.all(
+    formats.map(async (format) => ({
+      format,
+      res: await fetchFn(mirrorFormatPath(url, format)).catch(() => null),
+    })),
+  );
+  if (reads.some((r) => r.res && (r.res.status === 404 || r.res.status === 403)))
+    return { kind: 'missing' };
+  // Far larger than any mirror body: not the object FCP wrote.
+  if (reads.some((r) => r.res?.oversize)) return { kind: 'mismatch', observedHash: 'oversize' };
+  // The set hash needs every body: a read that failed decides nothing.
+  if (reads.some((r) => !r.res || r.res.status !== 200 || r.res.body === null))
     return { kind: 'unreachable' };
-  }
+  const observed = await mirrorSetHash(
+    await Promise.all(
+      reads.map(async (r) => ({ format: r.format, hash: await sha256Hex(r.res!.body!) })),
+    ),
+  );
+  return observed === objectHash ? { kind: 'match' } : { kind: 'mismatch', observedHash: observed };
 }
 
 export interface ProvisionResult {
@@ -780,9 +791,9 @@ export const provisionMirror = internalAction({
       entry = mirrors[0];
       if (entry && rendered.validated) entry = { ...entry, validated: rendered.validated };
     } catch {
-      // Nothing was written: nothing to repair (unless it replaced an open record of the object).
-      if (obligation.superseded === 0)
-        await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      // Some of the copy's objects may have been written before one failed:
+      // the obligation stays open, and with no row referencing the copy the
+      // repair pass withdraws whatever landed (every format's object).
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
     if (!entry) return { status: 'error', remaining: Math.max(0, cap - used) };
@@ -1144,10 +1155,9 @@ async function refreshOneSubMirrors(
         s3Send,
       );
     } catch {
-      // Nothing was written by THIS upload: its obligation is settled, unless
-      // it replaced an open one of the object (which then still stands for it).
-      if (obligation.superseded === 0)
-        await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      // Every provider failed, but some of a copy's objects may have been
+      // written before another failed (a copy part new, part old): the
+      // obligation stays open, so the repair pass rewrites these copies whole.
       await record(served, [
         ...confirmed,
         ...needing.map((t) => ({

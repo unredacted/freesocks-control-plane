@@ -638,6 +638,11 @@ export const fetchSubscriptionContent = internalAction({
     // activation, which is exactly when the rehearsal looks at it), so the
     // rehearsal renders what its members get once it opens, not another node's.
     pinNode: v.optional(v.string()),
+    // A mirror's other formats (docs/mirrors.md "Formats"): pinned to the node
+    // its plain link list landed on whenever this body names it, so every
+    // format serves the node the key's pin records; a body without it (a
+    // format that cannot carry that node's transport) is pinned as usual.
+    preferNode: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -651,6 +656,7 @@ export const fetchSubscriptionContent = internalAction({
       unpinned,
       nodeCheck,
       pinNode,
+      preferNode,
     },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
@@ -688,14 +694,22 @@ export const fetchSubscriptionContent = internalAction({
         });
         const blocked = new Set(rules.blocked);
         const servable = rules.servable && !nodeCheck ? new Set(rules.servable) : null;
+        const usual = () =>
+          pinSubscriptionToNode(
+            fetched.content,
+            backendShortId,
+            [...(excludeNode ? [excludeNode] : []), ...rules.blocked],
+            servable ? (n) => servable.has(n) && !blocked.has(n) : undefined,
+          );
+        const preferred =
+          preferNode && !blocked.has(preferNode) && (!servable || servable.has(preferNode))
+            ? pinSubscriptionToNode(fetched.content, backendShortId, [], (n) => n === preferNode)
+            : null;
         const pinned = pinNode
           ? pinSubscriptionToNode(fetched.content, backendShortId, [], (n) => n === pinNode)
-          : pinSubscriptionToNode(
-              fetched.content,
-              backendShortId,
-              [...(excludeNode ? [excludeNode] : []), ...rules.blocked],
-              servable ? (n) => servable.has(n) && !blocked.has(n) : undefined,
-            );
+          : preferred && preferred.node === preferNode
+            ? preferred
+            : usual();
         return {
           ...fetched,
           content: pinned.content,

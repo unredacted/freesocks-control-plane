@@ -398,6 +398,24 @@ describe('every format of a mirror', () => {
     expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', verify: 'match' });
   });
 
+  test('a first upload that wrote only some formats leaves its record open, and the repair withdraws them', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    w.fail.fn = (_p, op) => op.kind === 'put' && op.key.endsWith('.json');
+    const res = await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('error');
+    expect((await sub(w.t, subId))!.subscriptionMirrors).toEqual([]);
+    // The two objects that landed are tracked, never forgotten.
+    const landed = [...w.objects.keys()].filter((k) => k.startsWith('p1:mirrors/'));
+    expect(landed).toHaveLength(2);
+    expect(await openUploads(w.t)).toHaveLength(1);
+    w.fail.fn = () => false;
+    await makeDue(w.t);
+    await w.t.action(internal.storage.repairMirrorUploads, {});
+    expect([...w.objects.keys()].filter((k) => k.startsWith('p1:mirrors/'))).toEqual([]);
+    expect(await openUploads(w.t)).toEqual([]);
+  });
+
   test("removing a member's mirrors deletes every format's object", async () => {
     const w = await world();
     const { userId, subId } = await member(w);

@@ -116,19 +116,24 @@ of the key's one random id (`src/shared/mirrorFormats.ts`):
 - **Rendered like the main link's answer to that app.** Each format's body is fetched from the
   backend with a fixed User-Agent of its kind (`convex/lib/mirrorFormats.ts` `MIRROR_FETCH_UA`:
   none for `links`, as every mirror held before; a current Mihomo, never a legacy Clash core; the
-  canonical sing-box app), pinned by the same rules, edge-rendered for that client family (its
+  canonical sing-box app), pinned by the same rules (the other formats to the node the `links` body
+  landed on whenever their body names it, so the key's recorded pin, and a server switch, cover
+  every format; only a format that cannot carry that node resolves to another), edge-rendered for that client family (its
   per-client rules and leak checks) and finished with member-facing names. A format that cannot
   carry what the place serves (sing-box on XHTTP) holds the app notice, as the main link answers
   that app (no record that an app got it: nothing tells FCP an app read the mirror). Each object
   keeps the backend's `Content-Type`.
 - **Which formats.** Every key whose backend delivers a subscription document gets all three; a
   bare access key (Outline) keeps the one `links` object. A copy holds them together: an upload
-  writes every format, a provider counts as written only when every object was, and a format
+  writes every format, a provider counts as written only when every object was (each write
+  settles before it is judged; an upload that failed keeps its barrier record open, so a copy
+  written in part is rewritten whole, or withdrawn when nothing references it), and a format
   the key no longer keeps (a re-issue onto an access-key backend) is deleted with the next upload.
   The member's entry lists the formats written (`subscriptionMirrors[].formats`; absent = `links`
   only), and the member page offers a format's link only once it exists.
-- **Which app gets which.** The catalog's `format` (`publicConfig.clients[].format`, from the
-  app's name by the rules a User-Agent goes by, `mirrorFormatOfApp`). MirrorHelp lists each
+- **Which app gets which.** The catalog's `format` (`publicConfig.clients[].format`): the
+  client row's own `format` (Admin -> Clients "Subscription format"; the defaults set it), else
+  from the app's name by the rules a User-Agent goes by (`mirrorFormatOfApp`). MirrorHelp lists each
   mirror once per format, labelled with the catalog apps that read it ("For Clash, FlClash and
   Mihomo Party"); a format no catalog app reads is not offered.
 - **Mirrors from before formats.** They hold the `links` object only, at the same URL, which keeps
@@ -194,7 +199,7 @@ its first check), `fetch_failed`, `upload_failed`, `provider_missing`, `url_unre
   or stays stale.
 - **Read-back** (`mirror-verify`, every 15 min): each copy's member-facing URLs (one per format it
   holds) are read with a plain GET about every six hours (a new copy at the next run) and their
-  combined hash compared with `objectHash`; any one missing is `missing`, and each read stops at 4
+  combined hash compared with `objectHash`; any one missing is `missing` (even while another format's read fails), and each read stops at 4
   MiB (a larger answer is not the object). Another body or
   nothing at all gets the object rewritten once and read back right after; if that read finds the
   same, the URL itself is the problem (not publicly readable, wrong public URL, a cache keeping an

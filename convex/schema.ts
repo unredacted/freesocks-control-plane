@@ -5182,6 +5182,9 @@ export default defineSchema({
     // recorded evidence (offered on a Hysteria mode) / false = can't or drops
     // the pin / absent untested. Only true is offered there (lib/clientCatalog.ts).
     hysteria2: v.optional(v.boolean()),
+    // The subscription format the app reads, which of a mirror's objects it
+    // imports (docs/mirrors.md "Formats"). Absent = from the app's name.
+    format: v.optional(mirrorFormatValidator),
     enabled: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),

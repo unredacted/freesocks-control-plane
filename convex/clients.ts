@@ -16,6 +16,7 @@ import { ConvexError, v } from 'convex/values';
 import { sanitizeHttpsUrl } from './lib/verificationConfig';
 import { writeAuditLog } from './lib/audit';
 import { backendIdValidator } from './lib/backendIds';
+import { mirrorFormatValidator } from './lib/mirrorFormats';
 
 const backendId = backendIdValidator;
 const PLATFORM_KEYS = ['android', 'ios', 'windows', 'desktop'];
@@ -71,6 +72,7 @@ function mapClient(r: Doc<'clients'>) {
     ipv6: r.ipv6 ?? null,
     xhttp: r.xhttp ?? null,
     hysteria2: r.hysteria2 ?? null,
+    format: r.format ?? null,
     description: r.description ?? null,
     enabled: r.enabled,
     priority: r.priority,
@@ -115,6 +117,8 @@ export const create = internalMutation({
     ipv6: v.optional(v.union(v.boolean(), v.null())),
     xhttp: v.optional(v.union(v.boolean(), v.null())),
     hysteria2: v.optional(v.union(v.boolean(), v.null())),
+    // The subscription format the app reads (its mirror object); null = from its name.
+    format: v.optional(v.union(mirrorFormatValidator, v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -153,6 +157,7 @@ export const create = internalMutation({
       ipv6: a.ipv6 ?? undefined,
       xhttp: a.xhttp ?? undefined,
       hysteria2: a.hysteria2 ?? undefined,
+      format: a.format ?? undefined,
       description: normalizeDescription(a.description),
       enabled: a.enabled ?? true,
       priority: a.priority ?? 0,
@@ -188,6 +193,8 @@ export const update = internalMutation({
     ipv6: v.optional(v.union(v.boolean(), v.null())),
     xhttp: v.optional(v.union(v.boolean(), v.null())),
     hysteria2: v.optional(v.union(v.boolean(), v.null())),
+    // The subscription format the app reads (its mirror object); null = from its name.
+    format: v.optional(v.union(mirrorFormatValidator, v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -230,6 +237,7 @@ export const update = internalMutation({
     if (patch.ipv6 !== undefined) fields.ipv6 = patch.ipv6 ?? undefined;
     if (patch.xhttp !== undefined) fields.xhttp = patch.xhttp ?? undefined;
     if (patch.hysteria2 !== undefined) fields.hysteria2 = patch.hysteria2 ?? undefined;
+    if (patch.format !== undefined) fields.format = patch.format ?? undefined;
     if (patch.description !== undefined)
       fields.description = normalizeDescription(patch.description);
     if (patch.enabled !== undefined) fields.enabled = patch.enabled;
@@ -285,6 +293,8 @@ export const upsertByName = internalMutation({
     ipv6: v.optional(v.union(v.boolean(), v.null())),
     xhttp: v.optional(v.union(v.boolean(), v.null())),
     hysteria2: v.optional(v.union(v.boolean(), v.null())),
+    // The subscription format the app reads (its mirror object); null = from its name.
+    format: v.optional(v.union(mirrorFormatValidator, v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -318,6 +328,7 @@ export const upsertByName = internalMutation({
         ipv6: a.ipv6 ?? undefined,
         xhttp: a.xhttp ?? undefined,
         hysteria2: a.hysteria2 ?? undefined,
+        format: a.format ?? undefined,
         description: normalizeDescription(a.description),
         enabled: a.enabled ?? true,
         priority: a.priority ?? 0,
@@ -348,6 +359,7 @@ export const upsertByName = internalMutation({
     if (a.ipv6 !== undefined) fields.ipv6 = a.ipv6 ?? undefined;
     if (a.xhttp !== undefined) fields.xhttp = a.xhttp ?? undefined;
     if (a.hysteria2 !== undefined) fields.hysteria2 = a.hysteria2 ?? undefined;
+    if (a.format !== undefined) fields.format = a.format ?? undefined;
     if (a.description !== undefined) fields.description = normalizeDescription(a.description);
     if (a.enabled !== undefined) fields.enabled = a.enabled;
     if (a.priority !== undefined) fields.priority = a.priority;
