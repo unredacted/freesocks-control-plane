@@ -47,6 +47,7 @@ export function modeInputOf(m: BackendSetupView['modes'][number]): ModeSetupInpu
     ...(m.familySlug ? { familySlug: m.familySlug } : {}),
     acceptProxyProtocol: m.acceptProxyProtocol,
     ...(m.ws ? { ws: { ...m.ws } } : {}),
+    ...(m.hysteria ? { hysteria: { ...m.hysteria } } : {}),
   };
 }
 

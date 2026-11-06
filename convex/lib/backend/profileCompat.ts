@@ -32,7 +32,9 @@ export interface CompatIssue {
     | 'target'
     | 'reality_key'
     | 'public_key_mismatch'
-    | 'certificate';
+    | 'certificate'
+    | 'alpn'
+    | 'obfs';
 }
 
 export interface EffectiveWsTransport {
@@ -85,6 +87,8 @@ export interface ModeLookup {
   tag?: string;
   /** The transport a previous setup bound. */
   transport?: { uuid?: string };
+  /** A Hysteria mode as asked for: what the transport found must present. */
+  hysteria?: { serverName: string; salamander: boolean };
 }
 
 /**
@@ -160,11 +164,15 @@ function checkReality(
  * Xray's Hysteria 2 inbound on a public address, under TLS with a readable
  * inline certificate (its pins are what members verify) and `h3`. A
  * certificate FCP cannot read is refused: a member's client would have no pin
- * to check, and FCP never hands out an unverified Hysteria entry.
+ * to check, and FCP never hands out an unverified Hysteria entry. When the mode
+ * says what it asks for (`want`), the transport must present exactly that
+ * server name and Salamander setting: a setup never reaches ready recording one
+ * name while the transport serves another.
  */
 function checkHysteria(
   slug: string,
   ib: ObservedTransport,
+  want?: { serverName: string; salamander: boolean },
 ): EffectiveHysteriaTransport | CompatIssue {
   const tag = ib.tag;
   if (ib.protocol !== 'hysteria') return { slug, tag, field: 'protocol' };
@@ -174,6 +182,10 @@ function checkHysteria(
   if (ib.port === null) return { slug, tag, field: 'port' };
   const auth = ib.hysteriaAuth;
   if (!auth?.serverName) return { slug, tag, field: 'server_names' };
+  if (want && auth.serverName !== want.serverName.trim().toLowerCase())
+    return { slug, tag, field: 'server_names' };
+  if (!auth.alpn.includes('h3')) return { slug, tag, field: 'alpn' };
+  if (want && auth.obfs !== want.salamander) return { slug, tag, field: 'obfs' };
   if (!auth.pinHex || !auth.spkiB64 || !auth.digest) return { slug, tag, field: 'certificate' };
   return {
     kind: 'hysteria',
@@ -231,7 +243,7 @@ export function checkProfileCompatibility(
       m.shape.transport === 'ws'
         ? checkWs(m.slug, ib)
         : m.shape.transport === 'hysteria'
-          ? checkHysteria(m.slug, ib)
+          ? checkHysteria(m.slug, ib, m.hysteria)
           : checkReality(m.slug, ib, m.shape.transport);
     if ('field' in r) return { ok: false, issue: r };
     out[m.slug] = r;
