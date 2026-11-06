@@ -52,6 +52,7 @@
  */
 import YAML from 'yaml';
 import {
+  MAX_PLACE_NAME,
   cleanNamePart,
   entryName,
   placeCountry,
@@ -65,7 +66,9 @@ import { configServerName, linkRemark, linkServerName, splitPanelRemark } from '
 export { ENTRY_NAME_SEP } from '../../src/shared/entryNames';
 export const DEFAULT_SITE_NAME = 'FreeSocks';
 const MAX_SITE_NAME = 32;
-const MAX_PLACE = 32;
+// The node's place leads its direct names AND its edge names (`… via <front>`):
+// capped like a front's place, so the two together still fit a phone's row.
+const MAX_PLACE = MAX_PLACE_NAME;
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Names a Clash config resolves without a proxy of that name.
@@ -89,6 +92,17 @@ export interface EntryNaming {
   place: string | null;
   /** The country of the place (its flag), ISO 3166-1 alpha-2; absent or null = no flag. */
   country?: string | null;
+}
+
+/**
+ * The node's own place as it leads an edge entry's name (`🇨🇦 Example City via
+ * …`, src/shared/entryNames.ts): the same place and flag its direct entries
+ * read, so one node never has two names. Null when names are off or the place
+ * is unknown (an edge entry then reads as before: `🇧🇷 via Example Town`).
+ */
+export function exitPlaceOf(naming: EntryNaming | null): MemberPlace | null {
+  if (!naming?.place) return null;
+  return { name: naming.place, country: placeCountry(naming.country ?? null) };
 }
 
 /** The site name members see (`subscription.siteName`), with the built-in default. */

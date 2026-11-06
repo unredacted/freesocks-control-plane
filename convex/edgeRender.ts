@@ -63,6 +63,7 @@ import { memberLaneOfUser } from './edgeLanes';
 import { namesEnabledOf, servingNameOf } from './edgeNames';
 import { latencyInputsFor } from './edgeLatency';
 import type { LatencyInputs } from './lib/edges/latency';
+import { entryExitOf } from './subscriptions';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -665,6 +666,8 @@ export const decideForSubscription = internalQuery({
         originAddress: relay.originAddress,
         nodeAddresses: await nodeAddressesOf(ctx, relay),
         deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
+        // The node's own place leads every entry's name, as its direct names read.
+        exit: await entryExitOf(ctx.db, sub.backendServerId),
         withheldNotedAt: relay.withheldEntries?.at ?? null,
       },
     };
@@ -756,7 +759,9 @@ export const memberView = internalQuery({
       namesInBody(rule, hasAutoGroup),
     );
     const connections = orderEndpoints(
-      renderEntries(assigned, rule, hasAutoGroup, origin.originAddress),
+      renderEntries(assigned, rule, hasAutoGroup, origin.originAddress, {
+        exit: await entryExitOf(ctx.db, sub.backendServerId),
+      }),
       rule,
     ).map((e) => ({
       label: e.label,

@@ -893,6 +893,42 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toBeNull();
   });
 
+  test("the node's own place leads every name, in the body and the account page alike; names off = as before", async () => {
+    stubPanel();
+    const { t, subId, serverId } = await seed();
+    // The backend instance's member-facing place and its node's country: the
+    // place its direct entries read, so the edge entries read it too.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(serverId, { locationLabel: 'Example Port, EX' });
+      await ctx.db.insert('backendNodeInventory', {
+        backendServerId: serverId,
+        nodeUuid: 'n-1',
+        name: NODE,
+        usersOnline: 0,
+        online: true,
+        lastStatsAt: Date.now(),
+        countryCode: 'CA',
+      });
+    });
+    const labels = proxyLines(await (await get(t)).text()).map(labelOf);
+    expect(labels).toEqual([
+      `🇨🇦 Example Port ${PRIMARY} · IPv4`,
+      `🇨🇦 Example Port ${PRIMARY} · IPv6`,
+    ]);
+    const view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    expect(view.connections.map((c) => [c.label, c.base])).toEqual([
+      [labels[0], `🇨🇦 Example Port ${PRIMARY}`],
+      [labels[1], `🇨🇦 Example Port ${PRIMARY}`],
+    ]);
+    // Names off: the edge entries read as they did before the exit was shown.
+    await t.run((ctx) => upsertSettingRow(ctx, 'subscription.entryNames', 'false'));
+    await expireCache(t, subId);
+    expect(proxyLines(await (await get(t)).text()).map(labelOf)).toEqual([
+      `${PRIMARY} · IPv4`,
+      `${PRIMARY} · IPv6`,
+    ]);
+  });
+
   test('the snapshot records whether the body had an auto group; the rollback strip removes only that', async () => {
     stubPanel();
     const { t, subId } = await seed();

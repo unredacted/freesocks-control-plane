@@ -10,6 +10,7 @@
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import { BackendServerAdmin } from '../../../shared/contracts/admin';
   import { BACKEND_IDS, type BackendId } from '../../../shared/contracts/backends';
+  import { MAX_PLACE_NAME, cleanNamePart } from '../../../shared/entryNames';
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { z as zod } from 'zod';
@@ -62,6 +63,11 @@
   let slug = $state(init.slug);
   let location = $state(init.location);
   let locationLabel = $state(init.locationLabel);
+  // The place members' apps lead this server's connection names with
+  // (lib/memberEntryNames.ts `memberPlace`: the first comma segment, capped).
+  const exitExample = $derived(
+    cleanNamePart(locationLabel.split(',')[0], MAX_PLACE_NAME) || 'its place',
+  );
   // Free-text so the fields can be blank (= no map dot); parsed on save.
   let locationLatText = $state(init.locationLat);
   let locationLngText = $state(init.locationLng);
@@ -293,7 +299,9 @@
           >
           <Input id="srv-location-label" bind:value={locationLabel} placeholder="Kansas City, MO" />
           <p class="mt-1 text-[11px] text-muted-foreground">
-            What members see. Falls back to the code when blank.
+            What members see. Falls back to the code when blank. Its first part (up to a comma,
+            {MAX_PLACE_NAME} characters at most) names this server's connections in members' apps: "{exitExample}
+            · Direct", "{exitExample} via Example City".
           </p>
         </div>
         <div>

@@ -8,16 +8,24 @@
  * node, and the admin pages show the same names. Pure; English for every
  * locale (a member's language is not known where a body is made).
  *
- *   <flag> <place> · <how>[ · <form>][ #<n>]
+ *   <flag> <place> · Direct[ <n>]                        a node, dialled directly
+ *   <flag> <place> via <front>[ <letter>][ · <form>][ #<n>]   a node, through an edge
  *
- *   🇨🇦 Example City · Direct       a node, dialled directly (`Direct 2`, `Direct 3`
- *                                   for further server names of the same place)
- *   🇧🇷 via Example Town            a load balancer address (L4) in that place
- *   🇧🇷 via Example Town A / B      two addresses in the same place
- *   via relay A                     an address whose location has no member-facing name
- *   🌐 via CDN 1 / 2                a CDN front (L7), numbered in body order; never the CDN's name
- *   … · Domain / · IPv4 / · IPv6    one address in several forms (its name, its raw IPs)
- *   … #2                            a further server name for the same address (auto groups only)
+ *   🇨🇦 Example City · Direct                  a node, dialled directly (`Direct 2`,
+ *                                              `Direct 3` for further server names)
+ *   🇨🇦 Example City via Example Town          a load balancer address (L4) in that place
+ *   🇨🇦 Example City via Example Town A / B    two addresses in the same place
+ *   🇨🇦 Example City via relay A               an address whose location has no member-facing name
+ *   🇨🇦 Example City via CDN 1 / 2             a CDN front (L7), numbered in body order; never the CDN's name
+ *   … · Domain / · IPv4 / · IPv6               one address in several forms (its name, its raw IPs)
+ *   … #2                                       a further server name for the same address (auto groups only)
+ *
+ * The place and flag that lead are the NODE's (where the traffic leaves: the
+ * exit), the same place its direct entries read, so one node never has two
+ * names; the front's own country shows no flag (its place name says where it
+ * is). Without a known exit place (names off, or the backend instance has no
+ * location label) an edge entry reads as it did before the exit was shown:
+ * `🇧🇷 via Example Town` (the front's flag), `via relay A`, `🌐 via CDN 1`.
  *
  * Only a member-facing place name an operator typed for the purpose reaches a
  * name (`edgeLocations.memberPlace`, `backendServers.locationLabel`), never a
@@ -56,10 +64,13 @@ export interface MemberPlace {
 export type EntryRoute =
   /** A node, dialled directly. `n` counts from 1 within its place (1 carries no number). */
   | { kind: 'direct'; place: MemberPlace; n: number }
-  /** A load balancer address. `letter` tells two addresses of one place apart. */
-  | { kind: 'relay'; place: MemberPlace; letter: string | null }
-  /** A CDN front, numbered among the fronts of the body. */
-  | { kind: 'cdn'; n: number };
+  /**
+   * A load balancer address. `letter` tells two addresses of one place apart;
+   * `exit` is the node's own place (where the traffic leaves), null = unknown.
+   */
+  | { kind: 'relay'; place: MemberPlace; letter: string | null; exit?: MemberPlace | null }
+  /** A CDN front, numbered among the fronts of the body; `exit` as for a relay. */
+  | { kind: 'cdn'; n: number; exit?: MemberPlace | null };
 
 // A UTF-16 surrogate half with no partner: invalid text that
 // `encodeURIComponent` throws on.
@@ -131,15 +142,32 @@ export function entryBase(route: EntryRoute): string {
       const head = placeHead(route.place);
       return head ? `${head}${ENTRY_NAME_SEP}${how}` : how;
     }
-    case 'relay':
+    case 'relay': {
       // No member-facing name: no flag either, and always a letter.
-      if (!route.place.name) return `via relay ${route.letter ?? 'A'}`;
-      return [flagEmoji(route.place.country), 'via', route.place.name, route.letter]
+      const front = route.place.name
+        ? [route.place.name, route.letter].filter((s): s is string => !!s).join(' ')
+        : `relay ${route.letter ?? 'A'}`;
+      const exit = exitHead(route.exit);
+      if (exit) return `${exit} via ${front}`;
+      if (!route.place.name) return `via ${front}`;
+      return [flagEmoji(route.place.country), 'via', front]
         .filter((s): s is string => !!s)
         .join(' ');
-    case 'cdn':
-      return `${CDN_MARK} via CDN ${route.n}`;
+    }
+    case 'cdn': {
+      const exit = exitHead(route.exit);
+      return exit ? `${exit} via CDN ${route.n}` : `${CDN_MARK} via CDN ${route.n}`;
+    }
   }
+}
+
+/**
+ * The node's place as it leads an edge entry (`🇨🇦 Example City`), or null: an
+ * exit is shown only with its NAME (a lone flag before "via" would read as the
+ * front's).
+ */
+function exitHead(exit: MemberPlace | null | undefined): string | null {
+  return exit?.name ? placeHead(exit) : null;
 }
 
 /**

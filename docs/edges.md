@@ -1096,7 +1096,8 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    `hy2`/`tuic` auth). Per **client family** (`render.clients.<family>`): auto-capable
    families get the automatic group (`⚡ Auto (fastest)`), link-list families get the primary
    and backup entries side by side. Every entry is named by the one scheme of § "Names in apps"
-   (`🇧🇷 via Example Town · IPv4`, `🌐 via CDN 1`); names are not settings.
+   (`🇨🇦 Example Port via Example Town · IPv4`, `🇨🇦 Example Port via CDN 1`); names are not
+   settings.
    A link-list app (v2rayNG, Anywhere, anything unrecognized) shows both side by side and never
    switches on its own, so the member page adds one line when the key has a backup: pick the
    backup when the first stops working (`hero.relayBackupHint`, which names each address
@@ -1247,29 +1248,52 @@ sing-box tag, a Clash proxy name, an Xray config's `remarks`), comes from ONE fu
 `src/shared/entryNames.ts`, used by the renderer (`lib/edges/render.ts` `nameEntries`), by the
 member relabel step for direct entries (`lib/memberEntryNames.ts`), and by the admin pages that
 show the names. Names are English for every locale (a member's language is not known where a body
-is made), and never carry a comma or a pipe. Decided by the owner on 2026-11-04.
+is made), and never carry a comma or a pipe. Decided by the owner on 2026-11-04; the node's own
+place leading edge entries (`… via …`) on 2026-11-05.
 
 ```
-<flag> <place> · <how>[ · <form>][ #<n>]
+<flag> <node's place> · Direct[ <n>]                             a node, dialled directly
+<flag> <node's place> via <front>[ <letter>][ · <form>][ #<n>]   a node, through an edge
 
-🇨🇦 Example City · Direct           a node, dialled directly (Privacy, or a direct entry)
-🇨🇦 Example City · Direct 2         the next server name of the same place
-🇧🇷 via Example Town                a load balancer address (L4: REALITY, XHTTP)
-🇧🇷 via Example Town A · Domain     two addresses in one place get letters
-via relay A                         an address whose location has no member-facing name
-🌐 via CDN 1                        a CDN front (L7), numbered; never the CDN's name
-🇧🇷 via Example Town · Domain #2    a further server name (auto groups only)
+🇨🇦 Example Port · Direct                       a node, dialled directly (Privacy, or a direct entry)
+🇨🇦 Example Port · Direct 2                     the next server name of the same place
+🇨🇦 Example Port via Example Town               a load balancer address (L4: REALITY, XHTTP)
+🇨🇦 Example Port via Example Town A · Domain    two addresses in one place get letters
+🇨🇦 Example Port via relay A                    an address whose location has no member-facing name
+🇨🇦 Example Port via CDN 1                      a CDN front (L7), numbered; never the CDN's name
+🇨🇦 Example Port via Example Town · Domain #2   a further server name (auto groups only)
 ```
+
+- **Where the traffic leaves comes first.** Every name leads with the NODE's place and flag (the
+  exit: where a member appears to be), the same place its direct entries read, so one node never
+  has two names: the backend instance's location label up to its first comma (at most 24
+  characters, `MAX_PLACE_NAME`) and the country its nodes report (see **Direct** below). An edge
+  entry then says where the member connects: `via` and the location's member-facing place, or
+  `via CDN 1`. One flag per name, the exit's: the front's place name says where it is, and a
+  second flag would cost width (and draws as two letters on Windows). The renderer gets the place
+  from `subscriptions.entryExitOf` (`EdgeRenderContext.exit`, set by
+  `edgeRender.decideForSubscription` for the subscription route and the mirrors, by the admin
+  preview, and by `memberView`'s replay). Without it (names off, `subscription.entryNames`
+  false, or an instance with no location label) an edge entry reads as it did before 2026-11-05:
+  `🇧🇷 via Example Town` (the location's flag), `via relay A`, `🌐 via CDN 1`. A lone flag never
+  leads: `🇨🇦 via Example Town` would read as the front's.
+- **No transport in a name.** Every body is one connection mode, and the mode is the title apps
+  show (below). `via` is English in every locale: a translated word would sit between two
+  left-to-right place names and scramble their order in right-to-left apps, and an arrow points
+  the wrong way there.
+- **Length.** `🇨🇦 Example Port via Example Town · Domain` runs to about 40 characters, and phone
+  apps cut a name's end, where entries differ: keep both place names short (a city).
 
 - **Where an address is.** An L4 address reads its location's member-facing place
   (`edgeLocations.memberPlace`: a name and an ISO 3166-1 alpha-2 country an operator typed for
-  members, Admin -> Edges -> a provider account -> Locations, "Name in apps"; `POST
+  members, Admin -> Edges -> a provider account -> Locations, "Name in apps"; its country's
+  flag shows only where the node's own place is unknown; `POST
 providers/{id}/locations/{locationId}/member-place {name, country}`). The provider's own region
   name (`edgeLocations.label`) is admin-only and never reaches a member: it can name the provider.
   "Rename" on the location changes it (`PATCH providers/{id}/locations/{locationId} {label}`, up to
   80 characters; the location keeps its placement and its trust; audited `edge.location.updated`
   with the fields that moved, `changed`, never a value).
-  Without a name the address reads `via relay A` and no flag shows, whatever the country says.
+  Without a name the address reads `… via relay A`, whatever the country says.
   The place travels on the published pool (`PublishedEdge.memberPlace`, one read per location of
   the pool, as the countries it is meant for do). Saving it moves the epoch of every origin with an
   address in use there (members see it at their next refresh); audited
@@ -1753,7 +1777,8 @@ mirrors and the cached and stale bodies of `/api/v1/sub`, which all go through t
   before the IPv6: many networks where names get blocked have no IPv6, and link-list apps are
   the ones most used there. Order: name, backup, IPv4, IPv6 (then the backup's own raw IPs if it
   has a name), and no further names: a further name would be one more look-alike entry. So one
-  entry per way in: `🇧🇷 via Example Town · Domain`, `· IPv4`, `· IPv6`, plus the backup's. An
+  entry per way in: `🇨🇦 Example Port via Example Town · Domain`, `· IPv4`, `· IPv6`, plus the
+  backup's. An
   entry cap cuts from the end: the raw IPs first, and the backup stays as long as there is room
   for two entries;
 - a single key (Outline) keeps the IP: it has no room for an alternative.
@@ -6906,7 +6931,7 @@ admin call (`POST providers/{id}/locations/{locationId}/member-place`), one audi
 deploy, no migration, no env change. Members' apps show the new names at their next refresh past
 the content cache (minutes), every mirror at its next sweep; the subscription title and every
 ETag change, so apps that send `If-None-Match` fetch the body once. Until an operator gives a
-location a name, its addresses read `via relay A`: set "Name in apps" on every location in use
+location a name, its addresses read `… via relay A`: set "Name in apps" on every location in use
 first, or right after. Direct entries are numbered in the panel's Host order, so a panel that
 shuffles its Hosts on each fetch (Remnawave's subscription setting "randomize hosts") moves the
 numbers on every fetch: check that it is off. `edgeRender:retireEntryLabels` (no arguments) removes the retired settings'
@@ -6914,6 +6939,16 @@ stored rows and prints their values; it is optional (nothing reads them). To rol
 `edgeLocations:clearMemberPlacesForRollback` (no arguments) right before deploying the older build
 (its schema has no `memberPlace`), and put back any labels `retireEntryLabels` removed if they
 were not the defaults.
+
+**The node's place in edge names** (2026-11-05, § "Names in apps"): edge entries lead with the
+node's own place (`🇨🇦 Example Port via Example Town`). No schema, setting, migration or env
+change: the place is the backend instance's location label and its nodes' country, as direct
+names already read them. Members' apps show the new names at their next refresh past the content
+cache, every mirror at its next sweep; an app's chosen entry is kept by name, so a Clash or
+sing-box app falls back to its group's first entry (`⚡ Auto (fastest)`) once, and a link-list app
+may need one tap. A member's own Clash override that names an entry stops matching. Check every
+backend instance that fronts nodes has a location label (Servers -> Backends) and that its first
+part is short. Rollback: deploy the older build.
 
 **Country lists** (§ "Country lists") add seven tables (`countryLists`, `countryListVersions`,
 `countryListMembers`, `countryListChunks`, `countryListNameHistory`, `countryListUploads`,

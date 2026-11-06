@@ -23,7 +23,13 @@ import {
 import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { entryNamingFrom, instanceCountry, type EntryNaming } from './lib/memberEntryNames';
+import {
+  entryNamingFrom,
+  exitPlaceOf,
+  instanceCountry,
+  type EntryNaming,
+} from './lib/memberEntryNames';
+import type { MemberPlace } from '../src/shared/entryNames';
 import { profileTitleValue, resolveSubscriptionTitle } from './lib/subscriptionTitle';
 import { resolveUpdateIntervalHours } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
@@ -812,6 +818,18 @@ export async function entryNamingOf(
   const country =
     nodes.length > NODE_INVENTORY_SCAN ? null : instanceCountry(nodes.map((n) => n.countryCode));
   return entryNamingFrom(settings, server?.locationLabel, country);
+}
+
+/**
+ * The node's own place, leading the name of every entry that reaches it through
+ * an edge (`🇨🇦 Example City via …`): read like its direct names
+ * (`entryNamingOf`), null when names are off or the place is unknown.
+ */
+export async function entryExitOf(
+  db: DatabaseReader,
+  backendServerId: Id<'backendServers'> | undefined,
+): Promise<MemberPlace | null> {
+  return exitPlaceOf(await entryNamingOf(db, backendServerId));
 }
 
 export const entryNamingFor = internalQuery({
