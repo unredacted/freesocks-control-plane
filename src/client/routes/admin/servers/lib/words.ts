@@ -425,8 +425,11 @@ const ERROR_WORDS: Record<string, string> = {
     'The node does not run the transport yet. It is turned on with the node’s next look.',
   'servers.extra_mode_drifted':
     'Something it was checked under changed (certificate, server name, port or address). It is checked again before members get it.',
-  'servers.extra_mode_failed':
-    'Turning it on stopped. It is tried again with the node’s next look.',
+  'servers.extra_mode_failed': 'Turning it on stopped. It is tried again shortly.',
+  'servers.extra_mode_port_moved':
+    'Its transport moved to another port. The node’s firewall must let the new one in first.',
+  'servers.extra_mode_close_failed':
+    'The backend did not turn its address off. It is tried again shortly.',
   'servers.mode_unknown':
     'No such connection mode exists yet, or this backend is not set up for it. Add it under Connection modes first.',
   'servers.family_missing':

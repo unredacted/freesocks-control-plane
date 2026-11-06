@@ -45,6 +45,8 @@ describe('extraModeProblem', () => {
     ['servers.extra_mode_fallback_missing', { fallbackModeSlug: 'freedom-reality' }],
     ['servers.extra_mode_certificate', { extraOpening: null }],
     ['servers.port_taken', { extraOpening: { port: 443, protocol: 'tcp' } }],
+    // Another extra mode of the node already listens there.
+    ['servers.port_taken', { otherOpenings: [{ port: 443, protocol: 'udp' }] }],
     ['servers.extra_mode_name_collision', { extraName: 'Decoy.Example' }],
   ])('%s', (code, over) => {
     expect(extraModeProblem({ ...base, ...(over as object) } as typeof base)).toBe(code);

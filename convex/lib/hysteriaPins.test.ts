@@ -49,6 +49,8 @@ describe('Clash / Mihomo', () => {
     [`    fingerprint: ${PIN}\n`, 'pinned'],
     [`    fingerprint: ${PIN}\n    skip-cert-verify: false\n`, 'pinned'],
     ['    skip-cert-verify: true\n', 'insecure'],
+    // Verification off is never a pin, whatever else the entry says.
+    [`    fingerprint: ${PIN}\n    skip-cert-verify: true\n`, 'insecure'],
     // CA-only: not accepted either.
     ['', 'no_pin'],
     [`    fingerprint: ${OTHER}\n`, 'wrong_pin'],

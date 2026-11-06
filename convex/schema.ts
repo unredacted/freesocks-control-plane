@@ -4725,6 +4725,9 @@ export default defineSchema({
           // runs asks for another when it ends (`rerun`).
           lease: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
           rerun: v.optional(v.boolean()),
+          // Failed runs in a row: the next try waits 1, 2, 4… minutes (at most
+          // an hour). Reset once it serves.
+          retries: v.optional(v.number()),
           byAdminId: v.optional(v.id('adminUsers')),
           since: v.number(),
           updatedAt: v.number(),
