@@ -19,6 +19,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { placementGroups, placementSetOf } from './lib/placementSet';
+import { groupHasOtherNode } from './lib/switchServer';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -139,12 +140,12 @@ async function seed(opts: { bindHysteria?: boolean; serving?: boolean } = {}) {
   return { t, ...ids };
 }
 
-function nodeIntent(serverId: Id<'backendServers'>, serving: boolean) {
+function nodeIntent(serverId: Id<'backendServers'>, serving: boolean | null, name = 'node-a') {
   const now = Date.now();
   return {
     backendServerId: serverId,
-    name: 'node-a',
-    label: 'node-a',
+    name,
+    label: name,
     mode: 'privacy-reality',
     contractVersion: 2,
     generation: 1,
@@ -171,15 +172,18 @@ function nodeIntent(serverId: Id<'backendServers'>, serving: boolean) {
       },
     },
     origin: { dns: 'none' as const },
-    extraModes: [
-      {
-        slug: 'privacy-hysteria',
-        state: serving ? ('serving' as const) : ('activating' as const),
-        firewall: { port: 443, protocol: 'udp' as const, confirmedBy: 'role' as const },
-        since: now,
-        updatedAt: now,
-      },
-    ],
+    extraModes:
+      serving === null
+        ? []
+        : [
+            {
+              slug: 'privacy-hysteria',
+              state: serving ? ('serving' as const) : ('activating' as const),
+              firewall: { port: 443, protocol: 'udp' as const, confirmedBy: 'role' as const },
+              since: now,
+              updatedAt: now,
+            },
+          ],
     registeredAt: now,
     updatedAt: now,
   };
@@ -233,6 +237,21 @@ describe('issue target resolution', () => {
         onlyServerId: serverId,
       }),
     ).toMatchObject({ placement: SQ_REALITY, extraPlacements: [], fallbackUnresolved: false });
+    // No choice made: the key issues into the default mode, with its backup.
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'connectionMode.default',
+        value: JSON.stringify('privacy-hysteria'),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(
+      await t.query(internal.connectionModes.resolveIssueTarget, {
+        backend: 'remnawave',
+        modeId: null,
+        onlyServerId: serverId,
+      }),
+    ).toMatchObject({ placement: SQ_HY, extraPlacements: [SQ_REALITY], fallbackUnresolved: false });
   });
 
   test('says when the backup is not bound there', async () => {
@@ -297,16 +316,45 @@ describe('the pin', () => {
     await t.run((ctx) =>
       ctx.db.patch(subId, { backendPlacement: SQ_HY, backendExtraPlacements: [SQ_REALITY] }),
     );
+    // A second REALITY node that does not serve Hysteria.
+    await t.run((ctx) => ctx.db.insert('panelNodeIntents', nodeIntent(serverId, null, 'node-b')));
     expect((await rules()).servable).toEqual(['node-a']);
-    // While no node serves it (its address closed for a re-check), it pins as
-    // REALITY does: the member keeps the backup entry.
+    // "Switch server" counts only that tier: pinned to node-a, nowhere to go.
+    await t.run((ctx) => ctx.db.patch(subId, { pinnedNode: 'node-a' }));
+    expect(
+      await t.query(internal.subscriptions.otherPinTargets, { subscriptionId: subId }),
+    ).toEqual([]);
+    // While no node serves it (its address closed for a re-check), it pins
+    // among its backup mode's nodes: the member keeps the backup entry.
     await t.run(async (ctx) => {
-      const i = (await ctx.db.query('panelNodeIntents').collect())[0]!;
+      const i = (await ctx.db.query('panelNodeIntents').collect()).find(
+        (r) => r.name === 'node-a',
+      )!;
       await ctx.db.patch(i._id, {
         extraModes: i.extraModes!.map((m) => ({ ...m, state: 'activating' as const })),
       });
     });
-    expect((await rules()).servable).toBeNull();
+    expect((await rules()).servable).toEqual(['node-a', 'node-b']);
+    expect(
+      await t.query(internal.subscriptions.otherPinTargets, { subscriptionId: subId }),
+    ).toEqual(['node-b']);
+    // A node whose delivery gate is closed is never a candidate.
+    await t.run(async (ctx) => {
+      const i = (await ctx.db.query('panelNodeIntents').collect()).find(
+        (r) => r.name === 'node-b',
+      )!;
+      await ctx.db.patch(i._id, { maintenance: { id: 'm1', since: Date.now(), reason: 'test' } });
+    });
+    expect((await rules()).servable).toEqual(['node-a']);
+  });
+
+  test('switch server needs another node in the tier, not just in the group', () => {
+    const now = Date.now();
+    const stats = { nodeCount: 3, lastStatsAt: now };
+    expect(groupHasOtherNode(stats, now)).toBe(true);
+    expect(groupHasOtherNode(stats, now, [])).toBe(false);
+    expect(groupHasOtherNode(stats, now, ['node-b'])).toBe(true);
+    expect(groupHasOtherNode({ nodeCount: 1, lastStatsAt: now }, now, ['node-b'])).toBe(false);
   });
 });
 
@@ -324,6 +372,13 @@ describe('the backup mode', () => {
     );
     await expect(
       t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-reality' }),
+    ).rejects.toThrow(/uses this mode as its backup/);
+    // Nor leave the family of the mode it backs.
+    await expect(
+      t.mutation(internal.connectionModes.updateMode, {
+        slug: 'privacy-reality',
+        family: 'freedom',
+      }),
     ).rejects.toThrow(/uses this mode as its backup/);
     await update('privacy-hysteria', null);
     const list = await t.query(internal.connectionModes.list, {});

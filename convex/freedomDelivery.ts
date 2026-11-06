@@ -35,6 +35,7 @@ import {
   withheldReason,
   type NodeProtection,
 } from './lib/edges/freedomDelivery';
+import { extraModeTiersOf } from './lib/extraModeNodes';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { blockedNamesOf } from './nodeIntents';
 import { relayForBackendNode, scheduleMirrorRefresh } from './relays';
@@ -71,45 +72,17 @@ async function keyOf(
 }
 
 /**
- * The nodes a key placed in an extra mode may be pinned to: those serving that
- * mode beside their own (nodeExtraModes.ts, `serving`), under every name a key
- * may still hold. Null when the key has no extra groups, when its mode is not
- * one any node serves as an extra mode, or when none serves it right now (the
- * key then pins as its backup mode does).
- */
-async function extraModeServable(
-  db: Db,
-  backendServerId: Id<'backendServers'>,
-  backendShortId: string,
-): Promise<string[] | null> {
-  const sub = await keyOf(db, backendServerId, backendShortId);
-  if (!sub?.backendPlacement || !sub.backendExtraPlacements?.length) return null;
-  // The mode whose pool holds the key's own group.
-  const slug = (
-    await db
-      .query('modePlacements')
-      .withIndex('by_backend', (q) => q.eq('backend', sub.backend))
-      .collect()
-  ).find((r) => poolFromConfig(r.config).includes(sub.backendPlacement!))?.modeSlug;
-  if (!slug) return null;
-  const intents = await db
-    .query('panelNodeIntents')
-    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-    .collect();
-  const formers = await formerNamesByName(db, backendServerId);
-  const out: string[] = [];
-  for (const i of intents)
-    if ((i.extraModes ?? []).some((m) => m.slug === slug && m.state === 'serving'))
-      out.push(i.name, ...(formers.get(i.name) ?? []));
-  return out.length > 0 ? out : null;
-}
-
-/**
  * What the pinner may pick for one key: `blocked`, every node whose delivery
- * gate is closed (never picked while another exists), and `servable`, for a
- * key held to freedom delivery while the switch is on, the nodes an origin
- * with a live edge of the node's layer covers (the pick is made among them
- * while one is in the body). `servable` is null when nothing narrows the pick.
+ * gate is closed (never picked while another exists), and `servable`, the
+ * nodes the pick is made among while one is in the body (null when nothing
+ * narrows it). Two rules narrow it, and a key under both gets their
+ * intersection:
+ *  - a key held to freedom delivery while the switch is on: the nodes an
+ *    origin with a live edge of the node's layer covers (`edgeServable`);
+ *  - a key in two groups (a mode with a backup mode): the nodes serving its
+ *    mode beside their own, else, while none does, its backup mode's nodes
+ *    (lib/extraModeNodes.ts). A tier no covered node is in is skipped; with
+ *    none left the edge rule alone applies.
  */
 export const pinRules = internalQuery({
   args: { backendServerId: v.id('backendServers'), backendShortId: v.string() },
@@ -118,39 +91,57 @@ export const pinRules = internalQuery({
     { backendServerId, backendShortId },
   ): Promise<{ blocked: string[]; servable: string[] | null }> => {
     const blocked = await blockedNamesOf(ctx, backendServerId);
-    // A key placed in a mode a node serves BESIDE its own (a Hysteria key, with
-    // its REALITY backup group): pinned among the nodes that serve that mode,
-    // so its body carries both entries. While none does (its address closed for
-    // a re-check), it pins as its backup mode would: the member keeps REALITY.
-    const extra = await extraModeServable(ctx.db, backendServerId, backendShortId);
-    if (extra) return { blocked, servable: extra };
-    if (!(await freedomEdgesOnly(ctx.db))) return { blocked, servable: null };
     const sub = await keyOf(ctx.db, backendServerId, backendShortId);
-    const hold = sub ? await freedomHoldOf(ctx.db, sub, sub.pinnedNode) : null;
-    if (!hold) return { blocked, servable: null };
-    const covers = (p: NodeProtection, fronting: ModeFronting | null) =>
-      withheldReason({ protection: p, enrolled: true, fronting }) === null;
-    // A whole-server origin with a live edge covers every node.
-    if (covers(await protectionAt(ctx, backendServerId, undefined), hold.fronting))
-      return { blocked, servable: null };
-    const bindings = await ctx.db
-      .query('edgeDeliveryBindings')
-      .withIndex('by_server_node', (q) => q.eq('backendServerId', backendServerId))
-      .collect();
-    const frontings = await setupFrontings(ctx.db, backendServerId);
+    if (!sub) return { blocked, servable: null };
+    const edge = await edgeServable(ctx, backendServerId, sub);
+    const tiers = await extraModeTiersOf(ctx.db, sub);
+    if (!tiers) return { blocked, servable: edge };
+    const shut = new Set(blocked);
+    const covered = edge ? new Set(edge) : null;
     const formers = await formerNamesByName(ctx.db, backendServerId);
-    const servable: string[] = [];
-    for (const b of bindings) {
-      if (b.state !== 'active' || !b.nodeName) continue;
-      // An enrolled node is judged at its own mode's layer, any other at the key's.
-      const intent = await intentAt(ctx.db, backendServerId, b.nodeName);
-      const fronting = intent ? (frontings.get(intent.mode) ?? null) : hold.fronting;
-      if (!covers(await protectionAt(ctx, backendServerId, b.nodeName), fronting)) continue;
-      servable.push(b.nodeName, ...(formers.get(b.nodeName) ?? []));
+    for (const tier of [tiers.serving, tiers.backup]) {
+      const names = tier.filter((n) => !shut.has(n) && (!covered || covered.has(n)));
+      if (names.length > 0)
+        return { blocked, servable: names.flatMap((n) => [n, ...(formers.get(n) ?? [])]) };
     }
-    return { blocked, servable };
+    return { blocked, servable: edge };
   },
 });
+
+/**
+ * For a key held to freedom delivery while the switch is on, the nodes an
+ * origin with a live edge of the node's layer covers, under every name a key
+ * may still hold. Null when the rule does not narrow the pick.
+ */
+async function edgeServable(
+  ctx: Parameters<typeof protectionAt>[0],
+  backendServerId: Id<'backendServers'>,
+  sub: Doc<'subscriptions'>,
+): Promise<string[] | null> {
+  if (!(await freedomEdgesOnly(ctx.db))) return null;
+  const hold = await freedomHoldOf(ctx.db, sub, sub.pinnedNode);
+  if (!hold) return null;
+  const covers = (p: NodeProtection, fronting: ModeFronting | null) =>
+    withheldReason({ protection: p, enrolled: true, fronting }) === null;
+  // A whole-server origin with a live edge covers every node.
+  if (covers(await protectionAt(ctx, backendServerId, undefined), hold.fronting)) return null;
+  const bindings = await ctx.db
+    .query('edgeDeliveryBindings')
+    .withIndex('by_server_node', (q) => q.eq('backendServerId', backendServerId))
+    .collect();
+  const frontings = await setupFrontings(ctx.db, backendServerId);
+  const formers = await formerNamesByName(ctx.db, backendServerId);
+  const servable: string[] = [];
+  for (const b of bindings) {
+    if (b.state !== 'active' || !b.nodeName) continue;
+    // An enrolled node is judged at its own mode's layer, any other at the key's.
+    const intent = await intentAt(ctx.db, backendServerId, b.nodeName);
+    const fronting = intent ? (frontings.get(intent.mode) ?? null) : hold.fronting;
+    if (!covers(await protectionAt(ctx, backendServerId, b.nodeName), fronting)) continue;
+    servable.push(b.nodeName, ...(formers.get(b.nodeName) ?? []));
+  }
+  return servable;
+}
 
 /**
  * Whether a key's raw backend URL must not be shown to its member: the switch
