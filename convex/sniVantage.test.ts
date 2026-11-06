@@ -307,6 +307,132 @@ describe('a batch', () => {
   });
 });
 
+/**
+ * A Globalping fake that knows the country's probes: `eyeball` home-network
+ * ones and `datacenter` ones, each on its own network. A create answers with
+ * `probesCount` (a 422 when nothing matches, like the API); a measurement
+ * that reuses another runs on that one's probes. Every name works.
+ */
+function poolGlobalping(eyeball: number, datacenter: number) {
+  type Probe = { asn: number; tags: string[] };
+  const home: Probe[] = Array.from({ length: eyeball }, (_, i) => ({
+    asn: 64600 + i,
+    tags: ['eyeball-network'],
+  }));
+  const dc: Probe[] = Array.from({ length: datacenter }, (_, i) => ({
+    asn: 64700 + i,
+    tags: ['datacenter-network'],
+  }));
+  const requests: Array<Record<string, unknown>> = [];
+  const ran = new Map<string, Probe[]>();
+  const client: GlobalpingLike = {
+    async createMeasurement(req) {
+      requests.push(req as Record<string, unknown>);
+      const locs = (req as { locations: string | Array<{ limit: number; tags?: string[] }> })
+        .locations;
+      let picked: Probe[];
+      if (typeof locs === 'string') picked = ran.get(locs) ?? [];
+      else {
+        picked = [];
+        for (const l of locs) {
+          const pool = l.tags?.includes('eyeball-network')
+            ? home
+            : l.tags?.includes('datacenter-network')
+              ? dc
+              : [...home, ...dc];
+          picked.push(...pool.filter((p) => !picked.includes(p)).slice(0, l.limit));
+        }
+      }
+      if (picked.length === 0)
+        return {
+          ok: false,
+          response: new Response('{}', { status: 422 }),
+          data: { error: { type: 'no_probes_found', message: 'No suitable probes' } },
+        };
+      const id = `m-${requests.length}`;
+      ran.set(id, picked);
+      return { ok: true, data: { id, probesCount: picked.length } };
+    },
+    async getMeasurement(id) {
+      const results = (ran.get(id) ?? []).map((p) => ({
+        probe: { country: 'IR', asn: p.asn, network: `net-${p.asn}`, tags: p.tags },
+        result: { status: 'finished', statusCode: 200, tls: { authorized: true } },
+      }));
+      return { ok: true, data: { id, status: 'finished', results } };
+    },
+  };
+  return { client, requests };
+}
+
+describe('too few home-network probes in a country', () => {
+  const firstAsk = (q: Record<string, unknown> | undefined) => q?.locations;
+  const notedPool = async (t: T) =>
+    (await t.query(internal.edgeCountryView.country, { country: 'IR' })).namePool;
+
+  test('enough: home-network probes only, no extra ask', async () => {
+    const gp = poolGlobalping(4, 4);
+    __setVantageGlobalpingFactory(() => gp.client);
+    const { t } = await seed();
+    await tickAndDrain(t);
+    expect(gp.requests).toHaveLength(3);
+    expect(firstAsk(gp.requests[0])).toEqual([
+      { country: 'IR', limit: 3, tags: ['eyeball-network'] },
+    ]);
+    expect(await notedPool(t)).toMatchObject({ mode: 'eyeball', eyeball: 3, got: 3, needs: 3 });
+  });
+
+  test('two home-network probes: topped up with a data-centre one, and the names are judged', async () => {
+    const gp = poolGlobalping(2, 3);
+    __setVantageGlobalpingFactory(() => gp.client);
+    const { t } = await seed();
+    await tickAndDrain(t);
+    // The short eyeball ask, the top-up, then every other name on the top-up's probes.
+    expect(gp.requests.map(firstAsk)).toEqual([
+      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
+      [
+        { country: 'IR', limit: 2, tags: ['eyeball-network'] },
+        { country: 'IR', limit: 1, tags: ['datacenter-network'] },
+      ],
+      'm-2',
+      'm-2',
+    ]);
+    const all = await rows(t);
+    expect(all.every((x) => x.status === 'finished' && x.results.length === 3)).toBe(true);
+    // Before the fix this country never reached the floor of three vantages.
+    expect((await detailRow(t, 'y.example')).vantage[0]).toMatchObject({
+      suggestion: 'proven',
+      decision: 'suggest',
+      okNetworks: 3,
+    });
+    expect(await notedPool(t)).toMatchObject({
+      mode: 'topped_up',
+      eyeball: 2,
+      got: 3,
+      limit: 3,
+      needs: 3,
+    });
+  });
+
+  test('one probe in all: it is used, the names stay not judged, and the country page knows why', async () => {
+    const gp = poolGlobalping(0, 1);
+    __setVantageGlobalpingFactory(() => gp.client);
+    const { t } = await seed();
+    await tickAndDrain(t);
+    expect(gp.requests.map(firstAsk)).toEqual([
+      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
+      [{ country: 'IR', limit: 3 }],
+      'm-2',
+      'm-2',
+    ]);
+    // The floor is not lowered for one country.
+    expect((await detailRow(t, 'y.example')).vantage[0]).toMatchObject({
+      suggestion: null,
+      reason: 'not_enough_vantages',
+    });
+    expect(await notedPool(t)).toMatchObject({ mode: 'any', eyeball: 0, got: 1, needs: 3 });
+  });
+});
+
 describe('evidence and suggestions', () => {
   /** x is reset from every vantage; y and z work. */
   const blockX = (name: string): Outcome => (name === 'x.example' ? 'reset' : 'ok');
@@ -969,6 +1095,31 @@ describe('candidate names share the budget (docs/edges.md "Finding names")', () 
       ))!.countries?.find((x) => x.cc === 'IR')?.reading;
     expect(await reading('works.example')).toBe('ok');
     expect(await reading('blocked.example')).toBe('interference');
+    __setHuntDepsForTests(null);
+  });
+
+  test('a country short of home-network probes is topped up for candidate names too', async () => {
+    const { t } = await seed({ settings: { 'edge.sni.vantage.hourlyBudget': 30 } });
+    await candidates(t, ['works.example', 'also.example']);
+    const now = Date.now();
+    await t.mutation(internal.sniVantage.tick, { now });
+    await t.mutation(internal.sniVantage.tick, { now: now + 10 * 60_000 });
+    const gp = poolGlobalping(2, 3);
+    __setHuntDepsForTests({ globalping: () => gp.client, sleep: async () => undefined });
+    const batch = (await t.run((ctx) => ctx.db.query('sniHuntProbes').first()))!.batch;
+    await t.action(internal.sniHuntOps.countryBatch, { batch });
+    expect(gp.requests.map((q) => q.locations)).toEqual([
+      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
+      [
+        { country: 'IR', limit: 2, tags: ['eyeball-network'] },
+        { country: 'IR', limit: 1, tags: ['datacenter-network'] },
+      ],
+      'm-2',
+    ]);
+    const cand = await t.run(async (ctx) =>
+      (await ctx.db.query('sniCandidates').collect()).find((c) => c.name === 'works.example'),
+    );
+    expect(cand!.countries?.find((x) => x.cc === 'IR')?.reading).toBe('ok');
     __setHuntDepsForTests(null);
   });
 });

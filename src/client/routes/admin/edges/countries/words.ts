@@ -13,6 +13,7 @@
  *   handedWords                      what a member there is handed on one transport
  *   switchNotes                      what is off, and what that leaves the view without
  *   coverageNote / coverageLines     which outside probes answer from there, and why one went quiet
+ *   namePoolLines                    whether Globalping has enough probes there to judge a name
  *   addressListsLine / namesOnListsLine   what the watched allowlists say about the addresses, and
  *                                    how many of a transport's names the lists hold
  *   countryLabel / percent           display helpers
@@ -24,6 +25,7 @@ import type {
   CountryViewListener,
   CountryViewMeantFor,
   CountryViewName,
+  CountryViewNamePool,
   CountryViewSwitches,
   CountryViewTotals,
   ProbeSourceHealth,
@@ -558,6 +560,35 @@ export function coverageLines(
         : `${quietPart(s, health, now)}; an answer counts for ${window}.`,
     );
   }
+  return out;
+}
+
+// --- whether a name can be judged from there --------------------------------------------------
+
+/**
+ * How the newest name-check batch from there found its Globalping probes, in
+ * words (empty: nothing to say, or no batch yet). Too few home-network probes
+ * for a verdict: the checks also use data-centre ones. Too few probes at all:
+ * names checked from there stay not judged, and the page says why (the floor
+ * is not lowered for one country).
+ */
+export function namePoolLines(p: CountryViewNamePool | null | undefined): string[] {
+  if (!p) return [];
+  const out: string[] = [];
+  const needs = plural(p.needs, 'vantage');
+  if (p.mode === 'topped_up' && p.eyeball !== undefined)
+    out.push(
+      `Globalping has ${p.eyeball === 1 ? 'only one home-network probe' : `only ${p.eyeball} home-network probes`} here, fewer than the ${needs} a name verdict needs, so the name checks here also use data-centre probes.`,
+    );
+  else if (p.mode === 'any' && p.eyeball === 0)
+    out.push(
+      'Globalping has no home-network probe here, so the name checks here use data-centre probes.',
+    );
+  // Fewer probes than asked for: that is all there is (fewer than the limit is the setting).
+  if (p.got < p.needs && p.got < p.limit)
+    out.push(
+      `Globalping has ${p.got === 0 ? 'no probe' : p.got === 1 ? 'only one probe' : `only ${p.got} probes`} here and a name verdict needs ${needs}, so server names checked from here stay not judged on Globalping alone. The floor is not lowered for one country: so few probes cannot tell a blocked name from a broken probe or network.`,
+    );
   return out;
 }
 

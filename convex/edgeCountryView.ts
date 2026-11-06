@@ -45,6 +45,7 @@ import {
   type NewestAnswers,
 } from './lib/edges/country/coverage';
 import { enabledSources } from './probes';
+import { readNamePool } from './lib/edges/sni/namePool';
 import { marksByEdge } from './countryListEdges';
 import { evidenceLists, storedFactsOf, type StoredFact } from './lib/edges/lists/facts';
 import {
@@ -870,6 +871,8 @@ export const country = internalQuery({
       // Where new keys on Automatic of members who chose this country go
       // (docs/edges.md "Exit location by country"); counts no member.
       exits: await countryExitLabels(ctx.db, code),
+      // How the newest name-check batch from here found its Globalping probes.
+      namePool: await readNamePool(ctx.db, code),
     };
   },
 });

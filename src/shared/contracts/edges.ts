@@ -2016,6 +2016,23 @@ export const CountryViewCoverage = z.object({
 export type CountryViewCoverage = z.infer<typeof CountryViewCoverage>;
 const noCoverage = { asked: false, windowMs: 0, sources: [] };
 
+/**
+ * How a name-check batch found its Globalping probes in one country:
+ * `eyeball` home-network probes only, `topped_up` with data-centre ones (too
+ * few home-network probes for a verdict), `any` probe. `eyeball` = the
+ * home-network probes the tagged ask got, `got` = the probes the batch ran
+ * on, `limit` = asked for, `needs` = the vantages a verdict needs.
+ */
+export const CountryViewNamePool = z.object({
+  at: z.number(),
+  mode: z.enum(['eyeball', 'topped_up', 'any']),
+  eyeball: z.number().optional(),
+  got: z.number(),
+  limit: z.number(),
+  needs: z.number(),
+});
+export type CountryViewNamePool = z.infer<typeof CountryViewNamePool>;
+
 /** `GET countries/summary`: every listed country with its totals. */
 export const CountryViewSummaryResponse = z.object({
   generatedAt: z.number(),
@@ -2061,6 +2078,11 @@ export const CountryViewResponse = z.object({
    * Automatic of members who chose this country go, in order. No member counts.
    */
   exits: z.array(z.object({ code: z.string(), label: z.string() })).default([]),
+  /**
+   * How the newest name-check batch from here found its Globalping probes
+   * (lib/edges/sni/namePool.ts): null until one ran.
+   */
+  namePool: CountryViewNamePool.nullable().default(null),
   sources: z.array(ProbeSourceHealth).default([]),
 });
 export type CountryViewResponse = z.infer<typeof CountryViewResponse>;

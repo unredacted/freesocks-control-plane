@@ -40,6 +40,7 @@
     nameWhy,
     listsLine,
     meantForWords,
+    namePoolLines,
     namesOnListsLine,
     percent,
     probesLine,
@@ -108,6 +109,7 @@
       ? []
       : ['This country is not on the censored-country list, so nothing is checked from here.']),
     ...switchNotes(v.switches, v.listed?.nameChecksRun ?? false),
+    ...(v.listed?.nameChecksRun ? namePoolLines(v.namePool) : []),
   ]}
   <Card class="mb-6">
     <CardContent class="space-y-1 py-4 text-sm">

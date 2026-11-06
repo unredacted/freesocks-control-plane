@@ -3476,6 +3476,33 @@ volunteers' home connections. These rules are built in, not settings:
   turned off, a country or a source taken out, or a freeze in between settles the queued rows
   (`gate_off`, `gate_country`, `gate_source`, `gate_maintenance`) without dialling anything.
 
+**Which probes** (Globalping; `lib/edges/probes/nameCheck.ts` `createFirstNameMeasurement`).
+A batch's first measurement picks the probes; every later one reuses them. With
+`edge.probe.preferEyeball` on (the default) it asks for home-network probes (`eyeball-network`)
+first, and reads how many it got from the create answer (`probesCount`):
+
+| Home-network probes there                                 | The batch runs on                                                                                                                       | Extra tests                                    |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| at least `minVantages` (or the limit, when that is lower) | those, as before                                                                                                                        | none                                           |
+| fewer, but some                                           | a second ask: every home-network probe plus data-centre ones (`datacenter-network`) up to `perCountryLimit`; the two tags never overlap | the short first ask (fewer than `minVantages`) |
+| none (Globalping answers `422 no_probes_found`)           | a second ask for any probe, up to `perCountryLimit`                                                                                     | none (the refusal costs nothing)               |
+
+A top-up that gains nothing, or is refused, keeps the first measurement. Without a
+`probesCount` (an older API) nothing is topped up. Countries with enough home-network probes cost
+exactly what they did. A short country pays for its short first ask: at most `minVantages` - 1
+tests a batch beyond what the planner reserves (`hourlyBudget` x `perCountryLimit`), and the
+Globalping account reading counts what was really spent.
+
+Where a country has **fewer probes in all** than `minVantages`, the batch runs on what there is
+and its names stay not judged: the floor is not lowered for one country, because so few probes
+on so few networks cannot tell a blocked name from a broken probe or network (another source,
+such as RIPE Atlas, can still add vantages: a batch's sources are counted together). The newest
+batch's pool is noted per country (`appState` `sniVantage:namePool:<CC>`, `lib/edges/sni/namePool.ts`),
+and the country page says when the checks there use data-centre probes and when names cannot
+be judged there on Globalping alone. Measured on 2026-11-05: AE has two home-network probes
+(topped up, so it can now be judged); MM has one probe in all (stays not judged, and says so).
+The same applies to the real-site checks of candidate names (§ Finding names).
+
 **Residual risk** (accepted by turning a country on; the page says so next to the switch):
 
 - Whoever runs a vantage, which can be the censor, sees the address **and the name**. Globalping
