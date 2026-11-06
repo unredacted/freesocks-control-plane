@@ -1093,6 +1093,38 @@ backend: it is issued there even while the backend is out of the issuance pool (
 Backends), which only member keys skip, so a node is taken live again on a backend that issues
 no keys.
 
+### A node serving an extra mode
+
+A direct node may serve a mode BESIDE its own (`convex/nodeExtraModes.ts`,
+`lib/backend/extraModes.ts`): today one kind, a Hysteria 2 transport (`hysteria` / `direct`, UDP 443) on a direct REALITY node (TCP 443), for `privacy-hysteria`. Each mode's group still holds
+exactly its own transport; the node's active transport set is its own plus the extra ones; and
+the extra mode has its own stage, evidence and address, so nothing about it ever closes the
+node's own mode.
+
+`POST {slug}/nodes/intents/{id}/extra-mode {mode, action: add | firewall-confirmed | remove}`
+(the node page's "Also serves" card). `add` is refused when the mode is not a direct Hysteria one
+the backend is set up for (`servers.extra_mode_unsupported`, `servers.mode_unknown`), when the
+node is not direct (`servers.extra_mode_node_not_direct`), when it is the node's own mode or
+already served (`servers.extra_mode_present`), when the mode's backup mode
+(`connectionModes.fallbackModeSlug`) is not the node's own (`servers.extra_mode_fallback_missing`),
+when FCP cannot read the transport's certificate (`servers.extra_mode_certificate`), when both
+transports listen on the same (port, protocol) (`servers.port_taken`), and when the Hysteria
+server name is one of the REALITY names (`servers.extra_mode_name_collision`: both addresses are
+remarked `<node> | <server name>`).
+
+| Stage              | What happens                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `waiting_firewall` | The (port, protocol) is listed for the node's firewall (`firewall.ports`, `pending`) and nothing else changes. The node role's applied report confirms it only by naming exactly that (port, protocol): `443/tcp` never confirms `443/udp`, so a role that predates protocols keeps it waiting. A node no role runs (adopted) is confirmed by an admin (`firewall-confirmed`). Audit `servers.node.extra_mode_firewall`.                                                                                                                                                                                                                                                                                                                                                            |
+| `activating`       | The node reconcile turns the transport on for the node. The run writes the node's address for it DISABLED (`<node> \| <server name>`, the origin address, the transport's port, ALPN `h3`, security TLS, `pinnedPeerCertSha256` = the observed certificate pin, and the `mapper` of `lib/backend/hostMapper.ts` that makes every format verify by pin), enables it, and rehearses: the backend's bodies for the mode's OWN test credential (in the extra mode's group, never the node's own) must carry the address, pinned, in links, sing-box and Clash (`lib/hysteriaPins.ts`); where the client check service is configured, a real sing-box client must connect through it with the stored public-key pin. A failure turns the address off again (`servers.rehearsal_failed`). |
+| `serving`          | The address is on, bound to `evidence.revision`: the transport, the certificate identity (`hysteriaAuth.digest`: certificate, server name, ALPN, Salamander and its password) and the address fields. Any change of them closes ONLY this mode (address off, back to `activating`, `servers.extra_mode_drifted`, audit `servers.node.extra_mode_closed`) until a new rehearsal passes. A lost transport or certificate closes it the same way.                                                                                                                                                                                                                                                                                                                                      |
+| `removing`         | Address off, then deleted, then the transport is dropped from the node. A retirement removes the extra addresses with the node's own.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+
+One run per mode at a time (a lease on the entry); a kick while one runs asks for another when
+it ends. Every node reconcile kicks the runs when it ends. The extra address is never in the
+node's `addressUuids`, so the node's own address handling never touches it. Audit:
+`admin.servers.extra_mode.add|remove`, `servers.node.extra_mode_serving|closed|rehearsal_failed|removed`
+(mode slug, port and protocol, a code word; never an address or a pin).
+
 ### Node registration (contract v2)
 
 Routes on `{slug}/nodes/by-name/{name}` (`convex/httpServers.ts`; a former name resolves through

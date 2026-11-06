@@ -452,6 +452,24 @@ export interface ObservedAddress {
   configProfileInboundUuid: string | null;
   /** Node uuids the Host is pinned to (empty = every node serving the inbound). */
   nodeUuids: string[];
+  /** The certificate pin the Host hands out (hex SHA-256 of the certificate DER), if any. */
+  pinnedPeerCertSha256?: string | null;
+  /** The Host's per-client rewrite rules, as canonical JSON (null without any). */
+  mapperJson?: string | null;
+}
+
+/** One rewrite a backend Host applies to the config it generates for a client format. */
+export type HostMapperOp =
+  | { op: 'set'; to: string; value: unknown }
+  | { op: 'unset'; to: string }
+  | { op: 'copy'; from: string; to: string };
+
+/** A Host's per-client rewrites (Remnawave 3.x `mapper`). */
+export interface HostMapper {
+  xrayJson?: HostMapperOp[];
+  mihomo?: HostMapperOp[];
+  base64?: HostMapperOp[];
+  singbox?: HostMapperOp[];
 }
 
 export interface ObservedModeGroup {
@@ -522,6 +540,10 @@ export interface BackendAddressFields {
   inbound?: { configProfileUuid: string; configProfileInboundUuid: string };
   /** Node uuids the Host is pinned to; empty = every node serving the inbound. */
   nodeUuids?: string[];
+  /** A certificate pin (hex SHA-256 of the certificate DER) clients verify the server by. */
+  pinnedPeerCertSha256?: string | null;
+  /** Per-client rewrites of the generated config; null clears them. */
+  mapper?: HostMapper | null;
 }
 
 export type PanelHostCreate = BackendAddressFields & {

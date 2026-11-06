@@ -330,6 +330,16 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.profile.transition_released': ['backendSlug', 'held'],
   'servers.node.settings': ['backendSlug', 'name', 'change'],
   'servers.node.direct_confirmed': ['backendSlug', 'name'],
+  // A node serving an extra mode beside its own (nodeExtraModes.ts): the mode
+  // slug, the (port, protocol) its firewall opens, and a code word. Never an
+  // address, a certificate or a pin.
+  'admin.servers.extra_mode.add': ['backendSlug', 'name', 'mode', 'port', 'protocol'],
+  'admin.servers.extra_mode.remove': ['backendSlug', 'name', 'mode'],
+  'servers.node.extra_mode_firewall': ['backendSlug', 'name', 'mode', 'by', 'port', 'protocol'],
+  'servers.node.extra_mode_serving': ['backendSlug', 'name', 'mode', 'code'],
+  'servers.node.extra_mode_closed': ['backendSlug', 'name', 'mode', 'code'],
+  'servers.node.extra_mode_rehearsal_failed': ['backendSlug', 'name', 'mode', 'code'],
+  'servers.node.extra_mode_removed': ['backendSlug', 'name', 'mode'],
   // `kept`: how many addresses it already had the approval took it live on (no setup run).
   'servers.node.approved': ['backendSlug', 'name', 'mode', 'kept'],
   'servers.node.live': ['backendSlug', 'name', 'mode'],

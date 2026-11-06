@@ -233,11 +233,15 @@ export const context = internalQuery({
       relay: relay ? { _id: relay._id, deleting: !!relay.deleting } : null,
       // A direct node's own addresses (one per family name): recorded, or
       // under FCP's remark on its own transport.
-      addresses: addressesOf(
-        intent,
-        hosts,
-        (await addressTransportsOf(ctx, intent.backendServerId))(intent),
-      ),
+      // Plus the one address of each mode it served beside its own.
+      addresses: [
+        ...addressesOf(
+          intent,
+          hosts,
+          (await addressTransportsOf(ctx, intent.backendServerId))(intent),
+        ),
+        ...hosts.filter((h) => (intent.extraModes ?? []).some((m) => m.hostUuid === h.hostUuid)),
+      ],
       node,
       openOps,
     };

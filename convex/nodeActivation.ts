@@ -681,8 +681,10 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
     .query('edgeTestCredentials')
     .withIndex('by_intent', (q) => q.eq('nodeIntentId', intentId))
     .collect();
+  // An extra mode's credential is in that mode's group: never the node's own.
+  const own = rows.filter((r) => !r.modeSlug);
   const reusable =
-    rows.find(
+    own.find(
       (r) =>
         r.removal === 'pending' &&
         r.expiresAt > now + 60_000 &&
@@ -691,7 +693,7 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
         !!r.subscriptionUrl,
     ) ?? null;
   // An issuance whose answer was lost: the row holds no backend identity.
-  const unresolved = rows.find((r) => r.removal === 'pending' && !r.backendUserId) ?? null;
+  const unresolved = own.find((r) => r.removal === 'pending' && !r.backendUserId) ?? null;
   const hostname = originHostnameOf(intent, setup);
   const transport = transportFor(setup, modeSlug(intent));
   return {

@@ -22,7 +22,14 @@ import { parseProxyUri, type ParsedUri } from '../render/uri';
 type Obj = Record<string, unknown>;
 
 /** Why an engine was left out for a link. */
-export type EngineSkip = 'no_xhttp' | 'vless_encryption' | 'unsupported_transport' | 'no_codec';
+export type EngineSkip =
+  | 'no_xhttp'
+  | 'vless_encryption'
+  | 'unsupported_transport'
+  | 'no_codec'
+  // A pinned Hysteria link and no public-key pin to give sing-box (the link's
+  // certificate pin is another digest and is never converted).
+  | 'no_pin';
 
 export interface LinkOutbounds {
   proto: ListenerProto;
@@ -223,8 +230,20 @@ function xrayStream(c: Common): Obj {
   return out;
 }
 
-/** The outbounds for one share link, or null when it is not a link FCP renders. */
-export function outboundsForLink(link: string): LinkOutbounds | null {
+/**
+ * The outbounds for one share link, or null when it is not a link FCP renders.
+ *
+ * A Hysteria 2 link's `pinSHA256` is the certificate's digest; sing-box pins
+ * the PUBLIC KEY's (`certificate_public_key_sha256`), another value that can
+ * never be derived from the link. The caller passes it from what FCP observed
+ * on the profile (`hysteriaSpkiB64`, the stored `hysteriaAuth.spkiB64` of the
+ * transport the link points at); a pinned link without it gets no sing-box
+ * outbound (`no_pin`), never one that trusts anyone.
+ */
+export function outboundsForLink(
+  link: string,
+  opts: { hysteriaSpkiB64?: readonly string[] } = {},
+): LinkOutbounds | null {
   const u = parseProxyUri(link.trim().split(/\r?\n/)[0] ?? '');
   if (!u) return null;
   const p = u.params;
@@ -343,7 +362,22 @@ export function outboundsForLink(link: string): LinkOutbounds | null {
 
   if (scheme === 'hysteria2' || scheme === 'tuic') {
     const c = common('udp', 'tls');
-    const tls = singboxTls(c);
+    let tls = singboxTls(c);
+    if (scheme === 'hysteria2') {
+      const pins = (opts.hysteriaSpkiB64 ?? []).filter(Boolean);
+      if (pins.length > 0) {
+        const { insecure: _insecure, ...rest } = (tls ?? {}) as Obj;
+        tls = { ...rest, enabled: true, certificate_public_key_sha256: [...pins] };
+      } else if (p.get('pinSHA256')) {
+        return {
+          proto: { protocol: 'hysteria2', streamTransport: 'udp', security: 'tls' },
+          reality: false,
+          ...base,
+          outbounds: {},
+          skipped: { 'sing-box': 'no_pin', xray: 'no_codec', mihomo: 'no_codec' },
+        };
+      }
+    }
     const outbound =
       scheme === 'hysteria2'
         ? compact({

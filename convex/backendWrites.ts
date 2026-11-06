@@ -55,12 +55,27 @@ import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
 import { assertClaimable, claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
 import { inboundPortProtocol } from './lib/edges/inboundMapping';
+import { hostMapperJson } from './lib/backend/hostMapper';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
 };
 
 const nullable = v.union(v.string(), v.null());
+const hostMapperOps = v.array(
+  v.union(
+    v.object({ op: v.literal('set'), to: v.string(), value: v.any() }),
+    v.object({ op: v.literal('unset'), to: v.string() }),
+    v.object({ op: v.literal('copy'), from: v.string(), to: v.string() }),
+  ),
+);
+/** A Host's per-client rewrites (Remnawave 3.x `mapper`); null clears them. */
+const hostMapperV = v.object({
+  xrayJson: v.optional(hostMapperOps),
+  mihomo: v.optional(hostMapperOps),
+  base64: v.optional(hostMapperOps),
+  singbox: v.optional(hostMapperOps),
+});
 const hostFields = {
   remark: v.optional(v.string()),
   address: v.optional(v.string()),
@@ -76,6 +91,8 @@ const hostFields = {
   tag: v.optional(nullable),
   inboundUuid: v.optional(v.string()),
   nodeUuids: v.optional(v.array(v.string())),
+  pinnedPeerCertSha256: v.optional(nullable),
+  mapper: v.optional(v.union(hostMapperV, v.null())),
 };
 // Who asked: an admin, or (no admin) the FCP run that made the write, as a
 // short `<kind>:<id>` the audit names it by (an activation, a node's address
@@ -276,6 +293,11 @@ export const requestAddressUpdate = internalMutation({
     // enumeration has no "unset"), and the backend reads it back as that word;
     // expecting null here would never be observed and the claim never released.
     if (expected.securityLayer === null) expected.securityLayer = 'DEFAULT';
+    // A mapper is read back as canonical JSON (an object never compares equal).
+    if ('mapper' in expected) {
+      expected.mapperJson = hostMapperJson(expected.mapper);
+      delete expected.mapper;
+    }
     if (inboundUuid !== undefined) {
       fields.inbound = await inboundBinding(ctx, sid, inboundUuid);
       expected.configProfileInboundUuid = inboundUuid;

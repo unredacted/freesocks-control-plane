@@ -324,6 +324,10 @@ const observedHost = v.object({
   configProfileUuid: v.union(v.string(), v.null()),
   configProfileInboundUuid: v.union(v.string(), v.null()),
   nodeUuids: v.array(v.string()),
+  // A Hysteria address's pin and per-client rewrites (canonical JSON), so a
+  // write of them is settled against what the backend shows.
+  pinnedPeerCertSha256: v.optional(v.union(v.string(), v.null())),
+  mapperJson: v.optional(v.union(v.string(), v.null())),
 });
 const observedProfile = v.object({
   changeToken: v.string(),

@@ -715,10 +715,42 @@ export const NodeIntentView = z.object({
       since: z.string().nullable().default(null),
     })
     .nullable(),
+  /**
+   * Modes the node serves beside its own (docs/servers.md "A node serving an
+   * extra mode"), each with its own stage: `waiting_firewall` (the node's
+   * firewall must let `firewall` in first; `confirmedBy` says who confirms),
+   * `activating` (its address is being made and rehearsed), `serving`, or
+   * `removing`. `checked`: how its last rehearsal proved it (`client`: a real
+   * client connected; `rehearsal`: the backend's bodies only).
+   */
+  extraModes: z
+    .array(
+      z.object({
+        slug: z.string(),
+        state: z.enum(['waiting_firewall', 'activating', 'serving', 'removing']),
+        code: z.string().nullable(),
+        firewall: z.object({
+          port: z.number(),
+          protocol: FirewallProtocol,
+          confirmedBy: FirewallConfirmer,
+          confirmed: z.boolean(),
+        }),
+        checked: z.enum(['client', 'rehearsal']).nullable(),
+        since: z.string(),
+      }),
+    )
+    .default([]),
   registeredAt: z.string(),
   updatedAt: z.string(),
 });
 export type NodeIntentView = z.infer<typeof NodeIntentView>;
+
+/** `POST {slug}/nodes/intents/{id}/extra-mode`: add, confirm the firewall of, or remove an extra mode. */
+export const ExtraModeRequest = z.object({
+  mode: z.string().min(1).max(40),
+  action: z.enum(['add', 'firewall-confirmed', 'remove']),
+});
+export type ExtraModeRequest = z.infer<typeof ExtraModeRequest>;
 /** `carried`: tested edge addresses whose confirmations the adoption kept (a node Edges protect). */
 export const AdoptNodeResult = z.object({
   intentId: z.string(),
