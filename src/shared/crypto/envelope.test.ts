@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest';
 import { createHash } from 'node:crypto';
-import { fingerprintB64Url, routePolicy, sha256HexOfB64Url } from './envelope';
+import { outboundPolicy, fingerprintB64Url, routePolicy, sha256HexOfB64Url } from './envelope';
 
 /** The EXACT form scripts/hpke-fingerprint.mjs publishes, computed independently
  *  with node:crypto. If fingerprintB64Url (crypto.subtle) ever diverges from this,
@@ -100,7 +100,24 @@ describe('routePolicy (member routes sealed 2026-09 + intentionally unsealed)', 
       request: 'seal',
       response: 'reveal',
       plainWithReveal: true,
+      sealOnlyWith: ['region', 'countryCode'],
     });
+  });
+
+  test('outboundPolicy: sealed only with a country in the body, else the reveal-only shape', () => {
+    const mirror = routePolicy('/api/v1/mirror/request', 'POST')!;
+    const revealOnly = { request: 'plain', response: 'reveal' };
+    expect(outboundPolicy(mirror, { region: 'IR' })).toBe(mirror);
+    expect(outboundPolicy(mirror, { countryCode: 'IR' })).toBe(mirror);
+    expect(outboundPolicy(mirror, { countryCode: null })).toEqual(revealOnly);
+    expect(outboundPolicy(mirror, {})).toEqual(revealOnly);
+    expect(outboundPolicy(mirror, undefined)).toEqual(revealOnly);
+    const regen = routePolicy('/api/v1/account/regenerate', 'POST')!;
+    expect(outboundPolicy(regen, { confirm: true, location: 'x' })).toEqual(revealOnly);
+    expect(outboundPolicy(regen, { confirm: true, region: 'ZZ' })).toBe(regen);
+    // A route without the field list is unchanged.
+    const login = routePolicy('/api/v1/auth/account-login', 'POST')!;
+    expect(outboundPolicy(login, {})).toBe(login);
   });
 
   test('device revoke and the passkey management routes stay unsealed by design', () => {

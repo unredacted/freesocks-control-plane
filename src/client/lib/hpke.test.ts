@@ -89,7 +89,7 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
     const path = '/api/v1/mirror/request';
     const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify({ region: 'IR' }));
     expect(out).toBeDefined();
-    expect(out!.policy).toEqual({ request: 'seal', response: 'reveal', plainWithReveal: true });
+    expect(out!.policy).toMatchObject({ request: 'seal', response: 'reveal' });
     expect(out!.header).toBeUndefined();
     expect(out!.body).not.toContain('"region"');
     const wire = JSON.parse(out!.body!);
@@ -114,6 +114,16 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
       publicUrl: string;
     };
     expect(opened.publicUrl).toBe('https://bucket.example/abc');
+  });
+
+  test('POST /api/v1/mirror/request with no country: the reveal-only shape a backend that predates sealing it can read', async () => {
+    const path = '/api/v1/mirror/request';
+    const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify({ countryCode: null }));
+    expect(out!.policy).toEqual({ request: 'plain', response: 'reveal' });
+    const body = JSON.parse(out!.body!) as Record<string, unknown>;
+    expect(isSealedWire(body)).toBe(false);
+    expect(body.countryCode).toBeNull();
+    expect(typeof body[RESP_EPH_FIELD]).toBe('string');
   });
 
   test('routes without a policy entry are left plaintext (intentionally unsealed)', async () => {

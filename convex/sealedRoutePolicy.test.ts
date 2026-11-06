@@ -193,15 +193,20 @@ describe('sealed() wrappers vs the envelope.ts policy table', () => {
       request: 'seal',
       response: 'reveal',
       plainWithReveal: true,
+      sealOnlyWith: ['region', 'countryCode'],
     });
   });
 
   test('the routes that may carry a member country seal the request (dual-mode, not required)', () => {
-    for (const path of ['/api/v1/account/regenerate', '/api/v1/mirror/request'])
+    for (const [path, fields] of [
+      ['/api/v1/account/regenerate', ['region']],
+      ['/api/v1/mirror/request', ['region', 'countryCode']],
+    ] as const)
       expect(routePolicy(path, 'POST'), path).toEqual({
         request: 'seal',
         response: 'reveal',
         plainWithReveal: true,
+        sealOnlyWith: fields,
       });
   });
 });
