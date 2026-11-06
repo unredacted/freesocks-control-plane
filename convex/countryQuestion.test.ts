@@ -14,6 +14,7 @@ import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import { signValue } from './lib/cookies';
+import { sha256Hex } from './lib/crypto';
 import {
   bytesToB64Url,
   isSealedWire,
@@ -346,5 +347,121 @@ describe('the answer stays out of the audit log', () => {
       expect(text, r.action).not.toMatch(/"(IR|RU)"/);
       expect(text, r.action).not.toContain('sniRegion');
     }
+  });
+});
+
+describe('sealing posture (FS_HPKE_REQUIRED) on the routes that may carry a country', () => {
+  test('a sealed request with no response ephemeral is refused: its answer would go back in plaintext', async () => {
+    vi.stubEnv('FS_HPKE_REQUIRED', 'true');
+    const w = await world({ mode: 'freedom-ws' });
+    // Sealed, but prepared as if the response were plain: no fsRespEph inside.
+    const prep = await clientPrepareRequest({
+      serverPub: w.kp.publicKey,
+      serverKid: w.kid,
+      method: 'POST',
+      path: REGEN,
+      policy: { request: 'seal', response: 'plain' },
+      bodyObj: { confirm: true },
+    });
+    const res = await w.t.fetch(REGEN, {
+      method: 'POST',
+      headers: { cookie: w.cookie, ...JSON_HDR },
+      body: JSON.stringify(prep.body),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+    expect(await w.t.run((ctx) => ctx.db.query('subscriptions').collect())).toHaveLength(0);
+  });
+
+  test("an older client's reveal-only shape still works; a country in it is still refused", async () => {
+    vi.stubEnv('FS_HPKE_REQUIRED', 'true');
+    const w = await world({ mode: 'freedom-ws' });
+    const older = async (path: string, bodyObj: Record<string, unknown>) => {
+      const prep = await clientPrepareRequest({
+        serverPub: w.kp.publicKey,
+        serverKid: w.kid,
+        method: 'POST',
+        path,
+        policy: { request: 'plain', response: 'reveal' },
+        bodyObj,
+      });
+      return {
+        prep,
+        res: await w.t.fetch(path, {
+          method: 'POST',
+          headers: { cookie: w.cookie, ...JSON_HDR },
+          body: typeof prep.body === 'string' ? prep.body : JSON.stringify(prep.body),
+        }),
+      };
+    };
+    const ok = await older(REGEN, { confirm: true });
+    expect(ok.res.status).toBe(200);
+    expect(ok.res.headers.get('x-fs-sealed')).toBe('1');
+    const opened = (await clientOpenResponse({
+      serverKid: w.kid,
+      method: 'POST',
+      path: REGEN,
+      respEphPriv: ok.prep.respEphPriv!,
+      wire: await ok.res.json(),
+    })) as { subscriptionUrl: string };
+    expect(opened.subscriptionUrl).toBeTruthy();
+    for (const [path, body] of [
+      [REGEN, { confirm: true, region: 'IR' }],
+      [MIRROR, { countryCode: 'IR' }],
+    ] as const) {
+      const { res } = await older(path, body);
+      expect(res.status, path).toBe(400);
+      expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+    }
+    // Plaintext with no response ephemeral: refused as before.
+    const bare = await w.t.fetch(REGEN, {
+      method: 'POST',
+      headers: { cookie: w.cookie, ...JSON_HDR },
+      body: JSON.stringify({ confirm: true }),
+    });
+    expect(bare.status).toBe(400);
+  });
+});
+
+describe('scopes', () => {
+  test('a token without subscription:write cannot save an answer through a mirror request', async () => {
+    const w = await world({ mode: 'freedom-ws' });
+    await sealedPost(w, REGEN, { confirm: true });
+    const plaintext = `fsv1_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    await w.t.run(async (ctx) => {
+      const adminId = await ctx.db.insert('adminUsers', {
+        username: 'op',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('apiTokens', {
+        name: 'member-token',
+        tokenHash: await sha256Hex(plaintext),
+        tokenPrefix: plaintext.slice(0, 12),
+        createdByAdminId: adminId,
+        scopes: ['account:write'],
+        subjectType: 'user',
+        subjectUserId: w.userId,
+        updatedAt: Date.now(),
+      });
+    });
+    const prep = await clientPrepareRequest({
+      serverPub: w.kp.publicKey,
+      serverKid: w.kid,
+      method: 'POST',
+      path: MIRROR,
+      policy: routePolicy(MIRROR, 'POST')!,
+      bodyObj: { region: 'IR' },
+    });
+    const res = await w.t.fetch(MIRROR, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${plaintext}`, ...JSON_HDR },
+      body: JSON.stringify(prep.body),
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: { code: 'auth.forbidden' } });
+    expect(await currentChoice(w.t, w.userId)).toBeNull();
+    expect(await dayCount(w.t, w.userId)).toBe(0);
   });
 });

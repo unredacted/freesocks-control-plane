@@ -99,6 +99,7 @@ describe('routePolicy (member routes sealed 2026-09 + intentionally unsealed)', 
     expect(routePolicy('/api/v1/mirror/request', 'POST')).toEqual({
       request: 'seal',
       response: 'reveal',
+      plainWithReveal: true,
     });
   });
 

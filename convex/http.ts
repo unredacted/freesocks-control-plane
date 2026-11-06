@@ -63,6 +63,7 @@ import {
   adminSessionProbe,
   errorJson,
   guard,
+  hasScope,
   ipHashSubject,
   json,
   newRequestId,
@@ -1579,7 +1580,6 @@ http.route({
     const answer = await takeRegionAnswer(ctx, req, member.userId, body.region);
     if (answer.kind === 'refused') return answer.response;
     const region = answer.kind === 'answer' ? answer.region : undefined;
-    let regionApplied = false;
     const res = await withIssuanceSaga(
       ctx,
       member.userId,
@@ -1591,14 +1591,20 @@ http.route({
           location,
           region,
         });
-        const { regionApplied: applied, ...rest } = result;
-        regionApplied = applied;
+        const { regionApplied: _applied, ...rest } = result;
         return json(rest);
       },
     );
-    // Only an answer that landed counts against the day's allowance.
-    if (answer.kind === 'answer' && answer.counted && !regionApplied)
-      await releaseCountryChange(ctx, member.userId);
+    // Only an answer that landed counts against the day's allowance. Judged by
+    // what the member's current key holds now, not by whether the request
+    // finished: a step that fails after the key was committed keeps the charge.
+    if (answer.kind === 'answer' && answer.counted) {
+      const now = await ctx.runQuery(internal.memberCountry.answerCheck, {
+        userId: member.userId,
+        region: answer.region,
+      });
+      if (now.currentChoice !== answer.region) await releaseCountryChange(ctx, member.userId);
+    }
     return res;
   }),
 });
@@ -2243,6 +2249,14 @@ http.route({
       );
     }
     const body = await readJson<{ countryCode?: string | null; region?: string | null }>(req);
+    // Saving the answer changes the key's delivery: the account card's scope.
+    if (
+      body.region !== undefined &&
+      body.region !== null &&
+      member.source === 'token' &&
+      !hasScope(member.scopes, 'subscription:write')
+    )
+      return errorJson('auth.forbidden', 'This token cannot change where you connect from', 403);
     // A country the member picked never crosses the CDN in the clear: a
     // plaintext host hint is refused like a plaintext answer (docs/privacy.md).
     if (typeof body.countryCode === 'string' && !requestWasSealed(req))
