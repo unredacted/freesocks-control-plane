@@ -9,14 +9,21 @@
  *   links    `hysteria2://` / `hy2://`: `pinSHA256` is an expected certificate
  *            pin, and `insecure` is absent or `0`.
  *   clash    `type: hysteria2`: `fingerprint` is an expected certificate pin,
- *            and `skip-cert-verify` is not true. An entry with neither is
- *            CA-only, which is refused as well.
+ *            and `skip-cert-verify` is off as Mihomo reads it (its decoder is
+ *            weakly typed: `1`, `"true"`, `"t"` all switch verification off).
+ *            An entry with neither is CA-only, which is refused as well.
  *   singbox  `type: hysteria2`: `tls.certificate_public_key_sha256` is a
  *            non-empty list of expected PUBLIC-KEY pins, `tls.insecure` is not
  *            true, and no `tls.certificate` / `certificate_path` overrides it.
  *   xray     `protocol: hysteria` (an object or an array of configs): every
  *            value of `tlsSettings.pinnedPeerCertSha256` is an expected
- *            certificate pin, and `allowInsecure` is not true.
+ *            certificate pin, and `allowInsecure` is not set.
+ *
+ * Structured bodies are read by their parser, never by their text: JSON and
+ * YAML can spell `hysteria2` with escapes. A body whose shape is no single
+ * format (Clash proxies beside outbounds; sing-box `type` beside Xray
+ * `protocol` markers) is not guessed at: if anything in it, parsed, names
+ * Hysteria, it is unreadable.
  *
  * `pinHex` (certificate DER) and `spkiB64` (public key) are different digests,
  * both observed on the profile (`hysteriaAuth`); neither is derived from the
@@ -28,6 +35,7 @@
  */
 import YAML from 'yaml';
 import { decodeLinkList } from './edges/render/links';
+import { decodeBase64Loose } from './edges/render/base64';
 import { parseProxyUri } from './edges/render/uri';
 import { normalizePinHex } from './backend/hysteriaCert';
 
@@ -66,6 +74,33 @@ const truthy = (v: string | null) => v !== null && v !== '' && v !== '0' && v !=
 /** Something in the body that says Hysteria, whatever its format. */
 export const MENTIONS_HYSTERIA = /hysteria|hy2:\/\//i;
 
+/** Whether a parsed value names Hysteria anywhere: keys, values, binary scalars. */
+function deepMentions(v: unknown): boolean {
+  if (typeof v === 'string') return MENTIONS_HYSTERIA.test(v);
+  if (v instanceof Uint8Array) return MENTIONS_HYSTERIA.test(new TextDecoder().decode(v));
+  if (Array.isArray(v)) return v.some(deepMentions);
+  if (v instanceof Map)
+    return [...v.entries()].some(([k, x]) => deepMentions(k) || deepMentions(x));
+  if (isObj(v)) return Object.entries(v).some(([k, x]) => deepMentions(k) || deepMentions(x));
+  return false;
+}
+
+/**
+ * A flag as Mihomo decodes it (weak typing): off only when absent, false,
+ * zero, or a string strconv.ParseBool reads as false. Anything else, an
+ * unparseable string included, counts as on.
+ */
+function mihomoOn(v: unknown): boolean {
+  if (v === undefined || v === null || v === false || v === 0) return false;
+  if (typeof v === 'string') return !['0', 'f', 'F', 'false', 'FALSE', 'False'].includes(v);
+  return true;
+}
+
+/** A strictly typed flag (sing-box, Xray): any value but false switches it on. */
+const strictOn = (v: unknown) => v !== undefined && v !== null && v !== false;
+
+const kindOf = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
+
 function pinVerdict(values: readonly string[], expected: readonly string[]): HysteriaTrust {
   if (values.length === 0) return 'no_pin';
   return values.every((v) => expected.includes(v)) ? 'pinned' : 'wrong_pin';
@@ -103,7 +138,7 @@ function scanClash(doc: Obj, pins: ExpectedPins): HysteriaScan {
   const entries: HysteriaEntry[] = [];
   let unreadable = false;
   for (const p of Array.isArray(doc.proxies) ? doc.proxies : []) {
-    if (!isObj(p) || String(p.type ?? '').toLowerCase() !== 'hysteria2') continue;
+    if (!isObj(p) || kindOf(p.type) !== 'hysteria2') continue;
     if (typeof p.name !== 'string' || typeof p.server !== 'string') {
       unreadable = true;
       continue;
@@ -115,7 +150,7 @@ function scanClash(doc: Obj, pins: ExpectedPins): HysteriaScan {
       port: Number(p.port),
       sni: typeof p.sni === 'string' ? p.sni : null,
       // Verification switched off is never a pin, whatever else the entry says.
-      trust: p['skip-cert-verify'] === true ? 'insecure' : pinVerdict(fp ? [fp] : [], pins.pinHex),
+      trust: mihomoOn(p['skip-cert-verify']) ? 'insecure' : pinVerdict(fp ? [fp] : [], pins.pinHex),
     });
   }
   return { format: 'clash', entries, unreadable };
@@ -124,7 +159,7 @@ function scanClash(doc: Obj, pins: ExpectedPins): HysteriaScan {
 function singboxTrust(o: Obj, pins: ExpectedPins): HysteriaTrust {
   const tls = isObj(o.tls) ? o.tls : null;
   if (!tls) return 'no_pin';
-  if (tls.insecure === true) return 'insecure';
+  if (strictOn(tls.insecure)) return 'insecure';
   if (tls.certificate !== undefined || tls.certificate_path !== undefined) return 'wrong_pin';
   const list = Array.isArray(tls.certificate_public_key_sha256)
     ? tls.certificate_public_key_sha256.filter((x): x is string => typeof x === 'string')
@@ -136,7 +171,7 @@ function scanSingbox(doc: Obj, pins: ExpectedPins): HysteriaScan {
   const entries: HysteriaEntry[] = [];
   let unreadable = false;
   (Array.isArray(doc.outbounds) ? doc.outbounds : []).forEach((o, i) => {
-    if (!isObj(o) || o.type !== 'hysteria2') return;
+    if (!isObj(o) || kindOf(o.type) !== 'hysteria2') return;
     if (typeof o.server !== 'string') {
       unreadable = true;
       return;
@@ -158,7 +193,7 @@ function scanXray(configs: Obj[], pins: ExpectedPins): HysteriaScan {
   let unreadable = false;
   configs.forEach((cfg, c) => {
     (Array.isArray(cfg.outbounds) ? cfg.outbounds : []).forEach((o, i) => {
-      if (!isObj(o) || o.protocol !== 'hysteria') return;
+      if (!isObj(o) || !['hysteria', 'hysteria2'].includes(kindOf(o.protocol))) return;
       const settings = isObj(o.settings) ? o.settings : {};
       const stream = isObj(o.streamSettings) ? o.streamSettings : {};
       const tls = isObj(stream.tlsSettings) ? stream.tlsSettings : {};
@@ -176,7 +211,7 @@ function scanXray(configs: Obj[], pins: ExpectedPins): HysteriaScan {
         address: settings.address,
         port: Number(settings.port),
         sni: typeof tls.serverName === 'string' ? tls.serverName : null,
-        trust: tls.allowInsecure === true ? 'insecure' : pinVerdict(values, pins.pinHex),
+        trust: strictOn(tls.allowInsecure) ? 'insecure' : pinVerdict(values, pins.pinHex),
       });
     });
   });
@@ -190,38 +225,65 @@ function scanXray(configs: Obj[], pins: ExpectedPins): HysteriaScan {
  */
 export function scanHysteria(body: string, pins: ExpectedPins): HysteriaScan {
   const t = body.trim();
-  const other = (): HysteriaScan => ({
+  if (!t) return { format: 'other', entries: [], unreadable: false };
+  const textMentions = () => {
+    if (MENTIONS_HYSTERIA.test(t)) return true;
+    const decoded = decodeBase64Loose(t);
+    return decoded !== null && MENTIONS_HYSTERIA.test(decoded);
+  };
+  const other = (parsed?: unknown): HysteriaScan => ({
     format: 'other',
     entries: [],
-    unreadable: MENTIONS_HYSTERIA.test(t),
+    unreadable: textMentions() || deepMentions(parsed),
   });
-  if (!t) return other();
-  if (t.startsWith('{') || t.startsWith('[')) {
-    let json: unknown;
-    try {
-      json = JSON.parse(t);
-    } catch {
-      return other();
-    }
-    const configs = (Array.isArray(json) ? json : [json]).filter(isObj);
-    const outbounds = configs.flatMap((c) => (Array.isArray(c.outbounds) ? c.outbounds : []));
-    // sing-box outbounds carry `type`, Xray's `protocol`.
-    if (!Array.isArray(json) && outbounds.some((o) => isObj(o) && typeof o.type === 'string'))
-      return scanSingbox(configs[0]!, pins);
-    if (outbounds.some((o) => isObj(o) && typeof o.protocol === 'string'))
-      return scanXray(configs, pins);
-    return other();
-  }
   if (t.startsWith('<')) return other();
-  if (/^proxies:/m.test(t) || /^proxy-groups:/m.test(t)) {
-    try {
-      const doc = YAML.parse(t) as unknown;
-      return isObj(doc) ? scanClash(doc, pins) : other();
-    } catch {
-      return other();
-    }
-  }
+  // JSON is YAML too (and a flow mapping JSON refuses is still YAML a client
+  // reads); a link list parses to a scalar, or not at all.
+  const parsed = parseLoose(t);
+  if (isObj(parsed) || Array.isArray(parsed)) return scanStructured(parsed, pins) ?? other(parsed);
+  if (parsed === undefined && !isLinkList(t))
+    // Unreadable to us but maybe not to a client (whose parser may differ):
+    // any escape or tag could hide the word, so none is let through.
+    return { format: 'other', entries: [], unreadable: textMentions() || /[\\!]/.test(t) };
   return scanLinks(t, pins) ?? other();
+}
+
+/** The body parsed as JSON, else YAML; undefined when neither reads it. */
+function parseLoose(t: string): unknown {
+  if (t.startsWith('{') || t.startsWith('['))
+    try {
+      return JSON.parse(t);
+    } catch {
+      /* YAML below */
+    }
+  try {
+    return YAML.parse(t);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every line (of the body, or of its base64) a link or a comment. */
+function isLinkList(t: string): boolean {
+  const decoded = decodeLinkList(t);
+  const lines = (decoded?.lines ?? []).filter((l) => l && !l.startsWith('#'));
+  return lines.length > 0 && lines.every((l) => /^[a-z][a-z0-9+.-]*:\/\//i.test(l));
+}
+
+/** A parsed body of one known shape, or null (no shape, or more than one). */
+function scanStructured(json: Obj | unknown[], pins: ExpectedPins): HysteriaScan | null {
+  const configs = (Array.isArray(json) ? json : [json]).filter(isObj);
+  const outbounds = configs.flatMap((c) => (Array.isArray(c.outbounds) ? c.outbounds : []));
+  const clash = !Array.isArray(json) && Array.isArray(json.proxies);
+  // sing-box outbounds carry `type`, Xray's `protocol`; a body with both, or
+  // with Clash proxies too, is no one format.
+  const typed = outbounds.some((o) => isObj(o) && o.type !== undefined);
+  const proto = outbounds.some((o) => isObj(o) && o.protocol !== undefined);
+  if ([clash, typed, proto].filter(Boolean).length > 1) return null;
+  if (clash) return scanClash(json as Obj, pins);
+  if (typed && !Array.isArray(json)) return scanSingbox(json, pins);
+  if (proto) return scanXray(configs, pins);
+  return null;
 }
 
 const sameHost = (a: string, b: string) =>

@@ -163,3 +163,74 @@ describe('what cannot be read', () => {
     expect(guardHysteria('{"hysteria": ', pins).kind).toBe('refuse');
   });
 });
+
+describe('what a review found (escapes, loose flags, mixed shapes, dead links)', () => {
+  test('a type spelled with escapes is still read and judged', () => {
+    const singbox =
+      '{"outbounds":[{"type":"vless","tag":"r","server":"203.0.113.10","server_port":443},' +
+      '{"type":"hy\\u0073teria2","tag":"h","server":"203.0.113.10","server_port":443,' +
+      '"tls":{"enabled":true,"insecure":true}}]}';
+    const out = guardHysteria(singbox, pins);
+    expect(out).toMatchObject({ kind: 'kept', dropped: 1 });
+    expect((out as { content: string }).content).not.toContain('"h"');
+    const yaml =
+      'proxies:\n  - {name: r, type: vless, server: 203.0.113.10, port: 443}\n' +
+      '  - {name: h, type: "hy\\x73teria2", server: 203.0.113.10, port: 443, skip-cert-verify: true}\n';
+    expect(guardHysteria(yaml, pins)).toMatchObject({ kind: 'kept', dropped: 1 });
+    // A Clash body written as a flow mapping JSON refuses is read too.
+    expect(
+      guardHysteria(
+        '{proxies: [{name: h, type: hysteria2, server: 203.0.113.10, port: 443}]}',
+        pins,
+      ).kind,
+    ).toBe('refuse');
+  });
+
+  test('Mihomo reads its flags loosely: 1, "true" and "t" switch verification off', () => {
+    const mihomo = (skip: unknown) =>
+      YAML.stringify({
+        proxies: [
+          { name: 'r', type: 'vless', server: '203.0.113.10', port: 443 },
+          {
+            name: 'h',
+            type: 'hysteria2',
+            server: '203.0.113.10',
+            port: 443,
+            fingerprint: PIN,
+            'skip-cert-verify': skip,
+          },
+        ],
+      });
+    for (const on of [1, 'true', 't', 'yes'])
+      expect(guardHysteria(mihomo(on), pins)).toMatchObject({ kind: 'kept', dropped: 1 });
+    for (const off of [false, 0, 'false', '0'])
+      expect(guardHysteria(mihomo(off), pins)).toMatchObject({ kind: 'kept', dropped: 0 });
+  });
+
+  test('sing-box type and Xray protocol markers together: refused when Hysteria is in it', () => {
+    const mixed = JSON.stringify({
+      outbounds: [
+        { protocol: 'vless', type: 'vless', settings: {} },
+        {
+          protocol: 'hysteria',
+          tag: 'h',
+          settings: { version: 2, address: '203.0.113.10', port: 443 },
+          streamSettings: { network: 'hysteria', security: 'tls', tlsSettings: {} },
+        },
+      ],
+    });
+    expect(guardHysteria(mixed, pins).kind).toBe('refuse');
+    // Without Hysteria, such a body is none of the guard's business.
+    const plain = JSON.stringify({ outbounds: [{ protocol: 'vless', type: 'vless' }] });
+    expect(guardHysteria(plain, pins)).toEqual({ kind: 'kept', content: plain, dropped: 0 });
+  });
+
+  test('a link that cannot connect is not a connection left', () => {
+    expect(guardHysteria([hy('insecure=1'), 'vless://'].join('\n'), pins).kind).toBe('refuse');
+  });
+
+  test('a body only a client might read, with an escape in it: refused', () => {
+    const bomb = 'a: &a [x]\nb: *a\nc: "hy\\x73teria2"\nd: [' + '*a,'.repeat(200) + ']\n';
+    expect(guardHysteria(bomb, pins).kind).toBe('refuse');
+  });
+});

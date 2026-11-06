@@ -18,7 +18,8 @@
 import YAML from 'yaml';
 import { decodeLinkList } from './edges/render/links';
 import { decodeBase64Loose, encodeBase64 } from './edges/render/base64';
-import { MENTIONS_HYSTERIA, scanHysteria, type ExpectedPins } from './hysteriaPins';
+import { parseProxyUri } from './edges/render/uri';
+import { scanHysteria, type ExpectedPins } from './hysteriaPins';
 
 export type GuardOutcome =
   | { kind: 'kept'; content: string; dropped: number }
@@ -28,6 +29,21 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
+
+/**
+ * A link line an app can connect with: one that parses. `vmess://`, `ssr://`
+ * and legacy `ss://` carry their endpoint base64-encoded instead.
+ */
+function usableLink(line: string): boolean {
+  const m = PROXY_LINE_RE.exec(line);
+  if (!m) return false;
+  if (parseProxyUri(line)) return true;
+  const scheme = m[1]!.toLowerCase();
+  if (scheme !== 'vmess' && scheme !== 'ssr' && scheme !== 'ss') return false;
+  const payload = line.slice(m[0].length).split('#')[0]!;
+  const decoded = payload ? decodeBase64Loose(payload) : null;
+  return decoded !== null && decoded.trim().length > 0;
+}
 
 /** Whether `v` names any of `names` anywhere (a string equal to one, at any depth). */
 function mentions(v: unknown, names: ReadonlySet<string>): boolean {
@@ -46,7 +62,7 @@ const refuse = (dropped: number): GuardOutcome => ({
 function guardLinks(body: string, drop: ReadonlySet<string>): GuardOutcome {
   const decoded = decodeLinkList(body)!;
   const kept = decoded.lines.filter((_, i) => !drop.has(String(i)));
-  if (!kept.some((l) => PROXY_LINE_RE.test(l))) return refuse(drop.size);
+  if (!kept.some(usableLink)) return refuse(drop.size);
   const text = kept.join('\n');
   return { kind: 'kept', content: decoded.encoded ? encodeBase64(text) : text, dropped: drop.size };
 }
@@ -151,16 +167,12 @@ function guardXray(body: string, drop: ReadonlySet<string>): GuardOutcome {
  * no Hysteria at all comes back as it was, unread.
  */
 export function guardHysteria(body: string, pins: ExpectedPins): GuardOutcome {
-  // Read only a body that names Hysteria (a base64 link list, once decoded).
-  if (!MENTIONS_HYSTERIA.test(body)) {
-    const decoded = decodeBase64Loose(body.trim());
-    if (decoded === null || !MENTIONS_HYSTERIA.test(decoded))
-      return { kind: 'kept', content: body, dropped: 0 };
-  }
+  // Every body is read by its parser: escapes can hide the word from its text.
   const scan = scanHysteria(body, pins);
   if (scan.unreadable) return refuse(0);
   const bad = new Set(scan.entries.filter((e) => e.trust !== 'pinned').map((e) => e.ref));
   if (bad.size === 0) return { kind: 'kept', content: body, dropped: 0 };
+  // Dropping repairs one format's references; a body of no single format is refused.
   try {
     switch (scan.format) {
       case 'links':

@@ -100,7 +100,19 @@ async function renderMirrorBody(
   // A mirror hands out only verified Hysteria entries too (lib/hysteriaGuard.ts);
   // a body that cannot be repaired is the unavailable stub, never the raw one.
   const guarded = await guardBody(ctx, out.content, sub.backendServerId);
-  if (guarded.kind === 'refuse') return { ...out, content: MIRROR_UNAVAILABLE_STUB };
+  // A refused body is a stub like a refused render: nothing was handed out.
+  if (guarded.kind === 'refuse')
+    return {
+      content: MIRROR_UNAVAILABLE_STUB,
+      renderedEpoch: null,
+      validated: {
+        policyVersion: out.validated?.policyVersion ?? 0,
+        epoch: out.validated?.epoch ?? -1,
+        edgeIds: [],
+        at: Date.now(),
+        stub: true,
+      },
+    };
   out.content = guarded.content;
   // Finished like the fronted route's (member-facing names, docs/privacy.md),
   // after the render for the same reason.
