@@ -238,6 +238,9 @@ describe('a Hysteria 2 transport', () => {
     ['listen', { listen: '127.0.0.1' }],
     ['port', { port: null }],
     ['server_names', { hysteriaAuth: { ...auth, serverName: null } }],
+    // Not Hysteria over QUIC as the setup builds it.
+    ['alpn', { hysteriaAuth: { ...auth, alpn: [] } }],
+    ['alpn', { hysteriaAuth: { ...auth, alpn: ['h2'] } }],
     // No readable certificate: members would have nothing to pin.
     ['certificate', { hysteriaAuth: { ...auth, pinHex: null, spkiB64: null, digest: null } }],
   ] as const)('refused: %s', (field, over) => {
@@ -247,5 +250,28 @@ describe('a Hysteria 2 transport', () => {
       ok: false,
       issue: { slug: 'privacy-hysteria', tag: 'PRIVACY_HYSTERIA', field },
     });
+  });
+
+  test('the transport must present the name and Salamander setting the mode asks for', () => {
+    const asked = (hysteria: { serverName: string; salamander: boolean }) => [
+      { ...mode[0]!, hysteria },
+    ];
+    const ok = checkProfileCompatibility(
+      { inbounds: [hy({})] },
+      asked({ serverName: 'Quic.Example', salamander: false }),
+    );
+    expect(ok.ok).toBe(true);
+    expect(
+      checkProfileCompatibility(
+        { inbounds: [hy({})] },
+        asked({ serverName: 'other.example', salamander: false }),
+      ),
+    ).toMatchObject({ ok: false, issue: { field: 'server_names' } });
+    expect(
+      checkProfileCompatibility(
+        { inbounds: [hy({})] },
+        asked({ serverName: 'quic.example', salamander: true }),
+      ),
+    ).toMatchObject({ ok: false, issue: { field: 'obfs' } });
   });
 });
