@@ -332,6 +332,7 @@
   {#if creatingMode}
     <ConnectionModeEditor
       {families}
+      {modes}
       onClose={() => (creatingMode = false)}
       onSaved={() => {
         creatingMode = false;
@@ -343,6 +344,7 @@
     <ConnectionModeEditor
       mode={editingMode}
       {families}
+      {modes}
       onClose={() => (editingMode = null)}
       onSaved={() => {
         editingMode = null;

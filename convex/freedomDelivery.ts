@@ -71,6 +71,40 @@ async function keyOf(
 }
 
 /**
+ * The nodes a key placed in an extra mode may be pinned to: those serving that
+ * mode beside their own (nodeExtraModes.ts, `serving`), under every name a key
+ * may still hold. Null when the key has no extra groups, when its mode is not
+ * one any node serves as an extra mode, or when none serves it right now (the
+ * key then pins as its backup mode does).
+ */
+async function extraModeServable(
+  db: Db,
+  backendServerId: Id<'backendServers'>,
+  backendShortId: string,
+): Promise<string[] | null> {
+  const sub = await keyOf(db, backendServerId, backendShortId);
+  if (!sub?.backendPlacement || !sub.backendExtraPlacements?.length) return null;
+  // The mode whose pool holds the key's own group.
+  const slug = (
+    await db
+      .query('modePlacements')
+      .withIndex('by_backend', (q) => q.eq('backend', sub.backend))
+      .collect()
+  ).find((r) => poolFromConfig(r.config).includes(sub.backendPlacement!))?.modeSlug;
+  if (!slug) return null;
+  const intents = await db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect();
+  const formers = await formerNamesByName(db, backendServerId);
+  const out: string[] = [];
+  for (const i of intents)
+    if ((i.extraModes ?? []).some((m) => m.slug === slug && m.state === 'serving'))
+      out.push(i.name, ...(formers.get(i.name) ?? []));
+  return out.length > 0 ? out : null;
+}
+
+/**
  * What the pinner may pick for one key: `blocked`, every node whose delivery
  * gate is closed (never picked while another exists), and `servable`, for a
  * key held to freedom delivery while the switch is on, the nodes an origin
@@ -84,6 +118,12 @@ export const pinRules = internalQuery({
     { backendServerId, backendShortId },
   ): Promise<{ blocked: string[]; servable: string[] | null }> => {
     const blocked = await blockedNamesOf(ctx, backendServerId);
+    // A key placed in a mode a node serves BESIDE its own (a Hysteria key, with
+    // its REALITY backup group): pinned among the nodes that serve that mode,
+    // so its body carries both entries. While none does (its address closed for
+    // a re-check), it pins as its backup mode would: the member keeps REALITY.
+    const extra = await extraModeServable(ctx.db, backendServerId, backendShortId);
+    if (extra) return { blocked, servable: extra };
     if (!(await freedomEdgesOnly(ctx.db))) return { blocked, servable: null };
     const sub = await keyOf(ctx.db, backendServerId, backendShortId);
     const hold = sub ? await freedomHoldOf(ctx.db, sub, sub.pinnedNode) : null;

@@ -4331,6 +4331,7 @@ function pickModeFields(body: Record<string, unknown>) {
     'backends',
     'order',
     'makeDefault',
+    'fallbackModeSlug',
   ]) {
     if (body[k] !== undefined) out[k] = body[k];
   }

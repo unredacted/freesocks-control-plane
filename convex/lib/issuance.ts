@@ -78,6 +78,11 @@ export async function issueNewSubscription(
       placement: capabilitiesOf(input.backend).placement
         ? (input.spec.placement ?? undefined)
         : undefined,
+      // ...with the other groups it went into (a Hysteria key's REALITY backup).
+      extraPlacements:
+        capabilitiesOf(input.backend).placement && input.spec.placement
+          ? input.spec.extraPlacements
+          : undefined,
       excludeNode: input.excludeNode,
       carrySubTokenFromId: input.carrySubTokenFromId,
       carryCountryFromId: input.carryCountryFromId,

@@ -599,6 +599,26 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   incidents and the censorship-availability matrix (Admin → Status). Bands only,
   never raw counts — see `docs/privacy.md`.
 
+- **A key in two groups (a backup mode):** a mode may name a **backup mode**
+  (`connectionModes.fallbackModeSlug`, Admin → Connection modes; same family, offering
+  every backend the mode does, never itself, no backup of its own, never deleted while
+  used). A key of such a mode (`privacy-hysteria`, backup `privacy-reality`) is placed
+  in its own group AND the backup mode's group **on the same backend**, so its
+  subscription carries the node's REALITY entry beside the Hysteria one. The pair is
+  `subscriptions.backendPlacement` + `subscriptions.backendExtraPlacements`, always
+  written and sent together (`lib/placementSet.ts`): Remnawave **replaces** a key's
+  groups with what an update names, so every writer sends
+  `placementSet: {primary, extras}` (`UpdateUserPatch`; there is no lone `placement`
+  any more): issuance (`resolveIssueTarget` resolves the backup's group pinned to the
+  same backend, and refuses `mode.fallback_unbound` when it is not bound there, so a
+  key never issues without it), the tier push (re-sends the stored pair; a legacy
+  row has no extras), regenerate, switch-mode in place (into the mode: both groups;
+  away from it: the target's own) and switch-server, and every restore after a
+  failed PATCH. Such a mode is **available** only where its backup is too and a node
+  serves the mode beside the backup (`nodeExtraModes.ts`, `serving`); the pinner keeps
+  its keys on those nodes (`freedomDelivery.pinRules`), and while none serves it right
+  now a key pins as its backup mode would (the member keeps REALITY).
+
 Operator sizing: one mode group per node, add them all to the mode's pool, and FCP fills
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for
 the multi-backend / Outline case.

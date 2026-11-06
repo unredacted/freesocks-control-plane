@@ -958,7 +958,7 @@ describe('lifecycle push: re-enable + profile mode group (Review #2/#3)', () => 
     await seedActiveSub(t, userId, 'bu-squad');
 
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.placement).toBe('PRIVACY_SQUAD');
+    expect(st?.placementSet).toEqual({ primary: 'PRIVACY_SQUAD', extras: [] });
     expect(st?.userStatus).toBe('active');
     // The CURRENT tier's slug rides along so the push re-tags the backend key on
     // a tier change (issuance stamps it once — e.g. FREE — and without this an
@@ -984,7 +984,7 @@ describe('lifecycle push: re-enable + profile mode group (Review #2/#3)', () => 
     // (the push OMITS placement; it never sends null, which would clear the
     // mode group backend-side).
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.placement).toBeUndefined();
+    expect(st?.placementSet).toBeUndefined();
   });
 
   test('device-limit toggle: OFF (default) forces hwidDeviceLimit null; ON uses the tier limit', async () => {
@@ -1071,7 +1071,7 @@ describe('lifecycle push: re-enable + profile mode group (Review #2/#3)', () => 
     await seedActiveSub(t, userId, 'bu-pinned', 'SQUAD_A');
 
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.placement).toBe('SQUAD_A'); // pinned, NOT re-picked to SQUAD_B
+    expect(st?.placementSet).toEqual({ primary: 'SQUAD_A', extras: [] }); // pinned, NOT re-picked to SQUAD_B
 
     // A pre-pool row (no persisted placement) WITH a recorded backend resolves
     // pinned to a mode group ON THAT PANEL (never pool[0] of a foreign backend — that
@@ -1099,7 +1099,7 @@ describe('lifecycle push: re-enable + profile mode group (Review #2/#3)', () => 
       const stLegacy = await t.query(internal.lifecycle.activeSubAndTier, {
         userId: legacyUserId,
       });
-      expect(stLegacy?.placement).toBe('SQUAD_B'); // pinned to the key's own backend
+      expect(stLegacy?.placementSet).toEqual({ primary: 'SQUAD_B', extras: [] }); // pinned to the key's own backend
     } finally {
       randomSpy.mockRestore();
     }
@@ -1132,7 +1132,7 @@ describe('lifecycle push: re-enable + profile mode group (Review #2/#3)', () => 
     const stOrphan = await t.query(internal.lifecycle.activeSubAndTier, {
       userId: orphanUserId,
     });
-    expect(stOrphan?.placement).toBeUndefined();
+    expect(stOrphan?.placementSet).toBeUndefined();
   });
 
   test('pushTierToBackend runs cleanly for an active user and clears drift (mock backend)', async () => {

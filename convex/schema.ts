@@ -764,6 +764,11 @@ export default defineSchema({
     // placement on placement-capable backends.
     backends: v.array(backendId),
     order: v.number(),
+    // The mode a key of this mode is ALSO placed in, on the same backend, so its
+    // subscription carries that mode's entry as a backup (a Hysteria key's
+    // REALITY one). The mode is available only where both are bound and a node
+    // serves both. Same family and backends, never itself, never a chain.
+    fallbackModeSlug: v.optional(v.string()),
     updatedAt: v.number(),
   }).index('by_slug', ['slug']),
 
@@ -810,6 +815,10 @@ export default defineSchema({
     // thrash live keys across nodes on every renewal. Absent on non-Remnawave
     // subs; the push then falls back to the mode's placement resolution.
     backendPlacement: v.optional(v.string()),
+    // The other groups the key is in on the same backend (its mode's
+    // `fallbackModeSlug`): written and sent with `backendPlacement`, always
+    // (lib/placementSet.ts). Absent = none.
+    backendExtraPlacements: v.optional(v.array(v.string())),
     // Opaque CSPRNG key for origin-edge assignment + SNI selection (never the
     // subToken, so a URL rotation does not reshuffle a member's endpoints).
     renderKey: v.optional(v.string()),

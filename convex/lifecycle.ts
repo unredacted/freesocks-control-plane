@@ -33,6 +33,7 @@ import {
   type SessionBump,
 } from './lib/statusCounters';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
+import { placementSetOf } from './lib/placementSet';
 import { resolveDefaultFreeTier } from './tiers';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -353,7 +354,15 @@ export const activeSubAndTier = internalQuery({
       // updated it, so an upgraded member's key stayed tagged FREE backend-side).
       tag: tier.slug,
       hwidDeviceLimit: resolveHwidLimit(enforcementEnabled, tier),
-      placement,
+      // The key's WHOLE membership, re-sent as issued (lib/placementSet.ts): a
+      // Hysteria key keeps its REALITY backup group through every renewal. A
+      // legacy row resolved above has no extras. Undefined = the push omits it.
+      placementSet:
+        placement === undefined
+          ? undefined
+          : sub.backendPlacement
+            ? placementSetOf(sub)
+            : { primary: placement, extras: [] },
       // Raw ms (this is a query — the ISO is computed in the action, which can
       // call Date.now()), so a renewal re-pushes the backend expiry.
       membershipExpiresAt: user.membershipExpiresAt ?? null,
@@ -396,7 +405,7 @@ export const pushTierToBackend = internalAction({
           trafficLimitBytes: st.trafficLimitBytes,
           trafficLimitStrategy: st.trafficLimitStrategy,
           hwidDeviceLimit: st.hwidDeviceLimit,
-          placement: st.placement,
+          placementSet: st.placementSet,
           // Keep the backend-side tag in step with the tier (member ⇄ free).
           tag: st.tag,
           // Push the entitlement expiry too: a renewal extends the backend key,

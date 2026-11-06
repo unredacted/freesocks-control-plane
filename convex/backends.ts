@@ -86,7 +86,12 @@ const updatePatch = v.object({
   description: v.optional(v.string()),
   hwidDeviceLimit: v.optional(v.union(v.number(), v.null())),
   trafficLimitStrategy: v.optional(trafficStrategy),
-  placement: v.optional(v.union(v.string(), v.null())),
+  // The key's whole group membership, sent together: the mode's group and the
+  // groups it also needs (a Hysteria key's REALITY backup). Never one without
+  // the other (lib/placementSet.ts).
+  placementSet: v.optional(
+    v.object({ primary: v.union(v.string(), v.null()), extras: v.array(v.string()) }),
+  ),
   status: v.optional(v.union(v.literal('active'), v.literal('disabled'))),
 });
 

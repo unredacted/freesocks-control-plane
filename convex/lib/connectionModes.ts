@@ -47,6 +47,8 @@ export interface DefaultModeRow {
   isCensorshipRecommended?: boolean;
   backends: BackendId[];
   order: number;
+  /** The backup mode (connectionModes.fallbackModeSlug). */
+  fallbackModeSlug?: string;
   /**
    * The BUILT_IN_MODES_VERSION this mode was added in (1 = the first catalog).
    * The seed inserts a mode only where this is newer than what the deployment
@@ -187,6 +189,12 @@ export interface ConnectionMode {
   backends: BackendId[];
   order: number;
   builtIn: boolean;
+  /**
+   * The mode a key of this mode is also placed in, as a backup (a Hysteria
+   * key's REALITY mode); null without one. The mode is available only where
+   * its backup is too and a node serves both (lib/placement.ts).
+   */
+  fallbackModeSlug: string | null;
 }
 
 export interface ModeCatalog {
@@ -228,6 +236,7 @@ type ModeSource = Pick<
   | 'isCensorshipRecommended'
   | 'backends'
   | 'order'
+  | 'fallbackModeSlug'
 >;
 
 function defaultFamilySources(): FamilySource[] {
@@ -249,6 +258,7 @@ function defaultModeSources(): ModeSource[] {
     isCensorshipRecommended: m.isCensorshipRecommended,
     backends: [...m.backends],
     order: m.order,
+    ...(m.fallbackModeSlug ? { fallbackModeSlug: m.fallbackModeSlug } : {}),
   }));
 }
 
@@ -313,6 +323,7 @@ export async function resolveModeCatalog(db: DatabaseReader): Promise<ModeCatalo
         backends: [...m.backends],
         order: m.order,
         builtIn: BUILT_IN_MODE_SLUGS.has(m.slug),
+        fallbackModeSlug: trimmedOrNull(m.fallbackModeSlug),
       };
     })
     .sort(byFamilyThenOrder(familyOrder));

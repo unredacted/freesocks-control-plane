@@ -25,10 +25,12 @@
   interface Props {
     mode?: AdminConnectionMode;
     families: AdminConnectionModeFamily[];
+    /** Every mode, to pick a backup from. */
+    modes?: AdminConnectionMode[];
     onClose: () => void;
     onSaved: () => void;
   }
-  let { mode, families, onClose, onSaved }: Props = $props();
+  let { mode, families, modes = [], onClose, onSaved }: Props = $props();
 
   let open = $state(true);
   const isEdit = !!mode;
@@ -44,6 +46,7 @@
     isCensorshipRecommended: m?.isCensorshipRecommended ?? false,
     backends: new Set<string>(m?.backends ?? ['remnawave']),
     order: m?.order ?? 0,
+    fallbackModeSlug: m?.fallbackModeSlug ?? '',
   }))(mode);
 
   let slug = $state(init.slug);
@@ -56,6 +59,13 @@
   let isCensorshipRecommended = $state(init.isCensorshipRecommended);
   let backends = $state(init.backends);
   let order = $state(init.order);
+  let fallbackModeSlug = $state(init.fallbackModeSlug);
+  // A backup is another mode of the same family that has no backup of its own.
+  let backupChoices = $derived(
+    modes.filter(
+      (m) => m.id !== (mode?.id ?? slug.trim()) && m.family === family && !m.fallbackModeSlug,
+    ),
+  );
 
   function toggleBackend(id: string, on: boolean) {
     const next = new Set(backends);
@@ -76,6 +86,7 @@
         isCensorshipRecommended,
         backends: [...backends],
         order,
+        fallbackModeSlug: fallbackModeSlug || null,
       };
       if (isEdit) {
         return apiClient.patch(
@@ -196,6 +207,24 @@
         </div>
         <p class="text-xs text-muted-foreground/80 mt-1">
           Which backend types offer this mode. At least one is required.
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="cm-backup">Backup mode</label>
+        <select
+          id="cm-backup"
+          bind:value={fallbackModeSlug}
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="">None</option>
+          {#each backupChoices as m (m.id)}
+            <option value={m.id}>{m.label ?? m.id}</option>
+          {/each}
+        </select>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          Members of this mode are also placed in the backup mode, on the same node, so their config
+          carries its entry too (a Hysteria mode's REALITY backup). The mode is offered only where a
+          node serves both.
         </p>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">

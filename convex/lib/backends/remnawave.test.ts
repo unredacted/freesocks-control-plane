@@ -355,16 +355,30 @@ describe('remnawaveUpdateUser (Bug 14: mode group clear vs set vs absent)', () =
     expect(calls[0]!.body!.trafficLimitBytes).toBe(10);
   });
 
-  test('clears the mode group when placement is present and null', async () => {
+  test('clears every mode group when the placement set has no primary', async () => {
     mockFetch(() => jsonRes(userObj()));
-    await remnawaveUpdateUser(cfg, UUID, { placement: null });
+    await remnawaveUpdateUser(cfg, UUID, { placementSet: { primary: null, extras: ['sq-2'] } });
     expect(calls[0]!.body!.activeInternalSquads).toEqual([]);
   });
 
   test('sets the mode group when placement is present and a value', async () => {
     mockFetch(() => jsonRes(userObj()));
-    await remnawaveUpdateUser(cfg, UUID, { placement: 'sq-9' });
+    await remnawaveUpdateUser(cfg, UUID, { placementSet: { primary: 'sq-9', extras: [] } });
     expect(calls[0]!.body!.activeInternalSquads).toEqual(['sq-9']);
+  });
+
+  test('sends the whole membership, mode group first: the backup group is never dropped', async () => {
+    mockFetch(() => jsonRes(userObj()));
+    await remnawaveUpdateUser(cfg, UUID, {
+      placementSet: { primary: 'sq-hy', extras: ['sq-reality', 'sq-hy'] },
+    });
+    expect(calls[0]!.body!.activeInternalSquads).toEqual(['sq-hy', 'sq-reality']);
+  });
+
+  test('a patch without a placement set leaves the groups alone', async () => {
+    mockFetch(() => jsonRes(userObj()));
+    await remnawaveUpdateUser(cfg, UUID, { trafficLimitBytes: 10 });
+    expect(calls[0]!.body!.activeInternalSquads).toBeUndefined();
   });
 });
 
