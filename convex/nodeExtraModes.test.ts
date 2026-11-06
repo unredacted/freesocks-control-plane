@@ -349,6 +349,43 @@ describe('a node serving Hysteria beside its own REALITY', () => {
     );
     expect(e!.state).toBe('activating');
     expect(hyHosts(s)[0]!.isDisabled).toBe(true);
+    // Tried again after a backoff: no role report may ever come for it.
+    expect(e!.retries).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a transport moved to another port waits for the firewall again, its address off', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    const ib = (s.panel.profiles[0].config.inbounds as any[]).find((i) => i.tag === HY);
+    ib.port = 8443;
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    await s.t.action(internal.nodeExtraModes.run, { intentId: s.intentId });
+    const e = await until(
+      () => extraOf(s),
+      (x) => x?.state === 'waiting_firewall',
+    );
+    expect(e).toMatchObject({
+      code: 'servers.extra_mode_port_moved',
+      firewall: { port: 8443, protocol: 'udp', confirmedBy: 'role' },
+    });
+    expect(hyHosts(s)[0]!.isDisabled).toBe(true);
+    // Listed for the firewall (still `serving` until the reconcile turns it off).
+    expect(
+      (await roleView(s)).firewall.ports.some((p) => p.port === 8443 && p.protocol === 'udp'),
+    ).toBe(true);
+  });
+
+  test('a removal while a run holds the mode is taken up when that run ends', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    // A run holds the mode right now.
+    await s.t.mutation(internal.nodeExtraModes.claim, {
+      intentId: s.intentId,
+      slug: 'privacy-hysteria',
+    });
+    expect((await extraMode(s, 'remove')).status).toBe(200);
+    const e = await extraOf(s);
+    expect(e).toMatchObject({ state: 'removing', rerun: true });
   });
 
   test('removal takes the address away, then the transport', async () => {
