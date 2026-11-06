@@ -35,6 +35,7 @@ import { capabilitiesOf } from './lib/backends/capabilities';
 import { currentOrActiveSub } from './subscriptions';
 import { placementSetOf } from './lib/placementSet';
 import { appNoticeShown, type AppNoticeFamily } from './lib/appNotice';
+import { mirrorFormatsOf, type MirrorFormat } from '../src/shared/mirrorFormats';
 import {
   crossPanelMoveProven,
   groupHasOtherNode,
@@ -405,7 +406,7 @@ interface AccountView {
     /** An origin covers this key's place: only the fronted token URL is handed out. */
     edgeRequired: boolean;
     shortUuid: string;
-    mirrors: { provider: string; publicUrl: string }[];
+    mirrors: { provider: string; publicUrl: string; formats: MirrorFormat[] }[];
     expiresAt: string | null;
     trafficLimitBytes: number | null;
     trafficUsedBytes: number;
@@ -560,7 +561,12 @@ export const getAccountView = internalAction({
         // shouldn't be handed a URL we couldn't refresh.
         mirrors: sub.subscriptionMirrors
           .filter((m) => m.status !== 'failed')
-          .map((m) => ({ provider: m.provider, publicUrl: m.publicUrl })),
+          .map((m) => ({
+            provider: m.provider,
+            publicUrl: m.publicUrl,
+            // The formats written at this copy: an app is handed its own only once it exists.
+            formats: mirrorFormatsOf(m),
+          })),
         expiresAt: live.expireAt,
         trafficLimitBytes: live.trafficLimitBytes,
         trafficUsedBytes: live.usedTrafficBytes,

@@ -1109,8 +1109,9 @@ describe('a mirror notes what its render left out only once the upload is accept
       });
     });
     await w.refresh();
-    expect(puts).toHaveLength(1);
-    expect(puts[0]).not.toContain(BY_NAME);
+    // One copy, every format's object (none names the hidden Host).
+    expect(puts).toHaveLength(3);
+    for (const put of puts) expect(put).not.toContain(BY_NAME);
     expect(await w.noted()).toEqual({ note: undefined, audits: 0 });
     // Accepted under the barrier: now the operator is told, once.
     __setS3SendForTests(async () => {});

@@ -43,6 +43,8 @@ const props = $state({
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // MirrorHelp names apps from the catalog.
+  client.setQueryData(queryKeys.config, { clients: [], backends: { list: [] } });
   props.mirrors = [];
   props.geoCountry = 'IR';
   props.link = MAIN;

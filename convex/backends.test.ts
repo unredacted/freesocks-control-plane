@@ -20,6 +20,7 @@ import {
 } from './lib/backends/types';
 import { remnawaveUpdateUser } from './lib/backends/remnawave';
 import { sha256Hex } from './lib/crypto';
+import { MIRROR_FORMATS, mirrorSetHash } from './lib/mirrorFormats';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -701,7 +702,13 @@ describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
     vi.stubEnv('ENVIRONMENT', 'development');
     const t = convexTest(schema, modules);
     await seedProvider(t);
-    await seedActiveSub(t, await sha256Hex(MOCK_CONTENT), MIRROR_ON_P1);
+    // What the pass renders: the mock backend answers every format's fetch alike.
+    const hash = await sha256Hex(MOCK_CONTENT);
+    await seedActiveSub(
+      t,
+      await mirrorSetHash(MIRROR_FORMATS.map((format) => ({ format, hash }))),
+      MIRROR_ON_P1,
+    );
     expect(await t.query(internal.mirrorCopies.isSeeded, {})).toBe(false);
     const first = await t.action(internal.storage.refreshActiveMirrors, {});
     expect(first.scanned).toBe(1);

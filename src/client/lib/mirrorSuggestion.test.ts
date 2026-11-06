@@ -97,23 +97,27 @@ describe('chosenLink', () => {
 });
 
 describe('withMirror', () => {
+  const ALL: ('links' | 'clash' | 'singbox')[] = ['links', 'clash', 'singbox'];
   const view = {
     geoCountry: 'IR',
-    subscription: { url: MAIN, mirrors: [{ provider: 'p1', publicUrl: A }] },
+    subscription: {
+      url: MAIN,
+      mirrors: [{ provider: 'p1', publicUrl: A, formats: ['links' as const] }],
+    },
   };
 
   test('adds the new mirror to the cached view without touching the rest', () => {
-    const next = withMirror(view, { provider: 'p2', publicUrl: B });
+    const next = withMirror(view, { provider: 'p2', publicUrl: B, formats: ALL });
     expect(next?.subscription?.mirrors.map((m) => m.publicUrl)).toEqual([A, B]);
     expect(next?.geoCountry).toBe('IR');
     expect(view.subscription.mirrors).toHaveLength(1);
   });
 
   test('a mirror already listed, no view, or no key: unchanged', () => {
-    expect(withMirror(view, { provider: 'p1', publicUrl: A })).toBe(view);
-    expect(withMirror(undefined, { provider: 'p2', publicUrl: B })).toBeUndefined();
+    expect(withMirror(view, { provider: 'p1', publicUrl: A, formats: ALL })).toBe(view);
+    expect(withMirror(undefined, { provider: 'p2', publicUrl: B, formats: ALL })).toBeUndefined();
     const keyless = { subscription: null };
-    expect(withMirror(keyless, { provider: 'p2', publicUrl: B })).toBe(keyless);
+    expect(withMirror(keyless, { provider: 'p2', publicUrl: B, formats: ALL })).toBe(keyless);
   });
 });
 

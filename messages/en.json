@@ -693,7 +693,9 @@
   "setup": {
     "title": "Set up your VPN app",
     "install": "Install",
-    "mainLinkOnly": "Imports your main link: this app can't read a mirror link.",
+    "mirrorLinkForApp": "Your mirror link for this app:",
+    "copyMirrorLink": "Copy your mirror link for {app}",
+    "mirrorNotReady": "Imports your main link for now: your mirror link for this app is still being set up. Check back in a few minutes.",
     "xhttpOnly": "Only apps that work with XHTTP are shown. To use a different app, pick another connection mode.",
     "hysteriaOnly": "Only apps we have checked with Hysteria are shown. To use a different app, pick another connection mode.",
     "hysteriaNoApps": "No app we have checked with Hysteria runs on this platform yet. To connect this device, pick another connection mode.",
@@ -749,7 +751,9 @@
     "explainer": "If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked.",
     "unavailable": "Mirrors aren't available on this deployment right now - there are no mirror links to add.",
     "addedLabel": "Your mirror links",
-    "addToAppHint": "Add each one as an extra subscription in your app, then try connecting.",
+    "addYoursHint": "Add the link for your app as an extra subscription, then try connecting.",
+    "formatMost": "For most apps",
+    "formatFor": "For {apps}",
     "regionLabel": "Your region",
     "regionGlobal": "Global (any region)",
     "regionNotStored": "Used only to pick a nearby mirror - it isn't stored.",
@@ -780,11 +784,11 @@
     "create": "Create a mirror link",
     "chooseLabel": "Which link should your app use?",
     "optionMirror": "Mirror link",
-    "optionMirrorHint": "Served from another host, harder to block. sing-box and Clash apps can't read it.",
+    "optionMirrorHint": "Served from another host, harder to block.",
     "optionMain": "Main link",
     "optionMainHint": "Served from our main website.",
     "recommended": "Recommended",
-    "chooseHint": "Copy, download, the QR code and the app buttons below use the link you pick. sing-box and Clash apps always import the main link."
+    "chooseHint": "Copy, download, the QR code and the app buttons below use the link you pick. Clash and sing-box apps read the mirror in their own format: use the link under each one below."
   },
   "rawconfig": {
     "disclosure": "Show raw configuration",

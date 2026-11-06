@@ -13,6 +13,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { BackendId } from './backendIds';
+import { mirrorFormatOfApp, type MirrorFormat } from './mirrorFormats';
 
 export type ClientBackend = BackendId;
 
@@ -78,6 +79,12 @@ export interface PublicClient {
   xhttp?: boolean;
   hysteria2?: boolean;
   description?: string;
+  /**
+   * The subscription format the app reads (from its name, by the rules a
+   * User-Agent goes by): which of a mirror's objects it imports
+   * (docs/mirrors.md "Formats").
+   */
+  format: MirrorFormat;
 }
 
 /**
@@ -339,6 +346,7 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       xhttp: c.xhttp,
       hysteria2: c.hysteria2,
       description: c.description,
+      format: mirrorFormatOfApp(c.name),
     }));
 }
 

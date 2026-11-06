@@ -2904,10 +2904,13 @@ describe('the mirror barrier', () => {
     });
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
-    expect(w.calls.s3.at(-1)).toEqual({
-      op: { kind: 'delete', key: 'mirrors/orphan' },
-      provider: 'p1',
-    });
+    // Every format's object of the orphan goes.
+    expect(w.calls.s3.slice(-3)).toEqual(
+      ['mirrors/orphan', 'mirrors/orphan.yaml', 'mirrors/orphan.json'].map((key) => ({
+        op: { kind: 'delete', key },
+        provider: 'p1',
+      })),
+    );
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
 

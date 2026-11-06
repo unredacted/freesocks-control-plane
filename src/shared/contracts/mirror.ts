@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MIRROR_FORMATS } from '../mirrorFormats';
 
 /**
  * Opt-in subscription-mirror contracts (the `/api/v1/mirror` surface). A member
@@ -24,6 +25,8 @@ export const MirrorRequestResponse = z.object({
   /** The mirror URL to add as an additional subscription (present only on `ok`). */
   publicUrl: z.string().url().optional(),
   provider: z.string().optional(),
+  /** The formats the new mirror holds, each beside `publicUrl` (src/shared/mirrorFormats.ts). */
+  formats: z.array(z.enum(MIRROR_FORMATS)).optional(),
   /** Mirrors the member may still add before hitting the per-user cap. */
   remaining: z.number().int().nonnegative(),
 });

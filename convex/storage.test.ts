@@ -13,10 +13,17 @@ import {
   realFetch,
   uploadToProviders,
   verifyCopy,
+  type MirrorObject,
   type S3Op,
   type S3Provider,
   type S3Send,
 } from './storage';
+import { MIRROR_FORMATS, mirrorSetHash } from './lib/mirrorFormats';
+
+/** The one `links` object a mirror held before formats. */
+function links(content: string, contentType?: string): MirrorObject[] {
+  return [{ format: 'links', content, ...(contentType ? { contentType } : {}) }];
+}
 
 function provider(i: number, over: Partial<S3Provider> = {}): S3Provider {
   return {
@@ -50,7 +57,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe('uploadToProviders', () => {
   test('returns [] and sends nothing when there are no providers', async () => {
     const { send, calls } = recorder();
-    const out = await uploadToProviders([], { objectPath: 'subs/abc', content: 'x' }, send);
+    const out = await uploadToProviders([], { objectPath: 'subs/abc', objects: links('x') }, send);
     expect(out).toEqual([]);
     expect(calls).toHaveLength(0);
   });
@@ -59,7 +66,7 @@ describe('uploadToProviders', () => {
     const { send, calls } = recorder();
     const out = await uploadToProviders(
       [provider(1), provider(2)],
-      { objectPath: 'subs/abc', content: 'hello', contentType: 'text/yaml' },
+      { objectPath: 'subs/abc', objects: links('hello', 'text/yaml') },
       send,
     );
     expect(calls).toHaveLength(2);
@@ -70,12 +77,14 @@ describe('uploadToProviders', () => {
           publicUrl: 'https://cdn-1.example.com/subs/abc',
           objectPath: 'subs/abc',
           status: 'ok',
+          formats: ['links'],
         },
         {
           provider: 'p2',
           publicUrl: 'https://cdn-2.example.com/subs/abc',
           objectPath: 'subs/abc',
           status: 'ok',
+          formats: ['links'],
         },
       ]),
     );
@@ -89,7 +98,7 @@ describe('uploadToProviders', () => {
 
   test('defaults the content-type to text/plain', async () => {
     const { send, calls } = recorder();
-    await uploadToProviders([provider(1)], { objectPath: 'subs/abc', content: 'hi' }, send);
+    await uploadToProviders([provider(1)], { objectPath: 'subs/abc', objects: links('hi') }, send);
     expect(calls[0]!.op).toMatchObject({ kind: 'put', contentType: 'text/plain' });
   });
 
@@ -97,11 +106,53 @@ describe('uploadToProviders', () => {
     const { send } = recorder((p) => p.bucket === 'bucket-2');
     const out = await uploadToProviders(
       [provider(1), provider(2)],
-      { objectPath: 'subs/abc', content: 'hello' },
+      { objectPath: 'subs/abc', objects: links('hello') },
       send,
     );
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ provider: 'p1', status: 'ok' });
+  });
+
+  test('writes each format at its own path, and a provider succeeds only when all did', async () => {
+    const { send, calls } = recorder();
+    const objects: MirrorObject[] = [
+      { format: 'links', content: 'b64', contentType: 'text/plain' },
+      { format: 'clash', content: 'proxies: []', contentType: 'text/yaml' },
+      { format: 'singbox', content: '{}', contentType: 'application/json' },
+    ];
+    const out = await uploadToProviders([provider(2)], { objectPath: 'mirrors/ab', objects }, send);
+    expect(
+      calls.map((c) => c.op.kind === 'put' && [c.op.key, c.op.body, c.op.contentType]),
+    ).toEqual([
+      ['mirrors/ab', 'b64', 'text/plain'],
+      ['mirrors/ab.yaml', 'proxies: []', 'text/yaml'],
+      ['mirrors/ab.json', '{}', 'application/json'],
+    ]);
+    expect(out[0]).toMatchObject({
+      publicUrl: 'https://cdn-2.example.com/mirrors/ab',
+      formats: ['links', 'clash', 'singbox'],
+    });
+    // One object failing fails the provider: the copy is retried whole.
+    const failing: S3Send = async (_p, op) => {
+      if (op.kind === 'put' && op.key.endsWith('.json')) throw new Error('nope');
+    };
+    await expect(
+      uploadToProviders([provider(2)], { objectPath: 'mirrors/ab', objects }, failing),
+    ).rejects.toThrow(/All S3 mirror uploads failed/);
+  });
+
+  test('deletes the formats a copy no longer keeps with the upload', async () => {
+    const { send, calls } = recorder();
+    await uploadToProviders(
+      [provider(1)],
+      { objectPath: 'mirrors/ab', objects: links('ss://x'), drop: () => ['clash', 'singbox'] },
+      send,
+    );
+    expect(calls.map((c) => [c.op.kind, c.op.key])).toEqual([
+      ['put', 'mirrors/ab'],
+      ['delete', 'mirrors/ab.yaml'],
+      ['delete', 'mirrors/ab.json'],
+    ]);
   });
 
   test('throws when every provider upload fails', async () => {
@@ -109,7 +160,7 @@ describe('uploadToProviders', () => {
     await expect(
       uploadToProviders(
         [provider(1), provider(2)],
-        { objectPath: 'subs/abc', content: 'hello' },
+        { objectPath: 'subs/abc', objects: links('hello') },
         send,
       ),
     ).rejects.toThrow(/All S3 mirror uploads failed/);
@@ -167,6 +218,37 @@ describe('reading a copy back (realFetch + verifyCopy)', () => {
     );
     expect(await verifyCopy(realFetch, 'https://cdn.example/m', 'h')).toEqual({ kind: 'missing' });
   });
+
+  test('a copy of several formats reads each URL and compares the set hash', async () => {
+    const bodies: Record<string, string> = {
+      'https://cdn.example/m': 'b64',
+      'https://cdn.example/m.yaml': 'proxies: []',
+      'https://cdn.example/m.json': '{}',
+    };
+    const fetchFn = async (url: string) =>
+      bodies[url] !== undefined ? { status: 200, body: bodies[url]! } : { status: 404, body: null };
+    const hash = await mirrorSetHash([
+      { format: 'links', hash: await sha256Hex('b64') },
+      { format: 'clash', hash: await sha256Hex('proxies: []') },
+      { format: 'singbox', hash: await sha256Hex('{}') },
+    ]);
+    const all = ['links', 'clash', 'singbox'] as const;
+    expect(await verifyCopy(fetchFn, 'https://cdn.example/m', hash, all)).toEqual({
+      kind: 'match',
+    });
+    // The links hash alone is what a copy of one format records (as before formats).
+    expect(await verifyCopy(fetchFn, 'https://cdn.example/m', await sha256Hex('b64'))).toEqual({
+      kind: 'match',
+    });
+    bodies['https://cdn.example/m.json'] = '{"outbounds":[]}';
+    expect(await verifyCopy(fetchFn, 'https://cdn.example/m', hash, all)).toMatchObject({
+      kind: 'mismatch',
+    });
+    delete bodies['https://cdn.example/m.yaml'];
+    expect(await verifyCopy(fetchFn, 'https://cdn.example/m', hash, all)).toEqual({
+      kind: 'missing',
+    });
+  });
 });
 
 describe('deleteFromProviders', () => {
@@ -182,8 +264,12 @@ describe('deleteFromProviders', () => {
         send,
       ),
     ).resolves.toEqual({ failed: [] });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual({ bucket: 'bucket-1', op: { kind: 'delete', key: 'subs/abc' } });
+    // Every format's object goes with the mirror.
+    expect(calls).toEqual([
+      { bucket: 'bucket-1', op: { kind: 'delete', key: 'subs/abc' } },
+      { bucket: 'bucket-1', op: { kind: 'delete', key: 'subs/abc.yaml' } },
+      { bucket: 'bucket-1', op: { kind: 'delete', key: 'subs/abc.json' } },
+    ]);
   });
 
   test('never throws on a delete failure, and names the provider it failed on', async () => {
@@ -201,6 +287,15 @@ const RAW = [
   'vless://a@1.1.1.1:443?type=ws#xray1-ws',
   'vless://b@2.2.2.2:443?type=ws#xray2-ws',
 ].join('\n');
+
+/**
+ * The set hash of a mirror whose three formats hold this one body (the stub
+ * backend below answers every User-Agent alike).
+ */
+async function allFormats(body: string): Promise<string> {
+  const hash = await sha256Hex(body);
+  return mirrorSetHash(MIRROR_FORMATS.map((format) => ({ format, hash })));
+}
 
 /** What a mirror holds for a pinned body: the member-facing names (no location set here). */
 const memberBody = (pinned: string) =>
@@ -301,7 +396,7 @@ describe('mirror refresh records the pinned node', () => {
     // upload short-circuits and the only observable effect is the recorded pin.
     const pinned = pinSubscriptionToNode(RAW, 'short1');
     expect(pinned.node).toBeTruthy();
-    const subId = await seedMirroredSub(t, await sha256Hex(memberBody(pinned.content)));
+    const subId = await seedMirroredSub(t, await allFormats(memberBody(pinned.content)));
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(RAW, { status: 200 })),
@@ -339,7 +434,7 @@ describe('mirror refresh records the pinned node', () => {
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
     const pinned = pinSubscriptionToNode(RAW, 'short1');
-    const subId = await seedMirroredSub(t, await sha256Hex(memberBody(pinned.content)));
+    const subId = await seedMirroredSub(t, await allFormats(memberBody(pinned.content)));
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(RAW, { status: 200 })),
@@ -488,7 +583,7 @@ describe('a change members must see reaches every mirror in one pass', () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const pinned = pinSubscriptionToNode(RAW, 'short-last');
-    const hash = await sha256Hex(memberBody(pinned.content));
+    const hash = await allFormats(memberBody(pinned.content));
     const subId = await t.run(async (ctx) => {
       const tierId = await ctx.db.insert('tiers', {
         slug: 'free',
@@ -556,7 +651,8 @@ describe('a change members must see reaches every mirror in one pass', () => {
     vi.stubGlobal('fetch', fetches);
     await t.run((ctx) => scheduleMirrorRefresh(ctx));
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(fetches).toHaveBeenCalledTimes(1);
+    // The one mirrored key's body, once per format (and nothing for the 2600 others).
+    expect(fetches).toHaveBeenCalledTimes(MIRROR_FORMATS.length);
     expect((await t.run((ctx) => ctx.db.get(subId)))!.lastDeliveredContentAt).toBeDefined();
   }, 60_000);
 

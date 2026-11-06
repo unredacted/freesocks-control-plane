@@ -565,7 +565,6 @@
     "disclosure": "连接有问题？",
     "explainer": "如果你所在位置无法用普通订阅链接连接，可在下方添加镜像链接。它会从另一个可能未被封锁的主机提供相同的密钥。",
     "addedLabel": "你的镜像链接",
-    "addToAppHint": "将每个链接作为额外的订阅添加到你的应用中，然后尝试连接。",
     "regionLabel": "你所在的地区",
     "regionGlobal": "全球（任意地区）",
     "regionNotStored": "仅用于选择就近的镜像 - 不会被存储。",

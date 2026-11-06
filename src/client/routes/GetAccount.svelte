@@ -395,9 +395,9 @@
   // Censored-country onboarding: the server says this request's country is on
   // the list, so the main link may be blocked there. The suggestion offers a
   // mirror link (opt-in) and, once there is one, the member picks which link
-  // their app gets: the pass and the link-list apps follow the pick (sing-box
-  // and Clash apps keep the main link). Page state only; nothing about the
-  // country or the pick is stored.
+  // their app gets: the pass and the app list follow the pick (each app in its
+  // own format). Page state only; nothing about the country or the pick is
+  // stored.
   // The member's own stored answer wins over this request's country: one who
   // said "Somewhere else" is not told their country blocks the main link.
   let keyChoice = $derived(keyRegion.data?.applies ? keyRegion.data.choice : null);
@@ -421,6 +421,12 @@
   let keyMirrors = $derived(subscription ? mirrorLinks(subscription.mirrors, subUrl) : []);
   let pickedLink = $state<string | null>(null);
   let keyLink = $derived(suggestMirror ? chosenLink(subUrl, keyMirrors, pickedLink) : subUrl);
+  // The picked mirror's entry (its formats): each app imports it in its own.
+  let keyMirror = $derived(
+    keyLink !== subUrl
+      ? (subscription?.mirrors.find((m) => m.publicUrl === keyLink) ?? null)
+      : null,
+  );
 
   // Step numbers in the visitor's own digits (Persian and Arabic included).
   const stepNumber = $derived(new Intl.NumberFormat(getLocale()));
@@ -807,12 +813,12 @@
           modeId={effectiveModeId}
         />
       {:else}
-        <!-- The pick reaches the apps that read a plain link list; sing-box and
-             Clash apps keep the main link (a mirror serves one fixed format). -->
+        <!-- The pick reaches every app, each in its own format (Clash and
+             sing-box apps get the mirror's YAML and JSON objects). -->
         <ConnectClient
           backend={subscription.backend}
           subscriptionUrl={subUrl}
-          linkListUrl={keyLink}
+          mirror={keyMirror}
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
           modeId={effectiveModeId}
         />

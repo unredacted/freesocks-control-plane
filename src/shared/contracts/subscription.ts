@@ -1,8 +1,12 @@
 import { z } from 'zod';
+import { MIRROR_FORMATS } from '../mirrorFormats';
 
 export const SubscriptionMirror = z.object({
   provider: z.string(),
+  /** The mirror's `links` object; each other format sits beside it (src/shared/mirrorFormats.ts). */
   publicUrl: z.string().url(),
+  /** The formats this mirror holds now (a mirror from before formats: `links` only, until its next upload). */
+  formats: z.array(z.enum(MIRROR_FORMATS)).optional().default(['links']),
   latencyMs: z.number().int().nonnegative().optional(),
 });
 export type SubscriptionMirror = z.infer<typeof SubscriptionMirror>;

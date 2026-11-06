@@ -25,6 +25,8 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { BackendId } from './lib/backendIds';
+import { mirrorFormatsOf, type MirrorFormat } from '../src/shared/mirrorFormats';
+import { mirrorFormatsFor } from './lib/mirrorFormats';
 import {
   afterCheck,
   afterInvalidation,
@@ -275,8 +277,11 @@ export interface MirrorItem {
   excludeNode: string | null;
   /** The providers THIS sub was mirrored to (names) — refresh re-uploads to these only. */
   providers: string[];
-  /** What each copy holds as far as FCP knows (null = unknown): the per-copy skip-if-unchanged. */
-  copies: { provider: string; objectHash: string | null }[];
+  /**
+   * What each copy holds as far as FCP knows (null = unknown): the per-copy
+   * skip-if-unchanged; and the formats its objects were written in.
+   */
+  copies: { provider: string; objectHash: string | null; formats: MirrorFormat[] }[];
   /** The row's `deliveryRev` at read: an upload that outlives an in-place move stamps nothing. */
   deliveryRev: number;
   /** The row's `countryRev` at read: a check that straddles a country change records no sync. */
@@ -288,6 +293,8 @@ export interface MirrorPage {
   isDone: boolean;
   continueCursor: string;
   items: MirrorItem[];
+  /** (`seedPage`) Copies on this page not yet written in every format their key keeps. */
+  behind?: number;
 }
 
 /** The refresh item of one active, mirrored subscription (copies from the ledger, else the legacy hash). */
@@ -309,10 +316,12 @@ export async function mirrorItemOf(
     providers: s.subscriptionMirrors.map((m) => m.provider),
     copies: s.subscriptionMirrors.map((m) => {
       const row = rows.find((r) => r.provider === m.provider);
-      if (row) return { provider: m.provider, objectHash: row.objectHash ?? null };
+      const formats = mirrorFormatsOf(m);
+      if (row) return { provider: m.provider, objectHash: row.objectHash ?? null, formats };
       return {
         provider: m.provider,
         objectHash: m.status !== 'failed' ? (s.rawContentHash ?? null) : null,
+        formats,
       };
     }),
     deliveryRev: s.deliveryRev ?? 0,
@@ -388,13 +397,17 @@ export const seedPage = internalMutation({
       .withIndex('by_state', (q) => q.eq('state', 'active'))
       .paginate({ cursor, numItems });
     const items: MirrorItem[] = [];
+    let behind = 0;
     for (const s of res.page) {
       if (s.subscriptionMirrors.length === 0) continue;
       await ensureCopies(ctx, s);
       const item = await mirrorItemOf(ctx.db, s);
       if (item) items.push(item);
+      const want = mirrorFormatsFor(s.backend);
+      for (const m of s.subscriptionMirrors)
+        if (mirrorFormatsOf(m).join() !== want.join()) behind++;
     }
-    return { isDone: res.isDone, continueCursor: res.continueCursor, items };
+    return { isDone: res.isDone, continueCursor: res.continueCursor, items, behind };
   },
 });
 
@@ -509,6 +522,8 @@ export const dueForVerify = internalQuery({
       provider: string;
       publicUrl: string;
       objectHash: string | null;
+      /** The objects the copy keeps, each read back at its format's URL. */
+      formats: MirrorFormat[];
     }[] = [];
     for (const r of rows) {
       const sub = await ctx.db.get(r.subscriptionId);
@@ -523,6 +538,7 @@ export const dueForVerify = internalQuery({
         provider: r.provider,
         publicUrl: entry.publicUrl,
         objectHash: r.objectHash ?? null,
+        formats: mirrorFormatsOf(entry),
       });
     }
     return { rows: out, scanned: rows.length };
@@ -738,6 +754,7 @@ export const verifyTargetsOf = internalQuery({
       provider: string;
       publicUrl: string;
       objectHash: string | null;
+      formats: MirrorFormat[];
     }[] = [];
     for (const c of await copiesOf(ctx.db, subscriptionId)) {
       if (!providers.includes(c.provider)) continue;
@@ -750,6 +767,7 @@ export const verifyTargetsOf = internalQuery({
           provider: c.provider,
           publicUrl: entry.publicUrl,
           objectHash: c.objectHash ?? null,
+          formats: mirrorFormatsOf(entry),
         });
     }
     return out;

@@ -30,8 +30,8 @@
    * one their app gets (the mirror is the recommendation). The pick is page
    * state only: `onPick` hands it to the parent, which feeds the pass (copy,
    * download, QR) and the app list (import buttons); `link` is what it resolved.
-   * A mirror serves one fixed format, so sing-box and Clash apps keep importing
-   * the main link (ConnectClient `linkListUrl`), and the copy says so.
+   * The pass shows the mirror's plain link list; the app list hands each app
+   * the mirror in its own format (ConnectClient `mirror`), and the copy says so.
    *
    * With the country question on (`askCountry`, lib/countryQuestion.ts) the
    * mirror is shaped for the key's own answer: a key with one says what it is
@@ -110,7 +110,11 @@
         void qc.invalidateQueries({ queryKey: queryKeys.connectionRegion });
       }
       if (res.status === 'ok' && res.publicUrl) {
-        const added = { provider: res.provider ?? '', publicUrl: res.publicUrl };
+        const added = {
+          provider: res.provider ?? '',
+          publicUrl: res.publicUrl,
+          formats: res.formats ?? ['links' as const],
+        };
         qc.setQueryData<AccountResponse>(queryKeys.account, (old) => withMirror(old, added));
         onPick(res.publicUrl);
         status = 'idle';

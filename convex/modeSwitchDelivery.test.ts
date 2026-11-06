@@ -506,10 +506,19 @@ describe('a key that switches mode in place', () => {
     const refresh = scheduled.filter((f) => f.name.includes('refreshMirrorsForSubscription'));
     expect(refresh.map((f) => f.args[0])).toEqual([{ subscriptionId: subId }]);
     await t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
-    const put = puts.at(-1);
-    expect(put?.key).toBe('mirrors/m1');
-    expect(put?.body).toContain(L4_EDGE);
-    for (const mark of MARKS.ws) expect(put?.body).not.toContain(mark);
+    // Every format's object, each rendered for the new mode (its own family's body).
+    const written = new Map(puts.map((p) => [p.key, p.body]));
+    expect([...written.keys()].sort()).toEqual([
+      'mirrors/m1',
+      'mirrors/m1.json',
+      'mirrors/m1.yaml',
+    ]);
+    for (const body of written.values()) {
+      expect(body).toContain(L4_EDGE);
+      for (const mark of MARKS.ws) expect(body).not.toContain(mark);
+    }
+    expect(written.get('mirrors/m1.yaml')).toMatch(/^proxies:/m);
+    expect(JSON.parse(written.get('mirrors/m1.json')!)).toHaveProperty('outbounds');
     const after = (await row(t, subId))!;
     expect(after.pinnedNode).toBe('node-r');
     expect(after.rawContentHash).toMatch(/^[0-9a-f]{64}$/);
@@ -520,21 +529,31 @@ describe('a key that switches mode in place', () => {
     __setS3SendForTests(async (_p, op) => {
       if (op.kind === 'put') puts.push(op);
     });
-    const panel = stubPanel('ws');
-    const { t, subId, userId } = await seed('ws', { mirror: true });
-    // The sweep's refresh reads the key, the panel answers with the old
-    // group, and the switch lands before the body is uploaded.
-    panel.onFetch = async () => {
-      await t.action(internal.account.switchMode, { userId, target: MODE.r });
-    };
-    await t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
-    expect(puts).toEqual([]);
-    expect((await row(t, subId))!.rawContentHash).toBeUndefined();
-    // The refresh the switch scheduled is the one that writes the object.
-    await t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
-    expect(puts).toHaveLength(1);
-    expect(puts[0]!.body).toContain(L4_EDGE);
-    for (const mark of MARKS.ws) expect(puts[0]!.body).not.toContain(mark);
+    // Only the refreshes this test runs: the passes the setup and the switch
+    // schedule would otherwise race them in the background.
+    vi.useFakeTimers();
+    try {
+      const panel = stubPanel('ws');
+      const { t, subId, userId } = await seed('ws', { mirror: true });
+      // The sweep's refresh reads the key, the panel answers with the old
+      // group (every format's fetch), and the switch lands before the bodies
+      // are uploaded.
+      panel.onFetch = async () => {
+        await t.action(internal.account.switchMode, { userId, target: MODE.r });
+      };
+      await t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
+      expect(puts).toEqual([]);
+      expect((await row(t, subId))!.rawContentHash).toBeUndefined();
+      // The refresh the switch scheduled is the one that writes the objects.
+      await t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
+      expect(puts.map((p) => p.key)).toEqual(['mirrors/m1', 'mirrors/m1.yaml', 'mirrors/m1.json']);
+      for (const put of puts) {
+        expect(put.body).toContain(L4_EDGE);
+        for (const mark of MARKS.ws) expect(put.body).not.toContain(mark);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('a first mirror the switch overtakes is not handed out', async () => {

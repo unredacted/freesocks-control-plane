@@ -18,16 +18,28 @@
    * drops the certificate pin must never be suggested), and an empty platform
    * never says "use any compatible client".
    *
+   * With a mirror picked (onboarding), each app gets the mirror in the format
+   * it reads (the catalog's `format`, src/shared/mirrorFormats.ts): its import
+   * button carries it, and an app that does not read the plain link list (Clash,
+   * sing-box) also shows its own mirror link to copy, since the pass shows the
+   * plain one. A format the mirror does not hold yet (one made before formats,
+   * until its next upload) keeps the main link, and the card says so.
+   *
    * App names are proper nouns (not translated); the structural copy is i18n'd.
    */
   import { getLocale, t, type MessageKey } from '../lib/i18n/index.svelte';
   import Smartphone from '@lucide/svelte/icons/smartphone';
+  import Copy from '@lucide/svelte/icons/copy';
+  import Check from '@lucide/svelte/icons/check';
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import QrCode from './QrCode.svelte';
   import { configQuery } from '../lib/queries';
   import { backendEntry } from '../lib/backends';
-  import { buildImportLink, IMPORT_PROFILE_NAME, SHARE_LINK_SCHEMES } from '../lib/appLinks';
+  import { buildImportLink, IMPORT_PROFILE_NAME } from '../lib/appLinks';
+  import { mirrorFormatPath, mirrorFormatsOf, type MirrorFormat } from '../../shared/mirrorFormats';
+  import { copyText } from '../lib/utils';
+  import { toast } from 'svelte-sonner';
   import { installKind, type InstallKind } from '../lib/installKind';
   import { detectClientPlatform, type PlatformKey } from '../lib/platform';
   import { isXhttpMode } from '../lib/connectionMode';
@@ -42,11 +54,10 @@
      *  config below, so step 2 says "enter the configuration below" instead of
      *  "paste your link". */
     rawConfigFirst?: boolean;
-    /** The link apps that read a plain link list import instead (the onboarding
-     *  mirror pick). A mirror serves one fixed format (the base64 default, no UA
-     *  negotiation), so apps that take whole profiles only (sing-box, Clash: not
-     *  in SHARE_LINK_SCHEMES) keep importing `subscriptionUrl`. */
-    linkListUrl?: string;
+    /** The mirror the member picked (onboarding): each app imports it in its
+     *  own format, among those it holds. Absent, or the key's own link: every
+     *  app imports `subscriptionUrl`. */
+    mirror?: { publicUrl: string; formats?: readonly string[] } | null;
     /** True when the member's plan enforces a device limit (tier opts in AND the
      *  global toggle is on). Only then do we split apps by HWID support + show
      *  the HWID note; otherwise the device-limit concept is irrelevant and hidden. */
@@ -58,7 +69,7 @@
   let {
     backend = 'remnawave',
     subscriptionUrl,
-    linkListUrl,
+    mirror = null,
     rawConfigFirst = false,
     deviceLimited = false,
     modeId,
@@ -100,17 +111,37 @@
   // A one-tap import link is possible only with a (non-rawConfig) subscription
   // URL and an app that has an import scheme.
   let canImport = $derived(!rawConfigFirst && !!subscriptionUrl);
-  // A link-list pick that differs from the key's own link (a mirror).
-  let otherList = $derived(linkListUrl && linkListUrl !== subscriptionUrl ? linkListUrl : null);
-  // This app imports the key's own link although another was picked: it takes
-  // whole profiles only and a mirror can't give it one.
-  function keepsMainLink(schemeId: string | null): boolean {
-    return !!otherList && !!schemeId && !SHARE_LINK_SCHEMES.has(schemeId);
+  // A picked mirror (not the key's own link), and the formats it holds now.
+  let picked = $derived(
+    mirror && mirror.publicUrl && mirror.publicUrl !== subscriptionUrl ? mirror : null,
+  );
+  let pickedFormats = $derived(picked ? mirrorFormatsOf(picked) : []);
+  /** The picked mirror in this app's format, null when it holds none yet (or none is picked). */
+  function mirrorLinkFor(format: MirrorFormat): string | null {
+    return picked && pickedFormats.includes(format)
+      ? mirrorFormatPath(picked.publicUrl, format)
+      : null;
   }
-  function importLink(schemeId: string | null): string | null {
+  /** A mirror is picked but has no object in this app's format yet: the app keeps the main link. */
+  function mirrorNotReady(format: MirrorFormat): boolean {
+    return !!picked && !pickedFormats.includes(format);
+  }
+  function importLink(c: { schemeId: string | null; format: MirrorFormat }): string | null {
     if (!canImport || !subscriptionUrl) return null;
-    const url = otherList && !keepsMainLink(schemeId) ? otherList : subscriptionUrl;
-    return buildImportLink(schemeId, url, IMPORT_PROFILE_NAME);
+    return buildImportLink(
+      c.schemeId,
+      mirrorLinkFor(c.format) ?? subscriptionUrl,
+      IMPORT_PROFILE_NAME,
+    );
+  }
+  let copied = $state<string | null>(null);
+  async function copy(url: string) {
+    if (await copyText(url)) {
+      copied = url;
+      setTimeout(() => (copied = null), 1500);
+    } else {
+      toast.error(t('common.copyFailed'));
+    }
   }
 
   // Per-card QR toggle (one open at a time), keyed by client name.
@@ -213,7 +244,9 @@
     {/if}
 
     {#snippet clientCard(c: (typeof currentClients)[number], recommended = false)}
-      {@const link = importLink(c.schemeId)}
+      {@const link = importLink(c)}
+      <!-- The pass shows the plain-list mirror link; an app of another format gets its own here. -->
+      {@const ownMirror = c.format !== 'links' ? mirrorLinkFor(c.format) : null}
       {@const desc = clientDesc(c)}
       <!-- Facts as one quiet line, not a row of badges: recommended (the first
            entry, already sorted OSS-first then easiest), license, the two
@@ -284,8 +317,31 @@
         {#if desc}
           <p class="mt-1.5 text-[15px] leading-relaxed text-body">{desc}</p>
         {/if}
-        {#if link && keepsMainLink(c.schemeId)}
-          <p class="mt-1.5 text-sm text-muted-foreground">{t('setup.mainLinkOnly')}</p>
+        {#if ownMirror}
+          <div class="mt-2 space-y-1">
+            <p class="text-sm text-muted-foreground">{t('setup.mirrorLinkForApp')}</p>
+            <div class="flex gap-2">
+              <code
+                dir="ltr"
+                class="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm text-foreground"
+                >{ownMirror}</code
+              >
+              <button
+                type="button"
+                onclick={() => void copy(ownMirror)}
+                aria-label={t('setup.copyMirrorLink', { app: c.name })}
+                class="inline-flex min-h-10 items-center rounded-sm border-2 border-border px-2 hover:bg-muted"
+              >
+                {#if copied === ownMirror}
+                  <Check class="size-4" />
+                {:else}
+                  <Copy class="size-4" />
+                {/if}
+              </button>
+            </div>
+          </div>
+        {:else if mirrorNotReady(c.format)}
+          <p class="mt-1.5 text-sm text-muted-foreground">{t('setup.mirrorNotReady')}</p>
         {/if}
         {#if link && qrFor === c.name}
           <div class="mt-3 flex flex-col items-center">

@@ -26,9 +26,9 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   below), a host hint (`countryCode`, for a key with no country), "global" (`countryCode: null`),
   the key's stored answer (the opt-out picks global, never the CDN's reading), else the CDN
   country. A country in either field is refused in plaintext. One object path per key
-  (`mirrors/<128-bit hex>`), reused across providers. The body is rendered exactly like a refresh
-  (edge rendering, member-facing entry names, the node pin) and written before the member is
-  handed the URL. The member page offers mirrors only while a provider is active and the cap is
+  (`mirrors/<128-bit hex>`), reused across providers, with one object per format beside it
+  ("Formats" below). Every object is rendered exactly like a refresh (edge rendering,
+  member-facing entry names, the node pin) and written before the member is handed the URL. The member page offers mirrors only while a provider is active and the cap is
   above zero (`publicConfig.mirrorsEnabled`). A request that fails says so ("Couldn't add a mirror
   just now"). Two requests that raced to one provider for a key with no mirror yet each upload
   under their own path; the append that replaces the other's entry withdraws that object
@@ -52,9 +52,10 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   Still opt-in: the mirror is requested only on the member's click, through the same route. With
   a mirror on the key both links are listed and the member picks the one their app gets (the
   mirror is the recommendation); the pass (copy, download, QR) and the app buttons follow the
-  pick, which is page state only. A mirror serves one fixed format (the base64 default,
-  `docs/backends.md`), so sing-box and Clash apps keep importing the main link and their cards say
-  so. rawConfig modes get no suggestion, as they get no mirrors. The member's own stored answer
+  pick, which is page state only. The pass shows the mirror's plain link list; each app's button
+  imports the mirror in that app's format, and a Clash or sing-box app's card also shows its own
+  mirror link to copy (FlClash and Mihomo Party import by paste). rawConfig modes get no
+  suggestion, as they get no mirrors. The member's own stored answer
   wins over this request's country (`suggestionCountry` in `src/client/lib/mirrorSuggestion.ts`):
   a listed answer brings the suggestion even when the request looks elsewhere (a VPN), and "Somewhere
   else, or I'd rather not say" means no suggestion whatever the request says.
@@ -80,7 +81,7 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   mirror. The pass pages the ledger, so its cost follows the mirrors members asked for, not every
   active key, and it continues in new runs until it reaches the last one.
 - **What the object holds.** An edge-required place with nothing renderable gets the unavailable
-  stub, never the origin body. Every object is written with `Cache-Control: no-cache`, so a cache
+  stub, never the origin body (in every format's object). Every object is written with `Cache-Control: no-cache`, so a cache
   in front of a bucket revalidates instead of serving an old body (a withdrawn address, the stub
   and a re-issued key all depend on that). An upload whose delivery policy moved while it was in
   flight (the place's epoch, the key's own revision, the member's country or address lane) is
@@ -99,6 +100,51 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   deactivation and an abandoned tombstone all delete the objects. A delete that fails is recorded
   (`mirrorUploads` kind `withdraw`) and the repair pass deletes it until it is gone: a member's
   config never stays in a bucket because one delete failed.
+
+## Formats
+
+The main link picks the body's format per request from the app's User-Agent (`docs/backends.md`
+"Subscription formats"). A bucket cannot, so a mirror is one object per format, at sibling paths
+of the key's one random id (`src/shared/mirrorFormats.ts`):
+
+| Format    | Object              | Read by                                                    |
+| --------- | ------------------- | ---------------------------------------------------------- |
+| `links`   | `mirrors/<id>`      | apps that read a share-link list (Hiddify, v2rayNG, ...)   |
+| `clash`   | `mirrors/<id>.yaml` | Clash and Mihomo apps (Clash Verge, FlClash, Mihomo Party) |
+| `singbox` | `mirrors/<id>.json` | sing-box apps (sing-box, Karing)                           |
+
+- **Rendered like the main link's answer to that app.** Each format's body is fetched from the
+  backend with a fixed User-Agent of its kind (`convex/lib/mirrorFormats.ts` `MIRROR_FETCH_UA`:
+  none for `links`, as every mirror held before; a current Mihomo, never a legacy Clash core; the
+  canonical sing-box app), pinned by the same rules, edge-rendered for that client family (its
+  per-client rules and leak checks) and finished with member-facing names. A format that cannot
+  carry what the place serves (sing-box on XHTTP) holds the app notice, as the main link answers
+  that app (no record that an app got it: nothing tells FCP an app read the mirror). Each object
+  keeps the backend's `Content-Type`.
+- **Which formats.** Every key whose backend delivers a subscription document gets all three; a
+  bare access key (Outline) keeps the one `links` object. A copy holds them together: an upload
+  writes every format, a provider counts as written only when every object was, and a format
+  the key no longer keeps (a re-issue onto an access-key backend) is deleted with the next upload.
+  The member's entry lists the formats written (`subscriptionMirrors[].formats`; absent = `links`
+  only), and the member page offers a format's link only once it exists.
+- **Which app gets which.** The catalog's `format` (`publicConfig.clients[].format`, from the
+  app's name by the rules a User-Agent goes by, `mirrorFormatOfApp`). MirrorHelp lists each
+  mirror once per format, labelled with the catalog apps that read it ("For Clash, FlClash and
+  Mihomo Party"); a format no catalog app reads is not offered.
+- **Mirrors from before formats.** They hold the `links` object only, at the same URL, which keeps
+  its meaning. The post-deploy seed (`storage:seedMirrorLedger`) counts copies not written in
+  every format their key keeps and, when there are any, starts one mirror pass at once, so they
+  gain their objects within that pass rather than at the next six-hourly sweep (bounded by it
+  either way). Until then the member page leaves Clash and sing-box apps on the main link and
+  says the mirror link for them is still being set up.
+- **What a format's object cannot say.** The main link also sends `subscription-userinfo` (traffic
+  and expiry), `profile-update-interval` and `profile-title`. A bucket serves only standard object
+  headers (`Content-Type`, `Cache-Control`, `Content-Disposition`), so a mirror has none of them,
+  in any format (the `links` object never had them either). What an app loses: no usage or expiry
+  bar (the account page shows both); its own default refresh interval, or the one the member sets,
+  instead of FCP's (a rotated address reaches it at its next refresh, as before); and the profile
+  name, which the import button sets (`#FreeSocks`, `&name=`) and a pasted link leaves to the app
+  (usually the URL's last part). None of them stops an app importing or refreshing the mirror.
 
 ## Providers
 
@@ -120,8 +166,10 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
 
 ## The sync ledger
 
-For every mirror a member asked for, `mirrorCopies` holds one row per copy (key x provider):
-what FCP last wrote (`objectHash`), the body the last check rendered (`servedHash`, its origin
+For every mirror a member asked for, `mirrorCopies` holds one row per copy (key x provider),
+which covers all of the copy's format objects: their hashes are combined into one
+(`mirrorSetHash`; a copy of the `links` object alone hashes as that body, so every hash recorded
+before formats still means what it did). It holds what FCP last wrote (`objectHash`), the body the last check rendered (`servedHash`, its origin
 epoch, whether it is the stub), when it was last checked, synced, uploaded and read back, the
 consecutive failures and the last one. It stays in step with `subscriptionMirrors` (every write
 of that list goes through a helper), and holds no content, no country, no address and no IP.
@@ -138,13 +186,16 @@ Reasons: `content_changed`, `invalidated`, `country_changed`, `reissued`, `polic
 its first check), `fetch_failed`, `upload_failed`, `provider_missing`, `url_unreadable`,
 `url_stale`.
 
-- **Checks.** Every refresh renders the body once and compares it with each copy's `objectHash`:
-  equal is confirmed, different is written. The skip-if-unchanged is per copy, so a copy that
-  missed a round (a failed provider, an older copy when a second mirror is added) is never masked
-  by another.
-- **Read-back** (`mirror-verify`, every 15 min): each copy's member-facing URL is read with a
-  plain GET about every six hours (a new copy at the next run) and its sha256 compared with
-  `objectHash`; the read stops at 4 MiB (a larger answer is not the object). Another body or
+- **Checks.** Every refresh renders each format's body once and compares their combined hash with
+  each copy's `objectHash`: equal is confirmed, different is written (every format of that copy).
+  The skip-if-unchanged is per copy, so a copy that missed a round (a failed provider, an older
+  copy when a second mirror is added) is never masked by another. A country change, a re-render
+  or a re-issue moves every format's body, so no format is left behind: the copy is written whole
+  or stays stale.
+- **Read-back** (`mirror-verify`, every 15 min): each copy's member-facing URLs (one per format it
+  holds) are read with a plain GET about every six hours (a new copy at the next run) and their
+  combined hash compared with `objectHash`; any one missing is `missing`, and each read stops at 4
+  MiB (a larger answer is not the object). Another body or
   nothing at all gets the object rewritten once and read back right after; if that read finds the
   same, the URL itself is the problem (not publicly readable, wrong public URL, a cache keeping an
   old body) and the copy is `failing` (`url_unreadable` / `url_stale`) until a read matches again.
@@ -173,8 +224,13 @@ API: `GET /api/v1/admin/mirror-sync[?state=&cursor=]` (summary + one page of cop
 
 ## Cost
 
-Per copy: about four GETs a day of a few KB (the read-back), plus a write only when what FCP
-serves changed. No request carries anything but the object path the member's app fetches too.
+Per copy: about four read-backs a day, each one GET of a few KB per format (twelve GETs a day for
+a three-format copy), plus a write of every format only when what FCP serves changed. A refresh
+of a key fetches its backend body once per format (three fetches where it was one). Deletes are
+one per format. At about 580 mirrored keys that is roughly 7,000 GETs a day on the buckets, three
+objects per copy where there was one, and on a change (a rotation reaches every key) three PUTs
+per copy; the ledger and the database reads are unchanged (one row per copy, as before). No
+request carries anything but the object path the member's app fetches too.
 
 ## Tests
 
@@ -184,3 +240,10 @@ serves changed. No request carries anything but the object path the member's app
   SeaweedFS, `docker-compose.s3-test.yml`): request, refresh, read-back, an object deleted and
   one overwritten behind FCP's back, removal, a provider's withdrawal, a store that refuses writes,
   and the connection test.
+- `convex/lib/mirrorFormats.test.ts`, the "every format of a mirror" cases in
+  `convex/mirrorCopies.test.ts` and `convex/modeSwitchDelivery.test.ts`: the format rules, the
+  objects written, read back, upgraded from before formats and deleted, each format rendered for
+  its own family.
+- `bun run test:compat` (`docs/client-compatibility.md`): a mirror of the compat key against the
+  real panel, its Clash object run in Mihomo and its sing-box object in sing-box, each through
+  all three proxies.

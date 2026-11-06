@@ -6,6 +6,7 @@ import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { realityClientRefusalFields, realityClientRefusalV } from './lib/realityClients';
 import { edgeClientCheckV, sniAutoTestCheckV } from './lib/edges/clientCheck/validators';
+import { mirrorFormatValidator } from './lib/mirrorFormats';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -81,6 +82,10 @@ const subscriptionMirror = v.object({
   publicUrl: v.string(),
   objectPath: v.optional(v.string()),
   status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
+  // The formats written at this copy (src/shared/mirrorFormats.ts): one
+  // object each, beside `objectPath`. Absent = the `links` object only (a
+  // mirror from before formats, until its next upload).
+  formats: v.optional(v.array(mirrorFormatValidator)),
   // What the object holds under the edge-required policy: the binding policy
   // version + origin epoch the render passed under and the edges it carries;
   // `stub` = an unavailable stub was written because nothing could render.
