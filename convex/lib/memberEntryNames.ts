@@ -173,12 +173,19 @@ export function entryKey(remarkRest: string): string {
 export interface NamedEntry {
   name: string;
   entry: string;
+  /** A UDP transport (Hysteria 2, TUIC): named `UDP`, numbered apart from `Direct`. */
+  udp?: boolean;
 }
+
+/** Entry kinds that carry their traffic over UDP (QUIC), by scheme, type or protocol. */
+const UDP_KINDS = new Set(['hysteria', 'hysteria2', 'hy2', 'tuic']);
+const isUdpKind = (v: unknown) => typeof v === 'string' && UDP_KINDS.has(v.toLowerCase());
 
 /**
  * The new name of every node-named entry, by its old name: `<place> · Direct`
  * for the first server name in the order of `entries` (the body's order),
- * `Direct 2`, `Direct 3` for the next ones. `taken` holds every other name the
+ * `Direct 2`, `Direct 3` for the next ones; a UDP entry is `<place> · UDP`,
+ * numbered the same way among the UDP entries only. `taken` holds every other name the
  * body defines (groups, edge entries, built-ins), which no new name may equal.
  * The same server name under two nodes (one key, `entryKey`, two old names)
  * shares a number and the later one gets `uniqueName`'s ` (2)`.
@@ -189,15 +196,20 @@ export function planEntryNames(
   naming: EntryNaming,
 ): Map<string, string> {
   const place = placeOf(naming);
-  const byName = new Map<string, string>();
-  for (const e of entries) if (!byName.has(e.name)) byName.set(e.name, entryKey(e.entry));
-  // Server names in the order they first appear.
-  const keys = [...new Set(byName.values())];
+  const byName = new Map<string, { key: string; udp: boolean }>();
+  for (const e of entries)
+    if (!byName.has(e.name)) byName.set(e.name, { key: entryKey(e.entry), udp: !!e.udp });
+  // Server names in the order they first appear, per kind.
+  const keysOf = (udp: boolean) => [
+    ...new Set([...byName.values()].filter((v) => v.udp === udp).map((v) => v.key)),
+  ];
+  const keys = { direct: keysOf(false), udp: keysOf(true) };
   const used = new Set(taken);
   const plan = new Map<string, string>();
-  for (const [name, key] of byName) {
-    const n = keys.indexOf(key) + 1;
-    const label = uniqueName(entryName({ kind: 'direct', place, n }), used);
+  for (const [name, { key, udp }] of byName) {
+    const n = (udp ? keys.udp : keys.direct).indexOf(key) + 1;
+    const route = { kind: 'direct' as const, place, n, ...(udp ? { via: 'udp' as const } : {}) };
+    const label = uniqueName(entryName(route), used);
     used.add(label);
     plan.set(name, label);
   }
@@ -264,10 +276,11 @@ function planWithGroups(
 }
 
 /** The node-named entry a name and its server name make, or null. */
-function named(name: unknown, serverName: string | null): NamedEntry | null {
+function named(name: unknown, serverName: string | null, kind?: unknown): NamedEntry | null {
   if (typeof name !== 'string') return null;
   const split = splitPanelRemark(name, serverName);
-  return split ? { name, entry: split.entry } : null;
+  if (!split) return null;
+  return isUdpKind(kind) ? { name, entry: split.entry, udp: true } : { name, entry: split.entry };
 }
 
 export interface RelabelResult {
@@ -316,7 +329,8 @@ function relabelLinks(trimmed: string, naming: EntryNaming): RelabelResult | nul
     const cr = raw.endsWith('\r');
     const line = cr ? raw.slice(0, -1) : raw;
     const remark = PROXY_LINE_RE.test(line.trim()) ? linkRemark(line) : null;
-    return { line, cr, remark, node: named(remark, linkServerName(line)) };
+    const scheme = /^([a-z0-9+.-]+):\/\//i.exec(line.trim())?.[1];
+    return { line, cr, remark, node: named(remark, linkServerName(line), scheme) };
   });
   const entries = lines.map((l) => l.node).filter((e): e is NamedEntry => e !== null);
   if (entries.length === 0) return null;
@@ -354,7 +368,7 @@ function relabelSingbox(trimmed: string, naming: EntryNaming): RelabelResult | n
     ...cfg.outbounds,
     ...(Array.isArray(cfg.endpoints) ? (cfg.endpoints as unknown[]) : []),
   ].filter(isObj);
-  const nodes = defs.map((o) => named(o.tag, configServerName(o)));
+  const nodes = defs.map((o) => named(o.tag, configServerName(o), o.type));
   const entries = nodes.filter((e): e is NamedEntry => e !== null);
   const others = defs.filter((o, i) => nodes[i] === null && typeof o.tag === 'string');
   const taken = new Set(others.map((o) => o.tag as string));
@@ -374,7 +388,7 @@ function relabelClash(trimmed: string, naming: EntryNaming): RelabelResult | nul
     return null;
   // A key with no entry yet still shows the template's group.
   const proxies = Array.isArray(doc.proxies) ? doc.proxies.filter(isObj) : [];
-  const nodes = proxies.map((p) => named(p.name, configServerName(p)));
+  const nodes = proxies.map((p) => named(p.name, configServerName(p), p.type));
   const entries = nodes.filter((e): e is NamedEntry => e !== null);
   const groups = (Array.isArray(doc['proxy-groups']) ? (doc['proxy-groups'] as unknown[]) : [])
     .map((g) => (isObj(g) ? g.name : undefined))
@@ -398,7 +412,7 @@ function relabelClash(trimmed: string, naming: EntryNaming): RelabelResult | nul
 function relabelXrayJson(trimmed: string, naming: EntryNaming): RelabelResult | null {
   const list = JSON.parse(trimmed) as unknown;
   if (!Array.isArray(list) || !list.every(isObj)) return null;
-  const nodes = list.map((c) => named(c.remarks, xrayServerName(c)));
+  const nodes = list.map((c) => named(c.remarks, xrayServerName(c), xrayProtocol(c)));
   const entries = nodes.filter((e): e is NamedEntry => e !== null);
   if (entries.length === 0) return null;
   const taken = new Set(
@@ -412,6 +426,13 @@ function relabelXrayJson(trimmed: string, naming: EntryNaming): RelabelResult | 
     return label === undefined ? c : { ...c, remarks: label };
   });
   return { content: JSON.stringify(next), renamed: plan.size };
+}
+
+/** The protocol of an Xray client config's first outbound with stream settings (its proxy). */
+function xrayProtocol(config: Obj): string | null {
+  const outbounds = Array.isArray(config.outbounds) ? config.outbounds : [];
+  const proxy = outbounds.find((o) => isObj(o) && isObj(o.streamSettings));
+  return isObj(proxy) && typeof proxy.protocol === 'string' ? proxy.protocol : null;
 }
 
 /** The server name an Xray client config's first proxy outbound carries (REALITY or TLS), or null. */

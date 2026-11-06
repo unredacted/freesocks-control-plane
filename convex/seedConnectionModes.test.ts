@@ -58,7 +58,7 @@ describe('seedConnectionModes: fresh deploy', () => {
   test('inserts the compiled defaults into empty tables', async () => {
     const t = convexTest(schema, modules);
     const out = await t.mutation(internal.seed.seedConnectionModes, {});
-    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 4 });
+    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 5 });
     const fams = await t.run((ctx) => ctx.db.query('connectionModeFamilies').collect());
     const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
     expect(fams.map((f) => f.slug).sort()).toEqual(['freedom', 'privacy']);
@@ -66,6 +66,7 @@ describe('seedConnectionModes: fresh deploy', () => {
       'freedom-reality',
       'freedom-ws',
       'freedom-xhttp',
+      'privacy-hysteria',
       'privacy-reality',
     ]);
     expect(modes.find((m) => m.slug === 'freedom-xhttp')!.enabled).toBe(false); // ships dark
@@ -109,6 +110,7 @@ describe('seedConnectionModes: fresh deploy', () => {
     expect(modes.map((m) => m.slug).sort()).toEqual([
       'freedom-ws',
       'freedom-xhttp',
+      'privacy-hysteria',
       'privacy-reality',
     ]);
     expect(modes.find((m) => m.slug === 'freedom-ws')!.label).toBe('Tunnel Mode');
@@ -132,13 +134,17 @@ describe('seedConnectionModes: fresh deploy', () => {
     });
     await t.mutation(internal.seed.seedConnectionModes, {});
     const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
-    // freedom-xhttp arrived with version 2; freedom-reality was a version 1
-    // built-in the admin removed, and stays removed.
+    // freedom-xhttp arrived with version 2 and privacy-hysteria with 3 (with
+    // its backup); freedom-reality was a version 1 built-in the admin
+    // removed, and stays removed.
     expect(modes.map((m) => m.slug).sort()).toEqual([
       'freedom-ws',
       'freedom-xhttp',
+      'privacy-hysteria',
       'privacy-reality',
     ]);
+    const hysteria = modes.find((m) => m.slug === 'privacy-hysteria')!;
+    expect(hysteria).toMatchObject({ enabled: false, fallbackModeSlug: 'privacy-reality' });
   });
 });
 
@@ -231,6 +237,8 @@ describe('cleanupLegacyModeSettings', () => {
     // Empty pool: nothing to lose.
     await putSetting(t, 'remnawave.modePlacement.freedom-ws.squads', []);
     // Non-empty pool for a mode the admin deleted from the catalog: dead either way.
+    // (Its Hysteria mode first: a mode never goes while another uses it as its backup.)
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-hysteria' });
     await t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-reality' });
     await putSetting(t, 'remnawave.modePlacement.privacy.squads', ['sq-dead']);
     expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(2);
@@ -349,7 +357,7 @@ describe('seedCutover integration', () => {
   test('one call seeds the catalog; a second deploy is zero work', async () => {
     const t = convexTest(schema, modules);
     const out = await t.action(internal.seed.seedCutover, {});
-    expect(out.modesInserted).toBe(4);
+    expect(out.modesInserted).toBe(5);
     expect(out.modeFamiliesInserted).toBe(2);
     // Second deploy: fully converged, zero work.
     const out2 = await t.action(internal.seed.seedCutover, {});

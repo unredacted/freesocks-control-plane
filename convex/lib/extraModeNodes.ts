@@ -68,6 +68,20 @@ export function preferredTier(
 }
 
 /**
+ * Whether a two-group key gets only its backup's entry right now: no node
+ * serves its mode, or the node it is pinned to does not (its address closed
+ * for a re-check). The account view says so ("UDP unavailable right now").
+ */
+export async function extraModeDegradedOf(
+  db: DatabaseReader,
+  sub: Parameters<typeof extraModeTiersOf>[1] & Pick<Doc<'subscriptions'>, 'pinnedNode'>,
+): Promise<boolean> {
+  const tiers = await extraModeTiersOf(db, sub);
+  if (!tiers) return false;
+  return sub.pinnedNode ? !tiers.serving.includes(sub.pinnedNode) : tiers.serving.length === 0;
+}
+
+/**
  * The nodes "Switch server" may move a two-group key's pin to: those of the
  * tier the pinner picks from, other than the key's pin. Null for a key not in
  * two groups (its group's node count decides).

@@ -455,6 +455,8 @@ describe('saving a freedom mode set up direct', () => {
       'privacy-reality',
       'direct',
     );
+    // (Nothing uses it as a backup: that would refuse the move first.)
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-hysteria' });
     await expect(
       t.mutation(internal.connectionModes.updateMode, {
         slug: 'privacy-reality',

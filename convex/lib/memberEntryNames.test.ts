@@ -283,6 +283,77 @@ describe('relabelMemberEntries: labels', () => {
     expect(xr.map((c) => c.remarks)).toEqual(NAMES.map((n) => want.get(n)));
   });
 
+  test('a Hysteria entry beside its REALITY backup reads UDP, numbered on its own', () => {
+    const UDP = `🇨🇦 Example City${ENTRY_NAME_SEP}UDP`;
+    const hy = (sni: string) =>
+      `hysteria2://11111111-2222-3333-4444-555555555555@${ADDR_A}:443/?sni=${sni}&pinSHA256=${'ab'.repeat(32)}#${encodeURIComponent(addressRemark(NODE_A, sni))}`;
+    const names = (body: string) =>
+      relabelMemberEntries(body, NAMING)
+        .content.split('\n')
+        .map((l) => decodeURIComponent(l.slice(l.indexOf('#') + 1)));
+    // The UDP entry first does not take `Direct`'s number, nor the other way round.
+    expect(
+      names([hy('q.example'), link(NODE_A, NAMES[0]), link(NODE_A, NAMES[1])].join('\n')),
+    ).toEqual([UDP, direct(1), direct(2)]);
+    expect(names([link(NODE_A, NAMES[0]), hy('q.example'), hy('r.example')].join('\n'))).toEqual([
+      direct(1),
+      UDP,
+      `${UDP} 2`,
+    ]);
+    // sing-box, Clash and Xray JSON read the kind from the entry's type or protocol.
+    const sb = JSON.parse(
+      relabelMemberEntries(
+        JSON.stringify({
+          outbounds: [
+            {
+              type: 'hysteria2',
+              tag: addressRemark(NODE_A, 'q.example'),
+              server: ADDR_A,
+              server_port: 443,
+              tls: { enabled: true, server_name: 'q.example' },
+            },
+          ],
+        }),
+        NAMING,
+      ).content,
+    ) as { outbounds: Array<{ tag: string }> };
+    expect(sb.outbounds[0]!.tag).toBe(UDP);
+    const cl = YAML.parse(
+      relabelMemberEntries(
+        YAML.stringify({
+          proxies: [
+            {
+              name: addressRemark(NODE_A, 'q.example'),
+              type: 'hysteria2',
+              server: ADDR_A,
+              port: 443,
+              sni: 'q.example',
+            },
+          ],
+        }),
+        NAMING,
+      ).content,
+    ) as { proxies: Array<{ name: string }> };
+    expect(cl.proxies[0]!.name).toBe(UDP);
+    const xr = JSON.parse(
+      relabelMemberEntries(
+        JSON.stringify([
+          {
+            remarks: addressRemark(NODE_A, 'q.example'),
+            outbounds: [
+              {
+                protocol: 'hysteria',
+                streamSettings: { tlsSettings: { serverName: 'q.example' } },
+              },
+            ],
+          },
+        ]),
+        NAMING,
+      ).content,
+    ) as Array<{ remarks: string }>;
+    expect(xr[0]!.remarks).toBe(UDP);
+  });
+
   test('entries that name no node keep their names (edge labels, placeholders)', () => {
     const body = [
       link(NODE_A, NAMES[0]),

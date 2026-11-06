@@ -7,6 +7,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import UdpUnavailableNote from '../components/UdpUnavailableNote.svelte';
   import AppNoticeHint from '../components/AppNoticeHint.svelte';
   import UsagePanel from '../components/UsagePanel.svelte';
   import KeyLocationGlobe from '../components/KeyLocationGlobe.svelte';
@@ -1105,6 +1106,11 @@
                     </div>
                   {/snippet}
                 </SubscriptionHero>
+                {#if data.subscription.udpUnavailable}
+                  <!-- A Hysteria key whose node does not serve UDP right now:
+                       its configuration carries the REALITY backup only. -->
+                  <UdpUnavailableNote />
+                {/if}
                 {#if data.subscription.appNotice}
                   <!-- An app on this key got the app notice lately (too old, or
                        its format can't carry this mode): say so right under

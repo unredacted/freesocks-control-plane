@@ -528,6 +528,7 @@ async function materializeDefaultsIfEmpty(ctx: MutationCtx): Promise<void> {
       isCensorshipRecommended: m.isCensorshipRecommended || undefined,
       backends: m.backends,
       order: m.order,
+      ...(m.fallbackModeSlug ? { fallbackModeSlug: m.fallbackModeSlug } : {}),
       updatedAt: now,
     });
   }

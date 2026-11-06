@@ -59,6 +59,11 @@ export const MODE_COPY: Record<
     titleKey: 'delivery.privacyRealityTitle',
     bodyKey: 'delivery.privacyRealityBody',
   },
+  // Hysteria 2 over UDP, with the node's REALITY entry as its backup.
+  'privacy-hysteria': {
+    titleKey: 'delivery.privacyHysteriaTitle',
+    bodyKey: 'delivery.privacyHysteriaBody',
+  },
 };
 
 interface FamilyLike {

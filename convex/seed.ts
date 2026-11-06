@@ -319,6 +319,7 @@ export const seedConnectionModes = internalMutation({
         isCensorshipRecommended: m.isCensorshipRecommended,
         backends: [...m.backends],
         order: m.order,
+        ...(m.fallbackModeSlug ? { fallbackModeSlug: m.fallbackModeSlug } : {}),
         updatedAt: now,
       });
       modesInserted++;

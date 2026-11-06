@@ -1253,10 +1253,12 @@ place leading edge entries (`… via …`) on 2026-11-05.
 
 ```
 <flag> <node's place> · Direct[ <n>]                             a node, dialled directly
+<flag> <node's place> · UDP[ <n>]                                a node over UDP (Hysteria 2)
 <flag> <node's place> via <front>[ <letter>][ · <form>][ #<n>]   a node, through an edge
 
 🇨🇦 Example Port · Direct                       a node, dialled directly (Privacy, or a direct entry)
 🇨🇦 Example Port · Direct 2                     the next server name of the same place
+🇨🇦 Example Port · UDP                          the same node over Hysteria 2 (beside its Direct backup)
 🇨🇦 Example Port via Example Town               a load balancer address (L4: REALITY, XHTTP)
 🇨🇦 Example Port via Example Town A · Domain    two addresses in one place get letters
 🇨🇦 Example Port via relay A                    an address whose location has no member-facing name
@@ -1314,7 +1316,9 @@ Domain` (the address's name, § "Names for load balancer addresses"), `· IPv4` 
   `#2`, `#3` on the form it dials: `· Domain #2` for a named address, `· IPv4 #2` beside raw IPs,
   `#2` alone for an address with one form.
 - **Direct.** A direct entry is `<flag> <place> · Direct`, then `Direct 2`, `Direct 3` for further
-  server names, numbered in the order the panel lists them (its Host order), so an app shows them
+  server names. A UDP entry (Hysteria 2, TUIC: the link scheme, sing-box or Clash `type`, or Xray
+  `protocol` says which) is `<flag> <place> · UDP`, then `UDP 2`, numbered among the UDP entries
+  only, so a Hysteria key's two entries read `· UDP` and `· Direct`. Both are numbered in the order the panel lists them (its Host order), so an app shows them
   top to bottom (`docs/servers.md` § "A direct node's addresses"). The place is the backend
   instance's location label (its first comma segment); the flag is the country every node of the
   instance reports in the backend's node list (`backendNodeInventory.countryCode`; none when they

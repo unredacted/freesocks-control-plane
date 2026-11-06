@@ -221,6 +221,7 @@ describe('resolveBoundModeCounts', () => {
       'freedom-reality': 0,
       'freedom-xhttp': 0,
       'privacy-reality': 0,
+      'privacy-hysteria': 0,
     });
   });
 
@@ -239,6 +240,7 @@ describe('resolveBoundModeCounts', () => {
       'freedom-reality': 0,
       'freedom-xhttp': 0,
       'privacy-reality': 0,
+      'privacy-hysteria': 0,
     });
     expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual([]);
     const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);

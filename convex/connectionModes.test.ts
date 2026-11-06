@@ -46,6 +46,7 @@ describe('resolveModeCatalog', () => {
       'freedom-reality',
       'freedom-xhttp',
       'privacy-reality',
+      'privacy-hysteria',
     ]);
     // freedom-reality ships dark; the other two are enabled.
     expect(modes.find((m) => m.id === 'freedom-reality')!.enabled).toBe(false);
@@ -704,6 +705,7 @@ describe('admin CRUD', () => {
       'freedom-reality',
       'freedom-ws',
       'freedom-xhttp',
+      'privacy-hysteria',
       'privacy-reality',
     ]);
     expect(rows.find((r) => r.slug === 'freedom-reality')!.enabled).toBe(true);
@@ -810,12 +812,12 @@ describe('admin CRUD', () => {
       ctx.db.insert('users', {
         tierId,
         status: 'active',
-        connectionModeId: 'privacy-reality',
+        connectionModeId: 'freedom-xhttp',
         updatedAt: Date.now(),
       }),
     );
     await expect(
-      t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-reality' }),
+      t.mutation(internal.connectionModes.removeMode, { slug: 'freedom-xhttp' }),
     ).rejects.toThrow(/members are currently on this mode/i);
   });
 
@@ -828,12 +830,12 @@ describe('admin CRUD', () => {
 
   test('removeMode cascades its placement bindings', async () => {
     const t = convexTest(schema, modules);
-    await bindPool(t, 'privacy-reality', [SQUAD]);
-    await t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-reality' });
+    await bindPool(t, 'freedom-xhttp', [SQUAD]);
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'freedom-xhttp' });
     const placements = await t.run((ctx) => ctx.db.query('modePlacements').collect());
-    expect(placements.filter((p) => p.modeSlug === 'privacy-reality')).toHaveLength(0);
+    expect(placements.filter((p) => p.modeSlug === 'freedom-xhttp')).toHaveLength(0);
     const { modes } = await t.run((ctx) => resolveModeCatalog(ctx.db));
-    expect(modes.map((m) => m.id)).not.toContain('privacy-reality');
+    expect(modes.map((m) => m.id)).not.toContain('freedom-xhttp');
   });
 
   test('updateFamily: label null clears a built-in back to i18n; non-built-in must keep one', async () => {
@@ -880,6 +882,7 @@ describe('internal list (validation surface)', () => {
       'freedom-reality',
       'freedom-xhttp',
       'privacy-reality',
+      'privacy-hysteria',
     ]);
     const ws = modes.find((m) => m.id === 'freedom-ws')!;
     expect(ws.bound).toBe(true);
