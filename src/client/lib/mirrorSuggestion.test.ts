@@ -3,6 +3,7 @@ import {
   chosenLink,
   mirrorLinks,
   mirrorSuggested,
+  suggestionCountry,
   withMirror,
   withoutMirrors,
 } from './mirrorSuggestion';
@@ -31,6 +32,21 @@ describe('mirrorSuggested', () => {
   test('a country not on the list, or an older server without the flag', () => {
     expect(mirrorSuggested({ ...base, geoCountryCensored: false })).toBe(false);
     expect(mirrorSuggested({ ...base, geoCountryCensored: undefined })).toBe(false);
+  });
+
+  test("the member's own answer wins over this request's country", () => {
+    // Said a listed country: suggested even when the request looks elsewhere (a VPN).
+    expect(
+      mirrorSuggested({ ...base, geoCountry: 'DE', geoCountryCensored: false, storedChoice: 'IR' }),
+    ).toBe(true);
+    expect(
+      suggestionCountry({ geoCountry: 'DE', geoCountryCensored: false, storedChoice: 'IR' }),
+    ).toBe('IR');
+    // Said "Somewhere else": never suggested, whatever this request says.
+    expect(mirrorSuggested({ ...base, storedChoice: 'ZZ' })).toBe(false);
+    expect(suggestionCountry({ ...base, storedChoice: 'ZZ' })).toBeNull();
+    // No answer: this request's listed country, as before.
+    expect(suggestionCountry({ ...base, storedChoice: null })).toBe('IR');
   });
 
   test('no mirrors on this deployment, or a rawConfig mode (no public mirrors)', () => {

@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**171 of 777 strings are missing** (the app currently shows English for
+**190 of 796 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -695,7 +695,7 @@ review.
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | برنامهٔ iOS پولی و بسته‌متنی که محبوب و قابل اعتماد است. اگر از قبل آن را دارید ارزش استفاده دارد؛ برنامه‌های متن‌باز بالا همان کار را رایگان انجام می‌دهند. |
 | `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | ساده‌ترین تجربه‌ای که هست: کلید دسترسی خود را جای‌گذاری کنید و وصل شوید. فقط با کلیدهای دسترسی Outline (Shadowsocks) کار می‌کند. |
 
-## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(4 missing)*
+## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(10 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -720,6 +720,12 @@ review.
 | `mirror.quickLabel` | First, try moving servers | ⚠️ **MISSING** |
 | `mirror.quickHint` | A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key. | ⚠️ **MISSING** |
 | `mirror.pickLocation` | Pick a different location | ⚠️ **MISSING** |
+| `mirror.countryHelp` | A mirror link is a fixed copy of your settings, so it can't tell where you are. Tell us, and we'll set it up for that country. | ⚠️ **MISSING** |
+| `mirror.setFor` | Your mirror links are set up for {country}. | ⚠️ **MISSING** |
+| `mirror.setForNone` | Your mirror links aren't set up for any country. | ⚠️ **MISSING** |
+| `mirror.notSetPrompt` | Your mirror links aren't set up for a country. Pick yours so they work better there. | ⚠️ **MISSING** |
+| `mirror.willUpdate` | Your mirror links will update in a few minutes. Your app picks it up at its next refresh. | ⚠️ **MISSING** |
+| `mirror.saveCountry` | Save | ⚠️ **MISSING** |
 
 ## `mirrorSuggest` — Miscellaneous strings. *(11 missing)*
 
@@ -749,21 +755,34 @@ review.
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `region` — Miscellaneous strings. *(11 missing)*
+## `region` — Miscellaneous strings. *(24 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `region.title` | Where are you connecting from? | ⚠️ **MISSING** |
-| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses, the addresses it connects to first and the connection mode we suggest. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
+| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses, the addresses it connects to first, the connection mode we suggest and, if you pick a country, the server location of a new key. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
 | `region.helpDetect` | On Automatic we keep the country you connect from, guessed from your connection, and forget it {days} days after we last see you there. | ⚠️ **MISSING** |
 | `region.automatic` | Automatic | ⚠️ **MISSING** |
-| `region.elsewhere` | Opt-out: do not use my location | ⚠️ **MISSING** |
+| `region.elsewhere` | Somewhere else, or I'd rather not say | ⚠️ **MISSING** |
 | `region.guessed` | We think you're connecting from {country}. | ⚠️ **MISSING** |
 | `region.chosen` | You told us you're connecting from {country}. | ⚠️ **MISSING** |
 | `region.chosenElsewhere` | You opted out: we do not use your location. | ⚠️ **MISSING** |
 | `region.change` | Change | ⚠️ **MISSING** |
 | `region.saved` | Saved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
 | `region.failed` | That did not save. Try again. | ⚠️ **MISSING** |
+| `region.tooOften` | You can change your country a few times a day. Try again tomorrow. | ⚠️ **MISSING** |
+| `region.exitFaster` | From {country}, {location} is usually faster than where your key is now. | ⚠️ **MISSING** |
+| `region.exitMove` | Move my key there | ⚠️ **MISSING** |
+| `region.exitConfirm` | Your key moves there once. Your link stays the same, so there is nothing to import again, and you stay on Automatic. | ⚠️ **MISSING** |
+| `region.exitMoveNow` | Move it | ⚠️ **MISSING** |
+| `region.exitMoved` | Your key moved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
+| `region.exitFailed` | Your key did not move. Try again later. | ⚠️ **MISSING** |
+| `region.signupHelp` | We use this to give you server names and addresses that work in your country. It's saved with your key, never shared, and you can change it any time on your account page. | ⚠️ **MISSING** |
+| `region.choose` | Choose one | ⚠️ **MISSING** |
+| `region.prefilled` | We filled this in from your connection. Change it if it's wrong. | ⚠️ **MISSING** |
+| `region.required` | Choose where you're connecting from, or pick Somewhere else. | ⚠️ **MISSING** |
+| `region.alsoMirrors` | This also shapes your mirror links. | ⚠️ **MISSING** |
+| `region.automaticMirrorWarn` | Automatic doesn't apply to mirror links. They won't be set up for any country. | ⚠️ **MISSING** |
 
 ## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(26 missing)*
 

@@ -8,14 +8,18 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import MapPin from '@lucide/svelte/icons/map-pin';
   import Flag from '@lucide/svelte/icons/flag';
-  import { apiClient } from '../lib/api';
+  import { ApiCallError, apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { t } from '../lib/i18n/index.svelte';
   import { COUNTRY_CODES } from '../lib/countries';
   import MirrorRegionSelect from './MirrorRegionSelect.svelte';
   import { MirrorRequestResponse, MirrorClearResponse } from '../../shared/contracts/mirror';
   import type { AccountResponse } from '../../shared/contracts/account';
-  import { queryKeys } from '../lib/queries';
+  import { connectionRegionQuery, queryKeys, setConnectionRegion } from '../lib/queries';
+  import { sealingEnabled } from '../lib/hpke';
+  import { asksCountry, isAnswer, mirrorCountry, prefillAnswer } from '../lib/countryQuestion';
+  import CountryQuestion from './CountryQuestion.svelte';
+  import MirrorSetFor from './MirrorSetFor.svelte';
   import { MIRROR_REQUEST_KEY, withoutMirrors } from '../lib/mirrorSuggestion';
   import { copyText } from '../lib/utils';
   import { createMutation, useIsMutating, useQueryClient } from '@tanstack/svelte-query';
@@ -31,6 +35,16 @@
    * Renders in ALL deployments (the availability is member-visible state, not a
    * reason to hide): `available=false` (no active mirror provider configured)
    * shows a quiet "not available here" note instead of the picker.
+   *
+   * With the country question on (`askCountry`, lib/countryQuestion.ts), a
+   * mirror is shaped for the key's own answer to "Where are you connecting
+   * from?" (it cannot see where its reader is): a key with an answer says what
+   * its mirrors are set up for (Change asks again); a key without one asks,
+   * required, prefilled from the guess or the CDN geo. The answer travels sealed
+   * with the mirror request (saved to the key first) or, for mirrors the key
+   * already has, with Save (the account card's route): the server rewrites them
+   * at the same URLs. Off, or for a key whose mode holds no country, the old
+   * transient region picker stays.
    */
   interface Props {
     mirrors: { provider: string; publicUrl: string }[];
@@ -50,6 +64,8 @@
      *  pass has no report button): a member stuck here is exactly who should
      *  tell us why. */
     onReportIssue?: () => void;
+    /** The deployment asks where the member connects from (publicConfig.countryQuestion). */
+    askCountry?: boolean;
   }
   let {
     mirrors,
@@ -59,9 +75,68 @@
     onSwitchServer = undefined,
     onPickLocation = undefined,
     onReportIssue = undefined,
+    askCountry = false,
   }: Props = $props();
 
   const qc = useQueryClient();
+
+  const canSeal = sealingEnabled();
+  const region = connectionRegionQuery(() => canSeal && askCountry);
+  const asking = $derived(asksCountry({ countryQuestion: askCountry, canSeal, view: region.data }));
+  const setFor = $derived(mirrorCountry(region.data));
+  // Until the view answers, whether the key needs an answer is unknown: the
+  // request waits. A view that fails stays out of the way (the mirror is made
+  // as before the question existed; the account card can still take one).
+  const regionLoading = $derived(region.isLoading);
+  let changing = $state(false);
+  const needsAnswer = $derived(asking && (setFor.kind === 'unset' || changing));
+  let answer = $state('');
+  let answerInvalid = $state(false);
+  let savingAnswer = $state(false);
+  $effect(() => {
+    if (!needsAnswer || answer) return;
+    answer = prefillAnswer(region.data?.options ?? [], region.data?.guess?.country, geoCountry);
+  });
+  $effect(() => {
+    if (answer) answerInvalid = false;
+  });
+  const answerOk = () => isAnswer(answer, region.data?.options ?? []);
+
+  /** The request body: the answer (sealed), nothing (the stored answer picks the host), or a host hint. */
+  function requestBody(): Record<string, string | null> {
+    if (needsAnswer) return { region: answer };
+    if (asking) return {};
+    return { countryCode: selected || null };
+  }
+  function getMirror() {
+    if (regionLoading) return;
+    if (needsAnswer && !answerOk()) {
+      answerInvalid = true;
+      return;
+    }
+    request.mutate();
+  }
+  /** Mirrors the key already has: save the answer only; the server rewrites them. */
+  async function saveAnswer() {
+    if (!answerOk()) {
+      answerInvalid = true;
+      return;
+    }
+    savingAnswer = true;
+    try {
+      qc.setQueryData(queryKeys.connectionRegion, await setConnectionRegion(answer));
+      changing = false;
+      toast.success(t('region.saved'), { description: t('mirror.willUpdate') });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiCallError && err.payload.error.code === 'rate_limit.country_day'
+          ? t('region.tooOften')
+          : t('region.failed'),
+      );
+    } finally {
+      savingAnswer = false;
+    }
+  }
 
   let open = $state(false);
 
@@ -124,12 +199,13 @@
   const request = createMutation(() => ({
     mutationKey: MIRROR_REQUEST_KEY,
     mutationFn: () =>
-      apiClient.post(
-        '/api/v1/mirror/request',
-        { countryCode: selected || null },
-        MirrorRequestResponse,
-      ),
+      apiClient.post('/api/v1/mirror/request', requestBody(), MirrorRequestResponse),
     onSuccess: (res) => {
+      // An answer sent with the request is the key's answer now.
+      if (needsAnswer) {
+        changing = false;
+        void qc.invalidateQueries({ queryKey: queryKeys.connectionRegion });
+      }
       if (res.status === 'ok' && res.publicUrl) {
         if (!added.some((m) => m.publicUrl === res.publicUrl)) {
           pending = [...pending, { provider: res.provider ?? '', publicUrl: res.publicUrl }];
@@ -259,10 +335,59 @@
           </div>
         {/if}
 
-        {#if !exhausted}
-          <MirrorRegionSelect id="mirror-region" bind:value={selected} />
+        {#if asking && !needsAnswer}
+          <MirrorSetFor
+            country={setFor.kind === 'country' ? setFor.country : null}
+            onChange={() => (changing = true)}
+            disabled={busy || savingAnswer}
+          />
+        {/if}
 
-          <Button onclick={() => request.mutate()} disabled={busy} class="min-h-11">
+        {#if needsAnswer && added.length > 0}
+          <!-- Mirrors made before the question (or a change of answer): save it,
+               and the server rewrites the mirrors the key has at the same URLs. -->
+          <div class="space-y-3">
+            {#if setFor.kind === 'unset'}
+              <p class="font-bold text-foreground">{t('mirror.notSetPrompt')}</p>
+            {/if}
+            <CountryQuestion
+              id="mirror-country"
+              options={region.data?.options ?? []}
+              bind:value={answer}
+              help={t('mirror.countryHelp')}
+              invalid={answerInvalid}
+              disabled={busy || savingAnswer}
+            />
+            <Button
+              variant="outline"
+              onclick={() => void saveAnswer()}
+              disabled={busy || savingAnswer}
+              class="min-h-11"
+            >
+              {savingAnswer ? t('mirror.working') : t('mirror.saveCountry')}
+            </Button>
+          </div>
+        {/if}
+
+        {#if !exhausted}
+          {#if needsAnswer && added.length === 0}
+            <CountryQuestion
+              id="mirror-country"
+              options={region.data?.options ?? []}
+              bind:value={answer}
+              help={t('mirror.countryHelp')}
+              invalid={answerInvalid}
+              disabled={busy}
+            />
+          {:else if !asking}
+            <MirrorRegionSelect id="mirror-region" bind:value={selected} />
+          {/if}
+
+          <Button
+            onclick={getMirror}
+            disabled={busy || savingAnswer || regionLoading}
+            class="min-h-11"
+          >
             {busy
               ? t('mirror.working')
               : added.length === 0

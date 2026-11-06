@@ -13,20 +13,36 @@
 export const MIRROR_REQUEST_KEY = ['mirror', 'request'] as const;
 
 /**
- * Whether onboarding suggests a mirror link: the server says THIS request's
- * country is on the censored-country list (`geoCountryCensored`), the
- * deployment has mirrors, and the mode delivers a link (rawConfig modes get no
- * public mirrors). No country, no suggestion, whatever the flag says.
+ * The country the onboarding suggestion speaks about: the member's own stored
+ * answer when they gave one (the opt-out means none: their answer wins over
+ * this request's country), else THIS request's country when the server says it
+ * is on the censored-country list (`geoCountryCensored`).
+ */
+export function suggestionCountry(o: {
+  geoCountry?: string | null;
+  geoCountryCensored?: boolean;
+  /** The key's stored answer (a listed country or `ZZ`), from the sealed view. */
+  storedChoice?: string | null;
+}): string | null {
+  if (o.storedChoice === 'ZZ') return null;
+  if (o.storedChoice) return o.storedChoice;
+  return o.geoCountry && o.geoCountryCensored === true ? o.geoCountry : null;
+}
+
+/**
+ * Whether onboarding suggests a mirror link: there is a country to speak about
+ * (`suggestionCountry`), the deployment has mirrors, and the mode delivers a
+ * link (rawConfig modes get no public mirrors). No country, no suggestion,
+ * whatever the flag says.
  */
 export function mirrorSuggested(o: {
   geoCountry?: string | null;
   geoCountryCensored?: boolean;
+  storedChoice?: string | null;
   mirrorsEnabled?: boolean;
   rawConfig: boolean;
 }): boolean {
-  return (
-    !!o.geoCountry && o.geoCountryCensored === true && o.mirrorsEnabled === true && !o.rawConfig
-  );
+  return o.mirrorsEnabled === true && !o.rawConfig && suggestionCountry(o) !== null;
 }
 
 /** The key's mirror links, in the server's order, without the main link or repeats. */

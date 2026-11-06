@@ -10,7 +10,12 @@
   import UsagePanel from '../components/UsagePanel.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import MirrorSuggestion from '../components/MirrorSuggestion.svelte';
-  import { chosenLink, mirrorLinks, mirrorSuggested } from '../lib/mirrorSuggestion';
+  import {
+    chosenLink,
+    mirrorLinks,
+    mirrorSuggested,
+    suggestionCountry,
+  } from '../lib/mirrorSuggestion';
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
@@ -34,7 +39,12 @@
     accountUsageQuery,
     nodeStatusQuery,
     queryKeys,
+    connectionRegionQuery,
+    signupRegionQuery,
   } from '../lib/queries';
+  import CountryQuestion from '../components/CountryQuestion.svelte';
+  import { asksCountry, isAnswer, prefillAnswer } from '../lib/countryQuestion';
+  import { sealingEnabled } from '../lib/hpke';
   import { freeTier, deviceLimitsShown } from '../lib/tiers';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
@@ -143,6 +153,64 @@
       ? account.data.user.currentMode.deliveryStyle
       : connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle) === 'rawConfig',
   );
+  // "Where are you connecting from?" before the first key (lib/countryQuestion.ts):
+  // asked when the deployment asks, this build can seal, and the picked mode
+  // holds a country. Required, with "Somewhere else, or I'd rather not say" as
+  // an answer; prefilled from the guess or this request's listed country. Sent
+  // (sealed) with the first key, which is born with it: its first fetch and its
+  // first mirror are shaped for it. Page state until then.
+  const canSeal = sealingEnabled();
+  // Signed in only: the view is a member route (before the account exists it
+  // would answer 401 and stay errored).
+  const signupRegion = signupRegionQuery(
+    () => effectiveModeId ?? null,
+    () => isAuthed && canSeal && config.data?.countryQuestion === true && !subscription,
+  );
+  // Until the view answers, whether to ask is unknown: the key waits. A view
+  // that fails stays out of the way (the key is issued with no answer, as
+  // before the question existed; the account card can still take one).
+  let countryViewLoading = $derived(signupRegion.isLoading);
+  let askCountryNow = $derived(
+    !subscription &&
+      asksCountry({
+        countryQuestion: config.data?.countryQuestion,
+        canSeal,
+        view: signupRegion.data,
+      }),
+  );
+  let countryOptions = $derived(signupRegion.data?.options ?? []);
+  let countryAnswer = $state('');
+  let countryPrefill = $state('');
+  let countryInvalid = $state(false);
+  $effect(() => {
+    if (!askCountryNow || countryAnswer || countryPrefill) return;
+    const pre = prefillAnswer(
+      countryOptions,
+      signupRegion.data?.guess?.country,
+      account.data?.geoCountryCensored ? account.data?.geoCountry : null,
+    );
+    if (pre) {
+      countryPrefill = pre;
+      countryAnswer = pre;
+    }
+  });
+  $effect(() => {
+    if (countryAnswer) countryInvalid = false;
+  });
+  // The key's own answer once it exists (the suggestion below defers to it).
+  const keyRegion = connectionRegionQuery(() => canSeal && !!subscription);
+
+  async function createFirstKey() {
+    if (countryViewLoading) return;
+    if (askCountryNow && !isAnswer(countryAnswer, countryOptions)) {
+      countryInvalid = true;
+      await tick();
+      document.getElementById('get-account-country')?.focus();
+      return;
+    }
+    createSubscription.mutate();
+  }
+
   // Hide the gift-code redeem once they're a member.
   let isCurrentMember = $derived(account.data?.user.membership?.isCurrent ?? false);
 
@@ -291,11 +359,16 @@
           ...(locations.length >= 2
             ? { location: pickedLocation === 'auto' ? null : pickedLocation }
             : {}),
+          // Sealed by the route policy; the server refuses it in plaintext.
+          ...(askCountryNow && isAnswer(countryAnswer, countryOptions)
+            ? { region: countryAnswer }
+            : {}),
         },
         RegenerateResponse,
       );
     },
     onSuccess: () => {
+      // `account` is the prefix of the region views too: they refetch with it.
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
@@ -325,11 +398,22 @@
   // their app gets: the pass and the link-list apps follow the pick (sing-box
   // and Clash apps keep the main link). Page state only; nothing about the
   // country or the pick is stored.
+  // The member's own stored answer wins over this request's country: one who
+  // said "Somewhere else" is not told their country blocks the main link.
+  let keyChoice = $derived(keyRegion.data?.applies ? keyRegion.data.choice : null);
+  let suggestCountry = $derived(
+    suggestionCountry({
+      geoCountry: account.data?.geoCountry,
+      geoCountryCensored: account.data?.geoCountryCensored,
+      storedChoice: keyChoice,
+    }),
+  );
   let suggestMirror = $derived(
     !!subscription &&
       mirrorSuggested({
         geoCountry: account.data?.geoCountry,
         geoCountryCensored: account.data?.geoCountryCensored,
+        storedChoice: keyChoice,
         mirrorsEnabled: config.data?.mirrorsEnabled,
         rawConfig: rawConfigFirst,
       }),
@@ -582,6 +666,18 @@
           />
         {/if}
 
+        {#if askCountryNow}
+          <CountryQuestion
+            id="get-account-country"
+            options={countryOptions}
+            bind:value={countryAnswer}
+            help={t('region.signupHelp')}
+            prefilled={!!countryPrefill && countryAnswer === countryPrefill}
+            invalid={countryInvalid}
+            disabled={createSubscription.isPending}
+          />
+        {/if}
+
         {#if createSubscription.error}
           <div
             class="space-y-1 rounded-sm border border-destructive/40 bg-destructive/10 px-3 py-2 text-[15px] text-destructive"
@@ -600,8 +696,8 @@
         {/if}
 
         <Button
-          onclick={() => createSubscription.mutate()}
-          disabled={createSubscription.isPending}
+          onclick={() => void createFirstKey()}
+          disabled={createSubscription.isPending || countryViewLoading}
           size="lg"
           class="w-full"
         >
@@ -645,12 +741,13 @@
   {:else}
     <!-- STEP 3 (key issued): the pass + setup. This is the flow's destination. -->
     <div id="get-key" class="scroll-mt-24 space-y-6">
-      {#if suggestMirror && account.data?.geoCountry}
+      {#if suggestMirror && suggestCountry}
         <!-- Before the pass: it says the main link may be blocked here, and the
              link it lets the member pick is the one the pass shows. -->
         <MirrorSuggestion
           mirrors={keyMirrors}
-          geoCountry={account.data.geoCountry}
+          geoCountry={suggestCountry}
+          askCountry={config.data?.countryQuestion === true}
           subscriptionUrl={subUrl}
           link={keyLink}
           onPick={(url) => (pickedLink = url)}
@@ -684,6 +781,7 @@
           geoCountry={account.data?.geoCountry}
           subscriptionUrl={subUrl}
           available={config.data?.mirrorsEnabled ?? false}
+          askCountry={config.data?.countryQuestion === true}
         />
       {/if}
       <!-- Usage & validity beside the pass (extracted from it): what the key

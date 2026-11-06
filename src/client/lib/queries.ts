@@ -227,6 +227,24 @@ export const connectionRegionQuery = (enabled: () => boolean) =>
     retry: false,
   }));
 
+/**
+ * The same view before the first key exists (sign-up): judged for the mode the
+ * member picked (`?mode=`), so the country question shows only for a mode that
+ * holds a country. Keyed by the mode; the server ignores it once a key exists.
+ */
+export const signupRegionQuery = (mode: () => string | null, enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: [...queryKeys.connectionRegion, 'mode', mode() ?? ''] as const,
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/account/connection-region?mode=${encodeURIComponent(mode() ?? '')}`,
+        ConnectionRegionResponse,
+      ),
+    staleTime: 5 * 60_000,
+    enabled: enabled() && !!mode(),
+    retry: false,
+  }));
+
 export const setConnectionRegion = (region: string | null) =>
   apiClient.post('/api/v1/account/connection-region', { region }, ConnectionRegionResponse);
 

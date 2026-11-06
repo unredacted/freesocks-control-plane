@@ -54,7 +54,23 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   mirror is the recommendation); the pass (copy, download, QR) and the app buttons follow the
   pick, which is page state only. A mirror serves one fixed format (the base64 default,
   `docs/backends.md`), so sing-box and Clash apps keep importing the main link and their cards say
-  so. rawConfig modes get no suggestion, as they get no mirrors.
+  so. rawConfig modes get no suggestion, as they get no mirrors. The member's own stored answer
+  wins over this request's country (`suggestionCountry` in `src/client/lib/mirrorSuggestion.ts`):
+  a listed answer brings the suggestion even when the request looks elsewhere (a VPN), and "Somewhere
+  else, or I'd rather not say" means no suggestion whatever the request says.
+- **The member page** (with `delivery.country.ask` on; `src/client/lib/countryQuestion.ts`). Asked
+  only when this build can seal and the key (or, before the first key, the mode picked) holds a
+  country. Sign-up (`/get-account` step 3, `CountryQuestion.svelte`): required before "Get my free
+  key", the listed countries then "Somewhere else, or I'd rather not say", never Automatic;
+  prefilled from the guess or this request's listed country (and says so), otherwise "Choose one";
+  sent sealed with the first key. A mirror (`MirrorHelp`, `MirrorSuggestion`): a key with an answer
+  shows "Your mirror links are set up for Iran." (or "aren't set up for any country.") with Change
+  and asks nothing more; a key without one asks the same question in place of the region picker
+  and sends it with the request; mirrors the key already has get "Pick yours so they work better
+  there." and a Save that goes through the account card's route (the server rewrites them at the
+  same URLs). The account card says "This also shapes your mirror links." on a key with mirrors and
+  warns that Automatic leaves them with no country. A privacy-family key keeps the old transient
+  region picker.
 - **Keeping it current.** A full pass (`storage.drainMirrors`) re-renders every mirrored key and
   rewrites each copy whose object does not hold that body. It runs every six hours
   (`mirror-refresh`) and at once for any change members must see (an edge leaves the pool, a node

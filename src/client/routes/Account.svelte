@@ -1130,6 +1130,7 @@
                     geoCountry={data.geoCountry}
                     subscriptionUrl={subUrl}
                     available={config.data?.mirrorsEnabled ?? false}
+                    askCountry={config.data?.countryQuestion === true}
                     onSwitchServer={actionsDisabled || !canSwitchServer
                       ? undefined
                       : () => {
@@ -1286,7 +1287,10 @@
                 />
                 <!-- Where the member is, for server names known to work there. Renders
                      nothing unless the deployment curates any country. -->
-                <ConnectionRegion disabled={actionsDisabled} />
+                <ConnectionRegion
+                  disabled={actionsDisabled}
+                  hasMirrors={(data.subscription?.mirrors.length ?? 0) > 0}
+                />
                 {#if showGlobe && wideLayout.current}
                   <KeyLocationGlobe
                     locations={mapLocations}

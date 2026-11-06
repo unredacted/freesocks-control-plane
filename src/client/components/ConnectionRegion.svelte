@@ -18,7 +18,11 @@
    * stays the same and the member stays on Automatic. docs/edges.md "Exit
    * location by country".
    *
-   * Props: disabled?: boolean
+   * A key with mirror links: those are shaped by this answer too (a mirror
+   * cannot see where its reader is), so the card says so, warns that Automatic
+   * leaves them with no country, and a saved change says they will update.
+   *
+   * Props: disabled?: boolean, hasMirrors?: boolean
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -32,8 +36,10 @@
 
   interface Props {
     disabled?: boolean;
+    /** The key has mirror links (they follow this answer). */
+    hasMirrors?: boolean;
   }
-  let { disabled = false }: Props = $props();
+  let { disabled = false, hasMirrors = false }: Props = $props();
 
   const ELSEWHERE = 'ZZ';
   const canSeal = sealingEnabled();
@@ -76,7 +82,10 @@
       const next = await setConnectionRegion(value === '' ? null : value);
       qc.setQueryData(queryKeys.connectionRegion, next);
       changing = false;
-      toast.success(t('region.saved'));
+      toast.success(
+        t('region.saved'),
+        hasMirrors ? { description: t('mirror.willUpdate') } : undefined,
+      );
     } catch (err) {
       toast.error(
         err instanceof ApiCallError && err.payload.error.code === 'rate_limit.country_day'
@@ -149,6 +158,9 @@
         {t('region.helpDetect', { days: view.stickyDays })}
       {/if}
     </p>
+    {#if hasMirrors}
+      <p class="text-muted-foreground mt-1 text-sm">{t('region.alsoMirrors')}</p>
+    {/if}
     {#if showSelect}
       <select
         id="connection-region"
@@ -164,6 +176,11 @@
         {/each}
         <option value={ELSEWHERE}>{t('region.elsewhere')}</option>
       </select>
+      {#if hasMirrors && !view.choice}
+        <p class="mt-2 text-sm text-amber-700 dark:text-amber-400">
+          {t('region.automaticMirrorWarn')}
+        </p>
+      {/if}
     {/if}
   </div>
 {/if}
