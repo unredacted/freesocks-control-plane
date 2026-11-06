@@ -160,10 +160,16 @@
   // (sealed) with the first key, which is born with it: its first fetch and its
   // first mirror are shaped for it. Page state until then.
   const canSeal = sealingEnabled();
+  // Signed in only: the view is a member route (before the account exists it
+  // would answer 401 and stay errored).
   const signupRegion = signupRegionQuery(
     () => effectiveModeId ?? null,
-    () => canSeal && config.data?.countryQuestion === true && !subscription,
+    () => isAuthed && canSeal && config.data?.countryQuestion === true && !subscription,
   );
+  // Until the view answers, whether to ask is unknown: the key waits. A view
+  // that fails stays out of the way (the key is issued with no answer, as
+  // before the question existed; the account card can still take one).
+  let countryViewLoading = $derived(signupRegion.isLoading);
   let askCountryNow = $derived(
     !subscription &&
       asksCountry({
@@ -195,6 +201,7 @@
   const keyRegion = connectionRegionQuery(() => canSeal && !!subscription);
 
   async function createFirstKey() {
+    if (countryViewLoading) return;
     if (askCountryNow && !isAnswer(countryAnswer, countryOptions)) {
       countryInvalid = true;
       await tick();
@@ -690,7 +697,7 @@
 
         <Button
           onclick={() => void createFirstKey()}
-          disabled={createSubscription.isPending}
+          disabled={createSubscription.isPending || countryViewLoading}
           size="lg"
           class="w-full"
         >

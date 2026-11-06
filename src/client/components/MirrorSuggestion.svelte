@@ -58,6 +58,10 @@
   const region = connectionRegionQuery(() => canSeal && askCountry);
   const asking = $derived(asksCountry({ countryQuestion: askCountry, canSeal, view: region.data }));
   const setFor = $derived(mirrorCountry(region.data));
+  // Until the view answers, whether the key needs an answer is unknown: the
+  // request waits. A view that fails stays out of the way (the mirror is made
+  // as before the question existed; the account card can still take one).
+  const regionLoading = $derived(region.isLoading);
   let changing = $state(false);
   const needsAnswer = $derived(asking && (setFor.kind === 'unset' || changing));
   let answer = $state('');
@@ -77,6 +81,7 @@
     return { countryCode: selected || null };
   }
   function create() {
+    if (regionLoading) return;
     if (needsAnswer && !isAnswer(answer, region.data?.options ?? [])) {
       answerInvalid = true;
       return;
@@ -165,7 +170,7 @@
     {:else}
       <MirrorRegionSelect id="mirror-suggest-region" bind:value={selected} />
     {/if}
-    <Button onclick={create} disabled={busy} class="min-h-11">
+    <Button onclick={create} disabled={busy || regionLoading} class="min-h-11">
       {busy ? t('mirror.working') : t('mirrorSuggest.create')}
     </Button>
     {#if status === 'capped'}
