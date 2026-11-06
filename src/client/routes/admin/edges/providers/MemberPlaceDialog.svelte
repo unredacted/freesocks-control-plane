@@ -2,8 +2,9 @@
   /**
    * Where members are told one location's addresses are (docs/edges.md "Names
    * in apps"): a place name and a country, either optional, shown in members'
-   * apps as `🇧🇷 via Example Town`. Without a name the addresses read `via relay A`
-   * and no flag shows. The provider's own region name never reaches members;
+   * apps after the node's own place, `🇨🇦 Example Port via Example Town` (the
+   * flag is the node's; this country's flag shows only for a node with no place,
+   * `🇧🇷 via Example Town`). Without a name the addresses read `… via relay A`. The provider's own region name never reaches members;
    * this is the only place name that does. The dialog shows the name members
    * would read as it is typed (src/shared/entryNames.ts, the renderer's own
    * function).
@@ -77,8 +78,9 @@
       <Dialog.Title>Name in apps for {location?.label ?? 'this location'}</Dialog.Title>
       <Dialog.Description>
         Members see this in their apps for every address here. Anyone with a free account can read
-        it, so use a city or a country, never the provider's name for the region. Leave the name
-        empty and members read "via relay A".
+        it, so use a city or a country, never the provider's name for the region. Each name starts
+        with the node's own place, then this one: "Example Port via Example City". Leave the name
+        empty and members read "Example Port via relay A".
       </Dialog.Description>
     </Dialog.Header>
     <form
@@ -99,7 +101,7 @@
         />
       </div>
       <div class="grid gap-1.5">
-        <Label for="member-place-country">Country (its flag)</Label>
+        <Label for="member-place-country">Country (its flag, for a node with no place)</Label>
         <select
           id="member-place-country"
           class="border-input bg-background h-11 rounded-md border px-2 text-sm sm:h-9"

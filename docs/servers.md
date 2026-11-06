@@ -361,10 +361,12 @@ entry that names a node (`lib/memberEntryNames.ts`):
 
 - The scheme is the one every connection mode uses (`docs/edges.md` § "Names in apps",
   `src/shared/entryNames.ts`). `<place>` is the backend's member-facing location label up to its
-  first comma; `<flag>` the country every node of the backend reports in its node list
+  first comma (at most 24 characters); `<flag>` the country every node of the backend reports in its node list
   (`backendNodeInventory.countryCode`; none when they disagree or report a code that is not an
   assigned ISO 3166-1 country, such as the panel's unset `XX`). Either is left out when unknown; with neither, the site name leads
   (`FreeSocks · Direct`), so no entry reads as an app's own no-proxy outbound.
+- The same place and flag lead the node's entries through an edge (`<flag> <place> via <front>`,
+  `docs/edges.md` § "Names in apps"), so a node reads the same whichever way a member reaches it.
 - The numbers follow the order the panel lists the entries in (its Host order; owner's choice,
   2026-11-04), so an app shows `Direct`, `Direct 2`, `Direct 3` top to bottom. The same body gets
   the same names on every refresh and under a node rename. A server name that comes or goes

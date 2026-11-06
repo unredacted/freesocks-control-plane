@@ -15,6 +15,7 @@ import {
   placeCountry,
   placeLetter,
   subscriptionTitle,
+  type MemberPlace,
 } from '../../../src/shared/entryNames';
 import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
 import { entryNamesOf, relabelMemberEntries } from '../memberEntryNames';
@@ -84,6 +85,7 @@ function served(
   format: Format,
   primary: AssignedEndpoint,
   backup: AssignedEndpoint | null = null,
+  exit: MemberPlace | null = null,
 ): { entries: string[]; groups: string[] } {
   const proto = primary.edge.proto;
   const out = renderEdgeEndpoints({
@@ -100,6 +102,7 @@ function served(
     assigned: { primary, backup },
     rule: RULES[format],
     originAddress: ORIGIN,
+    exit,
   });
   expect(out.delivery, format).toEqual({ kind: 'serve' });
   const names = entryNamesOf(
@@ -116,10 +119,11 @@ function expectEverywhere(
   primary: AssignedEndpoint,
   backup: AssignedEndpoint | null,
   links: string[],
+  exit: MemberPlace | null = null,
 ): void {
-  expect(served('links', primary, backup).entries).toEqual(links);
+  expect(served('links', primary, backup, exit).entries).toEqual(links);
   for (const format of ['singbox-json', 'clash-yaml'] as const)
-    expect(served(format, primary, backup).entries.sort(), format).toEqual([...links].sort());
+    expect(served(format, primary, backup, exit).entries.sort(), format).toEqual([...links].sort());
 }
 
 describe('the naming function', () => {
@@ -297,6 +301,113 @@ describe('Freedom through an L7 CDN front', () => {
     const lines = out.body.split('\n');
     expect(lines[0]).toContain('front-b.example');
     expect(entryNamesOf(out.body).entries).toEqual(['🌐 via CDN 1', '🌐 via CDN 2']);
+  });
+});
+
+describe("with the node's own place (the exit) leading every name", () => {
+  const EXIT: MemberPlace = { name: 'Example Port', country: 'CA' };
+
+  test('the naming function: exit first with its flag, then via the front', () => {
+    expect(entryBase({ kind: 'relay', place: CITY, letter: null, exit: EXIT })).toBe(
+      '🇨🇦 Example Port via Example City',
+    );
+    expect(entryBase({ kind: 'relay', place: CITY, letter: 'B', exit: EXIT })).toBe(
+      '🇨🇦 Example Port via Example City B',
+    );
+    // The front's own country never shows a flag beside the exit's.
+    expect(entryBase({ kind: 'relay', place: CITY, letter: null, exit: EXIT })).not.toContain('🇧🇷');
+    expect(
+      entryBase({ kind: 'relay', place: { name: null, country: 'BR' }, letter: null, exit: EXIT }),
+    ).toBe('🇨🇦 Example Port via relay A');
+    expect(entryBase({ kind: 'cdn', n: 2, exit: EXIT })).toBe('🇨🇦 Example Port via CDN 2');
+    // An exit with no country: its name alone.
+    expect(entryBase({ kind: 'cdn', n: 1, exit: { name: 'Example Port', country: null } })).toBe(
+      'Example Port via CDN 1',
+    );
+    expect(
+      entryName(
+        { kind: 'relay', place: CITY, letter: null, exit: EXIT },
+        { form: 'domain', spare: 2 },
+      ),
+    ).toBe('🇨🇦 Example Port via Example City · Domain #2');
+  });
+
+  test('an exit without a name is not shown: the name reads as before', () => {
+    for (const exit of [null, undefined, { name: null, country: 'CA' }]) {
+      expect(entryBase({ kind: 'relay', place: CITY, letter: null, exit })).toBe(
+        '🇧🇷 via Example City',
+      );
+      expect(entryBase({ kind: 'cdn', n: 1, exit })).toBe('🌐 via CDN 1');
+    }
+  });
+
+  test('an L4 address in every format: Domain, IPv4, IPv6', () => {
+    const named = l4('eA', {
+      addresses: { v4: '203.0.113.10', v6: '2001:db8::10' },
+      addressName: 'shiny-orchestra.names.example',
+      memberPlace: CITY,
+    });
+    expectEverywhere(
+      at('primary', named),
+      null,
+      [
+        '🇨🇦 Example Port via Example City · Domain',
+        '🇨🇦 Example Port via Example City · IPv4',
+        '🇨🇦 Example Port via Example City · IPv6',
+      ],
+      EXIT,
+    );
+  });
+
+  test('two places, two letters, a location with no name', () => {
+    const a = l4('eA', { addresses: { v4: '203.0.113.10' }, memberPlace: CITY });
+    const b = l4('eB', { addresses: { v4: '203.0.113.20' }, memberPlace: CITY });
+    const town = l4('eB', { addresses: { v4: '203.0.113.20' }, memberPlace: TOWN });
+    const bare = l4('eB', { addresses: { v4: '203.0.113.20' } });
+    expectEverywhere(
+      at('primary', a),
+      at('backup', b),
+      ['🇨🇦 Example Port via Example City A', '🇨🇦 Example Port via Example City B'],
+      EXIT,
+    );
+    expectEverywhere(
+      at('primary', a),
+      at('backup', town),
+      ['🇨🇦 Example Port via Example City', '🇨🇦 Example Port via Example Town'],
+      EXIT,
+    );
+    expectEverywhere(
+      at('primary', a),
+      at('backup', bare),
+      ['🇨🇦 Example Port via Example City', '🇨🇦 Example Port via relay A'],
+      EXIT,
+    );
+  });
+
+  test('spare server names keep their #n', () => {
+    const edge = l4('eA', { addresses: { v4: '203.0.113.10' }, memberPlace: CITY });
+    for (const format of ['singbox-json', 'clash-yaml'] as const)
+      expect(
+        served(format, at('primary', edge, ['cdn-c.example']), null, EXIT).entries.slice(-1),
+        format,
+      ).toEqual(['🇨🇦 Example Port via Example City #2']);
+  });
+
+  test('CDN fronts: numbered after the exit, never the CDN or a place', () => {
+    expectEverywhere(
+      at('primary', l7('eF', 'front-a.example')),
+      at('backup', l7('eG', 'front-b.example')),
+      ['🇨🇦 Example Port via CDN 1', '🇨🇦 Example Port via CDN 2'],
+      EXIT,
+    );
+  });
+
+  test('groups keep their names', () => {
+    const edge = l4('eA', { addresses: { v4: '203.0.113.10' }, memberPlace: CITY });
+    for (const format of ['singbox-json', 'clash-yaml'] as const)
+      expect(served(format, at('primary', edge), null, EXIT).groups.sort(), format).toEqual(
+        [AUTO_GROUP_NAME, 'FreeSocks'].sort(),
+      );
   });
 });
 

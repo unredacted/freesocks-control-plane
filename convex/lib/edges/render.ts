@@ -21,6 +21,7 @@ import {
   placeLetter,
   type EntryForm,
   type EntryRoute,
+  type MemberPlace,
 } from '../../../src/shared/entryNames';
 import {
   RENDER_CLIENT_FAMILIES,
@@ -201,8 +202,9 @@ export function renderEntries(
   rule: EffectiveRule,
   hasAutoGroup: boolean,
   originAddress?: string,
+  opts: { exit?: MemberPlace | null } = {},
 ): RenderEndpoint[] {
-  return renderEntriesChecked(assigned, rule, hasAutoGroup, originAddress).entries;
+  return renderEntriesChecked(assigned, rule, hasAutoGroup, originAddress, [], opts).entries;
 }
 
 /** The name an L4 endpoint is dialled by in this render, or null for its IPs. */
@@ -230,7 +232,11 @@ export function renderEntriesChecked(
   hasAutoGroup: boolean,
   originAddress?: string,
   nodeAddresses: readonly string[] = [],
-  opts: { names?: boolean } = {},
+  /**
+   * `names`: L4 addresses dialled by their names. `exit`: the node's own place
+   * (`entryNamingOf`), which leads every entry's name; absent = not shown.
+   */
+  opts: { names?: boolean; exit?: MemberPlace | null } = {},
 ): { entries: RenderEndpoint[]; leaked: number } {
   const out: RenderEndpoint[] = [];
   let leaked = 0;
@@ -332,7 +338,7 @@ export function renderEntriesChecked(
   if (rule.includeBackup) push(assigned.backup);
   pushAlternates(assigned.primary);
   if (rule.includeBackup) pushAlternates(assigned.backup);
-  return { entries: nameEntries(out, assigned, rule), leaked };
+  return { entries: nameEntries(out, assigned, rule, opts.exit ?? null), leaked };
 }
 
 /** The form an entry takes of its address: the name (`Domain`) or a raw IP; none for a CDN front. */
@@ -344,9 +350,11 @@ function formOf(e: RenderEndpoint, route: EntryRoute): EntryForm | null {
 /**
  * Name every entry (src/shared/entryNames.ts), judged on what the body will
  * hold: the entries in the order and under the cap the codecs apply
- * (`orderEndpoints`). In that order, CDN fronts are numbered (`🌐 via CDN 1`,
- * `2`), and two addresses of one place get letters (`via Example Town A`, `B`), as
- * every address of a location with no member-facing name does (`via relay A`).
+ * (`orderEndpoints`). Every name leads with the node's own place when it is
+ * known (`exit`: `🇨🇦 Example City via …`). In that order, CDN fronts are
+ * numbered (`via CDN 1`, `2`), and two addresses of one place get letters
+ * (`via Example Town A`, `B`), as every address of a location with no
+ * member-facing name does (`via relay A`).
  * An address the body holds in more than one form (its name, its raw IPv4, its
  * raw IPv6) tags every form (`· Domain`, `· IPv4`, `· IPv6`); with one form it
  * carries no tag. A further server name ends in `#2`, `#3`. The replays
@@ -357,6 +365,7 @@ function nameEntries(
   entries: RenderEndpoint[],
   assigned: { primary: AssignedEndpoint | null; backup: AssignedEndpoint | null },
   rule: EffectiveRule,
+  exit: MemberPlace | null,
 ): RenderEndpoint[] {
   const fixed = rule.fixedLabel;
   if (fixed) return entries.map((e) => ({ ...e, label: fixed, base: fixed }));
@@ -383,7 +392,7 @@ function nameEntries(
     const edge = edgeOf(role);
     if (!edge) continue;
     if (edgeHostname(edge)) {
-      routes.set(role, { kind: 'cdn', n: ++cdn });
+      routes.set(role, { kind: 'cdn', n: ++cdn, exit });
       continue;
     }
     const place = memberPlaceOf(edge.memberPlace?.name, edge.memberPlace?.country);
@@ -394,7 +403,7 @@ function nameEntries(
       letters.set(key, i + 1);
       letter = placeLetter(i);
     }
-    routes.set(role, { kind: 'relay', place, letter });
+    routes.set(role, { kind: 'relay', place, letter, exit });
   }
   const forms = new Map<RenderEndpoint['role'], Set<EntryForm>>();
   for (const e of kept) {
@@ -407,6 +416,7 @@ function nameEntries(
       kind: 'relay' as const,
       place: { name: null, country: null },
       letter: null,
+      exit,
     };
     const tagged = (forms.get(e.role)?.size ?? 0) > 1;
     return {
@@ -562,6 +572,8 @@ export function renderEdgeEndpoints(args: {
    */
   edgeAddresses?: readonly string[];
   deliveryStyle?: DeliveryStyle;
+  /** The node's own place, leading every entry's name (`entryNamingOf`); absent = not shown. */
+  exit?: MemberPlace | null;
 }): RenderResult {
   const rule0 = ruleForDelivery(args.rule, args.deliveryStyle ?? 'subscription');
   const emptyPool = !args.assigned.primary;
@@ -590,7 +602,7 @@ export function renderEdgeEndpoints(args: {
     formatHasAutoGroup(rule, format),
     args.originAddress,
     args.nodeAddresses,
-    { names: (args.deliveryStyle ?? 'subscription') === 'subscription' },
+    { names: (args.deliveryStyle ?? 'subscription') === 'subscription', exit: args.exit ?? null },
   );
   if (entries.length === 0) return unavailable(leaked > 0 ? 'leak_detected' : 'empty_pool');
   const edgeAddresses = args.edgeAddresses;

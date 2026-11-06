@@ -378,10 +378,12 @@ included, so what it names is part of the posture.
   addresses"). `<place>` is the backend's member-facing location label, which the location
   picker already shows, and the flag the country the backend lists for its nodes; the number
   is the entry's place in the panel's list, which the body shows anyway, so a name tells a member nothing
-  the entry itself does not. Edge entries are named by the same scheme (`🇧🇷 via Example Town`,
-  `🌐 via CDN 1`, `docs/edges.md` § "Names in apps"): a location's place name is one an
-  operator typed for members, never the provider's region name, and a CDN front is never
-  named after its CDN. The machine's own host name never reaches a member at all: it is
+  the entry itself does not. Edge entries are named by the same scheme and lead with the
+  same place (`🇨🇦 Example Port via Example Town`, `🇨🇦 Example Port via CDN 1`, `docs/edges.md`
+  § "Names in apps"): the node's place is that same location label, never more than the
+  location picker and /status show (an instance with no label leaves it out), a location's
+  place name is one an operator typed for members, never the provider's region name, and a
+  CDN front is never named after its CDN. The machine's own host name never reaches a member at all: it is
   operator-only (`docs/servers.md` § "Node registration (contract v2)").
 - **No backend product name.** The backend's subscription templates
   (`convex/lib/backend/subscriptionTemplates/`) hold a selector group named after the

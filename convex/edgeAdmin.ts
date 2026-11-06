@@ -38,7 +38,7 @@ import { qualificationBinding, qualificationVerdict } from './lib/edges/frontChe
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
 import { previewSample, withUncarried } from './lib/edges/preview';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
-import { entryNamesOf, relabelMemberEntries } from './lib/memberEntryNames';
+import { entryNamesOf, exitPlaceOf, relabelMemberEntries } from './lib/memberEntryNames';
 import { entryNamingOf } from './subscriptions';
 import { effectiveRule, ruleForDelivery } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
@@ -794,6 +794,9 @@ export async function renderPreviewFor(
     const previewMatchers = matchers.map((m) =>
       m.rule.kind === 'remark' ? m : { ...m, originAddress: '192.0.2.10' },
     );
+    // The names members read: the node's own place leads every entry
+    // (src/shared/entryNames.ts), and the relabel below names the groups.
+    const naming = await entryNamingOf(ctx.db, origin.backendServerId ?? undefined);
     const out = applyEdgeRender(
       {
         epoch: origin.publicationEpoch,
@@ -809,6 +812,7 @@ export async function renderPreviewFor(
           : 'subscription',
         minProvenForExclusive: cfg.country.minProvenForExclusive,
         ...(await latencyContextOf(ctx.db, origin, published)),
+        exit: exitPlaceOf(naming),
       },
       input,
       sampleKey && sampleKey.length > 0 ? sampleKey : SAMPLE_RENDER_KEY,
@@ -821,12 +825,7 @@ export async function renderPreviewFor(
     // backend's group named after the site), and the names their app lists
     // (docs/edges.md "Names in apps").
     const body =
-      out.delivery.kind === 'serve'
-        ? relabelMemberEntries(
-            out.body,
-            await entryNamingOf(ctx.db, origin.backendServerId ?? undefined),
-          ).content
-        : out.body;
+      out.delivery.kind === 'serve' ? relabelMemberEntries(out.body, naming).content : out.body;
     return {
       family: fam,
       format,

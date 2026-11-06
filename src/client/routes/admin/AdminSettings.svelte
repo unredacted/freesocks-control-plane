@@ -578,9 +578,11 @@
             anyone with a free account) would see those names in their app. When this is on, FCP
             renames a direct connection to "🇨🇦 location · Direct" (the backend's location label up
             to its first comma, the flag of the country the backend lists for its nodes), then
-            "Direct 2", "Direct 3" for further server names. Connections through an edge are always
-            named by FCP ("🇧🇷 via place", "🌐 via CDN 1"; each location's "Name in apps" sets the
-            place). The group the backend names after itself takes the service name, and the
+            "Direct 2", "Direct 3" for further server names, and starts every connection through an
+            edge with the same place: "🇨🇦 location via place", "🇨🇦 location via CDN 1" (each
+            location's "Name in apps" sets the place after "via"). When this is off, connections
+            through an edge are still named by FCP, without the node's place ("🇧🇷 via place", "🌐
+            via CDN 1"). The group the backend names after itself takes the service name, and the
             subscription title reads "service name · connection mode".
           </CardDescription>
         </CardHeader>

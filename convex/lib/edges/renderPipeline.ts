@@ -19,6 +19,7 @@ import {
   type EdgeTier,
   type PublishedEdge,
 } from './assignment';
+import type { MemberPlace } from '../../../src/shared/entryNames';
 import { RENDER_FORMAT_OF, detectBodyFormat } from './clientFamilies';
 import { pathFigure, type LatencyBand, type LatencyInputs, type PathFigure } from './latency';
 import { formatSupported } from './protocols';
@@ -60,6 +61,12 @@ export interface EdgeRenderContext {
    */
   nodeAddresses?: string[];
   deliveryStyle?: DeliveryStyle;
+  /**
+   * The node's own place (where the traffic leaves), leading every entry's name
+   * (src/shared/entryNames.ts): the place its direct entries read
+   * (`subscriptions.entryNamingOf`). Absent/null = not shown.
+   */
+  exit?: MemberPlace | null;
   /** Delivery by country: proven edges needed before they are handed out alone (default 1). */
   minProvenForExclusive?: number;
   /**
@@ -196,6 +203,7 @@ export function applyEdgeRender(
     nodeAddresses: rctx.nodeAddresses,
     edgeAddresses: edgeAddressesOf(rctx.published),
     deliveryStyle: rctx.deliveryStyle,
+    exit: rctx.exit ?? null,
   });
   // An open member left with nothing because only trusted addresses remain:
   // its own reason (fail closed), so the refusal counter tells it apart.
