@@ -128,9 +128,11 @@ accidentally regress it).
     crosses the CDN in the clear; a caller that cannot seal is refused. The admin view answers a
     signed-in admin's passkey session only, never an API token, even one that seals. The two
     routes that may carry a country in one field (`POST /api/v1/account/regenerate` `region`,
-    `POST /api/v1/mirror/request` `region` and its host hint `countryCode`) seal their request
-    when the client can and refuse that field in plaintext (`hpke.sealed_required`, nothing
-    written); a plaintext request without it works as before.
+    `POST /api/v1/mirror/request` `region` and its host hint `countryCode`) are sealed by the
+    client whenever the body carries one of those fields (`sealOnlyWith` in
+    `src/shared/crypto/envelope.ts`) and refuse that field in plaintext (`hpke.sealed_required`,
+    nothing written). A request without one keeps the reveal-only shape (plaintext body, sealed
+    response), so an older client and a backend not yet updated both still work.
   - **Where a new key is placed** (`delivery.country.exits`, off until an admin maps a
     country): a new freedom-family key of a member on Automatic whose OWN answer is a mapped
     country goes to that country's exit location when it can. Never the guess, never the
