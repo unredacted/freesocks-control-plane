@@ -53,6 +53,7 @@ import { addressTransportsOf, addressesOf, closeForSharedChange } from './nodeIn
 import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
 import { assertClaimable, claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
+import { inboundPortProtocol } from './lib/edges/inboundMapping';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -820,7 +821,7 @@ export async function portChangeImpact(
   profileUuid: string,
   inboundUuid: string,
   port: number,
-): Promise<{ fromPort: number | null; nodes: PortNode[] }> {
+): Promise<{ fromPort: number | null; protocol: 'tcp' | 'udp'; nodes: PortNode[] }> {
   const profiles = await ctx.db
     .query('panelProfiles')
     .withIndex('by_server', (q) => q.eq('backendServerId', sid))
@@ -832,6 +833,10 @@ export async function portChangeImpact(
       'servers.unknown_inbound',
       'That transport is not on this backend. Refresh and retry',
     );
+  // TCP and UDP are separate port spaces: a QUIC transport on 443/udp shares
+  // nothing with a REALITY transport on 443/tcp. The node's API port and its own
+  // proxy are TCP.
+  const protocol = inboundPortProtocol(inbound);
   if (isLoopbackListen(inbound.listen))
     refuse(
       'servers.port_loopback',
@@ -871,14 +876,14 @@ export async function portChangeImpact(
       intents.find((i) => i.nodeUuid === n.nodeUuid) ?? intents.find((i) => i.name === n.name);
     // The node's API port (as the backend has it, and as FCP will set it) and
     // its own proxy's public port are listeners on the same machine.
-    if (n.port === port || intent?.settings.nodePort === port)
+    if (protocol === 'tcp' && (n.port === port || intent?.settings.nodePort === port))
       refuse('servers.port_taken', `${n.name} talks to the backend on port ${port}`);
-    if (intent?.settings.ingress?.externalPort === port)
+    if (protocol === 'tcp' && intent?.settings.ingress?.externalPort === port)
       refuse('servers.port_taken', `${n.name}'s own proxy listens on port ${port}`);
     const others = (inboundsOf.get(n.configProfileUuid ?? '') ?? []).filter(
       (i) => i.inboundUuid !== inboundUuid && n.activeInboundUuids.includes(i.inboundUuid),
     );
-    const clash = others.find((i) => i.port === port);
+    const clash = others.find((i) => i.port === port && inboundPortProtocol(i) === protocol);
     if (clash)
       refuse('servers.port_taken', `${n.name} already serves ${clash.tag} on port ${port}`);
     const roleRuns =
@@ -890,7 +895,7 @@ export async function portChangeImpact(
       confirmedBy: roleRuns ? 'role' : 'operator',
     });
   }
-  return { fromPort: inbound.port, nodes: out };
+  return { fromPort: inbound.port, protocol, nodes: out };
 }
 
 /**
@@ -1491,6 +1496,7 @@ export type ProfilePatchPreviewView = ProfilePatchPreview & {
   affectedRelays: { relaySlug: string; listenerKeys: string[]; publishedEdges: number }[];
   firewall: {
     port: number;
+    protocol: 'tcp' | 'udp';
     nodes: { name: string; confirmedBy: 'role' | 'operator'; enrolled: boolean }[];
   } | null;
   otherAddresses: { remark: string; address: string; port: number }[];
@@ -1549,6 +1555,7 @@ export const portPreview = internalQuery({
     return {
       firewall: {
         port: a.port,
+        protocol: impact.protocol,
         nodes: impact.nodes.map((n) => ({
           name: n.name,
           confirmedBy: n.confirmedBy,

@@ -494,7 +494,11 @@ reachable. `convex/backendPortChanges.ts` (the only writer of `panelPortChanges`
    node may map it, so they are listed and never moved). It records the edit and **one
    requirement per node serving the transport**: an enrolled node the role runs is confirmed by
    the role (`role`); a node FCP does not manage, or an adopted one (no role runs its machine),
-   by an admin (`operator`). Nothing is claimed and nothing is sent: members keep the old port.
+   by an admin (`operator`). The change and each requirement record the IP protocol the moved
+   transport listens on (`udp` for a QUIC transport such as Hysteria 2, `tcp` otherwise; absent
+   on older rows = `tcp`), and the port-clash check compares (port, protocol): a UDP transport
+   may share a port number with a TCP one, and the node's API port and its own proxy are TCP.
+   Nothing is claimed and nothing is sent: members keep the old port.
    Nodes FCP does not manage need the usual treatment (`unmanaged: hold | acknowledge`), and one
    port change per profile is open at a time (`servers.port_change_waiting`).
 2. **Confirm.** The role reads the pending port in its node's view and reports it in its applied
@@ -540,18 +544,22 @@ in words.
 The role repository implements this; FCP only describes it.
 
 - **Read the ports.** The node's view (`GET {slug}/nodes/by-name/{name}`) and the bootstrap
-  answer carry `firewall.ports: [{port, protocol: 'tcp', reason}]`: every port the node's
-  firewall must let in. `serving`: a transport the node serves listens there (loopback ones
-  excepted), or its own proxy's public port (a WebSocket node's Caddy). `pending`: a staged
-  change waits for this node; it stays listed after the role confirmed it, until the change is
-  sent and settled, cancelled or refused. The node's API port (`node.port`, the backend's channel
-  to the node) is the role's own business and is not listed.
-- **Open them.** On every run, let every listed port in (TCP, from anywhere) before reporting.
-  The role MAY close a port it opened for FCP earlier that is no longer listed; it never closes
-  SSH or the node API port on that basis.
-- **Report them.** `POST …/applied` gains `firewall: {ports: [{port, protocol: 'tcp'}]}`: the
-  ports the firewall lets in for FCP after this run. FCP confirms every pending requirement of
-  THIS node whose port is listed. The report's `appliedRevision` must be the node's current
+  answer carry `firewall.ports: [{port, protocol, reason}]`: every port the node's firewall must
+  let in. `protocol` is `tcp` or `udp`: TCP and UDP are separate port spaces, so a QUIC
+  transport (Hysteria 2) on `443/udp` and a REALITY one on `443/tcp` are two entries.
+  `serving`: a transport the node serves listens there (loopback ones excepted), or its own
+  proxy's public port (a WebSocket node's Caddy, TCP). `pending`: a staged change waits for this
+  node; it stays listed after the role confirmed it, until the change is sent and settled,
+  cancelled or refused. The node's API port (`node.port`, the backend's channel to the node) is
+  the role's own business and is not listed.
+- **Open them.** On every run, let every listed port in for its protocol (from anywhere) before
+  reporting. The role MAY close a port it opened for FCP earlier that is no longer listed; it
+  never closes SSH or the node API port on that basis.
+- **Report them.** `POST …/applied` gains `firewall: {ports: [{port, protocol}]}`: the ports the
+  firewall lets in for FCP after this run, each with the protocol it was opened for (a port
+  without `protocol` is TCP). FCP confirms every pending requirement of THIS node whose
+  **(port, protocol)** is listed: `443/tcp` never confirms `443/udp`, so a role that only opens
+  TCP keeps a UDP requirement waiting. The report's `appliedRevision` must be the node's current
   `machineRevision`, as for every applied report (an older one is refused
   `servers.revision_stale`, a newer one `servers.revision_unknown`, before anything is
   confirmed); a run that only opened a port reports the same revision again, which is
@@ -1088,11 +1096,11 @@ boundary the answer is 403 `servers.registration_boundary`. Only `bootstrap` is 
 | `PUT`              | Enroll or report observations (`NodeRegistration`): `{roleContractVersion: 2, mode, label?, machineName?, observed: {management: {address, port}, publicIps: {v4?, v6?}, capabilities: {caddy, ipv6}}}`. `mode` and `label` are taken once; observations every run. `machineName` is the machine's own name (the role sends its inventory host name), shown to operators next to the node and matched by the Nodes filter; it is never member-facing (the node name stays in address remarks and subscription bodies), never part of the desired hash, kept when a run omits it, and ignored when it is not a plain host name. The role never sends FCP-owned settings. Answers the view. |
 | `GET`              | The node's own view (`NodeRoleView`): `name` (the current one), `mode {slug, name, shape}`, `registration {state, code, generation}`, `stage`, `delivery`, `machineRevision`, `appliedRevision`, `node {uuid, port}`, `origin {hostname, dns}`, `retirement`, `firewall.ports`, `updatedAt`.                                                                                                                                                                                                                                                                                                                                                                                              |
 | `POST …/bootstrap` | The machine configuration and the node secret: `machineRevision`, `secretKey` (read from the backend per call, never stored, logged or audited), `node {port, name, mode}`, `ingress {hostname, externalPort, routes[{path, port, upstream?: 'h2c'}]}` or null (`upstream: 'h2c'` for a gRPC transport, proxied over HTTP/2 cleartext), `origin {hostname, dns}`, `firewall.ports`. `SEAL_BOTH`; bearer callers get plaintext over TLS as on every IaC route.                                                                                                                                                                                                                             |
-| `POST …/applied`   | `NodeAppliedReport`: `{appliedRevision, caddy?: {certificateReady}, nodeStarted, firewall?: {ports: [{port, protocol: 'tcp'}]}}` (at most 64 ports). `appliedRevision` must equal the current `machineRevision`; the same revision again is idempotent. The listed ports confirm this node's waiting port requirements (§ Firewall acknowledgement).                                                                                                                                                                                                                                                                                                                                      |
+| `POST …/applied`   | `NodeAppliedReport`: `{appliedRevision, caddy?: {certificateReady}, nodeStarted, firewall?: {ports: [{port, protocol?: 'tcp'                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | 'udp'}]}}`(at most 64 ports).`appliedRevision`must equal the current`machineRevision`; the same revision again is idempotent. The listed ports confirm this node's waiting port requirements (§ Firewall acknowledgement). |
 | `DELETE`           | A retirement request (below). Answers the view.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `POST …/wiped`     | The role's acknowledgement that the machine is cleaned up (`ready_to_wipe → retired`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
-`firewall.ports` entries are `{port, protocol: 'tcp', reason: 'serving' | 'pending'}`
+`firewall.ports` entries are `{port, protocol: 'tcp' | 'udp', reason: 'serving' | 'pending'}`
 (`lib/backend/portRequirements.ts`): `serving` = the non-loopback ports of the transports the
 node serves (its mode's transport before the backend node exists) plus the ingress external
 port; `pending` = a staged change's port, listed until that change ends. The node API port is

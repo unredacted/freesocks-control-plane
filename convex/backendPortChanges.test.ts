@@ -233,6 +233,7 @@ describe('a port change waits for the firewalls', () => {
     ]);
     expect(preview.firewall).toEqual({
       port: 8443,
+      protocol: 'tcp',
       nodes: [{ name: 'node-a', confirmedBy: 'role', enrolled: true }],
     });
     // The enrolled node's own address follows the port; nothing else is on the transport.
@@ -272,7 +273,7 @@ describe('a port change waits for the firewalls', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443],
+      firewallPorts: [{ port: 443, protocol: 'tcp' }],
     });
     expect((await changeOf(s, change.id)).state).toBe('waiting');
     expect(profileWrites(s.panel)).toHaveLength(0);
@@ -366,7 +367,10 @@ describe('a port change waits for the firewalls', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     const done = await until(
       () => changeOf(s, change.id),
@@ -398,12 +402,120 @@ describe('a port change waits for the firewalls', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     expect(profileWrites(s.panel)).toHaveLength(0);
     expect((await roleView(s)).firewall.ports.map((p) => p.port)).toEqual([443]);
     // A new change of the same profile may be staged now.
     expect((await stagePort(s, 9443)).status).toBe(200);
+  });
+});
+
+/**
+ * Put a Hysteria 2 (QUIC, UDP) transport on the profile and switch it on for
+ * node-a, as the backend would report it.
+ */
+async function addHysteria(s: Seeded, port: number) {
+  const uuid = UUID(800);
+  s.panel.profiles[0].config.inbounds.push({
+    tag: 'PRIVACY_HYSTERIA',
+    protocol: 'hysteria',
+    listen: '::',
+    port,
+    settings: { version: 2, clients: [] },
+    streamSettings: {
+      network: 'hysteria',
+      security: 'tls',
+      tlsSettings: { serverName: 'h.example' },
+    },
+  });
+  s.panel.profiles[0].inbounds.push({ uuid, tag: 'PRIVACY_HYSTERIA' });
+  const node = s.panel.nodes.find((n) => n.name === 'node-a')!;
+  node.configProfile.activeInbounds.push({ uuid, tag: 'PRIVACY_HYSTERIA' });
+  await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+  return uuid;
+}
+
+describe('UDP and TCP are separate port spaces', () => {
+  test('the role reads a QUIC transport as UDP beside the REALITY one on TCP', async () => {
+    const s = await seed();
+    await addHysteria(s, 443);
+    expect((await roleView(s)).firewall.ports).toEqual([
+      { port: 443, protocol: 'tcp', reason: 'serving' },
+      { port: 443, protocol: 'udp', reason: 'serving' },
+    ]);
+  });
+
+  test('a TCP transport may move onto a port a UDP one uses, and the other way round', async () => {
+    const s = await seed();
+    await addHysteria(s, 8443);
+    const preview = await previewPort(s, 8443);
+    expect(preview.firewall).toMatchObject({ port: 8443, protocol: 'tcp' });
+    // The same protocol on the same port is still taken.
+    const udpOnTcp = await s.call('POST', `profiles/${s.profileUuid}/preview`, {
+      ops: [{ op: 'setInboundPort', transportTag: 'PRIVACY_HYSTERIA', port: 443 }],
+    });
+    expect(udpOnTcp.status).toBe(200);
+    expect(ProfilePatchPreview.parse(await udpOnTcp.json()).firewall).toMatchObject({
+      port: 443,
+      protocol: 'udp',
+    });
+  });
+
+  test('a UDP port is confirmed only by a report that names UDP', async () => {
+    const s = await seed();
+    await addHysteria(s, 443);
+    const preview = ProfilePatchPreview.parse(
+      await (
+        await s.call('POST', `profiles/${s.profileUuid}/preview`, {
+          ops: [{ op: 'setInboundPort', transportTag: 'PRIVACY_HYSTERIA', port: 8443 }],
+        })
+      ).json(),
+    );
+    const staged = await s.call('POST', `profiles/${s.profileUuid}/port-change`, {
+      ops: preview.ops,
+      baseToken: preview.baseToken,
+      expectedToken: preview.expectedToken,
+      transportUuids: preview.transportUuids,
+    });
+    expect(staged.status).toBe(200);
+    const change = PortChangeView.parse(await staged.json());
+    expect(change).toMatchObject({ toPort: 8443, protocol: 'udp', state: 'waiting' });
+    expect((await roleView(s)).firewall.ports).toContainEqual({
+      port: 8443,
+      protocol: 'udp',
+      reason: 'pending',
+    });
+
+    // A role that opened 8443 for TCP (or predates protocols: a bare port is TCP) confirms nothing.
+    const tcpOnly = await s.call('POST', 'nodes/by-name/node-a/applied', {
+      appliedRevision: 1,
+      nodeStarted: true,
+      firewall: { ports: [{ port: 443 }, { port: 8443, protocol: 'tcp' }] },
+    });
+    expect(tcpOnly.status).toBe(200);
+    expect((await changeOf(s, change.id)).nodes[0]!.state).toBe('waiting');
+    expect(profileWrites(s.panel)).toHaveLength(0);
+
+    const udp = await s.call('POST', 'nodes/by-name/node-a/applied', {
+      appliedRevision: 1,
+      nodeStarted: true,
+      firewall: {
+        ports: [
+          { port: 443, protocol: 'tcp' },
+          { port: 8443, protocol: 'udp' },
+        ],
+      },
+    });
+    expect(udp.status).toBe(200);
+    const done = await until(
+      () => changeOf(s, change.id),
+      (c) => c.nodes[0]!.state === 'confirmed',
+    );
+    expect(done.nodes[0]!.state).toBe('confirmed');
   });
 });
 
@@ -492,7 +604,10 @@ describe('a change that cannot go out yet keeps waiting', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     const held = await until(
       () => changeOf(s, change.id),
@@ -536,7 +651,10 @@ describe('a change that cannot go out yet keeps waiting', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     const held = await until(
       () => changeOf(s, change.id),
@@ -569,7 +687,10 @@ describe('a change that cannot go out yet keeps waiting', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     const done = await until(
       () => changeOf(s, change.id),
@@ -724,7 +845,10 @@ describe('review follow-ups', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     // The stranger's wait still stands until the change is looked at again.
     expect((await changeOf(s, change.id)).state).toBe('waiting');
@@ -754,7 +878,10 @@ describe('review follow-ups', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     const applying = await until(
       () => changeOf(s, change.id),
@@ -893,7 +1020,10 @@ describe('review follow-ups', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     const done = await until(
       () => changeOf(s, change.id),
@@ -1005,7 +1135,10 @@ describe('a port change reaches an adopted node', () => {
       intentId: s.intentId,
       appliedRevision: 1,
       nodeStarted: true,
-      firewallPorts: [443, 8443],
+      firewallPorts: [
+        { port: 443, protocol: 'tcp' },
+        { port: 8443, protocol: 'tcp' },
+      ],
     });
     const done = await until(
       () => changeOf(s, change.id),

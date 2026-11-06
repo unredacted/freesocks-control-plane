@@ -240,7 +240,10 @@ async function byNameHandler(
       appliedRevision: parsed.data.appliedRevision,
       certificateReady: parsed.data.caddy?.certificateReady,
       nodeStarted: parsed.data.nodeStarted,
-      firewallPorts: parsed.data.firewall?.ports.map((p) => p.port),
+      firewallPorts: parsed.data.firewall?.ports.map((p) => ({
+        port: p.port,
+        protocol: p.protocol,
+      })),
     });
     return view();
   }

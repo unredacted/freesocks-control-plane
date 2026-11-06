@@ -149,6 +149,7 @@ export const stage = internalMutation({
       inboundUuid,
       fromPort: impact.fromPort ?? undefined,
       toPort: op.port,
+      protocol: impact.protocol,
       ops: JSON.stringify(ops),
       baseToken: a.baseToken,
       expectedToken: a.expectedToken,
@@ -166,6 +167,7 @@ export const stage = internalMutation({
         nodeName: n.name,
         intentId: n.intentId,
         port: op.port,
+        protocol: impact.protocol,
         confirmedBy: n.confirmedBy,
         state: 'waiting',
         createdAt: now,
@@ -176,7 +178,7 @@ export const stage = internalMutation({
       ctx,
       change,
       'servers.port_change.staged',
-      { port: op.port, nodes: impact.nodes.length },
+      { port: op.port, protocol: impact.protocol, nodes: impact.nodes.length },
       a.actorAdminId,
     );
     // No node listens there yet: nothing to wait for.
@@ -237,7 +239,12 @@ export const acknowledge = internalMutation({
         ctx,
         change,
         'servers.port_change.confirmed',
-        { by: 'operator', nodes: confirmed, port: change.toPort },
+        {
+          by: 'operator',
+          nodes: confirmed,
+          port: change.toPort,
+          protocol: change.protocol ?? 'tcp',
+        },
         actorAdminId,
       );
     await wakeIfReady(ctx, changeId);
@@ -325,6 +332,9 @@ export const admit = internalMutation({
         nodeName: n.name,
         intentId: n.intentId,
         port: change.toPort,
+        // The transport's protocol as it is now (the stored one if it was staged
+        // before protocols were recorded): a role confirms only what it opened.
+        protocol: impact.protocol,
         confirmedBy: n.confirmedBy,
         state: 'waiting',
         createdAt: now,
@@ -431,6 +441,7 @@ async function viewOf(ctx: { db: QueryCtx['db'] }, c: Change) {
     transportTag: c.inboundTag,
     fromPort: c.fromPort ?? null,
     toPort: c.toPort,
+    protocol: c.protocol ?? 'tcp',
     state,
     code: state === 'refused' && op ? (op.errorCode ?? c.code ?? null) : (c.code ?? null),
     op: op ? mapOp(op) : null,

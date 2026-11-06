@@ -1321,7 +1321,7 @@ describe("the node role's routes never act for an adopted machine", () => {
         intentId,
         appliedRevision: 1,
         nodeStarted: true,
-        firewallPorts: [443],
+        firewallPorts: [{ port: 443, protocol: 'tcp' }],
       }),
     ).rejects.toThrow(/servers\.node_adopted/);
     // Nothing reached the backend for the secret.

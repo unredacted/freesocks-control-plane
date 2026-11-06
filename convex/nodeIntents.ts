@@ -1263,10 +1263,15 @@ export const applied = internalMutation({
     certificateReady: v.optional(v.boolean()),
     nodeStarted: v.boolean(),
     /**
-     * The ports the node's firewall lets in after this run: confirms this
-     * node's pending port changes (backendPortChanges.ts). Absent = no claim.
+     * The ports the node's firewall lets in after this run, each with the
+     * protocol it opened: confirms this node's pending port changes for that
+     * (port, protocol) only (backendPortChanges.ts). Absent = no claim.
      */
-    firewallPorts: v.optional(v.array(v.number())),
+    firewallPorts: v.optional(
+      v.array(
+        v.object({ port: v.number(), protocol: v.union(v.literal('tcp'), v.literal('udp')) }),
+      ),
+    ),
   },
   handler: async (ctx, a) => {
     const intent = await ctx.db.get(a.intentId);
@@ -2140,7 +2145,7 @@ export interface BootstrapAnswer {
   firewall: { ports: FirewallPortRow[] };
 }
 
-type FirewallPortRow = { port: number; protocol: 'tcp'; reason: 'serving' | 'pending' };
+type FirewallPortRow = { port: number; protocol: 'tcp' | 'udp'; reason: 'serving' | 'pending' };
 
 /**
  * What the role needs to configure the machine, plus the backend's node secret

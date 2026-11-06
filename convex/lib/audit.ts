@@ -343,8 +343,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // A port change staged until every node's firewall lets the port in
   // (docs/servers.md "Firewall acknowledgement"): the profile name, the port and
   // counts; `by` is who confirmed (the node role, or an admin).
-  'servers.port_change.staged': ['backendSlug', 'label', 'port', 'nodes'],
-  'servers.port_change.confirmed': ['backendSlug', 'label', 'by', 'nodes', 'port'],
+  'servers.port_change.staged': ['backendSlug', 'label', 'port', 'protocol', 'nodes'],
+  'servers.port_change.confirmed': ['backendSlug', 'label', 'by', 'nodes', 'port', 'protocol'],
   'servers.port_change.cancelled': ['backendSlug', 'label'],
   'servers.port_change.admitted': ['backendSlug', 'label', 'outcome', 'code'],
   // A node rename (docs/servers.md "Renaming a node"): the two names only.
