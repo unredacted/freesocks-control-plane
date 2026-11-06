@@ -52,6 +52,10 @@ describe('inboundPortProtocol', () => {
     expect(inboundPortProtocol({ protocol: 'hysteria', network: 'tcp' })).toBe('udp');
     expect(inboundPortProtocol({ protocol: 'tuic', network: 'tcp' })).toBe('udp');
     expect(inboundPortProtocol({ protocol: 'vless', network: 'hysteria' })).toBe('udp');
+    // UDP streams under any protocol: a port clash with Hysteria is a real one.
+    expect(inboundPortProtocol({ protocol: 'vless', network: 'kcp' })).toBe('udp');
+    expect(inboundPortProtocol({ protocol: 'vmess', network: 'mKCP' })).toBe('udp');
+    expect(inboundPortProtocol({ protocol: 'vless', network: 'quic' })).toBe('udp');
     expect(inboundPortProtocol({ protocol: 'vless', network: 'raw' })).toBe('tcp');
     expect(inboundPortProtocol({ protocol: 'vless', network: 'xhttp' })).toBe('tcp');
     expect(inboundPortProtocol({ protocol: 'trojan', network: 'ws' })).toBe('tcp');
