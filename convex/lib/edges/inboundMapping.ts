@@ -129,11 +129,16 @@ const PROTOCOLS: Readonly<Record<string, ListenerProtocolId>> = {
 };
 /** Protocols carried over QUIC: their stream is UDP and their security TLS by construction. */
 const UDP_PROTOCOLS: ReadonlySet<ListenerProtocolId> = new Set(['hysteria2', 'tuic']);
+/**
+ * Xray streams that listen on UDP whatever the protocol over them: Hysteria's
+ * own, mKCP (`kcp`, older configs `mkcp`) and the legacy QUIC transport.
+ */
+const UDP_STREAMS: ReadonlySet<string> = new Set(['hysteria', 'kcp', 'mkcp', 'quic']);
 
 /**
  * The IP protocol an inbound listens on, as a firewall sees it: `udp` for a
- * QUIC protocol (Xray's `hysteria` inbound, TUIC) or a `hysteria` stream,
- * `tcp` for everything else. Pure over the observed protocol/network strings,
+ * QUIC protocol (Xray's `hysteria` inbound, TUIC) or a UDP stream (`hysteria`,
+ * mKCP, the legacy QUIC transport), `tcp` for everything else. Pure over the observed protocol/network strings,
  * so the firewall model (lib/backend/portRequirements.ts) and the port-change
  * impact share one answer.
  */
@@ -143,7 +148,7 @@ export function inboundPortProtocol(inbound: {
 }): 'tcp' | 'udp' {
   const protocol = PROTOCOLS[inbound.protocol.toLowerCase()];
   if (protocol && UDP_PROTOCOLS.has(protocol)) return 'udp';
-  return (inbound.network ?? '').toLowerCase() === 'hysteria' ? 'udp' : 'tcp';
+  return UDP_STREAMS.has((inbound.network ?? '').toLowerCase()) ? 'udp' : 'tcp';
 }
 const TRANSPORTS: Readonly<Record<string, ListenerStreamTransport>> = {
   tcp: 'raw',
