@@ -45,6 +45,7 @@ import {
   type NewestAnswers,
 } from './lib/edges/country/coverage';
 import { enabledSources } from './probes';
+import { currentNamePool, readNamePool } from './lib/edges/sni/namePool';
 import { marksByEdge } from './countryListEdges';
 import { evidenceLists, storedFactsOf, type StoredFact } from './lib/edges/lists/facts';
 import {
@@ -369,6 +370,8 @@ async function settingsOf(db: Db) {
       realHost: vantageOn && vantage.realHost,
     },
     nameCheckCountries: vantageOn ? vantageCountries(vantage, sni.curatedCountries) : [],
+    // Globalping is one of the name checks' sources now (the country page's pool note).
+    nameChecksGlobalping: vantageOn && usableSources(vantage, secrets).includes('globalping'),
     controls: controlCountriesOf(cfg, censored.codes),
     probeSources: enabledSources(cfg, secrets),
     // How long an answer counts: the reachability summaries' own window (probes.ts).
@@ -870,6 +873,15 @@ export const country = internalQuery({
       // Where new keys on Automatic of members who chose this country go
       // (docs/edges.md "Exit location by country"); counts no member.
       exits: await countryExitLabels(ctx.db, code),
+      // How the newest name-check batch from here found its Globalping probes.
+      namePool: currentNamePool(await readNamePool(ctx.db, code), {
+        at: now,
+        globalping: st.nameChecksGlobalping,
+        limit: st.vantage.perCountryLimit,
+        needs: st.vantage.minVantages,
+        preferEyeball: st.cfg.probe.preferEyeball,
+        intervalHours: st.vantage.intervalHours,
+      }),
     };
   },
 });

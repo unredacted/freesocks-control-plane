@@ -23,7 +23,7 @@ import {
   type GlobalpingLike,
   type TimedReading,
 } from './lib/edges/probes/globalping';
-import { saveGlobalpingReadings } from './lib/edges/probes/globalpingNote';
+import { saveGlobalpingReadings, saveNamePool } from './lib/edges/probes/globalpingNote';
 import { RIPE_ATLAS_BASE } from './lib/edges/probes/ripeatlas';
 import { resolvePublic } from './lib/edges/probes/internal';
 import { addressFamily } from './lib/edges/ip';
@@ -33,6 +33,7 @@ import type { RealHostSkip } from '../src/shared/contracts/edgeCodes';
 import {
   atlasNameBody,
   atlasProbeQuery,
+  createFirstNameMeasurement,
   globalpingNameRequest,
   isNoProbesError,
   parseAtlasNameResults,
@@ -40,6 +41,7 @@ import {
   parseGlobalpingNameResults,
   pickAtlasProbes,
   type CertCovers,
+  type NamePool,
   type NameVantageResult,
 } from './lib/edges/probes/nameCheck';
 
@@ -157,26 +159,41 @@ export async function realSiteOf(
 
 async function runGlobalping(
   rows: readonly Row[],
-  c: { country: string; perCountryLimit: number; preferEyeball: boolean; spacingMs: number },
+  c: {
+    country: string;
+    perCountryLimit: number;
+    preferEyeball: boolean;
+    minVantages: number;
+    spacingMs: number;
+  },
   token: string,
   /** Collects what Globalping says about the allowance (saved by the caller). */
   readings: TimedReading[] = [],
-): Promise<Settled> {
+): Promise<Settled & { pool: NamePool | null }> {
   const client = recordingClient(globalpingFactory(token), readings);
-  const out: Settled = { done: [], failed: [] };
+  const out: Settled & { pool: NamePool | null } = { done: [], failed: [], pool: null };
   const created: Array<{ row: Row; id: string }> = [];
   let first: string | null = null;
   for (const [i, row] of rows.entries()) {
     if (i > 0) await sleep(c.spacingMs);
-    const where = first
-      ? { reuse: first }
-      : { country: c.country, limit: c.perCountryLimit, preferEyeball: c.preferEyeball };
-    let res = await client.createMeasurement(globalpingNameRequest(row, where));
-    // Few probes in a country: the eyeball tag may match none. Once, without it.
-    if (!res.ok && !first && c.preferEyeball && isNoProbesError(res.response?.status, res.data))
-      res = await client.createMeasurement(
-        globalpingNameRequest(row, { country: c.country, limit: c.perCountryLimit }),
+    let res;
+    if (first) res = await client.createMeasurement(globalpingNameRequest(row, { reuse: first }));
+    else {
+      // Shaped by the country's probes: too few home-network ones are topped up.
+      const made = await createFirstNameMeasurement(
+        client,
+        row,
+        {
+          country: c.country,
+          limit: c.perCountryLimit,
+          preferEyeball: c.preferEyeball,
+          minVantages: c.minVantages,
+        },
+        () => sleep(c.spacingMs),
       );
+      res = made.res;
+      out.pool = made.pool;
+    }
     const id = res.ok ? (res.data as { id?: unknown } | undefined)?.id : undefined;
     if (typeof id !== 'string') {
       out.failed.push({
@@ -323,7 +340,7 @@ export const executeBatch = internalAction({
         dial.push({ ...r, address: site.address, port: REAL_HOST_PORT, realAddress: site.address });
       else skipped.push({ id: r.id, error: site.error });
     }
-    let settled: Settled;
+    let settled: Settled & { pool?: NamePool | null };
     const readings: TimedReading[] = [];
     try {
       settled =
@@ -337,6 +354,7 @@ export const executeBatch = internalAction({
       settled = { done: [], failed: dial.map((r) => ({ id: r.id, error: 'source_error' })) };
     }
     await saveGlobalpingReadings(ctx, readings);
+    if (settled.pool) await saveNamePool(ctx, c.country, settled.pool);
     const realOf = new Map(dial.filter((r) => r.realAddress).map((r) => [r.id, r.realAddress!]));
     const withReal = <T extends { id: Id<'sniVantageProbes'> }>(x: T) =>
       realOf.has(x.id) ? { ...x, realAddress: realOf.get(x.id)! } : x;

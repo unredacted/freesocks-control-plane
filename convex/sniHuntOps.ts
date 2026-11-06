@@ -61,11 +61,13 @@ import {
   type GlobalpingLike,
   type TimedReading,
 } from './lib/edges/probes/globalping';
-import { saveGlobalpingReadings } from './lib/edges/probes/globalpingNote';
+import { saveGlobalpingReadings, saveNamePool } from './lib/edges/probes/globalpingNote';
 import {
+  createFirstNameMeasurement,
   globalpingNameRequest,
   isNoProbesError,
   parseGlobalpingNameResults,
+  type NamePool,
 } from './lib/edges/probes/nameCheck';
 import {
   ooniUrl,
@@ -750,6 +752,7 @@ export const countryBatch = internalAction({
       country: string;
       perCountryLimit: number;
       preferEyeball: boolean;
+      minVantages: number;
       spacingMs: number;
       token: string;
       rows: Array<{ id: Id<'sniHuntProbes'>; name: string; address: string; ours: boolean }>;
@@ -782,6 +785,7 @@ export const countryBatch = internalAction({
     const client = recordingClient(deps.globalping(c.token), readings, deps.now);
     const created: Array<{ row: (typeof c.rows)[number]; mid: string }> = [];
     let first: string | null = null;
+    let pool: NamePool | null = null;
     for (const [i, row] of c.rows.entries()) {
       if (row.ours) {
         settle.push({ id: row.id, status: 'skipped', results: [], error: 'real_is_ours' });
@@ -789,14 +793,24 @@ export const countryBatch = internalAction({
       }
       if (i > 0) await deps.sleep(c.spacingMs);
       const t = { address: row.address, port: 443, name: row.name };
-      const where = first
-        ? { reuse: first }
-        : { country: c.country, limit: c.perCountryLimit, preferEyeball: c.preferEyeball };
-      let res = await client.createMeasurement(globalpingNameRequest(t, where));
-      if (!res.ok && !first && c.preferEyeball && isNoProbesError(res.response?.status, res.data))
-        res = await client.createMeasurement(
-          globalpingNameRequest(t, { country: c.country, limit: c.perCountryLimit }),
+      let res;
+      if (first) res = await client.createMeasurement(globalpingNameRequest(t, { reuse: first }));
+      else {
+        // Shaped by the country's probes: too few home-network ones are topped up.
+        const made = await createFirstNameMeasurement(
+          client,
+          t,
+          {
+            country: c.country,
+            limit: c.perCountryLimit,
+            preferEyeball: c.preferEyeball,
+            minVantages: c.minVantages,
+          },
+          () => deps.sleep(c.spacingMs),
         );
+        res = made.res;
+        pool = made.pool;
+      }
       const mid = res.ok ? (res.data as { id?: unknown } | undefined)?.id : undefined;
       if (typeof mid !== 'string') {
         settle.push({
@@ -839,6 +853,7 @@ export const countryBatch = internalAction({
     for (const { row } of pending.values())
       settle.push({ id: row.id, status: 'failed', results: [], error: 'timeout' });
     await saveGlobalpingReadings(ctx, readings);
+    if (pool) await saveNamePool(ctx, c.country, pool);
     await ctx.runMutation(internal.sniHunt.recordCountryBatch, {
       batch: a.batch,
       rows: settle,

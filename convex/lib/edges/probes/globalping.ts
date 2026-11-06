@@ -28,6 +28,8 @@ export interface GlobalpingLike {
   getMeasurement(id: string): Promise<{ ok: boolean; data?: unknown; response?: Response }>;
   /** `GET /v1/limits` (optional in fakes: no preflight without it). */
   getLimits?(): Promise<{ ok: boolean; data?: unknown; response?: Response }>;
+  /** `GET /v1/probes`, free (optional in fakes: name checks plan nothing without it). */
+  listProbes?(): Promise<{ ok: boolean; data?: unknown; response?: Response }>;
 }
 
 /** Probes asked for by one request (what Globalping's rate limit counts). */
@@ -135,6 +137,7 @@ export function recordingClient(
   now: () => number = Date.now,
 ): GlobalpingLike {
   const getLimits = client.getLimits?.bind(client);
+  const listProbes = client.listProbes?.bind(client);
   return {
     createMeasurement: async (req) => {
       const res = await client.createMeasurement(req);
@@ -153,6 +156,8 @@ export function recordingClient(
           },
         }
       : {}),
+    // Free: nothing to record.
+    ...(listProbes ? { listProbes } : {}),
   };
 }
 

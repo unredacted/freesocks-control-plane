@@ -1751,6 +1751,7 @@ export const countryBatchContext = internalQuery({
       country,
       perCountryLimit: vcfg.perCountryLimit,
       preferEyeball: (await resolveEdgeConfig(ctx.db)).probe.preferEyeball,
+      minVantages: vcfg.minVantages,
       spacingMs: EDGE_PLUMBING.probeSourceSpacingMs,
       token: secrets.globalpingToken,
       rows: rows.map((r) => ({

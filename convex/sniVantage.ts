@@ -48,6 +48,7 @@ import {
 import type { VantageSource } from './lib/edges/probes/nameCheck';
 import { readRealHost } from './lib/edges/sni/realHost';
 import { ownAddresses } from './lib/edges/sni/ownAddresses';
+import { namePoolKey } from './lib/edges/sni/namePool';
 import { resolveGlobalpingShare } from './lib/edges/probes/globalpingShare';
 import { admitHuntBatch, huntProbesThisHour } from './sniHunt';
 import {
@@ -688,6 +689,7 @@ export const batchContext = internalQuery({
       country,
       perCountryLimit: cfg.perCountryLimit,
       preferEyeball: edgeCfg.probe.preferEyeball,
+      minVantages: cfg.minVantages,
       spacingMs: EDGE_PLUMBING.probeSourceSpacingMs,
       secrets,
       // FCP's own addresses: a real-site answer among them is never dialled as one.
@@ -749,6 +751,32 @@ const vantageResult = v.object({
 
 const isOpen = (r: Doc<'sniVantageProbes'> | null) =>
   !!r && (r.status === 'requested' || r.status === 'running');
+
+const namePoolV = v.object({
+  mode: v.union(v.literal('eyeball'), v.literal('topped_up'), v.literal('any')),
+  eyeball: v.number(),
+  total: v.number(),
+  limit: v.number(),
+  needs: v.number(),
+  preferEyeball: v.boolean(),
+});
+
+/** How a batch found its Globalping probes in a country (lib/edges/sni/namePool.ts). */
+export const noteNamePool = internalMutation({
+  args: { country: v.string(), pool: namePoolV },
+  handler: async (ctx, { country, pool }) => {
+    const key = namePoolKey(country);
+    const now = Date.now();
+    const value = JSON.stringify({ ...pool, at: now });
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (row) await ctx.db.patch(row._id, { value, updatedAt: now });
+    else await ctx.db.insert('appState', { key, value, updatedAt: now });
+    return null;
+  },
+});
 
 /** Settle one source's measurements of a batch, then the batch. */
 export const finishBatch = internalMutation({
