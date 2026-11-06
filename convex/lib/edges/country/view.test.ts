@@ -537,6 +537,8 @@ describe('buildCountryView', () => {
       names: 2,
       at: NOW - H,
       flagged: true,
+      // Each address's own figure; neither rests on 3 pairs, so none is clear.
+      addresses: { timed: 2, lowMs: 80, highMs: 120, clear: 0 },
     });
     const quiet = buildCountryView(
       [origin()],
@@ -554,6 +556,133 @@ describe('buildCountryView', () => {
       buildCountryView([origin()], (n) => skewed[n] ?? null, SETTINGS).origins[0]!.listeners[0]!
         .targetAdds,
     ).toMatchObject({ ms: 60, oursMs: 65, pairs: 4, names: 2, flagged: true });
+  });
+
+  test('the handshake gap per address: one quick address clears the node’s leg', () => {
+    const timed = (addsMs: number, target: string, pairs = 3): NameFacts => ({
+      family: 'f',
+      qualified: true,
+      mark: null,
+      checks: null,
+      reports: null,
+      realHost: {
+        at: NOW - H,
+        target,
+        realAddress: '192.0.2.50',
+        reading: 'works',
+        counts: {
+          works: 3,
+          nameBlocked: 0,
+          addressBlocked: 0,
+          ipNameMatch: 0,
+          oursOnly: 0,
+          inconclusive: 0,
+        },
+        vantages: 3,
+        networks: 3,
+        timing: { pairs, oursMs: addsMs + 10, realMs: 10, addsMs },
+      },
+    });
+    // A near address (20 ms) and a far one (330 ms): the transport's median
+    // flags, and the near address shows the node's leg to its target is short.
+    const facts: Record<string, NameFacts> = {
+      'n1.example': timed(20, 'edge:a:198.51.100.1:443'),
+      'n2.example': timed(330, 'edge:b:198.51.100.2:443'),
+      'n3.example': timed(334, 'edge:b:198.51.100.2:443'),
+    };
+    const l = buildCountryView([origin()], (n) => facts[n] ?? null, SETTINGS).origins[0]!
+      .listeners[0]!;
+    expect(l.targetAdds).toMatchObject({
+      flagged: true,
+      addresses: { timed: 2, lowMs: 20, highMs: 332, clear: 1 },
+    });
+    const [a, b, spare] = l.addresses;
+    expect(a!.evidence.realHost?.timing).toMatchObject({
+      ms: 20,
+      pairs: 3,
+      names: 1,
+      flagged: false,
+      addresses: null,
+    });
+    expect(b!.evidence.realHost?.timing).toMatchObject({
+      ms: 332,
+      oursMs: 342,
+      pairs: 6,
+      names: 2,
+      flagged: true,
+      addresses: null,
+    });
+    expect(spare!.evidence.realHost).toBeNull();
+    // Every address slow: nothing clears the node's leg.
+    const allFar: Record<string, NameFacts> = {
+      'n1.example': timed(300, 'edge:a:198.51.100.1:443'),
+      'n2.example': timed(330, 'edge:b:198.51.100.2:443'),
+    };
+    expect(
+      buildCountryView([origin()], (n) => allFar[n] ?? null, SETTINGS).origins[0]!.listeners[0]!
+        .targetAdds?.addresses,
+    ).toEqual({ timed: 2, lowMs: 300, highMs: 330, clear: 0 });
+  });
+
+  test('the handshake gap by measured endpoint: moved edges and the node’s own address', () => {
+    const timed = (addsMs: number, target: string, at = NOW - H): NameFacts => ({
+      family: 'f',
+      qualified: true,
+      mark: null,
+      checks: null,
+      reports: null,
+      realHost: {
+        at,
+        target,
+        realAddress: '192.0.2.50',
+        reading: 'works',
+        counts: {
+          works: 3,
+          nameBlocked: 0,
+          addressBlocked: 0,
+          ipNameMatch: 0,
+          oursOnly: 0,
+          inconclusive: 0,
+        },
+        vantages: 3,
+        networks: 3,
+        timing: { pairs: 3, oursMs: addsMs + 10, realMs: 10, addsMs },
+      },
+    });
+    // Edge a moved: its old endpoint (300 ms) and its new one (20 ms) count apart,
+    // and its row shows only the newest.
+    const moved: Record<string, NameFacts> = {
+      'n1.example': timed(300, 'edge:a:198.51.100.1:443', NOW - 3 * H),
+      'n3.example': timed(20, 'edge:a:198.51.100.7:443'),
+    };
+    const l = buildCountryView([origin()], (n) => moved[n] ?? null, SETTINGS).origins[0]!
+      .listeners[0]!;
+    expect(l.targetAdds?.addresses).toEqual({ timed: 2, lowMs: 20, highMs: 300, clear: 1 });
+    expect(l.addresses[0]!.evidence.realHost?.timing).toMatchObject({ ms: 20, names: 1 });
+
+    // A transport measured only on the node's own address still carries its spread.
+    const direct = { address: '198.51.100.9', reachability: [] };
+    const alone = origin({ edges: [], published: [], direct });
+    const one: Record<string, NameFacts> = {
+      'n1.example': timed(90, 'relay:r1:198.51.100.9:443'),
+    };
+    const v = buildCountryView([alone], (n) => one[n] ?? null, SETTINGS).origins[0]!;
+    expect(v.listeners[0]!.targetAdds).toMatchObject({
+      ms: 90,
+      flagged: true,
+      addresses: { timed: 1, lowMs: 90, highMs: 90, clear: 0 },
+    });
+    expect(v.direct!.evidence.realHost?.timing).toMatchObject({ ms: 90, flagged: true });
+
+    // Two ports on the node's own address are two targets: its row gives no
+    // single figure (each transport's line keeps its own).
+    const two: Record<string, NameFacts> = {
+      'n1.example': timed(20, 'relay:r1:198.51.100.9:443'),
+      'n2.example': timed(300, 'relay:r1:198.51.100.9:8443'),
+    };
+    const w = buildCountryView([alone], (n) => two[n] ?? null, SETTINGS).origins[0]!;
+    expect(w.direct!.evidence.realHost?.names).toHaveLength(2);
+    expect(w.direct!.evidence.realHost?.timing).toBeNull();
   });
 
   test('a retired name still draining is listed; one past its drain is not', () => {

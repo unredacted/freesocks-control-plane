@@ -16,6 +16,7 @@ import type {
   CountryViewName,
 } from '@shared/contracts/edges';
 import * as W from './words';
+import { TARGET_ADDS_FLAG_MS as SERVER_FLAG_MS } from '../../../../../../convex/lib/edges/sni/realHost';
 
 const NOW = 1_800_000_000_000;
 const H = 3_600_000;
@@ -443,6 +444,7 @@ describe('country view words', () => {
             { name: 'b', reading: 'address_blocked' },
             { name: 'c', reading: 'works' },
           ],
+          timing: null,
         },
       },
     });
@@ -466,16 +468,68 @@ describe('country view words', () => {
       targetAdds,
     });
     expect(W.targetAddsLine(listener(null), NOW)).toBeNull();
-    const far = { ms: 133, oursMs: 140, realMs: 6, pairs: 6, names: 2, at: NOW - H, flagged: true };
+    const far = {
+      ms: 133,
+      oursMs: 140,
+      realMs: 6,
+      pairs: 6,
+      names: 2,
+      at: NOW - H,
+      flagged: true,
+      addresses: { timed: 2, lowMs: 120, highMs: 140, clear: 0 },
+    };
+    // Every address slow: either leg may be long.
     expect(W.targetAddsLine(listener(far), NOW)).toBe(
-      'The transport’s target adds about 133 ms to a handshake from here (this address 140 ms beyond one round trip, the names’ real sites 6 ms; 6 vantages, 2 names, 1 h ago). Flagged: the target sits far from the node.',
+      'A handshake on this transport’s addresses takes about 133 ms longer from here than on its names’ real sites (the addresses 140 ms beyond one round trip, the names’ real sites 6 ms; 6 vantages, 2 names, 1 h ago). Flagged: the node sits far from its target, or every address measured sits far from the node.',
+    );
+    // One address under the flag: the slow ones are far from the node, and the spread is said.
+    expect(
+      W.targetAddsLine(
+        listener({ ...far, addresses: { timed: 3, lowMs: 20, highMs: 330, clear: 1 } }),
+        NOW,
+      ),
+    ).toBe(
+      'A handshake on this transport’s addresses takes about 133 ms longer from here than on its names’ real sites (the addresses 140 ms beyond one round trip, the names’ real sites 6 ms; 6 vantages, 2 names, 1 h ago). By address it ranges from 20 to 330 ms (see each address’s evidence). Flagged: the slow addresses sit far from the node. An address under the threshold shows the node’s own leg to its target is short.',
     );
     expect(
       W.targetAddsLine(listener({ ...far, ms: -2, flagged: false }), NOW)?.startsWith(
-        'The transport’s target adds nothing measurable',
+        'A handshake on this transport’s addresses takes no measurably longer',
       ),
     ).toBe(true);
     expect(W.TARGET_ADDS_FLAG_WORDS).not.toMatch(/—/);
+    expect(W.TARGET_ADDS_FLAG_MS).toBe(SERVER_FLAG_MS);
+  });
+
+  it('says the handshake gap on one address, and which leg a flag points at', () => {
+    const t = {
+      ms: 330,
+      oursMs: 340,
+      realMs: 10,
+      pairs: 3,
+      names: 1,
+      at: NOW - H,
+      flagged: true,
+      addresses: null,
+    };
+    const on = (kind: 'edge' | 'origin', timing: typeof t | null) =>
+      address({
+        kind,
+        evidence: {
+          ...address().evidence,
+          realHost: { at: NOW - H, names: [{ name: 'a', reading: 'works' }], timing },
+        },
+      });
+    expect(W.addressTimingLine(address(), NOW)).toBeNull();
+    expect(W.addressTimingLine(on('edge', null), NOW)).toBeNull();
+    expect(W.addressTimingLine(on('edge', t), NOW)).toBe(
+      'A handshake on it takes about 330 ms longer from here than on the names’ real sites (it 340 ms beyond one round trip, the real sites 10 ms; 3 vantages, 1 name, 1 h ago). Flagged: this address sits far from the node (an address that accepts the connection itself puts its leg to the node inside the handshake), or the node far from its target.',
+    );
+    expect(W.addressTimingLine(on('origin', t), NOW)).toMatch(
+      /Flagged: the node sits far from its target\.$/,
+    );
+    expect(W.addressTimingLine(on('edge', { ...t, ms: 20, flagged: false }), NOW)).not.toMatch(
+      /Flagged/,
+    );
   });
 
   it('says what the watched lists say about an address, and how many names they hold', () => {

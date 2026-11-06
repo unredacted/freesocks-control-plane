@@ -202,9 +202,13 @@ export interface NameRealHost {
 }
 
 /**
- * What the transport's target adds to a handshake from this country, over the
- * timed real-host pairs of the transport's names (the median of the names'
- * medians, each weighted by its timed pairs). `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
+ * How much longer a handshake takes from this country on FCP's addresses than
+ * on the names' real sites, over the timed real-host pairs (the median of the
+ * names' medians, each weighted by its timed pairs). On one address the gap is
+ * its leg to the node (an L4 edge that accepts the connection itself puts that
+ * leg inside the handshake) plus the node's leg to the target; a transport's
+ * figure mixes its addresses, and `addresses` says how they differ.
+ * `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
  * `TARGET_ADDS_FLAG_MS` or more: a proposal, the owner decides.
  */
 export interface TargetAdds {
@@ -215,6 +219,13 @@ export interface TargetAdds {
   names: number;
   at: number;
   flagged: boolean;
+  /**
+   * A transport's figure only (null on one address's): its timed endpoints
+   * (address and port as measured), the lowest and highest of their own
+   * figures, and how many of them rest on enough pairs and stay under the flag. One such address shows the node's
+   * leg to the target is short, so a flagged gap is the slow addresses' own.
+   */
+  addresses: { timed: number; lowMs: number; highMs: number; clear: number } | null;
 }
 
 /** Timed pairs the flag needs (the name checks' default `minVantages`). A proposal. */
@@ -234,18 +245,23 @@ const medianOf = (xs: readonly number[]) => {
 const pairWeightedMedian = (xs: ReadonlyArray<{ value: number; pairs: number }>) =>
   medianOf(xs.flatMap((x) => Array.from({ length: Math.max(1, x.pairs) }, () => x.value)));
 
-/** The target leg of one transport, from its names' timed real-host pairs on its own addresses. */
-function targetAddsOn(
+type Timed = NameRealHost & { timing: HandshakeTiming };
+
+/** The names' timed real-host pairs on the addresses with key prefixes `prefixes`, once per name. */
+function timedOn(
   prefixes: readonly string[],
   names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
-): TargetAdds | null {
-  const timed = names
-    .map(({ f }) => f?.realHost)
-    .filter(
-      (r): r is NameRealHost & { timing: HandshakeTiming } =>
-        !!r?.timing && prefixes.some((p) => r.target.startsWith(p)),
-    );
-  if (timed.length === 0) return null;
+): Timed[] {
+  const byName = new Map<string, Timed>();
+  for (const { n, f } of names) {
+    const r = f?.realHost;
+    if (r?.timing && prefixes.some((p) => r.target.startsWith(p))) byName.set(n.name, r as Timed);
+  }
+  return [...byName.values()];
+}
+
+/** One figure over timed pairs (`addresses` left null). */
+function figureOf(timed: readonly Timed[]): TargetAdds {
   const weighted = (pick: (t: HandshakeTiming) => number) =>
     pairWeightedMedian(timed.map((r) => ({ value: pick(r.timing), pairs: r.timing.pairs })));
   const ms = weighted((t) => t.addsMs);
@@ -258,7 +274,58 @@ function targetAddsOn(
     names: timed.length,
     at: Math.max(...timed.map((r) => r.at)),
     flagged: pairs >= TARGET_ADDS_MIN_PAIRS && ms >= TARGET_ADDS_FLAG_MS,
+    addresses: null,
   };
+}
+
+/** Timed pairs grouped by the full endpoint they measured (`<kind>:<ref>:<address>:<port>`). */
+function byEndpoint(timed: readonly Timed[]): Timed[][] {
+  const m = new Map<string, Timed[]>();
+  for (const r of timed) m.set(r.target, [...(m.get(r.target) ?? []), r]);
+  return [...m.values()];
+}
+
+/**
+ * A transport's handshake gap over its own addresses (key prefixes
+ * `prefixes`), with the spread of each measured endpoint's own figure: an
+ * edge whose address or port changed counts its old and new endpoints apart.
+ */
+function transportTargetAdds(
+  prefixes: readonly string[],
+  names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
+): TargetAdds | null {
+  const timed = timedOn(prefixes, names);
+  if (timed.length === 0) return null;
+  const each = byEndpoint(timed).map(figureOf);
+  return {
+    ...figureOf(timed),
+    addresses: {
+      timed: each.length,
+      lowMs: Math.min(...each.map((t) => t.ms)),
+      highMs: Math.max(...each.map((t) => t.ms)),
+      clear: each.filter((t) => t.pairs >= TARGET_ADDS_MIN_PAIRS && !t.flagged).length,
+    },
+  };
+}
+
+/**
+ * The handshake gap on one address (key prefix `prefix`): the newest measured
+ * endpoint's figure, so an edge's old endpoint never counts for its current
+ * one. `oneEndpoint`: null when the names measured more than one endpoint
+ * under it (the node's own address carries one target per transport, so a
+ * figure over two ports would mix two targets; each transport's line has its own).
+ */
+function addressTiming(
+  prefix: string,
+  names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
+  oneEndpoint: boolean,
+): TargetAdds | null {
+  const groups = byEndpoint(timedOn([prefix], names));
+  if (groups.length === 0 || (oneEndpoint && groups.length > 1)) return null;
+  const newest = groups.reduce((x, y) =>
+    Math.max(...y.map((r) => r.at)) > Math.max(...x.map((r) => r.at)) ? y : x,
+  );
+  return figureOf(newest);
 }
 
 /** What the real-host controls of the names checked on one address say about it. */
@@ -267,12 +334,18 @@ export interface AddressRealHost {
   at: number;
   /** Each name's reading, as checked on this address. */
   names: Array<{ name: string; reading: RealHostReading }>;
+  /** The handshake gap on this address alone (null: no timed pair on it). */
+  timing: TargetAdds | null;
 }
 
-/** The names whose newest real-host batch measured the address with key prefix `prefix`. */
+/**
+ * The names whose newest real-host batch measured the address with key prefix
+ * `prefix`. `oneEndpoint`: see `addressTiming` (true for the node's own address).
+ */
 function realHostOn(
   prefix: string,
   names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
+  oneEndpoint = false,
 ): AddressRealHost | null {
   const byName = new Map<string, { name: string; reading: RealHostReading; at: number }>();
   for (const { n, f } of names)
@@ -283,6 +356,7 @@ function realHostOn(
   return {
     at: Math.max(...hits.map((h) => h.at)),
     names: hits.map(({ name, reading }) => ({ name, reading })),
+    timing: addressTiming(prefix, names, oneEndpoint),
   };
 }
 
@@ -672,7 +746,7 @@ export interface ListenerView {
   members: Handed;
   /** With lanes on: what an open member there (a new or suspected account) is handed. */
   openMembers: Handed | null;
-  /** What the transport's target adds to a handshake from there (null: no timed pair). */
+  /** How much longer a handshake takes on its addresses than on the real sites (null: no timed pair). */
   targetAdds: TargetAdds | null;
 }
 
@@ -941,7 +1015,7 @@ export function buildCountryView(
         members,
         openMembers,
         // Its names measured on its own addresses (an edge of it, or the origin itself).
-        targetAdds: targetAddsOn(
+        targetAdds: transportTargetAdds(
           [...edges.map((e) => `edge:${e.edgeId}:`), `relay:${o.relayId}:`],
           nameViews0,
         ),
@@ -954,6 +1028,7 @@ export function buildCountryView(
           realHostOn(
             `relay:${o.relayId}:`,
             o.listeners.flatMap((l) => l.names.map((n) => ({ n, f: facts(n.name) }))),
+            true,
           ),
         )
       : null;

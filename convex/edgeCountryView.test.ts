@@ -256,6 +256,7 @@ describe('the country view', () => {
     expect(l.addresses[0]!.evidence.realHost).toEqual({
       at: expect.any(Number),
       names: [{ name: 'b.example', reading: 'ip_name_match' }],
+      timing: null,
     });
     expect(l.addresses[1]!.evidence.realHost).toBeNull();
     // The reading is judged now from the stored counts: a raised floor makes it thin.
