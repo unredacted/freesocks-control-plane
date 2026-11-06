@@ -8,8 +8,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 import schema from '../../convex/schema';
-import { internal } from '../../convex/_generated/api';
-import { __setS3SendForTests } from '../../convex/storage';
+import { makeFunctionReference } from 'convex/server';
 import { mirrorFormatPath } from '../../src/shared/mirrorFormats';
 import { defaultRouteFaults } from '../../convex/lib/backend/subscriptionTemplates/defaultRoute';
 import { clients } from './manifest';
@@ -419,9 +418,20 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
    * a map behind the storage seam; the panel and the engines are real.
    */
   test('a mirror: each format imports in its engine and every proxy carries HTTPS', async () => {
+    // By path, not the typed API and module: this suite's typecheck stays out
+    // of convex/ (the root config is stricter than convex/tsconfig.json).
+    const provisionMirror = makeFunctionReference<'action'>('storage:provisionMirror');
+    const clearMirrorsForUser = makeFunctionReference<'action'>('storage:clearMirrorsForUser');
+    const storagePath = '../../convex/storage';
+    const { __setS3SendForTests } = (await import(/* @vite-ignore */ storagePath)) as {
+      __setS3SendForTests: (
+        send:
+          ((p: unknown, op: { kind: string; key: string; body?: string }) => Promise<void>) | null,
+      ) => void;
+    };
     const objects = new Map<string, string>();
     __setS3SendForTests(async (_p, op) => {
-      if (op.kind === 'put') objects.set(op.key, op.body);
+      if (op.kind === 'put') objects.set(op.key, op.body ?? '');
       else objects.delete(op.key);
     });
     const userId = await t.run(async (ctx) => {
@@ -440,7 +450,7 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
       return (await ctx.db.query('subscriptions').first())!.userId;
     });
     try {
-      const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+      const res = await t.action(provisionMirror, { userId, countryCode: null });
       expect(res).toMatchObject({ status: 'ok', formats: ['links', 'clash', 'singbox'] });
       const base = (await t.run(async (ctx) => (await ctx.db.query('subscriptions').first())!))
         .subscriptionMirrors[0]!.objectPath!;
@@ -469,7 +479,7 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
       }
     } finally {
       __setS3SendForTests(null);
-      await t.action(internal.storage.clearMirrorsForUser, { userId });
+      await t.action(clearMirrorsForUser, { userId });
       await t.run(async (ctx) => {
         for (const p of await ctx.db.query('mirrorProviders').collect()) await ctx.db.delete(p._id);
       });
