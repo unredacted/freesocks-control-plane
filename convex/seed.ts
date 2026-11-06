@@ -224,6 +224,7 @@ export const seedClients = internalMutation({
         easeOfUse: c.easeOfUse ?? undefined,
         ipv6: c.ipv6 ?? undefined,
         xhttp: c.xhttp ?? undefined,
+        hysteria2: c.hysteria2 ?? undefined,
         enabled: c.enabled,
         priority: c.priority,
         updatedAt: Date.now(),
@@ -237,8 +238,8 @@ export const seedClients = internalMutation({
 /**
  * OPERATOR-RUN catalog refresh: upsert every DEFAULT_CLIENTS row by name,
  * OVERWRITING the default-managed fields (homepageUrl, easeOfUse, openSource,
- * license, sourceUrl, schemeId, hwid, ipv6, xhttp, platforms, backends,
- * priority) on rows that already exist - unlike seedClients, which is
+ * license, sourceUrl, schemeId, hwid, ipv6, xhttp, hysteria2, platforms,
+ * backends, priority) on rows that already exist - unlike seedClients, which is
  * insert-if-missing only.
  * Use after a defaults change (e.g. the install-page URL repoints) to push it
  * to a deployed instance: `bunx convex run seed:refreshDefaultClients '{}'`.
@@ -271,6 +272,7 @@ export const refreshDefaultClients = internalMutation({
         easeOfUse: c.easeOfUse ?? undefined,
         ipv6: c.ipv6 ?? undefined,
         xhttp: c.xhttp ?? undefined,
+        hysteria2: c.hysteria2 ?? undefined,
         priority: c.priority,
         updatedAt: Date.now(),
       };

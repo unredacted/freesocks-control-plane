@@ -5157,6 +5157,10 @@ export default defineSchema({
     // XHTTP under REALITY as FCP delivers it to the app: true works / false
     // can't (hidden on an XHTTP mode) / absent untested (lib/clientCatalog.ts).
     xhttp: v.optional(v.boolean()),
+    // Hysteria 2 with its pinned certificate, as FCP delivers it: true =
+    // recorded evidence (offered on a Hysteria mode) / false = can't or drops
+    // the pin / absent untested. Only true is offered there (lib/clientCatalog.ts).
+    hysteria2: v.optional(v.boolean()),
     enabled: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),

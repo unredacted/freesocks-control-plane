@@ -636,6 +636,8 @@ export type MessageKey =
   | "setup.easeAdvanced"
   | "setup.easeEasy"
   | "setup.hwidNote"
+  | "setup.hysteriaNoApps"
+  | "setup.hysteriaOnly"
   | "setup.install"
   | "setup.intro"
   | "setup.ios"

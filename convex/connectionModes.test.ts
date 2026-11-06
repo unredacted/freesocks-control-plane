@@ -713,6 +713,41 @@ describe('admin CRUD', () => {
     expect(rows.find((r) => r.slug === 'freedom-ws')!.enabled).toBe(true);
   });
 
+  test('a Hysteria mode turns on only with an app that has recorded Hysteria support', async () => {
+    const t = convexTest(schema, modules);
+    const turnOn = () =>
+      t.mutation(internal.connectionModes.updateMode, { slug: 'privacy-hysteria', enabled: true });
+    // The defaults claim it for no app: refused, and it says why.
+    await expect(turnOn()).rejects.toThrow(/no enabled app has recorded Hysteria support/);
+    // An app marked so, but disabled, does not count.
+    const app = await t.mutation(internal.clients.create, {
+      name: 'Evidenced',
+      platforms: ['android'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://app.example',
+      hysteria2: true,
+      enabled: false,
+    });
+    await expect(turnOn()).rejects.toThrow(/Hysteria support/);
+    await t.mutation(internal.clients.update, { id: app.id as Id<'clients'>, enabled: true });
+    await turnOn();
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query('connectionModes')
+        .withIndex('by_slug', (q) => q.eq('slug', 'privacy-hysteria'))
+        .unique(),
+    );
+    expect(row!.enabled).toBe(true);
+    // An edit that leaves it on and its backends alone is not re-checked.
+    await t.mutation(internal.clients.update, { id: app.id as Id<'clients'>, hysteria2: null });
+    await t.mutation(internal.connectionModes.updateMode, { slug: 'privacy-hysteria', order: 3 });
+    // Another mode is never held to it.
+    await t.mutation(internal.connectionModes.updateMode, {
+      slug: 'privacy-reality',
+      enabled: true,
+    });
+  });
+
   test('createMode: validation (slug shape, dup, unknown family, empty backends, label required)', async () => {
     const t = convexTest(schema, modules);
     const base = {

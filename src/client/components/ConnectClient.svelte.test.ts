@@ -189,3 +189,60 @@ describe('which apps an XHTTP mode offers', () => {
     expect(document.body.textContent).toContain('Not recommended for your plan');
   });
 });
+
+describe('which apps a Hysteria mode offers', () => {
+  const names = () =>
+    [...document.querySelectorAll('ul > li')].map((li) =>
+      li.querySelector('p')?.textContent?.trim(),
+    );
+  const text = () => document.body.textContent ?? '';
+
+  test('only apps with Hysteria evidence; untested and false ones are left out, one line says why', () => {
+    client.setQueryData(queryKeys.config, {
+      clients: [
+        app('Hiddify', 'hiddify', { hysteria2: false }),
+        app('v2rayNG', 'v2rayng', { hysteria2: true }),
+        // Untested: no flag. Unlike XHTTP, it is not offered.
+        app('Shadowrocket', 'shadowrocket'),
+      ],
+      backends: { list: [] },
+    });
+    props.modeId = 'privacy-hysteria';
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    expect(names()).toEqual(['v2rayNG']);
+    expect(text()).toContain('Only apps we have checked with Hysteria are shown');
+    expect(text()).not.toContain('use any compatible client');
+  });
+
+  test('none checked on this platform: it says to pick another mode, never "any compatible client"', () => {
+    client.setQueryData(queryKeys.config, {
+      clients: [
+        app('Hiddify', 'hiddify', { hysteria2: false }),
+        app('Shadowrocket', 'shadowrocket'),
+      ],
+      backends: { list: [] },
+    });
+    props.modeId = 'privacy-hysteria';
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    expect(names()).toEqual([]);
+    expect(text()).toContain('No app we have checked with Hysteria runs on this platform yet');
+    expect(text()).not.toContain('use any compatible client');
+    expect(text()).not.toContain('Only apps we have checked with Hysteria are shown');
+  });
+
+  test('the REALITY mode of the same family offers every app', () => {
+    client.setQueryData(queryKeys.config, {
+      clients: [
+        app('Hiddify', 'hiddify', { hysteria2: false }),
+        app('Shadowrocket', 'shadowrocket'),
+      ],
+      backends: { list: [] },
+    });
+    props.modeId = 'privacy-reality';
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    expect(names()).toEqual(['Hiddify', 'Shadowrocket']);
+  });
+});

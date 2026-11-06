@@ -14,7 +14,6 @@ import { SETTINGS_DEFAULTS } from './appSettings';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
 import { resolveClients } from './lib/clientCatalog';
 import { resolveSubscriptionSiteName } from './lib/subscriptionTitle';
-import { isXhttpMode } from '../src/shared/xhttpModes';
 import type { DatabaseReader } from './_generated/server';
 import {
   appNoticeBody,
@@ -76,7 +75,7 @@ export const words = internalQuery({
     const notice: AppNotice = { family: a.family, why: a.why };
     const apps = noticeApps(clients, {
       backend: sub?.backend ?? 'remnawave',
-      xhttpMode: isXhttpMode(user?.connectionModeId),
+      modeId: user?.connectionModeId,
       deviceLimited: enforcement && tier?.hwidEnabled === true,
       notice,
     });

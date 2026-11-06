@@ -14,6 +14,8 @@
 import type { DatabaseReader } from '../_generated/server';
 import { BACKEND_IDS, type BackendId } from './backendIds';
 import { CAPABILITIES } from './backends/capabilities';
+import { hysteriaAppBackends, resolveClients } from './clientCatalog';
+import { isHysteriaMode } from '../../src/shared/hysteriaModes';
 import {
   effectiveDefaultId,
   publicProjection,
@@ -156,7 +158,8 @@ export interface CatalogWithAvailability extends ModeCatalog {
  * The catalog with per-backend availability composed in:
  *   availableBackends(mode) = mode.backends where the mode is enabled AND
  *   (the backend has no placement concept OR the mode is bound there AND its
- *   pool has a node).
+ *   pool has a node), and for a Hysteria mode an enabled catalog app on that
+ *   backend with recorded Hysteria evidence.
  * `isDefault` is re-pointed to the effective default (`effectiveDefaultId`), so
  * no surface hands a new member a default that no node serves.
  * The single source for publicConfig, the internal mode list, and the admin
@@ -189,10 +192,16 @@ export async function resolveCatalogWithAvailability(
     (!!catalog.modes.find((f) => f.id === m.fallbackModeSlug && f.enabled) &&
       usableOn(b, m.fallbackModeSlug) &&
       (!CAPABILITIES[b].placement || extraServing.has(m.id)));
+  // A Hysteria mode also needs an app to offer: the setup page offers only
+  // apps with recorded Hysteria evidence (src/shared/hysteriaModes.ts).
+  const hysteriaApps = catalog.modes.some((m) => m.enabled && isHysteriaMode(m.id))
+    ? hysteriaAppBackends(await resolveClients(db))
+    : new Set<BackendId>();
+  const withApp = (b: BackendId, m: ConnectionMode) => !isHysteriaMode(m.id) || hysteriaApps.has(b);
   const modes: ModeWithAvailability[] = catalog.modes.map((m) => ({
     ...m,
     availableBackends: m.enabled
-      ? m.backends.filter((b) => usableOn(b, m.id) && withBackup(b, m))
+      ? m.backends.filter((b) => usableOn(b, m.id) && withBackup(b, m) && withApp(b, m))
       : [],
   }));
   const configuredDefaultId = catalog.modes.find((m) => m.isDefault)?.id ?? null;

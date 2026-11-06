@@ -30,6 +30,7 @@ import YAML from 'yaml';
 import { v } from 'convex/values';
 import { type AppNoticeFamily } from './appNoticeFamilies';
 import { publicClients, type CatalogClient } from './clientCatalog';
+import { appFitsMode } from '../../src/shared/hysteriaModes';
 import { SINGBOX_JSON } from './backend/subscriptionTemplates/SINGBOX';
 import {
   classifyClient,
@@ -133,8 +134,10 @@ export const NOTICE_APPS_MAX = 2;
 /**
  * The apps the notice names, from the client catalog in the setup page's
  * order (open source, then easier, then priority): enabled, on the key's
- * backend, never one marked unable to use an XHTTP mode while the member is
- * on one, never one that reads as a legacy core. On a device-limited plan,
+ * backend, fit for the member's mode (never one marked unable to use an XHTTP
+ * mode while the member is on one; on a Hysteria mode only apps with recorded
+ * Hysteria evidence, src/shared/hysteriaModes.ts), never one that reads as a
+ * legacy core. On a device-limited plan,
  * apps that honour the device limit (`hwid`) come first, as the setup page
  * puts them: another app may not connect there. Then an old app is pointed at
  * a current app of its own kind (it imports the same link); an app whose
@@ -142,13 +145,19 @@ export const NOTICE_APPS_MAX = 2;
  */
 export function noticeApps(
   clients: readonly CatalogClient[],
-  opts: { backend: string; xhttpMode: boolean; deviceLimited?: boolean; notice: AppNotice },
+  opts: {
+    backend: string;
+    /** The member's connection mode: an XHTTP or Hysteria mode narrows the apps. */
+    modeId?: string | null;
+    deviceLimited?: boolean;
+    notice: AppNotice;
+  },
 ): string[] {
   const format = FORMAT_OF_FAMILY[opts.notice.family];
   const usable = publicClients([...clients]).filter(
     (c) =>
       (c.backends as string[]).includes(opts.backend) &&
-      !(opts.xhttpMode && c.xhttp === false) &&
+      appFitsMode(c, opts.modeId) &&
       !LEGACY_APP_NAMES.has(squash(c.name)) &&
       !(opts.notice.why === 'mode' && formatOfApp(c.name) === format),
   );

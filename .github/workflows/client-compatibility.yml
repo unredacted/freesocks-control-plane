@@ -103,6 +103,30 @@ jobs:
       # carry the per-run client id.
       - run: bun run test:integration:reality-keyshare
 
+  hysteria-engines:
+    # Hysteria 2 for Privacy (docs/client-compatibility.md § "Hysteria
+    # engines"): the node image's Xray-core serves FCP's own Hysteria
+    # transport, and Xray-core, sing-box and Mihomo connect from the entry FCP
+    # delivers, carry a UDP round trip, and refuse a rogue server with another
+    # certificate without handing it the password.
+    name: Hysteria vs Xray-core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v6
+        with:
+          # download.ts re-verifies every cached artifact's SHA-256 before use.
+          path: .cache/compat/bin
+          key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
+      # Tears the containers down itself. No logs or configs are kept: they
+      # carry the per-run password.
+      - run: bun run test:integration:hysteria
+
   node-image-xray:
     # The REALITY hold (.github/dependabot.yml): every remnawave/node image the
     # compose files pin must bundle Xray-core v26.7.28 or older, because from

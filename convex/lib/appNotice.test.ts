@@ -152,7 +152,6 @@ describe('the apps it names', () => {
   test('an old Clash app is pointed at current Clash apps first, never at "Clash"', () => {
     const apps = noticeApps(DEFAULT_CLIENTS, {
       backend: 'remnawave',
-      xhttpMode: false,
       notice: OLD,
     });
     expect(apps).toEqual(['FlClash', 'Mihomo Party']);
@@ -160,33 +159,51 @@ describe('the apps it names', () => {
     const renamed = DEFAULT_CLIENTS.map((c) =>
       c.name === 'Clash' ? { ...c, name: 'Clash Verge Rev', easeOfUse: 'easy' as const } : c,
     );
-    expect(noticeApps(renamed, { backend: 'remnawave', xhttpMode: false, notice: OLD })[0]).toBe(
-      'Clash Verge Rev',
-    );
+    expect(noticeApps(renamed, { backend: 'remnawave', notice: OLD })[0]).toBe('Clash Verge Rev');
   });
 
   test('sing-box on an XHTTP mode: never an app of its own format, even with no flags set', () => {
     const apps = noticeApps(DEFAULT_CLIENTS, {
       backend: 'remnawave',
-      xhttpMode: true,
+      modeId: 'freedom-xhttp',
       notice: SINGBOX_MODE,
     });
     expect(apps).toEqual(['Hiddify', 'Anywhere']);
     const unflagged: CatalogClient[] = DEFAULT_CLIENTS.map(({ xhttp: _xhttp, ...c }) => c);
     const named = noticeApps(unflagged, {
       backend: 'remnawave',
-      xhttpMode: true,
+      modeId: 'freedom-xhttp',
       notice: SINGBOX_MODE,
     });
     expect(named).not.toContain('Karing');
     expect(named).not.toContain('sing-box');
   });
 
+  test('on a Hysteria mode only apps with Hysteria evidence are named, untested ones never', () => {
+    // The defaults carry no evidence yet: nothing is named rather than a guess.
+    expect(
+      noticeApps(DEFAULT_CLIENTS, {
+        backend: 'remnawave',
+        modeId: 'privacy-hysteria',
+        notice: OLD,
+      }),
+    ).toEqual([]);
+    const evidenced = DEFAULT_CLIENTS.map((c) =>
+      c.name === 'v2rayNG' ? { ...c, hysteria2: true } : c,
+    );
+    expect(
+      noticeApps(evidenced, { backend: 'remnawave', modeId: 'privacy-hysteria', notice: OLD }),
+    ).toEqual(['v2rayNG']);
+    // Another mode is not narrowed by the flag.
+    expect(
+      noticeApps(evidenced, { backend: 'remnawave', modeId: 'privacy-reality', notice: OLD }),
+    ).toEqual(['FlClash', 'Mihomo Party']);
+  });
+
   test('on a device-limited plan, apps that honour the limit come first', () => {
     expect(
       noticeApps(DEFAULT_CLIENTS, {
         backend: 'remnawave',
-        xhttpMode: false,
         deviceLimited: true,
         notice: OLD,
       }),
@@ -195,7 +212,7 @@ describe('the apps it names', () => {
     expect(
       noticeApps(DEFAULT_CLIENTS, {
         backend: 'remnawave',
-        xhttpMode: true,
+        modeId: 'freedom-xhttp',
         deviceLimited: true,
         notice: SINGBOX_MODE,
       }),
@@ -207,10 +224,8 @@ describe('the apps it names', () => {
       ...c,
       enabled: c.name === 'Mihomo Party' || c.name === 'Outline',
     }));
-    expect(noticeApps(one, { backend: 'remnawave', xhttpMode: false, notice: OLD })).toEqual([
-      'Mihomo Party',
-    ]);
-    expect(noticeApps([], { backend: 'remnawave', xhttpMode: false, notice: OLD })).toEqual([]);
+    expect(noticeApps(one, { backend: 'remnawave', notice: OLD })).toEqual(['Mihomo Party']);
+    expect(noticeApps([], { backend: 'remnawave', notice: OLD })).toEqual([]);
   });
 });
 

@@ -11,6 +11,8 @@ import { pinSubscriptionToNode } from './lib/nodePinning';
 import { finishMemberBody } from './lib/subscriptionDelivery';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 import { classifyClient } from './lib/edges/clientFamilies';
+import { evidenceSchema } from '../tests/compat/evidence';
+import evidenceFile from '../tests/compat/application-evidence.json';
 
 describe('client compatibility coverage', () => {
   test('every enabled recommendation has an explicit coverage entry', () => {
@@ -32,6 +34,20 @@ describe('client compatibility coverage', () => {
       const entry = DEFAULT_CLIENTS.find((c) => c.name === client.name);
       expect(entry?.xhttp, client.name).not.toBe(true);
     }
+  });
+  test('an app is marked Hysteria-capable only with a recorded Hysteria check of that app', () => {
+    // An app that drops the certificate pin hands the member's password to
+    // whoever answers, so `hysteria2: true` is never a guess from release notes.
+    const records = evidenceSchema.parse(evidenceFile);
+    for (const app of DEFAULT_CLIENTS) {
+      if (app.hysteria2 !== true) continue;
+      expect(
+        records.some((r) => r.client === app.name && r.hysteria2),
+        `${app.name} has no recorded Hysteria check`,
+      ).toBe(true);
+    }
+    // Hiddify's link parser ignores pinSHA256: recorded as unable.
+    expect(DEFAULT_CLIENTS.find((c) => c.name === 'Hiddify')?.hysteria2).toBe(false);
   });
   test('every manifest User-Agent classifies to the format the manifest expects', () => {
     // The manifest says what the PANEL serves each UA; classifyClient is what

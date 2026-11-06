@@ -52,7 +52,9 @@ describe('placementSetOf', () => {
 });
 
 /** A backend with REALITY and Hysteria groups bound, a member on REALITY, and a node serving both. */
-async function seed(opts: { bindHysteria?: boolean; serving?: boolean } = {}) {
+async function seed(
+  opts: { bindHysteria?: boolean; serving?: boolean; hysteriaApp?: boolean } = {},
+) {
   const t = convexTest(schema, modules);
   await t.mutation(internal.seed.seedConnectionModes, {});
   const ids = await t.run(async (ctx) => {
@@ -62,6 +64,18 @@ async function seed(opts: { bindHysteria?: boolean; serving?: boolean } = {}) {
       .withIndex('by_slug', (q) => q.eq('slug', 'privacy-hysteria'))
       .unique())!;
     await ctx.db.patch(hysteria._id, { enabled: true });
+    // An app with recorded Hysteria evidence: without one the mode is never offered.
+    await ctx.db.insert('clients', {
+      name: 'Evidenced',
+      platforms: ['android'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://app.example',
+      hwid: false,
+      hysteria2: opts.hysteriaApp ?? true,
+      enabled: true,
+      priority: 0,
+      updatedAt: Date.now(),
+    });
     const serverId = await ctx.db.insert('backendServers', {
       backend: 'remnawave',
       name: 'test',
@@ -426,6 +440,9 @@ describe('the backup mode', () => {
     expect(await avail(served.t)).toEqual(['remnawave']);
     const notYet = await seed({ serving: false });
     expect(await avail(notYet.t)).toEqual([]);
+    // Served beside its backup, but no app has Hysteria evidence: not offered.
+    const noApp = await seed({ hysteriaApp: false });
+    expect(await avail(noApp.t)).toEqual([]);
     const unbound = await seed({ bindHysteria: false });
     expect(await avail(unbound.t)).toEqual([]);
   });

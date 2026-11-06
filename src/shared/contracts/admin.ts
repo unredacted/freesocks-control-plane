@@ -381,6 +381,10 @@ export const ClientAdmin = z.object({
   /** XHTTP under REALITY as FCP delivers it to the app: true works / false
    *  can't (hidden on an XHTTP mode) / null untested. Defaulted for skew. */
   xhttp: z.boolean().nullable().optional().default(null),
+  /** Hysteria 2 with its pinned certificate, as FCP delivers it: true =
+   *  recorded evidence (offered on a Hysteria mode) / false can't / null
+   *  untested (hidden there too). Defaulted for skew. */
+  hysteria2: z.boolean().nullable().optional().default(null),
   /** Admin-set member-facing blurb (verbatim in every locale); null = the SPA's
    *  built-in translated copy for known default apps. */
   description: z.string().nullable().optional().default(null),
@@ -405,6 +409,7 @@ export const ClientUpsert = z.object({
   easeOfUse: z.enum(['easy', 'moderate', 'advanced']).nullable().optional(),
   ipv6: z.boolean().nullable().optional(),
   xhttp: z.boolean().nullable().optional(),
+  hysteria2: z.boolean().nullable().optional(),
   description: z.string().max(280).nullable().optional(),
   enabled: z.boolean().default(true),
   priority: z.number().int().default(0),

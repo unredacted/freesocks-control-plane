@@ -156,6 +156,65 @@ services:
       compat-reality-edge:
         ipv4_address: 10.89.72.100
 
+  # Hysteria 2 (scripts/compat/hysteria.sh,
+  # convex/lib/hysteriaEngines.integration.test.ts): the node image's Xray
+  # release serving FCP's own Hysteria transport, a rogue one with another
+  # certificate for the same name, an Xray-core client, and the pinned
+  # sing-box and Mihomo. The test writes every config first (a fresh
+  # certificate pair and password per run). Their tunnels end at the
+  # REALITY target's page and at a UDP DNS echo, on a network the clients are
+  # not on. Same Xray pin as the cores above: it moves by hand with them.
+  compat-hysteria-node:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558
+    volumes:
+      - ./.cache/compat/hysteria/node.json:/etc/xray/config.json:ro
+    command: [run, -c, /etc/xray/config.json]
+    depends_on: [compat-reality-target, compat-hysteria-echo]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.41
+      compat-reality-origin:
+        ipv4_address: 10.89.73.41
+  compat-hysteria-rogue:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558
+    volumes:
+      - ./.cache/compat/hysteria/rogue.json:/etc/xray/config.json:ro
+    command: [run, -c, /etc/xray/config.json]
+    depends_on: [compat-reality-target, compat-hysteria-echo]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.42
+      compat-reality-origin:
+        ipv4_address: 10.89.73.42
+  # Started per test with the config the test just wrote.
+  compat-hysteria-xray-client:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558
+    volumes:
+      - ./.cache/compat/hysteria/xray-client.json:/etc/xray/config.json:ro
+    command: [run, -c, /etc/xray/config.json]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.43
+  compat-hysteria-echo:
+    image: oven/bun:${FCP_COMPAT_BUN_VERSION:?read from packageManager by the run script}
+    volumes:
+      - ./docker/compat/dns-echo.mjs:/dns-echo.mjs:ro
+    command: [bun, /dns-echo.mjs]
+    networks:
+      compat-reality-origin:
+        ipv4_address: 10.89.73.30
+  compat-hysteria-client:
+    platform: linux/amd64
+    image: fcp-compat-engine:local
+    volumes:
+      - ./.cache/compat/hysteria/client:/work
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.101
+
 networks:
   compat-origin:
     internal: true

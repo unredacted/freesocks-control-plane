@@ -695,6 +695,8 @@
     "install": "Install",
     "mainLinkOnly": "Imports your main link: this app can't read a mirror link.",
     "xhttpOnly": "Only apps that work with XHTTP are shown. To use a different app, pick another connection mode.",
+    "hysteriaOnly": "Only apps we have checked with Hysteria are shown. To use a different app, pick another connection mode.",
+    "hysteriaNoApps": "No app we have checked with Hysteria runs on this platform yet. To connect this device, pick another connection mode.",
     "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
     "openSource": "Open source",
     "ipv6Works": "IPv6 ready",

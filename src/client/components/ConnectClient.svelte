@@ -13,7 +13,10 @@
    * mode hides the URL, so those apps import the raw config below (manual).
    *
    * On an XHTTP mode, apps the catalog marks `xhttp: false` are left out (they
-   * can't connect there) and one line says why; untested apps stay.
+   * can't connect there) and one line says why; untested apps stay. On a
+   * Hysteria mode only apps marked `hysteria2: true` are offered (an app that
+   * drops the certificate pin must never be suggested), and an empty platform
+   * never says "use any compatible client".
    *
    * App names are proper nouns (not translated); the structural copy is i18n'd.
    */
@@ -28,6 +31,7 @@
   import { installKind, type InstallKind } from '../lib/installKind';
   import { detectClientPlatform, type PlatformKey } from '../lib/platform';
   import { isXhttpMode } from '../lib/connectionMode';
+  import { appFitsMode, isHysteriaMode } from '../../shared/hysteriaModes';
 
   interface Props {
     backend?: string;
@@ -77,11 +81,11 @@
     (config.data?.clients ?? []).filter((c) => (c.backends as string[]).includes(backend)),
   );
   let platformClients = $derived(clients.filter((c) => c.platforms.includes(active)));
-  // On an XHTTP mode, only `xhttp: false` goes: untested apps stay visible.
-  let currentClients = $derived(
-    isXhttpMode(modeId) ? platformClients.filter((c) => c.xhttp !== false) : platformClients,
-  );
-  let xhttpHidden = $derived(currentClients.length < platformClients.length);
+  // On an XHTTP mode only `xhttp: false` goes (untested apps stay visible); on
+  // a Hysteria mode only `hysteria2: true` stays (src/shared/hysteriaModes.ts).
+  let currentClients = $derived(platformClients.filter((c) => appFitsMode(c, modeId)));
+  let hysteriaMode = $derived(isHysteriaMode(modeId));
+  let modeHidden = $derived(currentClients.length < platformClients.length);
   // On a device-limited plan, HWID-capable apps honor the limit; others each
   // consume a slot per launch (or, with backend enforcement on, fail to connect),
   // so we surface them separately. `gateDevices` is true only when it matters —
@@ -202,8 +206,10 @@
     aria-labelledby="connect-tab-{active}"
     class="mt-4"
   >
-    {#if xhttpHidden}
+    {#if modeHidden && isXhttpMode(modeId)}
       <p class="mb-3 text-sm text-muted-foreground">{t('setup.xhttpOnly')}</p>
+    {:else if modeHidden && hysteriaMode && currentClients.length > 0}
+      <p class="mb-3 text-sm text-muted-foreground">{t('setup.hysteriaOnly')}</p>
     {/if}
 
     {#snippet clientCard(c: (typeof currentClients)[number], recommended = false)}
@@ -333,7 +339,7 @@
       <p
         class="rounded-sm border border-dashed border-border px-3 py-2 text-sm text-muted-foreground"
       >
-        {t('setup.noApps')}
+        {hysteriaMode ? t('setup.hysteriaNoApps') : t('setup.noApps')}
       </p>
     {/if}
 

@@ -1,4 +1,7 @@
-"""Perform UDP DNS through the client's SOCKS5 UDP association (RFC 1928)."""
+"""Perform UDP DNS through the client's SOCKS5 UDP association (RFC 1928).
+
+probe.py <DNS echo IPv4> [SOCKS host, default 127.0.0.1]
+"""
 import socket
 import struct
 import secrets
@@ -15,7 +18,9 @@ def read_exact(sock, count):
     return value
 
 
-with socket.create_connection(('127.0.0.1', 1080), timeout=5) as control:
+socks_host = sys.argv[2] if len(sys.argv) > 2 else '127.0.0.1'
+
+with socket.create_connection((socks_host, 1080), timeout=5) as control:
     control.sendall(b'\x05\x01\x00')
     assert read_exact(control, 2) == b'\x05\x00', 'SOCKS authentication failed'
     control.sendall(b'\x05\x03\x00\x01' + b'\x00' * 6)
@@ -29,7 +34,7 @@ with socket.create_connection(('127.0.0.1', 1080), timeout=5) as control:
         host = read_exact(control, read_exact(control, 1)[0]).decode()
     port = struct.unpack('!H', read_exact(control, 2))[0]
     if host in ('0.0.0.0', '::'):
-        host = '127.0.0.1'
+        host = socks_host
     txid = secrets.token_bytes(2)
     label = secrets.token_hex(6).encode()
     query = txid + bytes.fromhex('01000001000000000000') + bytes([len(label)]) + label + b'\x04test\x00\x00\x01\x00\x01'

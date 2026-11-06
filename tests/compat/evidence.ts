@@ -19,6 +19,21 @@ export const evidenceRecord = z.object({
   dns: z.literal('passed'),
   https: z.literal('passed'),
   refresh: z.enum(['passed', 'not-applicable']),
+  /**
+   * The Hysteria 2 checks (docs/client-device-checklists.md § "Hysteria"), run
+   * on a `privacy-hysteria` key: the app imported FCP's raw config through its
+   * own importer, connected over UDP, and refused to connect once one
+   * character of the entry's certificate pin was changed. Only a record with
+   * this block lets the catalog mark the app `hysteria2: true`
+   * (convex/clientCompatibility.test.ts).
+   */
+  hysteria2: z
+    .object({
+      rawImport: z.literal('passed'),
+      udp: z.literal('passed'),
+      wrongPinRefused: z.literal('passed'),
+    })
+    .optional(),
 });
 export type EvidenceRecord = z.infer<typeof evidenceRecord>;
 export const evidenceSchema = z.array(evidenceRecord);

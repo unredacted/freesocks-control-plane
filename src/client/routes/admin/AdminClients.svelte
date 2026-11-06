@@ -131,6 +131,14 @@
               <strong class="text-foreground"
                 >{c.xhttp === true ? 'works' : c.xhttp === false ? "can't" : 'untested'}</strong
               >
+              · Hysteria:
+              <strong class="text-foreground"
+                >{c.hysteria2 === true
+                  ? 'works'
+                  : c.hysteria2 === false
+                    ? "can't"
+                    : 'untested'}</strong
+              >
             </div>
             <div class="text-muted-foreground">
               License:

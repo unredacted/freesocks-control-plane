@@ -30,6 +30,18 @@ Write down the app's exact version and the device's OS and version, then:
 
 A check that fails is a bug: report it and record nothing for that app. `scripts/compat/evidence.ts` refuses to write a record with a failed check.
 
+## Hysteria (only where the catalog should mark the app)
+
+Run these as well only for an app that should be offered on the `privacy-hysteria` mode (`docs/client-compatibility.md` § "Hysteria in the client catalog"). They need beta with `privacy-hysteria` serving on a node, and a second device-test key on that mode (the switch is on the account page while the mode is on for beta; ask the operator to turn it on for the test).
+
+| Check      | Pass when                                                                                                                                                                                                                                                                                             | Screenshot               |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Raw import | The raw config from the account page imports through the app's own importer (paste or QR), and the profile holds a `· UDP` entry and a `· Direct` entry for the same place.                                                                                                                           | The app's server list.   |
+| UDP        | Connected through the `· UDP` entry, `https://ipleak.net` loads. Then block UDP to the server (a network that drops UDP, or the device's firewall) and reconnect through `· UDP`: it fails, so it was UDP that carried the first one.                                                                 | Both connection screens. |
+| Wrong pin  | Copy the raw config, change one character of the `· UDP` link's `pinSHA256` value (keep it 64 hex characters), import the edited copy as a new profile and connect through its `· UDP` entry: the app refuses (a certificate or pin error, never a connection). Delete the edited profile afterwards. | The refusal.             |
+
+An app that connects with the wrong pin, or that ignores `pinSHA256` and fails both ways, is not Hysteria-capable: record nothing with `--hysteria2`, and say which in the pull request so its `hysteria2` default can be set to `false`.
+
 ## Record it
 
 From a checkout of the release candidate's branch:
@@ -38,7 +50,7 @@ From a checkout of the release candidate's branch:
 bun --no-env-file scripts/compat/evidence.ts --client "Hiddify" --app-version "4.1.2" --os "Android 15 (Pixel 8)" --backend-version "2.4.3" --commit "<commit from step 1>" --tested-by "<your name>" --evidence "<private folder link>"
 ```
 
-`--client` is the app's name exactly as in the headings below. The script asks you to confirm each check, then appends the record. Commit the file in a pull request. Before releasing:
+Add `--hysteria2` only after the three Hysteria checks above also passed. `--client` is the app's name exactly as in the headings below. The script asks you to confirm each check, then appends the record. Commit the file in a pull request. Before releasing:
 
 ```bash
 FCP_COMPAT_CERTIFY_COMMIT="<commit from step 1>" bun --no-env-file scripts/compat/certify.ts

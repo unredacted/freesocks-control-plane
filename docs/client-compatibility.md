@@ -225,7 +225,8 @@ Apps needing Apple hardware, Android devices, licensed installs or missing autom
 - client, exact app version, OS, backend version and 40-character FCP commit;
 - UTC `testedAt`, tester, and a URL to the test evidence;
 - `import`, `connection`, `dns`, `https`: `passed`;
-- `refresh`: `passed` (or `not-applicable` for Outline's static key).
+- `refresh`: `passed` (or `not-applicable` for Outline's static key);
+- for a record made with `--hysteria2`, a `hysteria2` block (`rawImport`, `udp`, `wrongPinRefused`: `passed`), the checks in `docs/client-device-checklists.md` § "Hysteria". Only such a record lets the catalog mark the app `hysteria2: true` (§ "Hysteria in the client catalog").
 
 Evidence expires after 30 days and certifies only the recorded configuration/version/OS. This is the place to attach full TUN/device tests; the automatic engine and SFL import jobs alone cannot certify every client. Configure branch protection to require **Subscriptions, engines and packaged SFL** and **Report form (Chromium and Firefox)**. A green PR means those automated checks passed; full application certification remains a distinct release decision.
 
@@ -251,3 +252,41 @@ A deployment whose `clients` table is empty reads `DEFAULT_CLIENTS` directly and
 - Or set **XHTTP support** per app in **Client apps** → Edit. Nothing else changes.
 
 Do one of them before turning the `freedom-xhttp` mode on for members.
+
+## Hysteria in the client catalog
+
+Each catalog app also carries a `hysteria2` flag (`convex/lib/clientCatalog.ts`), tri-state again, but read as an **allowlist**: on a Hysteria mode (the built-in `privacy-hysteria`) only apps marked `true` are offered, and untested ones are left out with the ones marked `false`. The entry's certificate is self-signed and trusted only by its pin (`docs/privacy.md`), and the Hysteria password is the member's own credential. An app that drops the pin either fails to connect or connects to whoever answers at the address and hands that server the password. So `true` is never set from release notes or from what an app's core can do: it needs a recorded check of that app's version through FCP's own delivery.
+
+| `hysteria2` | Apps                                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `false`     | Hiddify (its link parser ignores `pinSHA256`, so the pin never reaches its core)                                          |
+| unset       | Every other app, until a record exists. Likely first: v2rayNG and v2rayN (Xray-core reads `pinSHA256` from the link list) |
+
+What counts as a record: an entry in `tests/compat/application-evidence.json` made with `scripts/compat/evidence.ts --hysteria2`, for a specific app version, after the three Hysteria checks in `docs/client-device-checklists.md` § "Hysteria": the app imports a `privacy-hysteria` key's raw config through its own importer, connects through the `· UDP` entry over UDP, and refuses to connect once one character of the entry's pin is changed. `convex/clientCompatibility.test.ts` fails when a default app is `true` without such a record for it. An admin who sets **Hysteria support** in **Client apps** is held to the same rule by the field's own help text; the CMS cannot see the evidence file.
+
+Three places read it, through `appFitsMode` in `src/shared/hysteriaModes.ts` (`isHysteriaMode` decides which modes count: an admin-created Hysteria mode needs its slug added there):
+
+- **The setup page** (`ConnectClient.svelte`) offers only `true` apps and says so in one line (`setup.hysteriaOnly`). A platform with none says to pick another connection mode (`setup.hysteriaNoApps`), never the usual "use any compatible client".
+- **The app notice** (`convex/lib/appNotice.ts`) names only `true` apps for a member on a Hysteria mode, and none when there are none.
+- **Availability** (`resolveCatalogWithAvailability`, `convex/lib/placement.ts`): a Hysteria mode is available on a backend only while an enabled app on that backend is `true`, besides the backup and serving rules. The CMS refuses to turn the mode on, or to give it a backend, where no such app exists, and says why. Disabling the last such app later takes the mode out of the catalog rather than leaving members with nothing to install.
+
+To turn `privacy-hysteria` on: record an app, set its default to `true` in `DEFAULT_CLIENTS` with the record in the same pull request (or set **Hysteria support** in **Client apps** after the same check), run `seed:refreshDefaultClients` on a seeded deployment, then enable the mode. The engines behind the record are proved in CI by the Hysteria job (§ "Hysteria engines").
+
+### Hysteria engines
+
+`bun run test:integration:hysteria` (`scripts/compat/hysteria.sh`, the **Hysteria vs Xray-core** job) proves the pieces a device record cannot: a real Xray-core of the release the node image runs serves FCP's own Hysteria inbound (`convex/lib/backend/profileTemplate.ts`, with its self-signed certificate), and the pinned engines connect through it from the entry FCP's delivery would hand them:
+
+- Xray-core from a `hysteria2://` link (the link list the Privacy raw config carries), sing-box from its outbound, Mihomo from its proxy, each with the pin in its own form (`pinSHA256` hex, `certificate_public_key_sha256` base64 SPKI, `fingerprint` hex);
+- a UDP datagram round trip through each engine to an echo service behind the server, so the tunnel carries UDP, not only TCP;
+- a rogue Xray-core answering in the node's place (the entry's server pointed at it, as a hijacked route would) with another certificate for the same name, which accepts the member's password: each engine refuses it (sing-box: `unrecognized remote public key`, Mihomo: `certificate fingerprints do not match`) and the rogue's access log carries **nothing** for the member, so no engine handed it the password (had one, the rogue would have accepted it and carried the request). A control run with the rogue's own pins then gets through and is logged, so the refusal is the pin, not a broken rogue.
+
+It needs Docker and takes under two minutes once the images and engines are cached; it never prints a configuration or a log, and `FCP_HYSTERIA_KEEP=1` leaves the stack up for debugging. The Xray pin moves by hand with the other Xray-core pins of `docker-compose.compat.yml`.
+
+### Hysteria on the backend
+
+Two more runs prove the backend side, with FCP's own transport, certificate and Host:
+
+- **Every app's body passes the guard.** `convex/lib/backends/remnawave.hysteria.integration.test.ts`, in `bun run test:integration:remnawave` (CI): the test backend takes FCP's Hysteria transport beside a REALITY one and FCP's Hysteria Host as FCP writes it (`desiredExtraHost`: the pin, h3, TLS and the per-format rewrites), and reads the pin and the rewrites back. A key placed in both groups then gets a body for every User-Agent of the client manifest, and each one that carries Hysteria passes `guardHysteria` with nothing dropped, every entry verified by the expected pin. With the rewrites in place the guard never has anything to drop.
+- **A real node serves it.** `convex/lib/backends/remnawave.hysteria.node-integration.test.ts`, in `bun run test:integration:remnawave-node` (manual, Docker; one file: `bun run test:integration:remnawave-node convex/lib/backends/remnawave.hysteria.node-integration.test.ts`): `remnawave/node` 3.4.3 applies the profile and serves Hysteria on UDP 443 beside REALITY on TCP 443 to one key in both groups; a key added while it runs is served without an Xray restart; the backend counts Hysteria bytes to the key; a disabled key is refused on both on a new connection; and after a regenerate (FCP deletes the key and issues a new one) the old password is refused while the new one is served.
+
+**Open connections outlive a disable.** Hysteria authenticates once per QUIC connection, and an app keeps one connection open and sends every request over it. On the node release the fleet runs (Xray v26.7.28 in `remnawave/node` 3.4.3), a connection opened before the key was disabled went on carrying its requests for the whole five minutes the test watched (2026-11-06). Only a new connection is refused. REALITY authenticates every TCP connection, so there a disable takes effect on the app's next connection. The node test records how long it took (`observed.openHysteriaCutAfterDisableMs`, null when it was not cut within `RW_TEST_OPEN_WATCH_MS`). Until something cuts open connections, disabling a key (a lapsed membership, an abuse ban, a device limit) does not stop a Hysteria app that stays connected.

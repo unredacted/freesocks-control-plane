@@ -385,6 +385,9 @@ export const PublicConfig = z.object({
         /** XHTTP under REALITY as FCP delivers it; false = hidden on an XHTTP
          *  mode, absent = untested. */
         xhttp: z.boolean().optional(),
+        /** Hysteria 2 with its pinned certificate, from recorded evidence;
+         *  only true is offered on a Hysteria mode. */
+        hysteria2: z.boolean().optional(),
         /** Admin-set blurb (verbatim in every locale); absent = the SPA's
          *  built-in translated copy for known default apps. */
         description: z.string().optional(),
