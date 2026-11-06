@@ -10,6 +10,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
+import { formerNamesByName } from './backend/nodeAliases';
 import { poolFromConfig } from './remnawavePlacement';
 
 export interface ExtraModeTiers {
@@ -78,7 +79,23 @@ export async function extraModeDegradedOf(
 ): Promise<boolean> {
   const tiers = await extraModeTiersOf(db, sub);
   if (!tiers) return false;
-  return sub.pinnedNode ? !tiers.serving.includes(sub.pinnedNode) : tiers.serving.length === 0;
+  const pinned = await pinnedNameOf(db, sub);
+  return pinned ? !tiers.serving.includes(pinned) : tiers.serving.length === 0;
+}
+
+/**
+ * The current name of the node a key is pinned to: a pin recorded under a
+ * name the node had before a rename (kept until the rename drains its pins)
+ * is that node's.
+ */
+async function pinnedNameOf(
+  db: DatabaseReader,
+  sub: Pick<Doc<'subscriptions'>, 'pinnedNode' | 'backendServerId'>,
+): Promise<string | null> {
+  if (!sub.pinnedNode || !sub.backendServerId) return sub.pinnedNode ?? null;
+  for (const [name, formers] of await formerNamesByName(db, sub.backendServerId))
+    if (formers.includes(sub.pinnedNode)) return name;
+  return sub.pinnedNode;
 }
 
 /**
@@ -92,5 +109,6 @@ export async function otherPinTargetsOf(
 ): Promise<string[] | null> {
   const tiers = await extraModeTiersOf(db, sub);
   if (!tiers) return null;
-  return (preferredTier(tiers, new Set()) ?? []).filter((n) => n !== sub.pinnedNode);
+  const pinned = await pinnedNameOf(db, sub);
+  return (preferredTier(tiers, new Set()) ?? []).filter((n) => n !== pinned);
 }
