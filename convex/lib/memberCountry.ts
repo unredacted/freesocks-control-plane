@@ -32,6 +32,21 @@ import { isCountryCode } from '../../src/shared/countryPoints';
 /** The opt-out ("Opt-out: do not use my location"): no country, nothing guessed. */
 export const ELSEWHERE = 'ZZ';
 
+/**
+ * Ask the member where they connect from at sign-up and when a mirror is made
+ * (appSettings). It changes what the member page asks, never what is delivered,
+ * so it is not part of `MemberCountryConfig`.
+ */
+export const COUNTRY_QUESTION_KEY = 'delivery.country.ask';
+
+/**
+ * An answer a member may give: a country on the list, or the opt-out `ZZ`.
+ * Automatic (no answer) is not one: it is the absence of a field.
+ */
+export function isAnswer(value: string, listed: readonly string[]): boolean {
+  return value === ELSEWHERE || listed.includes(value);
+}
+
 export const MEMBER_COUNTRY_KEYS = {
   detect: 'delivery.country.detect',
   stickyDays: 'delivery.country.stickyDays',

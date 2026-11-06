@@ -85,25 +85,45 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
     expect(plaintext).toEqual({ code: 'ABCD-EFGH' });
   });
 
-  test('POST /api/v1/mirror/request: plain body carrying fsRespEph, response sealed to it', async () => {
+  test('POST /api/v1/mirror/request: the body (and any country in it) is sealed, the ephemeral rides inside, the response is sealed to it', async () => {
+    const path = '/api/v1/mirror/request';
+    const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify({ region: 'IR' }));
+    expect(out).toBeDefined();
+    expect(out!.policy).toMatchObject({ request: 'seal', response: 'reveal' });
+    expect(out!.header).toBeUndefined();
+    expect(out!.body).not.toContain('"region"');
+    const wire = JSON.parse(out!.body!);
+    expect(isSealedWire(wire)).toBe(true);
+    const plaintext = (await serverOpenRequest({
+      serverPriv: kp.privateKey,
+      serverKid: kid,
+      method: 'POST',
+      path,
+      wireBody: wire,
+    })) as Record<string, unknown>;
+    expect(plaintext.region).toBe('IR');
+    expect(typeof plaintext[RESP_EPH_FIELD]).toBe('string');
+    const sealedResponse = await serverSealResponse({
+      serverKid: kid,
+      method: 'POST',
+      path,
+      respEphPubB64: plaintext[RESP_EPH_FIELD] as string,
+      responseObj: { status: 'ok', publicUrl: 'https://bucket.example/abc', remaining: 0 },
+    });
+    const opened = (await hpke.openInbound(out!, path, 'POST', sealedResponse)) as {
+      publicUrl: string;
+    };
+    expect(opened.publicUrl).toBe('https://bucket.example/abc');
+  });
+
+  test('POST /api/v1/mirror/request with no country: the reveal-only shape a backend that predates sealing it can read', async () => {
     const path = '/api/v1/mirror/request';
     const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify({ countryCode: null }));
-    expect(out).toBeDefined();
     expect(out!.policy).toEqual({ request: 'plain', response: 'reveal' });
-    expect(out!.header).toBeUndefined();
     const body = JSON.parse(out!.body!) as Record<string, unknown>;
     expect(isSealedWire(body)).toBe(false);
     expect(body.countryCode).toBeNull();
     expect(typeof body[RESP_EPH_FIELD]).toBe('string');
-    const wire = await serverSealResponse({
-      serverKid: kid,
-      method: 'POST',
-      path,
-      respEphPubB64: body[RESP_EPH_FIELD] as string,
-      responseObj: { status: 'ok', publicUrl: 'https://bucket.example/abc', remaining: 0 },
-    });
-    const opened = (await hpke.openInbound(out!, path, 'POST', wire)) as { publicUrl: string };
-    expect(opened.publicUrl).toBe('https://bucket.example/abc');
   });
 
   test('routes without a policy entry are left plaintext (intentionally unsealed)', async () => {

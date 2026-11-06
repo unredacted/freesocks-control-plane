@@ -235,6 +235,13 @@ export const PublicConfig = z.object({
    *  (≥1 active mirror provider). The SPA hides it entirely when false. */
   mirrorsEnabled: z.boolean().optional(),
   /**
+   * Ask where a freedom-family member connects from at sign-up and when a key
+   * with no answer gets a mirror (`delivery.country.ask` AND a non-empty
+   * censored-country list). Only the bit; the options come from the sealed
+   * connection-region route. Absent on an older backend = not asked.
+   */
+  countryQuestion: z.boolean().optional(),
+  /**
    * The referral program's public knobs: whether the signup field + account
    * card render, and the bonus-days numbers so the copy can state the real
    * reward ("you each get N extra days"). No user data. Defaulted for

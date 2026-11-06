@@ -29,6 +29,8 @@ import { CAPABILITIES } from './lib/backends/capabilities';
 import { resolveClients, publicClients } from './lib/clientCatalog';
 import { resolveLocations } from './lib/locations';
 import { resolveReferralConfig } from './lib/referralConfig';
+import { resolveCensoredCountries } from './lib/censoredCountries';
+import { COUNTRY_QUESTION_KEY } from './lib/memberCountry';
 import type { BackendId } from './lib/backendIds';
 
 export const get = query({
@@ -47,6 +49,8 @@ export const get = query({
       // Whether per-tier device (HWID) limits are enforced — drives the connect
       // UI's app-compatibility gating. Non-secret boolean.
       'devices.enforcementEnabled': false,
+      // Whether the member page asks where a member connects from (the bit only).
+      [COUNTRY_QUESTION_KEY]: false,
     };
     for (const row of rows) {
       if (!(row.key in settings)) continue;
@@ -100,6 +104,7 @@ export const get = query({
       analyticsCfg,
       locations,
       clientsCatalog,
+      censored,
     ] = await Promise.all([
       // Public-safe billing catalog: prices, durations, which rails are live, and
       // the tier slug the membership maps to. No secrets (API keys/IPN secrets are
@@ -141,6 +146,8 @@ export const get = query({
       resolveAnalyticsConfig(ctx.db),
       resolveLocations(ctx.db),
       resolveClients(ctx.db),
+      // Only for the country question's on/off bit: the list stays server-side.
+      resolveCensoredCountries(ctx.db),
     ]);
     const mirrorsEnabled = firstMirror !== null;
     const { modes: modeProjection, catalog: modeCatalog } = publicModes;
@@ -263,6 +270,10 @@ export const get = query({
         },
       },
       mirrorsEnabled,
+      // Whether the member page asks where a freedom-family member connects from
+      // (at sign-up and for a mirror): the switch AND a non-empty list. Only the
+      // bit: the list itself and every answer stay behind the sealed routes.
+      countryQuestion: settings[COUNTRY_QUESTION_KEY] === true && censored.codes.length > 0,
       // Referral-program knobs (enabled + the bonus-days numbers for the
       // signup/account copy). Non-secret; drives the referral surfaces.
       referrals: {

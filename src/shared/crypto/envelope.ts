@@ -247,6 +247,35 @@ export interface RoutePolicy {
    * data must never cross the CDN in the clear (a member's country).
    */
   required?: true;
+  /**
+   * A seal-both route that used to be reveal-only: a PLAINTEXT body that carries
+   * a response ephemeral is still accepted when sealing is required (a cached
+   * older client sends that shape), and its response is still sealed. The
+   * handler refuses any field that may only travel sealed (`requestWasSealed`).
+   */
+  plainWithReveal?: true;
+  /**
+   * The client seals the request only when the body carries one of these
+   * fields with a value; otherwise it sends the reveal-only shape (plaintext
+   * body + response ephemeral, response sealed). So a backend that predates the
+   * seal-both entry (the SPA can be served before the functions are pushed)
+   * still reads every request that carries nothing sensitive, and only a body
+   * with such a field, which only a current backend asks for, is sealed.
+   */
+  sealOnlyWith?: readonly string[];
+}
+
+/**
+ * The policy a client request actually goes out under: a `sealOnlyWith` route
+ * whose body carries none of those fields goes reveal-only.
+ */
+export function outboundPolicy(
+  policy: RoutePolicy,
+  body: Record<string, unknown> | undefined,
+): RoutePolicy {
+  if (!policy.sealOnlyWith) return policy;
+  const sensitive = policy.sealOnlyWith.some((f) => body?.[f] !== undefined && body?.[f] !== null);
+  return sensitive ? policy : { request: 'plain', response: policy.response };
 }
 
 const SEAL_REQ: RoutePolicy = { request: 'seal', response: 'plain' };
@@ -259,6 +288,16 @@ const SEAL_BOTH: RoutePolicy = { request: 'seal', response: 'reveal' };
 /** Where a member connects from (convex/memberCountry.ts): sealed, never plaintext. */
 const REVEAL_REQUIRED: RoutePolicy = { ...REVEAL, required: true };
 const SEAL_BOTH_REQUIRED: RoutePolicy = { ...SEAL_BOTH, required: true };
+/**
+ * Seal-both for a route that was reveal-only: sealed only when the body
+ * carries a country (`sealOnlyWith`), the reveal-only shape kept otherwise
+ * (`plainWithReveal`), so neither an older client nor an older backend breaks.
+ */
+const sealWhenCountry = (...fields: string[]): RoutePolicy => ({
+  ...SEAL_BOTH,
+  plainWithReveal: true,
+  sealOnlyWith: fields,
+});
 
 /**
  * Keyed by `"METHOD /path"` (method-aware): several admin paths serve BOTH a GET
@@ -283,7 +322,9 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/auth/account-login': SEAL_REQ,
   'GET /api/v1/account': REVEAL,
   'POST /api/v1/account': REVEAL,
-  'POST /api/v1/account/regenerate': REVEAL,
+  // SEAL_BOTH: the first key may carry the member's answer to "Where are you
+  // connecting from?" (`region`), which the handler refuses in plaintext.
+  'POST /api/v1/account/regenerate': sealWhenCountry('region'),
   'POST /api/v1/account/switch-backend': REVEAL,
   'POST /api/v1/account/switch-mode': REVEAL,
   'POST /api/v1/account/switch-server': REVEAL,
@@ -304,7 +345,9 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // is only the granted tier + duration).
   'POST /api/v1/account/redeem-code': SEAL_REQ,
   // The response carries the mirror URL: a public capability URL to the config.
-  'POST /api/v1/mirror/request': REVEAL,
+  // The request may carry the member's country (`region`) or a host hint
+  // (`countryCode`); the handler refuses either in plaintext.
+  'POST /api/v1/mirror/request': sealWhenCountry('region', 'countryCode'),
   // Admin secret reveals (server returns a fresh secret once).
   'POST /api/v1/admin/tokens': REVEAL,
   'POST /api/v1/admin/membership-codes': REVEAL,

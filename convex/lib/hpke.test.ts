@@ -366,7 +366,8 @@ describe('hpke: FS_HPKE_REQUIRED on the member routes sealed in 2026-09', () => 
     expect(redeem.status).toBe(400);
     expect(await redeem.json()).toMatchObject({ error: { code: 'code.invalid' } });
 
-    // POST reveal: fsRespEph inside the plain body satisfies the gate.
+    // POST seal-both (since the country question): the body travels sealed and
+    // carries the response ephemeral inside it.
     const prepMirror = await clientPrepareRequest({
       serverPub: kp.publicKey,
       serverKid: kid,

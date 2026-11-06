@@ -53,7 +53,7 @@ import {
 import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
 import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
-import { sealed } from './lib/hpke';
+import { requestWasSealed, sealed, sealedRequiredResponse } from './lib/hpke';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import { isBackendId, type BackendId } from './lib/backendIds';
 import { isSwitchServerReason } from '../src/shared/contracts/switchServerReasons';
@@ -63,6 +63,7 @@ import {
   adminSessionProbe,
   errorJson,
   guard,
+  hasScope,
   ipHashSubject,
   json,
   newRequestId,
@@ -1552,7 +1553,11 @@ http.route({
     // the preference, 'auto' (or null) clears it back to automatic, absent
     // keeps the stored preference. Validated against the live catalog so a
     // typo'd/unknown code is a 400, not a silently-ignored filter.
-    const body = await readJson<{ location?: string | null; confirm?: boolean }>(req);
+    const body = await readJson<{
+      location?: string | null;
+      confirm?: boolean;
+      region?: string | null;
+    }>(req);
     // Re-issuing destroys the current key after a 24h grace — require the
     // explicit confirm gate (the contract declares it; enforce it like
     // /switch-backend and /switch-mode do).
@@ -1571,14 +1576,36 @@ http.route({
         return errorJson('validation', 'location must be a string or null', 400);
       }
     }
-    return withIssuanceSaga(ctx, member.userId, 'account.regenerate', async (requestId) => {
-      const result = await ctx.runAction(internal.account.regenerate, {
+    // The member's answer given with the first key (sign-up): sealed only.
+    const answer = await takeRegionAnswer(ctx, req, member.userId, body.region);
+    if (answer.kind === 'refused') return answer.response;
+    const region = answer.kind === 'answer' ? answer.region : undefined;
+    const res = await withIssuanceSaga(
+      ctx,
+      member.userId,
+      'account.regenerate',
+      async (requestId) => {
+        const result = await ctx.runAction(internal.account.regenerate, {
+          userId: member.userId,
+          requestId,
+          location,
+          region,
+        });
+        const { regionApplied: _applied, ...rest } = result;
+        return json(rest);
+      },
+    );
+    // Only an answer that landed counts against the day's allowance. Judged by
+    // what the member's current key holds now, not by whether the request
+    // finished: a step that fails after the key was committed keeps the charge.
+    if (answer.kind === 'answer' && answer.counted) {
+      const now = await ctx.runQuery(internal.memberCountry.answerCheck, {
         userId: member.userId,
-        requestId,
-        location,
+        region: answer.region,
       });
-      return json(result);
-    });
+      if (now.currentChoice !== answer.region) await releaseCountryChange(ctx, member.userId);
+    }
+    return res;
   }),
 });
 
@@ -1630,6 +1657,74 @@ http.route({
   }),
 });
 
+/**
+ * A NEW country chosen today counts against `account.country.day` (each one is
+ * handed that country's own addresses: docs/edges.md "Addresses only for some
+ * countries"). Clearing it, the opt-out and the same country again are free.
+ * Returns the refusal, or null when the change may go ahead (`counted` then
+ * says whether it used one of the day's changes, to release on failure).
+ */
+async function countCountryChange(
+  ctx: ActionCtx,
+  userId: Id<'users'>,
+  next: string | null,
+  current: string | null,
+): Promise<{ refused: Response | null; counted: boolean }> {
+  if (!next || next === 'ZZ' || next === current) return { refused: null, counted: false };
+  const day = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'account.country.day',
+    subject: userId,
+  });
+  if (!day.allowed)
+    return {
+      refused: errorJson(
+        'rate_limit.country_day',
+        'You can change your country a few times a day. Try again later.',
+        429,
+        { retryAfterMs: day.retryAfterMs },
+      ),
+      counted: false,
+    };
+  return { refused: null, counted: true };
+}
+
+async function releaseCountryChange(ctx: ActionCtx, userId: Id<'users'>): Promise<void> {
+  await ctx.runMutation(internal.rateLimits.release, {
+    policyKey: 'account.country.day',
+    subject: userId,
+  });
+}
+
+/**
+ * The member's answer to "Where are you connecting from?" riding a route other
+ * than the account card: the first key's `region` (regenerate) or a mirror's.
+ * Absent: nothing. Present: refused in plaintext (a member's country never
+ * crosses the CDN in the clear, docs/privacy.md), refused unless it is a listed
+ * country or `ZZ`, and a new country is counted like the card's.
+ */
+async function takeRegionAnswer(
+  ctx: ActionCtx,
+  req: Request,
+  userId: Id<'users'>,
+  raw: unknown,
+): Promise<
+  | { kind: 'none' }
+  | { kind: 'refused'; response: Response }
+  | { kind: 'answer'; region: string; counted: boolean; previous: string | null }
+> {
+  if (raw === undefined || raw === null) return { kind: 'none' };
+  if (!requestWasSealed(req)) return { kind: 'refused', response: sealedRequiredResponse() };
+  if (typeof raw !== 'string' || !/^[A-Za-z]{2}$/.test(raw.trim()))
+    return { kind: 'refused', response: errorJson('validation', 'unknown region', 400) };
+  const region = raw.trim().toUpperCase();
+  const check = await ctx.runQuery(internal.memberCountry.answerCheck, { userId, region });
+  if (!check.valid)
+    return { kind: 'refused', response: errorJson('validation', 'unknown region', 400) };
+  const { refused, counted } = await countCountryChange(ctx, userId, region, check.currentChoice);
+  if (refused) return { kind: 'refused', response: refused };
+  return { kind: 'answer', region, counted, previous: check.currentChoice };
+}
+
 // "Where are you connecting from?" (lib/memberCountry.ts, docs/privacy.md): the
 // member's answer (a country on the censored-country list, `ZZ` "Somewhere
 // else", or Automatic) and, on Automatic with detection on, the country guessed
@@ -1642,7 +1737,10 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    return json(await regionView(ctx, member.userId));
+    // Sign-up, before the first key: `?mode=` judges the question for the mode
+    // the member picked (ignored once a key exists).
+    const mode = new URL(req.url).searchParams.get('mode');
+    return json(await regionView(ctx, member.userId, mode && mode.length <= 64 ? mode : undefined));
   }),
 });
 
@@ -1652,8 +1750,8 @@ http.route({
  * own country choice while their key is elsewhere. Only ever sealed, like the
  * choice it follows from.
  */
-async function regionView(ctx: ActionCtx, userId: Id<'users'>) {
-  const view = await ctx.runQuery(internal.memberCountry.memberView, { userId });
+async function regionView(ctx: ActionCtx, userId: Id<'users'>, modeSlug?: string) {
+  const view = await ctx.runQuery(internal.memberCountry.memberView, { userId, modeSlug });
   const offer = await ctx.runQuery(internal.countryExits.memberExit, { userId });
   return { ...view, exit: offer ? { label: offer.label } : null };
 }
@@ -1677,40 +1775,23 @@ http.route({
     const region = typeof body.region === 'string' && body.region.length <= 2 ? body.region : null;
     if (body.region !== null && body.region !== undefined && region === null)
       return errorJson('validation', 'unknown region', 400);
-    // Choosing another country a few times a day at most: each one is handed
-    // that country's own addresses (docs/edges.md "Addresses only for some
-    // countries"). Clearing it, the opt-out and the same country again are free.
+    // Choosing another country a few times a day at most (`countCountryChange`).
     const next = region ? region.trim().toUpperCase() : null;
     let counted = false;
     if (next && next !== 'ZZ') {
       const before = await ctx.runQuery(internal.memberCountry.memberView, {
         userId: member.userId,
       });
-      if (before.choice !== next) {
-        const day = await ctx.runMutation(internal.rateLimits.enforce, {
-          policyKey: 'account.country.day',
-          subject: member.userId,
-        });
-        if (!day.allowed)
-          return errorJson(
-            'rate_limit.country_day',
-            'You can change your country a few times a day. Try again later.',
-            429,
-            { retryAfterMs: day.retryAfterMs },
-          );
-        counted = true;
-      }
+      const day = await countCountryChange(ctx, member.userId, next, before.choice);
+      if (day.refused) return day.refused;
+      counted = day.counted;
     }
     try {
       try {
         await ctx.runMutation(internal.memberCountry.setChoice, { userId: member.userId, region });
       } catch (err) {
         // Only a change that lands counts against the day's allowance.
-        if (counted)
-          await ctx.runMutation(internal.rateLimits.release, {
-            policyKey: 'account.country.day',
-            subject: member.userId,
-          });
+        if (counted) await releaseCountryChange(ctx, member.userId);
         throw err;
       }
       return json(await regionView(ctx, member.userId));
@@ -2167,17 +2248,65 @@ http.route({
         },
       );
     }
-    // A valid 2-letter code → use it; explicit null → "global" (don't geo-detect);
-    // absent → fall back to the CDN header. So picking "Global" can't be silently
-    // overridden by the detected country.
-    const body = await readJson<{ countryCode?: string | null }>(req);
+    const body = await readJson<{ countryCode?: string | null; region?: string | null }>(req);
+    // Saving the answer changes the key's delivery: the account card's scope.
+    if (
+      body.region !== undefined &&
+      body.region !== null &&
+      member.source === 'token' &&
+      !hasScope(member.scopes, 'subscription:write')
+    )
+      return errorJson('auth.forbidden', 'This token cannot change where you connect from', 403);
+    // A country the member picked never crosses the CDN in the clear: a
+    // plaintext host hint is refused like a plaintext answer (docs/privacy.md).
+    if (typeof body.countryCode === 'string' && !requestWasSealed(req))
+      return sealedRequiredResponse();
+    // `region`: the member's answer to "Where are you connecting from?", saved
+    // to their key BEFORE the mirror is rendered, so its first body is shaped
+    // for it (a mirror cannot see where its reader is). Then it picks the host.
+    const answer = await takeRegionAnswer(ctx, req, member.userId, body.region);
+    if (answer.kind === 'refused') return answer.response;
+    if (answer.kind === 'answer') {
+      try {
+        await ctx.runMutation(internal.memberCountry.setChoice, {
+          userId: member.userId,
+          region: answer.region,
+        });
+      } catch (err) {
+        if (answer.counted) await releaseCountryChange(ctx, member.userId);
+        if (err instanceof ConvexError && (err.data as { code?: string }).code === 'validation')
+          return errorJson(
+            'validation',
+            (err.data as { message?: string }).message ?? 'unknown region',
+            400,
+          );
+        throw err;
+      }
+    }
+    // The host hint, used once and never stored: the answer just given; else a
+    // valid code from the body (a key with no country: the privacy family);
+    // explicit null = "global"; else the key's stored answer (the opt-out =
+    // global, never the CDN's reading); else the CDN header.
     let countryCode: string | null;
-    if (typeof body.countryCode === 'string' && /^[A-Za-z]{2}$/.test(body.countryCode.trim())) {
+    if (answer.kind === 'answer') {
+      countryCode = answer.region === 'ZZ' ? null : answer.region;
+    } else if (
+      typeof body.countryCode === 'string' &&
+      /^[A-Za-z]{2}$/.test(body.countryCode.trim())
+    ) {
       countryCode = body.countryCode.trim().toUpperCase();
     } else if (body.countryCode === null) {
       countryCode = null;
     } else {
-      countryCode = resolveCountry(req);
+      const stored = await ctx.runQuery(internal.memberCountry.memberView, {
+        userId: member.userId,
+      });
+      countryCode =
+        stored.source === 'choice' && stored.choice
+          ? stored.choice === 'ZZ'
+            ? null
+            : stored.choice
+          : resolveCountry(req);
     }
     const result = await ctx.runAction(internal.storage.provisionMirror, {
       userId: member.userId,

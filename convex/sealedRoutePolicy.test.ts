@@ -187,9 +187,26 @@ describe('sealed() wrappers vs the envelope.ts policy table', () => {
       request: 'seal',
       response: 'plain',
     });
+    // Both legs since the country question (2026-11): the request may carry the
+    // member's country, which the handler refuses in plaintext.
     expect(routePolicy('/api/v1/mirror/request', 'POST')).toEqual({
-      request: 'plain',
+      request: 'seal',
       response: 'reveal',
+      plainWithReveal: true,
+      sealOnlyWith: ['region', 'countryCode'],
     });
+  });
+
+  test('the routes that may carry a member country seal the request (dual-mode, not required)', () => {
+    for (const [path, fields] of [
+      ['/api/v1/account/regenerate', ['region']],
+      ['/api/v1/mirror/request', ['region', 'countryCode']],
+    ] as const)
+      expect(routePolicy(path, 'POST'), path).toEqual({
+        request: 'seal',
+        response: 'reveal',
+        plainWithReveal: true,
+        sealOnlyWith: fields,
+      });
   });
 });

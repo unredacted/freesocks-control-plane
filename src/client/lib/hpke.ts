@@ -15,6 +15,7 @@ import {
   fingerprintB64Url,
   isSealedWire,
   routePolicy,
+  outboundPolicy,
   sha256HexOfB64Url,
   SUITE_ID,
   type RoutePolicy,
@@ -404,8 +405,14 @@ export async function prepareOutbound(
   bodyStr: string | undefined,
 ): Promise<OutboundSeal | undefined> {
   if (!sealingEnabled()) return undefined;
-  const policy = routePolicy(path, method);
-  if (!policy) return undefined;
+  const routed = routePolicy(path, method);
+  if (!routed) return undefined;
+  const bodyObj = bodyStr ? safeParse(bodyStr) : undefined;
+  // A route sealed only for some fields goes reveal-only without them.
+  const policy = outboundPolicy(
+    routed,
+    bodyObj && typeof bodyObj === 'object' ? (bodyObj as Record<string, unknown>) : undefined,
+  );
   const m = method.toUpperCase();
   // Seal target: for a request-seal route (login) prefer the current epoch key;
   // the reveal leg ignores serverPub/serverKid here (it seals the response to a
@@ -429,7 +436,7 @@ export async function prepareOutbound(
     method: m,
     path,
     policy,
-    bodyObj: bodyStr ? safeParse(bodyStr) : undefined,
+    bodyObj,
   });
   const out: OutboundSeal = { policy, respEphPriv: prep.respEphPriv };
   if (policy.request === 'seal') {

@@ -19,9 +19,13 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
 
 ## A member's mirror
 
-- **Asking.** `POST /api/v1/mirror/request` (sealed) runs `storage.provisionMirror`: the next
-  active provider the member has not tried (country-matched first, the country used once and
-  never stored), up to `mirror.maxPerUser` (default 3). One object path per key
+- **Asking.** `POST /api/v1/mirror/request` (sealed both ways) runs `storage.provisionMirror`:
+  the next active provider the member has not tried (country-matched first, the country used
+  once and never stored), up to `mirror.maxPerUser` (default 3). The country that picks the host
+  is, in order: the member's answer sent with the request (`region`, saved to the key first, see
+  below), a host hint (`countryCode`, for a key with no country), "global" (`countryCode: null`),
+  the key's stored answer (the opt-out picks global, never the CDN's reading), else the CDN
+  country. A country in either field is refused in plaintext. One object path per key
   (`mirrors/<128-bit hex>`), reused across providers. The body is rendered exactly like a refresh
   (edge rendering, member-facing entry names, the node pin) and written before the member is
   handed the URL. The member page offers mirrors only while a provider is active and the cap is
@@ -30,6 +34,16 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   under their own path; the append that replaces the other's entry withdraws that object
   (`appendMirror`), and the member page holds both of its mirror buttons while either request
   runs.
+- **Shaped for the member's answer.** A mirror is rendered for the key's stored answer to
+  "Where are you connecting from?" (`sniRegion`), never a guess: no request reaches FCP when an
+  app reads the bucket. Without an answer it gets the universal server names, no address only
+  for some countries, and edges blocked in any listed country last. With `delivery.country.ask`
+  on, the member page asks for the answer when a key without one gets a mirror, and sends it as
+  `region` (a listed country or the opt-out `ZZ`): it is saved to every freedom-family key of
+  the member (as the account card saves it, counted against `account.country.day`) BEFORE the
+  object is rendered, so the first upload is already shaped for it. A key whose mode holds no
+  country refuses it (`validation`). Changing the answer later rewrites the member's mirrors at
+  once at the same URL (`country_changed` below). docs/privacy.md has what the object reveals.
 - **Suggested at sign-up.** On `/get-account`, once the first key is issued, a visitor the CDN
   places in a country on the censored-country list is told the main link may be blocked there
   and offered a mirror link, the country prefilled. The account view carries only the server's

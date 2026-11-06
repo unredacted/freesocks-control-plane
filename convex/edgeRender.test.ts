@@ -1941,6 +1941,19 @@ describe('edgeRender: delivery by country', () => {
     expect(entries[0]).toMatchObject({ region: 'IR', render: { primaryEdgeId: edgeB } });
   });
 
+  test('a body shaped for a stored country never names it (a mirror is this body in a public bucket)', async () => {
+    const { t } = await world();
+    const res = await fetchAs(t, 'v2rayNG/1.9.0');
+    expect(res.status).toBe(200);
+    const lines = proxyLines(await res.text());
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      const text = decodeURIComponent(line);
+      expect(text).not.toMatch(/\bIR\b/);
+      expect(text).not.toMatch(/Iran/i);
+    }
+  });
+
   test('steer off: the same member gets the edge their seed points at, as before', async () => {
     const { t, subId, edgeA } = await world({ steer: false });
     const res = await fetchAs(t, 'v2rayNG/1.9.0');

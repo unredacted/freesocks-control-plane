@@ -728,11 +728,16 @@ export const regenerate = internalAction({
     // validated at the HTTP layer): a string persists the preference, null
     // clears it back to automatic, absent keeps the stored preference.
     location: v.optional(v.union(v.string(), v.null())),
+    // The member's answer to "Where are you connecting from?" given with this
+    // issuance (sign-up's first key; checked by the HTTP layer): a listed
+    // country or `ZZ`. Stored on the new key only when its mode is
+    // freedom-family; `regionApplied` says whether it was.
+    region: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { userId, requestId, location },
-  ): Promise<{ subscriptionUrl: string; shortUuid: string }> => {
+    { userId, requestId, location, region },
+  ): Promise<{ subscriptionUrl: string; shortUuid: string; regionApplied: boolean }> => {
     const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) throw new Error('user not found');
     const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
@@ -793,7 +798,13 @@ export const regenerate = internalAction({
       // the token so their URL never changes; this one must not. Their answer
       // to "where are you connecting from?" does follow them (not a guess).
       carryCountryFromId: oldSub?._id,
+      region,
     });
+    const regionApplied =
+      region !== undefined &&
+      (await ctx.runQuery(internal.memberCountry.keyChoice, {
+        subscriptionId: issued.subscriptionId,
+      })) === region.trim().toUpperCase();
 
     if (oldSub) {
       await tombstoneOldSub(ctx, oldSub.backendUserId);
@@ -821,6 +832,7 @@ export const regenerate = internalAction({
     });
     return {
       ...(await memberFacing(ctx, issued.subscriptionId, issued)),
+      regionApplied,
     };
   },
 });

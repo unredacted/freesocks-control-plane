@@ -56,6 +56,26 @@ accidentally regress it).
     ordered by where it is, and it is never handed an address only for some countries. A
     country can be chosen anew at most 3 times a day (`account.country.day`: the count is kept
     per account in the rate-limit table, never the country). Automatic removes the answer.
+  - **Asked where a mirror needs it** (`delivery.country.ask`, Admin -> Settings, off by
+    default; `publicConfig.countryQuestion` is that switch AND a non-empty list, the only bit
+    that is public). A mirror is a fixed object a third party serves: it cannot see where its
+    reader is, so it is shaped only by the member's own answer (never the guess; a mirror
+    without one gets the universal names and no address only for some countries). With the
+    switch on, the member is asked the same question at sign-up, before the first key, and
+    when a key with no answer gets a mirror. The answer is the same stored choice, written in
+    two more ways: with the first key (`POST /api/v1/account/regenerate` `region`, stored on a
+    freedom-family key only, judged before sign-up by `GET .../connection-region?mode=<slug>`
+    for the mode picked) and with a mirror (`POST /api/v1/mirror/request` `region`, saved to
+    the key before the mirror is rendered). Both take a listed country or the opt-out, count a
+    new country against `account.country.day` like the account card, and give the count back
+    when nothing is stored. Neither is a second copy: no field on the account, nothing pending.
+  - **What a mirror object says about it.** One object per key at a random path, never one per
+    country, with no country in its path or metadata, and the body never names the country
+    (pinned in `convex/edgeRender.test.ts`). It can still be inferred by whoever holds the URL,
+    from the names proven there and the addresses only for that country. The URL is a
+    capability as strong as the subscription token (it already hands out the member's key), and
+    the bucket host sees each fetch's address anyway, so a mirror shaped for an answer adds
+    little; it is the body the member's own answer already gave them before this was asked.
   - **The guess.** Only with `delivery.country.detect` on (Admin -> Settings, off by default)
     and only on Automatic: the country the CDN reports (`CF-IPCountry`, read only when
     `CF_FRONTED=true`) is stored on the subscription (`regionSeenCountry`, first and last
@@ -106,7 +126,13 @@ accidentally regress it).
   - **Sealed in transit.** The routes that carry it (`GET|POST /api/v1/account/connection-region`,
     `GET /api/v1/admin/member-country/{id}`) are HPKE-sealed and refuse plaintext, so it never
     crosses the CDN in the clear; a caller that cannot seal is refused. The admin view answers a
-    signed-in admin's passkey session only, never an API token, even one that seals.
+    signed-in admin's passkey session only, never an API token, even one that seals. The two
+    routes that may carry a country in one field (`POST /api/v1/account/regenerate` `region`,
+    `POST /api/v1/mirror/request` `region` and its host hint `countryCode`) are sealed by the
+    client whenever the body carries one of those fields (`sealOnlyWith` in
+    `src/shared/crypto/envelope.ts`) and refuse that field in plaintext (`hpke.sealed_required`,
+    nothing written). A request without one keeps the reveal-only shape (plaintext body, sealed
+    response), so an older client and a backend not yet updated both still work.
   - **Where a new key is placed** (`delivery.country.exits`, off until an admin maps a
     country): a new freedom-family key of a member on Automatic whose OWN answer is a mapped
     country goes to that country's exit location when it can. Never the guess, never the

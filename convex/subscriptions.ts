@@ -33,8 +33,9 @@ import type { MemberPlace } from '../src/shared/entryNames';
 import { profileTitleValue, resolveSubscriptionTitle } from './lib/subscriptionTitle';
 import { resolveUpdateIntervalHours } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
-import { storedCountry } from './lib/memberCountry';
+import { isAnswer, storedCountry } from './lib/memberCountry';
 import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from './memberCountry';
+import { memberFamilyOf } from './lib/memberFamily';
 import { memberLaneOfUser } from './edgeLanes';
 import { noteExposures } from './edgeTrust';
 
@@ -157,6 +158,36 @@ export async function seatOf(ctx: MutationCtx, userId: Id<'users'>): Promise<str
   return seat;
 }
 
+/**
+ * The answer a new key may be born with (`insertSubscription` `region`): a
+ * listed country or `ZZ`, on a key whose mode is freedom-family (judged as for
+ * any key: its placement and the member's stored or default mode). Anything
+ * else stores nothing, as a privacy-family key never holds a country.
+ */
+async function answerForNewKey(
+  db: DatabaseReader,
+  a: {
+    userId: Id<'users'>;
+    backend: Doc<'subscriptions'>['backend'];
+    backendServerId?: Id<'backendServers'>;
+    placement?: string;
+    region?: string;
+  },
+): Promise<string | null> {
+  if (a.region === undefined) return null;
+  const region = a.region.trim().toUpperCase();
+  const { codes } = await resolveCensoredCountries(db);
+  if (!isAnswer(region, codes)) return null;
+  const family = await memberFamilyOf(db, {
+    backend: a.backend,
+    backendPlacement: a.placement,
+    backendServerId: a.backendServerId,
+    pinnedNode: undefined,
+    userId: a.userId,
+  });
+  return family === 'freedom' ? region : null;
+}
+
 /** Persist a freshly-issued subscription. Returns its id. */
 export const insertSubscription = internalMutation({
   args: {
@@ -183,6 +214,10 @@ export const insertSubscription = internalMutation({
     // `regenerate`: carry only the member's answer to "where are you connecting
     // from?" (not the URL, not a guessed country) from this row.
     carryCountryFromId: v.optional(v.id('subscriptions')),
+    // `regenerate` with the member's answer given now (sign-up's first key): a
+    // listed country or `ZZ`, already checked by the HTTP layer and checked
+    // again here. Wins over a carried one. Stored only on a freedom-family key.
+    region: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     // The fronted-URL token: carried from the old row when requested, else a
@@ -214,6 +249,11 @@ export const insertSubscription = internalMutation({
         a.placement,
         'choice',
       );
+    if (a.region !== undefined) {
+      // A choice clears any guess, so only the choice is written.
+      const answer = await answerForNewKey(ctx.db, a);
+      if (answer) carried = { sniRegion: answer };
+    }
     if (a.carrySubTokenFromId) {
       const old = await ctx.db.get(a.carrySubTokenFromId);
       carried = await carriedCountry(ctx.db, old, a.placement, 'choice_and_guess');
@@ -249,6 +289,7 @@ export const insertSubscription = internalMutation({
       placement,
       carrySubTokenFromId: _carry,
       carryCountryFromId: _carryCountry,
+      region: _region,
       ...rest
     } = a;
     const inserted = await ctx.db.insert('subscriptions', {

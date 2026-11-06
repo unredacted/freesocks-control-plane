@@ -98,6 +98,24 @@ export async function memberFamilyOf(
   return signals.includes('freedom') ? 'freedom' : 'none';
 }
 
+/**
+ * The family a member's FIRST key would have in this mode (sign-up, before any
+ * key exists, so there is no placement or pin to read): the mode's own family,
+ * on a backend with connection modes only. Fail closed: an unknown slug or a
+ * backend without modes gives `none`.
+ */
+export async function familyOfMode(
+  db: DatabaseReader,
+  backend: string,
+  slug: string,
+): Promise<MemberFamily> {
+  if (backend !== 'remnawave') return 'none';
+  const catalog = await resolveModeCatalog(db);
+  const family = catalog.modes.find((m) => m.id === slug)?.family ?? null;
+  if (family === 'privacy') return 'privacy';
+  return family === 'freedom' ? 'freedom' : 'none';
+}
+
 /** The family of the mode(s) a placement is bound to, alone (the in-place switch). */
 export async function familyOfPlacement(
   db: DatabaseReader,
