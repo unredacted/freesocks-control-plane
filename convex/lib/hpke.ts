@@ -74,7 +74,12 @@ export function postureKnob(name: 'FS_HPKE_REQUIRED' | 'FS_HPKE_ADMIN_REQUIRED')
  * signed, while the handler's `.text()` sees the transformed (decrypted /
  * fsRespEph-stripped) body.
  */
-function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request {
+function proxyReq(
+  req: Request,
+  bodyObj: unknown,
+  rawWireBody: string,
+  sealedBody = false,
+): Request {
   const text = JSON.stringify(bodyObj ?? {});
   return {
     url: req.url,
@@ -83,7 +88,18 @@ function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request 
     json: async () => JSON.parse(text),
     text: async () => text,
     __fsWireBody: rawWireBody,
+    __fsSealedBody: sealedBody,
   } as unknown as Request;
+}
+
+/**
+ * Did this request's BODY arrive sealed (an HPKE envelope this wrapper opened)?
+ * For a route that accepts plaintext (dual-mode) but carries one field that must
+ * never cross the CDN in the clear (a member's country): the handler refuses
+ * that field unless this is true. False for every unwrapped or plaintext request.
+ */
+export function requestWasSealed(req: Request): boolean {
+  return (req as unknown as { __fsSealedBody?: boolean }).__fsSealedBody === true;
 }
 
 /** A syntactically present `Authorization: Bearer <token>` header. */
@@ -107,6 +123,15 @@ export async function isBearerCaller(ctx: ActionCtx, req: Request): Promise<bool
   if (!bearerHeaderPresent(req)) return false;
   if (!parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE]) return true;
   return (await resolveAdminCookie(ctx, req)) === null;
+}
+
+/** The refusal of a request that had to be sealed and was not. */
+export function sealedRequiredResponse(): Response {
+  return errorJson(
+    'hpke.sealed_required',
+    'This deployment requires a client that seals requests with HPKE. Please update your app or use the official web client.',
+    400,
+  );
 }
 
 export function sealed(handler: RawHandler) {
@@ -155,12 +180,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     policy.required === true ||
     (postureKnob('FS_HPKE_REQUIRED') && !isAdminPath) ||
     (postureKnob('FS_HPKE_ADMIN_REQUIRED') && isAdminPath && !(await isBearerCaller(ctx, req)));
-  const sealedRequired = (): Response =>
-    errorJson(
-      'hpke.sealed_required',
-      'This deployment requires a client that seals requests with HPKE. Please update your app or use the official web client.',
-      400,
-    );
+  const sealedRequired = sealedRequiredResponse;
 
   let handlerReq = req;
   let respEphPubB64: string | undefined;
@@ -177,7 +197,8 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       parsed = undefined;
     }
     let bodyObj: Record<string, unknown>;
-    if (isSealedWire(parsed)) {
+    const wasSealed = isSealedWire(parsed);
+    if (wasSealed) {
       const opened = await ctx.runAction(internal.lib.hpkeCrypto.openRequest, {
         method,
         path,
@@ -194,7 +215,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       if (typeof eph === 'string') respEphPubB64 = eph;
       delete bodyObj[RESP_EPH_FIELD];
     }
-    handlerReq = proxyReq(req, bodyObj, raw);
+    handlerReq = proxyReq(req, bodyObj, raw, wasSealed);
   } else if (policy.response === 'reveal') {
     if (method === 'GET' || method === 'HEAD') {
       respEphPubB64 = req.headers.get('x-fs-resp-eph') ?? undefined;

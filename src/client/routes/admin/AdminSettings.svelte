@@ -636,6 +636,18 @@
           </label>
           <label class="flex items-center gap-3">
             <Checkbox
+              checked={draft['delivery.country.ask'] === true}
+              onCheckedChange={(v) => (draft = { ...draft, 'delivery.country.ask': v === true })}
+            />
+            <span>
+              Ask members where they connect from at sign-up and when they add a mirror link (a
+              mirror can't tell where its reader is, so it is shaped only by this answer). Their
+              answer is the same one as on the account page, and "Somewhere else, or I'd rather not
+              say" is always an answer. Needs a censored-country list.
+            </span>
+          </label>
+          <label class="flex items-center gap-3">
+            <Checkbox
               checked={draft['delivery.country.steer'] === true}
               onCheckedChange={(v) => (draft = { ...draft, 'delivery.country.steer': v === true })}
             />

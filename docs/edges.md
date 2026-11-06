@@ -3329,11 +3329,11 @@ once settled; a listener it changes moves its origin's epoch).
 **Selecting** (`countryTier`, `convex/lib/edges/assignment.ts`; a listener on `hrw1`, which
 every listener with a judged name is):
 
-| The member is             | They are offered                                                                                                                                                                 |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| in a curated country      | **Never** a name blocked there. Names proven there first; names nobody has judged there fill the remaining slots. With three or more proven names they hold only proven ones.    |
-| anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country. Only when no edge has one are names blocked somewhere offered, as the last resort, fewest countries first. |
-| reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are.                    |
+| The member is             | They are offered                                                                                                                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| in a curated country      | **Never** a name blocked there. Names proven there first; names nobody has judged there fill the remaining slots. With three or more proven names they hold only proven ones.                                                 |
+| anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country. Only when no edge has one are names blocked somewhere offered, as the last resort, fewest countries first.                                              |
+| reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are (asked at sign-up and for a mirror with `delivery.country.ask`). |
 
 Each tier keeps the rendezvous order, so the stability properties hold inside it. An endpoint's
 further names, and the backup's, spread over names the other endpoint does not carry only

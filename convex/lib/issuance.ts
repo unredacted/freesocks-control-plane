@@ -51,6 +51,9 @@ export async function issueNewSubscription(
     // regenerate: carry only the member's answer to "where are you connecting
     // from?" from this row (convex/memberCountry.ts).
     carryCountryFromId?: Id<'subscriptions'>;
+    // regenerate: the member's answer given with this issuance (sign-up's first
+    // key); stored on a freedom-family key only (subscriptions.insertSubscription).
+    region?: string;
   },
 ): Promise<IssueResult> {
   const issued = await ctx.runAction(internal.backends.issueUser, {
@@ -78,6 +81,7 @@ export async function issueNewSubscription(
       excludeNode: input.excludeNode,
       carrySubTokenFromId: input.carrySubTokenFromId,
       carryCountryFromId: input.carryCountryFromId,
+      region: input.region,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,

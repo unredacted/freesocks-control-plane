@@ -95,8 +95,9 @@ describe('routePolicy (member routes sealed 2026-09 + intentionally unsealed)', 
       request: 'seal',
       response: 'plain',
     });
+    // Both legs since the country question: the request may carry a country.
     expect(routePolicy('/api/v1/mirror/request', 'POST')).toEqual({
-      request: 'plain',
+      request: 'seal',
       response: 'reveal',
     });
   });

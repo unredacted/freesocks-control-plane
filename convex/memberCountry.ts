@@ -28,6 +28,7 @@ import {
   ELSEWHERE,
   MEMBER_COUNTRY_KEYS,
   guessable,
+  isAnswer,
   liveChoice,
   memberCountryConfig,
   memberCountryView,
@@ -38,7 +39,7 @@ import {
   type MemberCountryConfig,
   type MemberFamily,
 } from './lib/memberCountry';
-import { familyOfPlacement, familyReads, memberFamilyOf } from './lib/memberFamily';
+import { familyOfMode, familyOfPlacement, familyReads, memberFamilyOf } from './lib/memberFamily';
 import { EMPTY_OWN_EXITS, type OwnExits } from './lib/ownExits';
 import { OWN_EXITS_STATE_KEY } from './ownExits';
 import { invalidateCopies } from './mirrorCopies';
@@ -396,8 +397,13 @@ export async function readOwnExits(db: DatabaseReader): Promise<OwnExits> {
 
 /** The account page's control: the member's current key, as they see it. */
 export const memberView = internalQuery({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }) => {
+  args: {
+    userId: v.id('users'),
+    // Sign-up, before the first key: judge the question for the mode the member
+    // picked (it is stored only when the key is issued). Ignored once a key exists.
+    modeSlug: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, modeSlug }) => {
     const user = await ctx.db.get(userId);
     const { cfg, listed } = await settingsAndList(ctx.db);
     const subs = await ctx.db
@@ -405,13 +411,47 @@ export const memberView = internalQuery({
       .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
       .collect();
     const sub = subs.find((s) => s._id === user?.currentSubscriptionId) ?? subs[0] ?? null;
-    const family: MemberFamily = sub ? await memberFamilyOf(ctx.db, sub, user) : 'none';
+    let family: MemberFamily = sub ? await memberFamilyOf(ctx.db, sub, user) : 'none';
+    if (!sub && modeSlug && user) {
+      const tier = await ctx.db.get(user.tierId);
+      family = tier ? await familyOfMode(ctx.db, tier.backend, modeSlug) : 'none';
+    }
     const view = memberCountryView(family, sub ? fieldsOf(sub) : {}, cfg, listed, Date.now());
     return {
       ...view,
       options: view.applies ? listed : [],
       detect: cfg.detect,
       stickyDays: cfg.stickyDays,
+    };
+  },
+});
+
+/** The answer a key holds (`sniRegion`), for a caller that just wrote one. */
+export const keyChoice = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }) => (await ctx.db.get(subscriptionId))?.sniRegion ?? null,
+});
+
+/**
+ * Before an answer is written anywhere but the account card (the first key's
+ * `region`, a mirror's): is it one a member may give (a listed country or
+ * `ZZ`), and what does the member's current key hold (null: Automatic, or no
+ * key)? The HTTP layer counts a new country against `account.country.day`
+ * only when it differs from that.
+ */
+export const answerCheck = internalQuery({
+  args: { userId: v.id('users'), region: v.string() },
+  handler: async (ctx, { userId, region }) => {
+    const { listed } = await settingsAndList(ctx.db);
+    const user = await ctx.db.get(userId);
+    const subs = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+      .collect();
+    const sub = subs.find((s) => s._id === user?.currentSubscriptionId) ?? subs[0] ?? null;
+    return {
+      valid: isAnswer(region, listed),
+      currentChoice: sub ? liveChoice(fieldsOf(sub), listed) : null,
     };
   },
 });

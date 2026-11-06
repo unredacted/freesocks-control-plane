@@ -52,6 +52,11 @@ export const SETTINGS_DEFAULTS = {
   // traffic leaves the service from beyond the addresses FCP knows (a reading
   // from there is the member's app refreshing through the tunnel).
   'delivery.country.detect': false,
+  // Ask a freedom-family member where they connect from (docs/privacy.md): at
+  // sign-up, before the first key, and when a key with no answer gets a mirror
+  // (a mirror cannot see where its reader is). The answer is the same stored
+  // choice as the account card's. Off: nothing is asked (the card stays).
+  'delivery.country.ask': false,
   'delivery.country.stickyDays': 30,
   'delivery.country.refreshHours': 6,
   'delivery.country.ownExitRanges': [] as string[],

@@ -283,7 +283,9 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/auth/account-login': SEAL_REQ,
   'GET /api/v1/account': REVEAL,
   'POST /api/v1/account': REVEAL,
-  'POST /api/v1/account/regenerate': REVEAL,
+  // SEAL_BOTH: the first key may carry the member's answer to "Where are you
+  // connecting from?" (`region`), which the handler refuses in plaintext.
+  'POST /api/v1/account/regenerate': SEAL_BOTH,
   'POST /api/v1/account/switch-backend': REVEAL,
   'POST /api/v1/account/switch-mode': REVEAL,
   'POST /api/v1/account/switch-server': REVEAL,
@@ -304,7 +306,9 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // is only the granted tier + duration).
   'POST /api/v1/account/redeem-code': SEAL_REQ,
   // The response carries the mirror URL: a public capability URL to the config.
-  'POST /api/v1/mirror/request': REVEAL,
+  // The request may carry the member's country (`region`) or a host hint
+  // (`countryCode`); the handler refuses either in plaintext.
+  'POST /api/v1/mirror/request': SEAL_BOTH,
   // Admin secret reveals (server returns a fresh secret once).
   'POST /api/v1/admin/tokens': REVEAL,
   'POST /api/v1/admin/membership-codes': REVEAL,
