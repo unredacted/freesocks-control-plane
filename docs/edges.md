@@ -1276,7 +1276,9 @@ place leading edge entries (`… via …`) on 2026-11-05.
   preview, and by `memberView`'s replay). Without it (names off, `subscription.entryNames`
   false, or an instance with no location label) an edge entry reads as it did before 2026-11-05:
   `🇧🇷 via Example Town` (the location's flag), `via relay A`, `🌐 via CDN 1`. A lone flag never
-  leads: `🇨🇦 via Example Town` would read as the front's.
+  leads: `🇨🇦 via Example Town` would read as the front's. The place is part of the fronted
+  route's cache token (`edgeRender.epochTokenFor`, a short hash after the epoch), so a changed
+  location label, node country or names switch re-renders a member's body at its next fetch.
 - **No transport in a name.** Every body is one connection mode, and the mode is the title apps
   show (below). `via` is English in every locale: a translated word would sit between two
   left-to-right place names and scramble their order in right-to-left apps, and an arrow points
@@ -6943,8 +6945,8 @@ were not the defaults.
 **The node's place in edge names** (2026-11-05, § "Names in apps"): edge entries lead with the
 node's own place (`🇨🇦 Example Port via Example Town`). No schema, setting, migration or env
 change: the place is the backend instance's location label and its nodes' country, as direct
-names already read them. Members' apps show the new names at their next refresh past the content
-cache, every mirror at its next sweep; an app's chosen entry is kept by name, so a Clash or
+names already read them. The cache token of a fronted place gains the place's hash, so every
+fronted body is rendered again once, at its next fetch; every mirror at its next sweep; an app's chosen entry is kept by name, so a Clash or
 sing-box app falls back to its group's first entry (`⚡ Auto (fastest)`) once, and a link-list app
 may need one tap. A member's own Clash override that names an entry stops matching. Check every
 backend instance that fronts nodes has a location label (Servers -> Backends) and that its first

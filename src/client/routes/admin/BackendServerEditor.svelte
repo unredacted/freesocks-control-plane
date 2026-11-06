@@ -65,9 +65,7 @@
   let locationLabel = $state(init.locationLabel);
   // The place members' apps lead this server's connection names with
   // (lib/memberEntryNames.ts `memberPlace`: the first comma segment, capped).
-  const exitExample = $derived(
-    cleanNamePart(locationLabel.split(',')[0], MAX_PLACE_NAME) || 'its place',
-  );
+  const exitExample = $derived(cleanNamePart(locationLabel.split(',')[0], MAX_PLACE_NAME));
   // Free-text so the fields can be blank (= no map dot); parsed on save.
   let locationLatText = $state(init.locationLat);
   let locationLngText = $state(init.locationLng);
@@ -299,9 +297,14 @@
           >
           <Input id="srv-location-label" bind:value={locationLabel} placeholder="Kansas City, MO" />
           <p class="mt-1 text-[11px] text-muted-foreground">
-            What members see. Falls back to the code when blank. Its first part (up to a comma,
-            {MAX_PLACE_NAME} characters at most) names this server's connections in members' apps: "{exitExample}
-            · Direct", "{exitExample} via Example City".
+            What members see. Falls back to the code when blank.
+            {#if exitExample}
+              Its first part (up to a comma, {MAX_PLACE_NAME} characters at most) names this server's
+              connections in members' apps: "{exitExample} · Direct", "{exitExample} via Example City".
+            {:else}
+              Blank, members' apps name this server's connections without a place: "&lt;service
+              name&gt; · Direct", "via Example City" (the code is not used there).
+            {/if}
           </p>
         </div>
         <div>

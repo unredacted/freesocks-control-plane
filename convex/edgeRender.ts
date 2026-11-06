@@ -465,9 +465,32 @@ export const rawUrlEdgeRequired = internalQuery({
  * while freedom modes are only served through edges, null for an unbound place
  * with none of these (raw delivery).
  */
+/**
+ * The part of the cache token that names the node's own place
+ * (`entryExitOf`): rendered edge entries lead with it, and the member relabel
+ * never renames them, so a changed location label, node country or
+ * `subscription.entryNames` must re-key a cached body. Empty when no place is
+ * shown, so a token without one reads as it always did.
+ */
+async function exitTokenFor(
+  db: QueryCtx['db'],
+  backendServerId: Id<'backendServers'>,
+): Promise<string[]> {
+  const exit = await entryExitOf(db, backendServerId);
+  if (!exit?.name) return [];
+  // FNV-1a over the name and country: short, and free of the token's ':'.
+  let h = 0x811c9dc5;
+  for (const ch of `${exit.name}|${exit.country ?? ''}`) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return [`x${h.toString(36)}`];
+}
+
 async function epochTokenFor(
   ctx: { db: QueryCtx['db'] },
   policy: DeliveryPolicy,
+  backendServerId: Id<'backendServers'>,
 ): Promise<{ token: string | null; relay: Doc<'relays'> | null }> {
   // A place with a managed node carries the gate in its token even under raw
   // delivery, so a gate change re-keys the cache; so does an unmanaged node an
@@ -491,6 +514,7 @@ async function epochTokenFor(
       policy.bindingVersion,
       ...(gate ? [gate] : []),
       relay && relay.enabled && renderOn ? relay.publicationEpoch : -1,
+      ...(await exitTokenFor(ctx.db, backendServerId)),
     ].join(':'),
     relay,
   };
@@ -499,7 +523,13 @@ async function epochTokenFor(
 export const epochFor = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
   handler: async (ctx, { backendServerId, nodeName }): Promise<string | null> =>
-    (await epochTokenFor(ctx, await deliveryPolicyFor(ctx, backendServerId, nodeName))).token,
+    (
+      await epochTokenFor(
+        ctx,
+        await deliveryPolicyFor(ctx, backendServerId, nodeName),
+        backendServerId,
+      )
+    ).token,
 });
 
 /**
@@ -517,7 +547,7 @@ export const renderContextFor = internalQuery({
     { backendServerId, nodeName },
   ): Promise<{ token: string | null; curated: string[]; sensitive: boolean; covered: boolean }> => {
     const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
-    const { token, relay } = await epochTokenFor(ctx, policy);
+    const { token, relay } = await epochTokenFor(ctx, policy, backendServerId);
     if (!relay) return { token, curated: [], sensitive: false, covered: false };
     const { curatedCountries } = await resolveSniConfig(ctx.db);
     if (curatedCountries.length === 0)

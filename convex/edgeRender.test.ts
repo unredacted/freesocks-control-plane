@@ -920,9 +920,15 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       [labels[0], `🇨🇦 Example Port ${PRIMARY}`],
       [labels[1], `🇨🇦 Example Port ${PRIMARY}`],
     ]);
+    // A new label re-keys the cached body (the cache token carries the place):
+    // the next fetch reads it, with no wait for the cache to age.
+    await t.run((ctx) => ctx.db.patch(serverId, { locationLabel: 'Other Port' }));
+    expect(proxyLines(await (await get(t)).text()).map(labelOf)).toEqual([
+      `🇨🇦 Other Port ${PRIMARY} · IPv4`,
+      `🇨🇦 Other Port ${PRIMARY} · IPv6`,
+    ]);
     // Names off: the edge entries read as they did before the exit was shown.
     await t.run((ctx) => upsertSettingRow(ctx, 'subscription.entryNames', 'false'));
-    await expireCache(t, subId);
     expect(proxyLines(await (await get(t)).text()).map(labelOf)).toEqual([
       `${PRIMARY} · IPv4`,
       `${PRIMARY} · IPv6`,
