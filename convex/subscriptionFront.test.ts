@@ -956,6 +956,105 @@ describe('GET /api/v1/sub/<token>: the REALITY key share Mihomo asks for', () =>
   });
 });
 
+describe('GET /api/v1/sub/<token>: Hysteria entries verify the node by pin, or go', () => {
+  const PIN = 'ab'.repeat(32);
+  const REALITY = { name: 'r', type: 'vless', server: '192.0.2.10', port: 443, uuid: 'x' };
+  const hy = (extra: Record<string, unknown>) => ({
+    name: 'h',
+    type: 'hysteria2',
+    server: '192.0.2.10',
+    port: 443,
+    password: 'x',
+    sni: 'q.example',
+    ...extra,
+  });
+  const body = (hyExtra: Record<string, unknown>) =>
+    YAML.stringify({
+      proxies: [REALITY, hy(hyExtra)],
+      'proxy-groups': [{ name: 'Pick', type: 'select', proxies: ['r', 'h'] }],
+      rules: ['MATCH,Pick'],
+    });
+
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    mockStatus = 200;
+    mockHeaders = { 'content-type': 'text/yaml' };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  /** The backend's Hysteria transport as FCP observed it: its certificate pin. */
+  async function seedWithPin(t: ReturnType<typeof convexTest>) {
+    const { subId } = await seedSub(t);
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      await ctx.db.insert('panelProfiles', {
+        backendServerId: sub.backendServerId!,
+        profileUuid: 'p-1',
+        name: 'FreeSocks-Config',
+        shapeHash: 'h',
+        changeToken: 't',
+        digestKeyId: 'k',
+        inbounds: [
+          {
+            tag: 'PRIVACY_HYSTERIA',
+            inboundUuid: 'i-hy',
+            protocol: 'hysteria',
+            port: 443,
+            network: 'hysteria',
+            security: 'tls',
+            hysteriaAuth: {
+              digest: 'd',
+              pinHex: PIN,
+              spkiB64: 'c3Bracm==',
+              serverName: 'q.example',
+              alpn: ['h3'],
+              obfs: false,
+            },
+          },
+        ],
+        observedAt: Date.now(),
+      });
+    });
+  }
+  const get = (t: ReturnType<typeof convexTest>) =>
+    t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'mihomo/1.19' } });
+
+  test('a skip-verify entry (what the backend writes for a pin) goes; the group no longer names it', async () => {
+    const t = convexTest(schema, modules);
+    await seedWithPin(t);
+    mockBody = body({ 'skip-cert-verify': true });
+    const res = await get(t);
+    expect(res.status).toBe(200);
+    const doc = YAML.parse(await res.text()) as {
+      proxies: { name: string }[];
+      'proxy-groups': { proxies: string[] }[];
+    };
+    expect(doc.proxies.map((p) => p.name)).toEqual(['r']);
+    expect(doc['proxy-groups'][0]!.proxies).toEqual(['r']);
+  });
+
+  test('an entry pinned to the node’s certificate stays', async () => {
+    const t = convexTest(schema, modules);
+    await seedWithPin(t);
+    mockBody = body({ fingerprint: PIN });
+    const doc = YAML.parse(await (await get(t)).text()) as { proxies: { name: string }[] };
+    expect(doc.proxies.map((p) => p.name)).toEqual(['r', 'h']);
+  });
+
+  test('a body with nothing left but an unverified entry is refused, never served', async () => {
+    const t = convexTest(schema, modules);
+    await seedWithPin(t);
+    mockBody = YAML.stringify({ proxies: [hy({ 'skip-cert-verify': true })] });
+    const res = await get(t);
+    expect(res.status).toBe(503);
+    expect(await res.text()).not.toContain('hysteria2');
+  });
+});
+
 describe('getAccountView subscription URL', () => {
   beforeEach(() => {
     // Mock backend so getAccountView's live getUser doesn't hit the network.

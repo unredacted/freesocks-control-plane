@@ -37,4 +37,15 @@ describe('detectBodyFormat', () => {
     expect(detectBodyFormat('dmxlc3M6Ly8=')).toBe('links');
     expect(detectBodyFormat('   ')).toBe('unknown');
   });
+
+  test('an Xray JSON body (an object or an array of configs) is neither sing-box nor links', () => {
+    expect(
+      detectBodyFormat('{"outbounds":[{"protocol":"vless","settings":{}},{"protocol":"freedom"}]}'),
+    ).toBe('unknown');
+    expect(detectBodyFormat('[{"outbounds":[{"protocol":"hysteria"}]}]')).toBe('unknown');
+    // sing-box outbounds carry `type`.
+    expect(detectBodyFormat('{"outbounds":[{"type":"direct","tag":"direct"}]}')).toBe(
+      'singbox-json',
+    );
+  });
 });

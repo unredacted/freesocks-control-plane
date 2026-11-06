@@ -455,6 +455,21 @@ Freedom XHTTP`, `profile-title`, `docs/backends.md`).
   payload and are not renamed (FCP's modes do not use VMess). The response headers are not
   part of the switch: the title is always the site name and the connection mode, and the
   page URL never passes.
+- **Hysteria entries verify the node by pin, or they go.** A Hysteria 2 password is the
+  member's VLESS id, so an entry that trusts whoever answers (or any certificate a CA
+  signed) would hand that credential to anyone in the path. Every Hysteria entry in every
+  body a member receives (the fronted route, fresh, cached or stale; the sealed
+  configuration copy; every S3 mirror) must verify the node's self-signed certificate by
+  an expected pin: `pinSHA256` in links with no `insecure`, `fingerprint` in Clash/Mihomo
+  with no `skip-cert-verify`, the public-key pin `certificate_public_key_sha256` in
+  sing-box with no `insecure`, `pinnedPeerCertSha256` in Xray JSON with no
+  `allowInsecure` (`convex/lib/hysteriaPins.ts`). FCP's Hysteria addresses make the backend
+  write that (`convex/lib/backend/hostMapper.ts`); the delivery guard
+  (`convex/lib/hysteriaGuard.ts`, the last step before names) drops any other entry, prunes
+  every group and default that named it, and refuses the body (a 503, never the body as it
+  came) when a reference cannot be removed, a group would be left empty, nothing would be
+  left to connect with, or the body names Hysteria in a way it cannot read. Drops are
+  counted (`hysteria_dropped`) with the delivery refusals.
 
 ## 6. Analytics (optional self-hosted Umami origin)
 

@@ -30,6 +30,7 @@ import { needsUpload, type CopyOutcome, type VerifyOutcome } from './lib/mirrorS
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import {
   finishMemberBody,
+  guardBody,
   noteWithheldEntries,
   type WithheldNote,
 } from './lib/subscriptionDelivery';
@@ -96,6 +97,11 @@ async function renderMirrorBody(
 ): Promise<MirrorRender> {
   const out = await renderMirrorEndpoints(ctx, sub, node, content);
   if (out.validated?.stub) return out;
+  // A mirror hands out only verified Hysteria entries too (lib/hysteriaGuard.ts);
+  // a body that cannot be repaired is the unavailable stub, never the raw one.
+  const guarded = await guardBody(ctx, out.content, sub.backendServerId);
+  if (guarded.kind === 'refuse') return { ...out, content: MIRROR_UNAVAILABLE_STUB };
+  out.content = guarded.content;
   // Finished like the fronted route's (member-facing names, docs/privacy.md),
   // after the render for the same reason.
   const naming = await ctx.runQuery(internal.subscriptions.entryNamingFor, {

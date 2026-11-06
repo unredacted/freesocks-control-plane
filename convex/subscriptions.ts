@@ -884,6 +884,29 @@ export const entryNamingFor = internalQuery({
     entryNamingOf(ctx.db, backendServerId),
 });
 
+/**
+ * The pins a member body's Hysteria entries may verify by: those of every
+ * Hysteria transport FCP observed on this backend's profiles (public values;
+ * lib/hysteriaGuard.ts). None without a backend: then no Hysteria entry passes.
+ */
+export const hysteriaPinsFor = internalQuery({
+  args: { backendServerId: v.optional(v.id('backendServers')) },
+  handler: async (ctx, { backendServerId }) => {
+    const pinHex: string[] = [];
+    const spkiB64: string[] = [];
+    if (!backendServerId) return { pinHex, spkiB64 };
+    for (const p of await ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .collect())
+      for (const i of p.inbounds) {
+        if (i.hysteriaAuth?.pinHex) pinHex.push(i.hysteriaAuth.pinHex);
+        if (i.hysteriaAuth?.spkiB64) spkiB64.push(i.hysteriaAuth.spkiB64);
+      }
+    return { pinHex, spkiB64 };
+  },
+});
+
 /** Append one freshly-provisioned mirror (opt-in flow), idempotent per provider.
  *  The cap is RE-CHECKED inside this serializable mutation (Review D-#8): the
  *  action's earlier read-then-act check raced two concurrent provisions, both
