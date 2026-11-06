@@ -754,10 +754,11 @@ const isOpen = (r: Doc<'sniVantageProbes'> | null) =>
 
 const namePoolV = v.object({
   mode: v.union(v.literal('eyeball'), v.literal('topped_up'), v.literal('any')),
-  eyeball: v.optional(v.number()),
-  got: v.number(),
+  eyeball: v.number(),
+  total: v.number(),
   limit: v.number(),
   needs: v.number(),
+  preferEyeball: v.boolean(),
 });
 
 /** How a batch found its Globalping probes in a country (lib/edges/sni/namePool.ts). */

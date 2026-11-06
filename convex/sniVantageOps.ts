@@ -179,13 +179,18 @@ async function runGlobalping(
     let res;
     if (first) res = await client.createMeasurement(globalpingNameRequest(row, { reuse: first }));
     else {
-      // Too few home-network probes for a verdict: topped up with data-centre ones.
-      const made = await createFirstNameMeasurement(client, row, {
-        country: c.country,
-        limit: c.perCountryLimit,
-        preferEyeball: c.preferEyeball,
-        minVantages: c.minVantages,
-      });
+      // Shaped by the country's probes: too few home-network ones are topped up.
+      const made = await createFirstNameMeasurement(
+        client,
+        row,
+        {
+          country: c.country,
+          limit: c.perCountryLimit,
+          preferEyeball: c.preferEyeball,
+          minVantages: c.minVantages,
+        },
+        () => sleep(c.spacingMs),
+      );
       res = made.res;
       out.pool = made.pool;
     }

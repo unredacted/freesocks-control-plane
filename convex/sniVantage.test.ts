@@ -309,9 +309,10 @@ describe('a batch', () => {
 
 /**
  * A Globalping fake that knows the country's probes: `eyeball` home-network
- * ones and `datacenter` ones, each on its own network. A create answers with
- * `probesCount` (a 422 when nothing matches, like the API); a measurement
- * that reuses another runs on that one's probes. Every name works.
+ * ones and `datacenter` ones, each on its own network, in its free listing. A
+ * create runs on the probes its locations match (a 422 when none, like the
+ * API); a measurement that reuses another runs on that one's probes. Every
+ * name works.
  */
 function poolGlobalping(eyeball: number, datacenter: number) {
   type Probe = { asn: number; tags: string[] };
@@ -326,6 +327,16 @@ function poolGlobalping(eyeball: number, datacenter: number) {
   const requests: Array<Record<string, unknown>> = [];
   const ran = new Map<string, Probe[]>();
   const client: GlobalpingLike = {
+    // The free listing: this country's probes, and one elsewhere.
+    async listProbes() {
+      return {
+        ok: true,
+        data: [
+          ...[...home, ...dc].map((p) => ({ location: { country: 'IR' }, tags: p.tags })),
+          { location: { country: 'DE' }, tags: ['eyeball-network'] },
+        ],
+      };
+    },
     async createMeasurement(req) {
       requests.push(req as Record<string, unknown>);
       const locs = (req as { locations: string | Array<{ limit: number; tags?: string[] }> })
@@ -378,23 +389,22 @@ describe('too few home-network probes in a country', () => {
     expect(firstAsk(gp.requests[0])).toEqual([
       { country: 'IR', limit: 3, tags: ['eyeball-network'] },
     ]);
-    expect(await notedPool(t)).toMatchObject({ mode: 'eyeball', eyeball: 3, got: 3, needs: 3 });
+    expect(await notedPool(t)).toMatchObject({ mode: 'eyeball', eyeball: 4, total: 8, needs: 3 });
   });
 
-  test('two home-network probes: topped up with a data-centre one, and the names are judged', async () => {
+  test('two home-network probes: topped up with a data-centre one in the same ask, and the names are judged', async () => {
     const gp = poolGlobalping(2, 3);
     __setVantageGlobalpingFactory(() => gp.client);
     const { t } = await seed();
     await tickAndDrain(t);
-    // The short eyeball ask, the top-up, then every other name on the top-up's probes.
+    // One topped-up ask (no extra tests), then every other name on its probes.
     expect(gp.requests.map(firstAsk)).toEqual([
-      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
       [
         { country: 'IR', limit: 2, tags: ['eyeball-network'] },
         { country: 'IR', limit: 1, tags: ['datacenter-network'] },
       ],
-      'm-2',
-      'm-2',
+      'm-1',
+      'm-1',
     ]);
     const all = await rows(t);
     expect(all.every((x) => x.status === 'finished' && x.results.length === 3)).toBe(true);
@@ -407,7 +417,7 @@ describe('too few home-network probes in a country', () => {
     expect(await notedPool(t)).toMatchObject({
       mode: 'topped_up',
       eyeball: 2,
-      got: 3,
+      total: 5,
       limit: 3,
       needs: 3,
     });
@@ -418,18 +428,16 @@ describe('too few home-network probes in a country', () => {
     __setVantageGlobalpingFactory(() => gp.client);
     const { t } = await seed();
     await tickAndDrain(t);
-    expect(gp.requests.map(firstAsk)).toEqual([
-      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
-      [{ country: 'IR', limit: 3 }],
-      'm-2',
-      'm-2',
-    ]);
+    expect(gp.requests.map(firstAsk)).toEqual([[{ country: 'IR', limit: 3 }], 'm-1', 'm-1']);
     // The floor is not lowered for one country.
     expect((await detailRow(t, 'y.example')).vantage[0]).toMatchObject({
       suggestion: null,
       reason: 'not_enough_vantages',
     });
-    expect(await notedPool(t)).toMatchObject({ mode: 'any', eyeball: 0, got: 1, needs: 3 });
+    expect(await notedPool(t)).toMatchObject({ mode: 'any', eyeball: 0, total: 1, needs: 3 });
+    // Turned off, Globalping no longer describes the checks: the page says nothing of it.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.preferEyeball', 'false'));
+    expect(await notedPool(t)).toBeNull();
   });
 });
 
@@ -1109,12 +1117,11 @@ describe('candidate names share the budget (docs/edges.md "Finding names")', () 
     const batch = (await t.run((ctx) => ctx.db.query('sniHuntProbes').first()))!.batch;
     await t.action(internal.sniHuntOps.countryBatch, { batch });
     expect(gp.requests.map((q) => q.locations)).toEqual([
-      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
       [
         { country: 'IR', limit: 2, tags: ['eyeball-network'] },
         { country: 'IR', limit: 1, tags: ['datacenter-network'] },
       ],
-      'm-2',
+      'm-1',
     ]);
     const cand = await t.run(async (ctx) =>
       (await ctx.db.query('sniCandidates').collect()).find((c) => c.name === 'works.example'),

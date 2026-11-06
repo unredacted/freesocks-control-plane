@@ -566,28 +566,34 @@ export function coverageLines(
 // --- whether a name can be judged from there --------------------------------------------------
 
 /**
- * How the newest name-check batch from there found its Globalping probes, in
- * words (empty: nothing to say, or no batch yet). Too few home-network probes
- * for a verdict: the checks also use data-centre ones. Too few probes at all:
- * names checked from there stay not judged, and the page says why (the floor
- * is not lowered for one country).
+ * Which Globalping probes the newest name-check batch from there used, in
+ * words (empty: nothing to say, no batch yet, or the note no longer describes
+ * the checks). Too few home-network probes for a verdict: the checks also use
+ * other probes. Fewer probes there in all than a verdict needs: names checked
+ * from there stay not judged, and the page says why (the floor is not lowered
+ * for one country).
  */
 export function namePoolLines(p: CountryViewNamePool | null | undefined): string[] {
   if (!p) return [];
   const out: string[] = [];
   const needs = plural(p.needs, 'vantage');
-  if (p.mode === 'topped_up' && p.eyeball !== undefined)
+  const home =
+    p.eyeball === 0
+      ? 'no home-network probe'
+      : p.eyeball === 1
+        ? 'only one home-network probe'
+        : `only ${p.eyeball} home-network probes`;
+  if (p.mode === 'topped_up')
     out.push(
-      `Globalping has ${p.eyeball === 1 ? 'only one home-network probe' : `only ${p.eyeball} home-network probes`} here, fewer than the ${needs} a name verdict needs, so the name checks here also use data-centre probes.`,
+      `Globalping has ${home} here, fewer than the ${needs} a name verdict needs, so the name checks here also use data-centre probes.`,
     );
-  else if (p.mode === 'any' && p.eyeball === 0)
+  else if (p.mode === 'any' && p.preferEyeball)
     out.push(
-      'Globalping has no home-network probe here, so the name checks here use data-centre probes.',
+      `Globalping has ${home} here, fewer than the ${needs} a name verdict needs, so the name checks here use any probe there.`,
     );
-  // Fewer probes than asked for: that is all there is (fewer than the limit is the setting).
-  if (p.got < p.needs && p.got < p.limit)
+  if (p.total < p.needs)
     out.push(
-      `Globalping has ${p.got === 0 ? 'no probe' : p.got === 1 ? 'only one probe' : `only ${p.got} probes`} here and a name verdict needs ${needs}, so server names checked from here stay not judged on Globalping alone. The floor is not lowered for one country: so few probes cannot tell a blocked name from a broken probe or network.`,
+      `Globalping has ${p.total === 0 ? 'no probe' : p.total === 1 ? 'only one probe' : `only ${p.total} probes`} here in all and a name verdict needs ${needs}, so server names checked from here stay not judged on Globalping alone. The floor is not lowered for one country: so few probes cannot tell a blocked name from a broken probe or network.`,
     );
   return out;
 }

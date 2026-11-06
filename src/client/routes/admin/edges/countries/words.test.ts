@@ -646,42 +646,34 @@ describe('the whole path of an address', () => {
 
 describe('namePoolLines', () => {
   const at = Date.parse('2026-11-05T00:00:00Z');
+  const base = { at, limit: 3, needs: 3, preferEyeball: true };
   it('says nothing before a batch, or where home-network probes were enough', () => {
     expect(W.namePoolLines(null)).toEqual([]);
+    expect(W.namePoolLines({ ...base, mode: 'eyeball', eyeball: 30, total: 40 })).toEqual([]);
+    // The preference off: nothing to say about home networks.
     expect(
-      W.namePoolLines({ at, mode: 'eyeball', eyeball: 3, got: 3, limit: 3, needs: 3 }),
+      W.namePoolLines({ ...base, preferEyeball: false, mode: 'any', eyeball: 0, total: 9 }),
     ).toEqual([]);
-    // The preference off: nothing to say about home networks either.
-    expect(W.namePoolLines({ at, mode: 'any', got: 3, limit: 3, needs: 3 })).toEqual([]);
   });
 
   it('a country topped up with data-centre probes says so', () => {
-    const lines = W.namePoolLines({
-      at,
-      mode: 'topped_up',
-      eyeball: 2,
-      got: 3,
-      limit: 3,
-      needs: 3,
-    });
-    expect(lines).toEqual([
+    expect(W.namePoolLines({ ...base, mode: 'topped_up', eyeball: 2, total: 9 })).toEqual([
       'Globalping has only 2 home-network probes here, fewer than the 3 vantages a name verdict needs, so the name checks here also use data-centre probes.',
     ]);
   });
 
-  it('a country with fewer probes than a verdict needs says plainly that names stay not judged', () => {
-    const lines = W.namePoolLines({ at, mode: 'any', eyeball: 0, got: 1, limit: 3, needs: 3 });
-    expect(lines[0]).toMatch(/no home-network probe here/);
+  it('a country with fewer probes in all than a verdict needs says plainly that names stay not judged', () => {
+    const lines = W.namePoolLines({ ...base, mode: 'any', eyeball: 0, total: 1 });
+    expect(lines[0]).toMatch(/^Globalping has no home-network probe here/);
+    expect(lines[0]).toMatch(/use any probe there/);
     expect(lines[1]).toMatch(
-      /^Globalping has only one probe here and a name verdict needs 3 vantages/,
+      /^Globalping has only one probe here in all and a name verdict needs 3 vantages/,
     );
     expect(lines[1]).toMatch(/stay not judged/);
     for (const l of lines) expect(l).not.toMatch(/—|_/);
-  });
-
-  it('fewer probes than asked for only because of the setting is not a short country', () => {
+    // The same holds with the preference off.
     expect(
-      W.namePoolLines({ at, mode: 'eyeball', eyeball: 2, got: 2, limit: 2, needs: 3 }),
-    ).toEqual([]);
+      W.namePoolLines({ ...base, preferEyeball: false, mode: 'any', eyeball: 0, total: 1 }),
+    ).toHaveLength(1);
   });
 });

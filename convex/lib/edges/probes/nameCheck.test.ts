@@ -10,6 +10,7 @@ import {
   atlasProbeQuery,
   classifyConnectError,
   classifyStage,
+  countProbesIn,
   createFirstNameMeasurement,
   globalpingNameRequest,
   isNoProbesError,
@@ -17,6 +18,7 @@ import {
   parseAtlasProbes,
   parseGlobalpingNameResults,
   pickAtlasProbes,
+  planNameProbes,
 } from './nameCheck';
 
 const T = { address: '198.51.100.9', port: 443, name: 'site.example' };
@@ -279,124 +281,152 @@ describe('where a failure stopped, and which vantage it was', () => {
   });
 });
 
-/**
- * A Globalping that knows one country's probes: `eyeball` home-network ones
- * and `datacenter` ones. Answers a create with `probesCount` like the API
- * (a 422 when nothing matches) and records what was asked.
- */
-function poolClient(eyeball: number, datacenter: number, opts: { refuseTopUp?: boolean } = {}) {
+/** A probe listing like `GET /v1/probes`: `eyeball` / `datacenter` probes in `country`, plus others elsewhere. */
+function listing(country: string, eyeball: number, datacenter: number, untagged = 0) {
+  const at = (cc: string, tags: string[]) => ({ location: { country: cc }, tags });
+  return [
+    ...Array.from({ length: eyeball }, () => at(country, ['eyeball-network'])),
+    ...Array.from({ length: datacenter }, () => at(country, ['datacenter-network'])),
+    ...Array.from({ length: untagged }, () => at(country, [])),
+    at('DE', ['eyeball-network']),
+    at('DE', ['datacenter-network']),
+  ];
+}
+
+/** A Globalping fake: records every create; the listing (or none) as given; refuses as told. */
+function client(
+  list: unknown[] | null,
+  opts: { refuse?: (req: unknown) => boolean; listFails?: boolean } = {},
+) {
   const asked: unknown[] = [];
   return {
     asked,
     async createMeasurement(req: unknown) {
       asked.push(req);
-      const locs = (req as { locations: Array<{ limit: number; tags?: string[] }> }).locations;
-      if (opts.refuseTopUp && locs.some((l) => l.tags?.includes('datacenter-network')))
-        return { ok: false, response: new Response('{}', { status: 400 }), data: {} };
-      let n = 0;
-      for (const l of locs) {
-        const have = l.tags?.includes('eyeball-network')
-          ? eyeball
-          : l.tags?.includes('datacenter-network')
-            ? datacenter
-            : eyeball + datacenter;
-        n += Math.min(l.limit, have);
-      }
-      if (n === 0)
+      if (opts.refuse?.(req))
         return {
           ok: false,
           response: new Response('{}', { status: 422 }),
           data: { error: { type: 'no_probes_found', message: 'No suitable probes' } },
         };
-      return { ok: true, data: { id: `m-${asked.length}`, probesCount: n } };
+      return { ok: true, data: { id: `m-${asked.length}` } };
     },
+    ...(list
+      ? {
+          async listProbes() {
+            return opts.listFails ? { ok: false } : { ok: true, data: list };
+          },
+        }
+      : {}),
   };
 }
 
 describe('which probes a batch runs on', () => {
   const C = { country: 'AE', limit: 3, preferEyeball: true, minVantages: 3 };
   const locationsOf = (req: unknown) => (req as { locations: unknown }).locations;
+  const tagged = (req: unknown) =>
+    (locationsOf(req) as Array<{ tags?: string[] }>).some((l) => l.tags?.length);
 
   test('the top-up ask: every home-network probe, the rest data-centre ones, never one probe twice', () => {
     expect(globalpingNameRequest(T, { country: 'AE', limit: 3, eyeball: 2 }).locations).toEqual([
       { country: 'AE', limit: 2, tags: ['eyeball-network'] },
       { country: 'AE', limit: 1, tags: ['datacenter-network'] },
     ]);
-    expect(globalpingNameRequest(T, { country: 'AE', limit: 3, eyeball: 0 }).locations).toEqual([
-      { country: 'AE', limit: 3, tags: ['datacenter-network'] },
-    ]);
   });
 
-  test('enough home-network probes: one ask, exactly as before', async () => {
-    const gp = poolClient(5, 4);
-    const r = await createFirstNameMeasurement(gp, T, C);
-    expect(gp.asked).toHaveLength(1);
-    expect(locationsOf(gp.asked[0])).toEqual([
-      { country: 'AE', limit: 3, tags: ['eyeball-network'] },
-    ]);
-    expect(r.res.data).toMatchObject({ id: 'm-1' });
-    expect(r.pool).toEqual({ mode: 'eyeball', eyeball: 3, got: 3, limit: 3, needs: 3 });
+  test('the listing, counted per country; a listing without any network tag counts nothing', () => {
+    expect(countProbesIn(listing('AE', 2, 4, 1), 'AE')).toEqual({
+      eyeball: 2,
+      datacenter: 4,
+      total: 7,
+    });
+    expect(countProbesIn(listing('MM', 0, 1), 'MM')).toEqual({
+      eyeball: 0,
+      datacenter: 1,
+      total: 1,
+    });
+    expect(countProbesIn([{ location: { country: 'AE' }, tags: [] }], 'AE')).toBeNull();
+    expect(countProbesIn({ nope: true }, 'AE')).toBeNull();
   });
 
-  test('too few home-network probes for a verdict: topped up with data-centre ones', async () => {
-    const gp = poolClient(2, 4);
+  test('the plan: enough home-network probes, too few, too few of both, the preference off', () => {
+    const plan = (e: number, d: number, n = e + d, c = C) =>
+      planNameProbes({ eyeball: e, datacenter: d, total: n }, c);
+    expect(plan(5, 4)).toMatchObject({
+      where: { country: 'AE', limit: 3, preferEyeball: true },
+      pool: { mode: 'eyeball', eyeball: 5, total: 9, limit: 3, needs: 3, preferEyeball: true },
+    });
+    expect(plan(2, 4)).toMatchObject({
+      where: { country: 'AE', limit: 3, eyeball: 2 },
+      pool: { mode: 'topped_up', eyeball: 2, total: 6 },
+    });
+    // Home-network and data-centre probes together are too few: any probe.
+    expect(plan(1, 1, 4).where).toEqual({ country: 'AE', limit: 3 });
+    expect(plan(0, 1)).toMatchObject({
+      where: { country: 'AE', limit: 3 },
+      pool: { mode: 'any', eyeball: 0, total: 1 },
+    });
+    // The floor is the lower of minVantages and the limit.
+    expect(plan(2, 4, 6, { ...C, limit: 2 }).pool.mode).toBe('eyeball');
+    expect(plan(2, 4, 6, { ...C, preferEyeball: false })).toMatchObject({
+      where: { country: 'AE', limit: 3 },
+      pool: { mode: 'any', preferEyeball: false },
+    });
+  });
+
+  test('a short country: ONE ask, already topped up (the tests every measurement is budgeted at)', async () => {
+    const gp = client(listing('AE', 2, 4));
     const r = await createFirstNameMeasurement(gp, T, C);
     expect(gp.asked.map(locationsOf)).toEqual([
-      [{ country: 'AE', limit: 3, tags: ['eyeball-network'] }],
       [
         { country: 'AE', limit: 2, tags: ['eyeball-network'] },
         { country: 'AE', limit: 1, tags: ['datacenter-network'] },
       ],
     ]);
-    // The batch runs on the topped-up measurement.
-    expect(r.res.data).toMatchObject({ id: 'm-2', probesCount: 3 });
-    expect(r.pool).toEqual({ mode: 'topped_up', eyeball: 2, got: 3, limit: 3, needs: 3 });
+    expect(r.res.data).toMatchObject({ id: 'm-1' });
+    expect(r.pool).toMatchObject({ mode: 'topped_up', eyeball: 2, total: 6 });
   });
 
-  test('no home-network probe at all: any probe, once; fewer than a verdict needs is all there is', async () => {
-    const gp = poolClient(0, 1);
+  test('enough home-network probes: one ask, exactly as before', async () => {
+    const gp = client(listing('AE', 5, 4));
     const r = await createFirstNameMeasurement(gp, T, C);
     expect(gp.asked.map(locationsOf)).toEqual([
       [{ country: 'AE', limit: 3, tags: ['eyeball-network'] }],
+    ]);
+    expect(r.pool).toMatchObject({ mode: 'eyeball' });
+  });
+
+  test('probes gone since the listing: the spacing, then any probe once; the counts stay what the listing said', async () => {
+    const gp = client(listing('AE', 2, 4), { refuse: tagged });
+    let waited = 0;
+    const r = await createFirstNameMeasurement(gp, T, C, async () => {
+      waited++;
+    });
+    expect(waited).toBe(1);
+    expect(gp.asked.map(locationsOf)[1]).toEqual([{ country: 'AE', limit: 3 }]);
+    expect(r.res.data).toMatchObject({ id: 'm-2' });
+    expect(r.pool).toMatchObject({ mode: 'topped_up', eyeball: 2, total: 6 });
+  });
+
+  test('without a usable listing: as before, and no pool is claimed', async () => {
+    for (const gp of [client(null), client(listing('AE', 2, 4), { listFails: true })]) {
+      const r = await createFirstNameMeasurement(gp, T, C);
+      expect(gp.asked.map(locationsOf)).toEqual([
+        [{ country: 'AE', limit: 3, tags: ['eyeball-network'] }],
+      ]);
+      expect(r.pool).toBeNull();
+    }
+    // No home-network probe matched: any probe, once, after the spacing.
+    const none = client(null, { refuse: tagged });
+    let waited = 0;
+    const r = await createFirstNameMeasurement(none, T, C, async () => {
+      waited++;
+    });
+    expect(waited).toBe(1);
+    expect(none.asked.map(locationsOf)).toEqual([
+      [{ country: 'AE', limit: 3, tags: ['eyeball-network'] }],
       [{ country: 'AE', limit: 3 }],
     ]);
-    expect(r.res.data).toMatchObject({ id: 'm-2' });
-    expect(r.pool).toEqual({ mode: 'any', eyeball: 0, got: 1, limit: 3, needs: 3 });
-  });
-
-  test('a top-up that gains nothing, or is refused, keeps the first measurement', async () => {
-    const none = poolClient(1, 0);
-    let r = await createFirstNameMeasurement(none, T, C);
-    expect(none.asked).toHaveLength(2);
-    expect(r.res.data).toMatchObject({ id: 'm-1' });
-    expect(r.pool).toMatchObject({ mode: 'eyeball', eyeball: 1, got: 1 });
-    const refused = poolClient(2, 4, { refuseTopUp: true });
-    r = await createFirstNameMeasurement(refused, T, C);
-    expect(r.res.data).toMatchObject({ id: 'm-1' });
-    expect(r.pool).toMatchObject({ mode: 'eyeball', eyeball: 2, got: 2 });
-  });
-
-  test('the floor is the lower of minVantages and the limit; the preference off asks any probe', async () => {
-    // Two vantages asked for: two home-network probes are all a batch can get anyway.
-    const two = poolClient(2, 4);
-    await createFirstNameMeasurement(two, T, { ...C, limit: 2 });
-    expect(two.asked).toHaveLength(1);
-    const off = poolClient(2, 4);
-    const r = await createFirstNameMeasurement(off, T, { ...C, preferEyeball: false });
-    expect(off.asked.map(locationsOf)).toEqual([[{ country: 'AE', limit: 3 }]]);
-    expect(r.pool).toEqual({ mode: 'any', got: 3, limit: 3, needs: 3 });
-  });
-
-  test('without a probesCount (an older API) nothing is topped up', async () => {
-    const asked: unknown[] = [];
-    const gp = {
-      async createMeasurement(req: unknown) {
-        asked.push(req);
-        return { ok: true, data: { id: 'm-1' } };
-      },
-    };
-    const r = await createFirstNameMeasurement(gp, T, C);
-    expect(asked).toHaveLength(1);
     expect(r.pool).toBeNull();
   });
 });
