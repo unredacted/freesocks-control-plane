@@ -77,6 +77,8 @@ const observedHostV = v.object({
   configProfileUuid: nullableString,
   configProfileInboundUuid: nullableString,
   nodeUuids: v.array(v.string()),
+  pinnedPeerCertSha256: v.optional(nullableString),
+  mapperJson: v.optional(nullableString),
 });
 
 type StoredInbound = Doc<'panelProfiles'>['inbounds'][number];
@@ -144,6 +146,8 @@ export async function upsertObservedHosts(
       configProfileUuid: opt(h.configProfileUuid),
       configProfileInboundUuid: opt(h.configProfileInboundUuid),
       nodeUuids: h.nodeUuids,
+      pinnedPeerCertSha256: opt(h.pinnedPeerCertSha256 ?? null),
+      mapperJson: opt(h.mapperJson ?? null),
       observedAt: now,
     };
     const prev = by.get(h.hostUuid);

@@ -155,6 +155,19 @@ export const intentsView = internalQuery({
               ).toISOString(),
             }
           : null,
+        extraModes: (i.extraModes ?? []).map((m) => ({
+          slug: m.slug,
+          state: m.state,
+          code: m.code ?? null,
+          firewall: {
+            port: m.firewall.port,
+            protocol: m.firewall.protocol,
+            confirmedBy: m.firewall.confirmedBy,
+            confirmed: m.firewall.confirmedAt !== undefined,
+          },
+          checked: m.evidence?.checked ?? null,
+          since: new Date(m.since).toISOString(),
+        })),
         registeredAt: new Date(i.registeredAt).toISOString(),
         updatedAt: new Date(i.updatedAt).toISOString(),
       });

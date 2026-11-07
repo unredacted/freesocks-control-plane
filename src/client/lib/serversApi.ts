@@ -237,6 +237,21 @@ export const confirmWiped = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));
 export const finishMaintenance = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
+/**
+ * A mode the node serves beside its own (docs/servers.md "A node serving an
+ * extra mode"): add it, confirm the firewall of a node no role runs, or remove it.
+ */
+export const extraModeAction = (
+  slug: string,
+  id: string,
+  mode: string,
+  action: 'add' | 'firewall-confirmed' | 'remove',
+) =>
+  apiClient.post(
+    `${intentPath(slug, id)}/extra-mode`,
+    { mode, action },
+    z.object({ state: z.string().nullable() }),
+  );
 
 const ROOT = ['admin', 'servers'] as const;
 export const serverKeys = {

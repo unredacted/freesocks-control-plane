@@ -121,13 +121,135 @@ function clashOf(entries: Entry[]): string {
     .join('')}`;
 }
 
+// --- Hysteria 2, as Remnawave 3.4.8 renders it -------------------------------------------------
+//
+// The backend turns a pinned certificate into "skip verification" in Mihomo
+// and sing-box (`skip-cert-verify: true`, `tls.insecure: true`, no pin) and
+// writes `pinSHA256` plus the Xray-only `fm` in links; then it applies the
+// Host's `mapper` per format. Rendered here the same way, so tests see what
+// FCP's rewrites (lib/backend/hostMapper.ts) make of it.
+
+function hysteriaInboundOf(panel: FakeBackend, h: any): any | null {
+  const ref = h.inbound?.configProfileInboundUuid as string | undefined;
+  const profile = panel.profiles.find((p) => p.inbounds.some((i: any) => i.uuid === ref));
+  const tag = profile?.inbounds.find((i: any) => i.uuid === ref)?.tag;
+  const cfg = (profile?.config?.inbounds as any[] | undefined)?.find((i) => i.tag === tag);
+  return cfg?.protocol === 'hysteria' ? cfg : null;
+}
+
+function setPath(o: any, path: string, value: unknown) {
+  const keys = path.split('.');
+  let at = o;
+  for (const k of keys.slice(0, -1)) {
+    if (at[k] === undefined || at[k] === null) at[k] = {};
+    if (typeof at[k] !== 'object') return;
+    at = at[k];
+  }
+  at[keys[keys.length - 1]!] = structuredClone(value);
+}
+function unsetPath(o: any, path: string) {
+  const keys = path.split('.');
+  let at = o;
+  for (const k of keys.slice(0, -1)) {
+    if (!at || typeof at !== 'object') return;
+    at = at[k];
+  }
+  if (at && typeof at === 'object') delete at[keys[keys.length - 1]!];
+}
+function applyMapper<T extends object>(target: T, ops: any[] | undefined, flat = false): T {
+  for (const op of ops ?? []) {
+    if (flat && String(op.to).startsWith('$link.')) continue;
+    if (op.op === 'set')
+      flat ? ((target as any)[op.to] = op.value) : setPath(target, op.to, op.value);
+    else if (op.op === 'unset') flat ? delete (target as any)[op.to] : unsetPath(target, op.to);
+  }
+  return target;
+}
+
+function hysteriaLink(panel: FakeBackend, h: any): string {
+  const cfg = hysteriaInboundOf(panel, h);
+  const fm = cfg?.streamSettings?.finalmask;
+  const salamander = (fm?.udp ?? []).find((u: any) => u.type === 'salamander');
+  const q: Record<string, unknown> = {};
+  if (salamander) {
+    q.obfs = 'salamander';
+    q['obfs-password'] = salamander.settings?.password;
+  }
+  q.sni = h.sni ?? '';
+  if (h.pinnedPeerCertSha256) q.pinSHA256 = h.pinnedPeerCertSha256;
+  if (fm) q.fm = JSON.stringify(fm);
+  applyMapper(q, h.mapper?.base64, true);
+  const params = new URLSearchParams(
+    Object.entries(q).map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)]),
+  );
+  return `hysteria2://${FAKE_BACKEND_USER_UUID}@${h.address}:${h.port}/?${params.toString()}#${encodeURIComponent(h.remark)}`;
+}
+
+function hysteriaSingbox(panel: FakeBackend, h: any): unknown {
+  const cfg = hysteriaInboundOf(panel, h);
+  const salamander = (cfg?.streamSettings?.finalmask?.udp ?? []).find(
+    (u: any) => u.type === 'salamander',
+  );
+  const o: any = {
+    type: 'hysteria2',
+    tag: h.remark,
+    server: h.address,
+    server_port: h.port,
+    password: FAKE_BACKEND_USER_UUID,
+    ...(salamander
+      ? { obfs: { type: 'salamander', password: salamander.settings?.password } }
+      : {}),
+    tls: {
+      enabled: true,
+      server_name: h.sni ?? '',
+      ...(h.pinnedPeerCertSha256 ? { insecure: true } : {}),
+      alpn: ['h3'],
+    },
+  };
+  return applyMapper(o, h.mapper?.singbox);
+}
+
+function hysteriaClash(panel: FakeBackend, h: any): string {
+  const cfg = hysteriaInboundOf(panel, h);
+  const salamander = (cfg?.streamSettings?.finalmask?.udp ?? []).find(
+    (u: any) => u.type === 'salamander',
+  );
+  const o: any = {
+    name: h.remark,
+    type: 'hysteria2',
+    server: h.address,
+    port: h.port,
+    password: FAKE_BACKEND_USER_UUID,
+    ...(salamander ? { obfs: 'salamander', 'obfs-password': salamander.settings?.password } : {}),
+    sni: h.sni ?? '',
+    ...(h.pinnedPeerCertSha256 ? { 'skip-cert-verify': true } : {}),
+    alpn: ['h3'],
+  };
+  applyMapper(o, h.mapper?.mihomo);
+  // One YAML list item, indented under `proxies:`.
+  const lines = Object.entries(o).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
+  return `  - ${lines[0]}\n${lines
+    .slice(1)
+    .map((l) => `    ${l}\n`)
+    .join('')}`;
+}
+
 /**
  * `userIds: 'numeric'` answers like a 3.x backend: users carry a per-backend
  * integer `id` and no `uuid`, so FCP stores them scoped (`<serverId>:<id>`)
  * and must strip the scope before every call (lib/backendUserId.ts).
  */
 export function createFakeBackend(
-  opts: { host?: string; userIds?: 'uuid' | 'numeric' } = {},
+  opts: {
+    host?: string;
+    userIds?: 'uuid' | 'numeric';
+    /**
+     * Answer a node update as a real backend whose node applies it: the node's
+     * `lastStatusChange` moves, so the write's node work settles (off by
+     * default: most tests hold it to see the wait).
+     */
+    applyNodeUpdates?: boolean;
+  } = {},
 ): FakeBackend {
   const host = opts.host ?? FAKE_BACKEND_HOST;
   const numericIds = opts.userIds === 'numeric';
@@ -145,10 +267,17 @@ export function createFakeBackend(
   };
   const json = (o: unknown, status = 200) => jsonRes({ response: o }, status);
   panel.bodyFor = (ua: string) => {
-    const entries = panel.hosts.filter((h) => !h.isDisabled).map((h) => entryOf(panel, h));
-    if (/sing-box/i.test(ua)) return singboxOf(entries);
-    if (/clash|mihomo/i.test(ua)) return clashOf(entries);
-    return entries.map(linkOf).join('\n');
+    const live = panel.hosts.filter((h) => !h.isDisabled);
+    const hy = live.filter((h) => hysteriaInboundOf(panel, h));
+    const entries = live.filter((h) => !hysteriaInboundOf(panel, h)).map((h) => entryOf(panel, h));
+    if (/sing-box/i.test(ua)) {
+      const doc = JSON.parse(singboxOf(entries)) as { outbounds: unknown[] };
+      doc.outbounds.push(...hy.map((h) => hysteriaSingbox(panel, h)));
+      return JSON.stringify(doc);
+    }
+    if (/clash|mihomo/i.test(ua))
+      return `${clashOf(entries)}${hy.map((h) => hysteriaClash(panel, h)).join('')}`;
+    return [...entries.map(linkOf), ...hy.map((h) => hysteriaLink(panel, h))].join('\n');
   };
   panel.handle = (c) => {
     if (new URL(c.url).hostname !== host) return null;
@@ -285,6 +414,7 @@ export function createFakeBackend(
               tag: uuid,
             })),
           };
+        if (opts.applyNodeUpdates) n.lastStatusChange = `t${++panel.seq}`;
       }
       return json(n ?? null);
     }
@@ -322,7 +452,7 @@ export function createFakeBackend(
 
 /** The fake backend as the global fetch on its own (the activation tests' shape). */
 export function installFakeBackend(
-  opts: { userIds?: 'uuid' | 'numeric' } = {},
+  opts: { userIds?: 'uuid' | 'numeric'; applyNodeUpdates?: boolean } = {},
 ): FakeBackend & { stub: FetchStub } {
   const panel = createFakeBackend(opts);
   const stub = mockFetch(routeFetch(panel.handle));

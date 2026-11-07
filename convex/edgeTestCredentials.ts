@@ -157,6 +157,7 @@ export const insertPending = internalMutation({
     backendServerId: v.id('backendServers'),
     username: v.string(),
     purpose: purposeValidator,
+    modeSlug: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     const server = await ctx.db.get(a.backendServerId);
@@ -171,6 +172,7 @@ export const insertPending = internalMutation({
       backend: server.backend,
       username: a.username,
       purpose: a.purpose,
+      ...(a.modeSlug ? { modeSlug: a.modeSlug } : {}),
       expiresAt: now + TEST_CREDENTIAL_TTL_MS,
       removal: 'pending',
       attempts: 0,

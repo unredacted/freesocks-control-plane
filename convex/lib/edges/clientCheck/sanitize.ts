@@ -7,6 +7,11 @@
  * routing mark, reads a file or opens a second destination (XHTTP's
  * `downloadSettings`).
  *
+ * A TLS setting that decides whom the client trusts is never dropped quietly:
+ * a Hysteria 2 outbound must keep its certificate pin
+ * (`certificate_public_key_sha256`) and may not skip verification, or it is
+ * refused. Its password is a member's credential; a check that silently fell
+ * back to trusting anyone would hand it to whoever answered.
  * The one destination must be an IP literal, and a public one (`allowPrivate`
  * is for the CI harness only, whose nodes sit on private addresses). A name is
  * refused: it would be resolved by the service, where FCP cannot see what it
@@ -91,9 +96,25 @@ const SB_TLS: Spec = {
   server_name: 'string',
   insecure: 'boolean',
   alpn: 'strings',
+  // sing-box 1.13+: trust exactly these public keys (base64 SHA-256 of the SPKI).
+  certificate_public_key_sha256: 'strings',
   utls: { enabled: 'boolean', fingerprint: 'string' },
   reality: { enabled: 'boolean', public_key: 'string', short_id: 'string' },
 };
+
+/**
+ * A sing-box Hysteria 2 outbound's TLS: every key it carries is one the
+ * allowlist keeps (nothing that decides trust is dropped quietly), it does not
+ * skip verification, and it pins at least one public key.
+ */
+function hysteriaTlsKept(raw: Obj): boolean {
+  const tls = raw.tls;
+  if (!isObj(tls)) return false;
+  if (Object.keys(tls).some((k) => !(k in SB_TLS))) return false;
+  if (tls.insecure === true) return false;
+  const pins = tls.certificate_public_key_sha256;
+  return Array.isArray(pins) && pins.length > 0 && pins.every((x) => typeof x === 'string' && x);
+}
 const SB_TRANSPORT: Spec = {
   type: 'string',
   path: 'string',
@@ -260,6 +281,8 @@ export function sanitizeOutbound(
   if (engine === 'sing-box') {
     const spec = typeof raw.type === 'string' ? SB_TYPES[raw.type] : undefined;
     if (!spec) return { ok: false, code: 'unsupported_type' };
+    if (raw.type === 'hysteria2' && !hysteriaTlsKept(raw))
+      return { ok: false, code: 'invalid_outbound' };
     const out = pick(raw, spec);
     if (!out) return { ok: false, code: 'invalid_outbound' };
     const transport = out.transport as Obj | undefined;

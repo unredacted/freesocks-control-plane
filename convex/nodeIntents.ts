@@ -49,7 +49,12 @@ import {
   verificationCurrent,
 } from './lib/edges/verification';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
-import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
+import { extraTransportOn } from './lib/backend/extraModes';
+import {
+  confirmExtraModesFromRole,
+  confirmFromRole,
+  firewallPortsFor,
+} from './lib/backend/portRequirements';
 import { currentNodeName, formerNamesByName, runningRenameOf } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
@@ -1294,7 +1299,10 @@ export const applied = internalMutation({
     const now = Date.now();
     // The firewall report holds whatever the revision: a run that only opened
     // a port reports the same machine revision again.
-    if (a.firewallPorts) await confirmFromRole(ctx, intent, a.firewallPorts);
+    if (a.firewallPorts) {
+      await confirmFromRole(ctx, intent, a.firewallPorts);
+      await confirmExtraModesFromRole(ctx, intent, a.firewallPorts);
+    }
     // Idempotent: the same revision reported again changes nothing but the report.
     if (intent.appliedRevision === a.appliedRevision) {
       await ctx.db.patch(intent._id, {
@@ -1722,14 +1730,22 @@ export const reconcile = internalAction({
       //    (members of other groups may reach it on them); FCP's own node
       //    serves its mode's alone.
       const adopted = c.intent.adopted;
+      // The node's EXTRA modes (nodeExtraModes.ts) add their own transports
+      // once their firewall is confirmed, and keep them until their address
+      // is gone; one waiting for its firewall adds nothing.
+      const extraTransports = (c.intent.extraModes ?? [])
+        .filter((m) => extraTransportOn(m.state, m.hostUuid))
+        .map((m) => modeOf(setup, m.slug)?.transport?.uuid)
+        .filter((u): u is string => !!u);
+      const own = adopted
+        ? (adopted.activeInboundUuids ?? c.node?.activeInboundUuids ?? [t.uuid])
+        : [t.uuid];
       const want = {
         address: c.intent.observed.management.address,
         port: c.intent.settings.nodePort,
         countryCode: c.intent.settings.countryCode,
         configProfileUuid: setup.profileUuid!,
-        activeInboundUuids: adopted
-          ? (adopted.activeInboundUuids ?? c.node?.activeInboundUuids ?? [t.uuid])
-          : [t.uuid],
+        activeInboundUuids: [...new Set([...own, ...extraTransports])],
       };
       const sameSet = (x: readonly string[], y: readonly string[]) =>
         x.length === y.length && x.every((u) => y.includes(u));
@@ -2011,6 +2027,10 @@ export const reconcile = internalAction({
       // ran): its records were fenced off, so its claim is handed over here
       // and the current generation reconciled, never left to expire.
       await ctx.runMutation(internal.nodeIntents.releaseOvertaken, f);
+      // The node's extra modes look at what this run left (their transports).
+      await ctx
+        .runMutation(internal.nodeExtraModes.kick, { intentId: f.intentId })
+        .catch(() => undefined);
     }
   },
 });

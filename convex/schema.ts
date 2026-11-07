@@ -2110,6 +2110,9 @@ export default defineSchema({
     backendShortId: v.optional(v.string()),
     subscriptionUrl: v.optional(v.string()),
     purpose: v.union(v.literal('rehearsal'), v.literal('test_link'), v.literal('client_check')),
+    // A node's credential for one of its EXTRA modes (nodeExtraModes.ts): it is
+    // in that mode's group, never the node's own. Absent = the node's own mode.
+    modeSlug: v.optional(v.string()),
     expiresAt: v.number(),
     removal: v.union(v.literal('pending'), v.literal('done'), v.literal('failed')),
     attempts: v.number(),
@@ -3513,6 +3516,11 @@ export default defineSchema({
     configProfileUuid: v.optional(v.string()),
     configProfileInboundUuid: v.optional(v.string()),
     nodeUuids: v.array(v.string()),
+    // The certificate pin the Host hands out, and its per-client rewrites as
+    // canonical JSON (a Hysteria Host's pin in Mihomo and sing-box form). Both
+    // public; observed so a hand edit of them is drift.
+    pinnedPeerCertSha256: v.optional(v.string()),
+    mapperJson: v.optional(v.string()),
     observedAt: v.number(),
   })
     .index('by_server', ['backendServerId'])
@@ -4672,6 +4680,59 @@ export default defineSchema({
           v.array(v.object({ inboundUuid: v.string(), from: v.number(), to: v.number() })),
         ),
       }),
+    ),
+    // Modes the node serves BESIDE its own (`mode`), each with its own staged
+    // lifecycle (convex/nodeExtraModes.ts, docs/servers.md "A node serving an
+    // extra mode"): today a Hysteria 2 transport on UDP 443 next to a direct
+    // REALITY one on TCP 443. `waiting_firewall`: the (port, protocol) is
+    // listed for the node's firewall and nothing else happens until it is
+    // confirmed; `activating`: the transport is on and the node's address for
+    // it exists, disabled until a rehearsal passes; `serving`: the address is
+    // on, bound to `evidence.revision` (a change of certificate, server name,
+    // Salamander, port, address or Host fields closes ONLY this mode again);
+    // `removing`: address off and gone, then the transport. `hostUuid` is the
+    // one address FCP wrote for it (never in `addressUuids`).
+    extraModes: v.optional(
+      v.array(
+        v.object({
+          slug: v.string(),
+          state: v.union(
+            v.literal('waiting_firewall'),
+            v.literal('activating'),
+            v.literal('serving'),
+            v.literal('removing'),
+          ),
+          code: v.optional(v.string()),
+          firewall: v.object({
+            port: v.number(),
+            protocol: v.union(v.literal('tcp'), v.literal('udp')),
+            confirmedBy: v.union(v.literal('role'), v.literal('operator')),
+            confirmedAt: v.optional(v.number()),
+          }),
+          hostUuid: v.optional(v.string()),
+          // `client`: a real client connected through the address with the
+          // stored public-key pin; `rehearsal`: no check service is
+          // configured, so only the backend's bodies were verified (pinned in
+          // every format).
+          evidence: v.optional(
+            v.object({
+              revision: v.string(),
+              at: v.number(),
+              checked: v.union(v.literal('client'), v.literal('rehearsal')),
+            }),
+          ),
+          // One run at a time per mode (nodeExtraModes.run); a kick while one
+          // runs asks for another when it ends (`rerun`).
+          lease: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
+          rerun: v.optional(v.boolean()),
+          // Failed runs in a row: the next try waits 1, 2, 4… minutes (at most
+          // an hour). Reset once it serves.
+          retries: v.optional(v.number()),
+          byAdminId: v.optional(v.id('adminUsers')),
+          since: v.number(),
+          updatedAt: v.number(),
+        }),
+      ),
     ),
     retirementId: v.optional(v.id('panelRetirements')),
     tokenId: v.optional(v.id('apiTokens')),

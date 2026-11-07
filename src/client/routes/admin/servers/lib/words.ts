@@ -410,6 +410,26 @@ const ERROR_WORDS: Record<string, string> = {
     'That zone is not active at its provider yet. Finish setting it up there, or pick another zone.',
   'servers.modes_invalid': 'The modes are not usable. Check their names and shapes.',
   'servers.unsupported_transport': 'This backend type cannot serve a UDP (Hysteria) transport.',
+  'servers.extra_mode_present': 'The node already serves that mode.',
+  'servers.extra_mode_unsupported':
+    'Only a direct Hysteria 2 transport can be served beside a node’s own mode.',
+  'servers.extra_mode_node_not_direct':
+    'Only a node members reach at its own address can serve it.',
+  'servers.extra_mode_fallback_missing':
+    'That mode’s backup is another mode than the one this node serves.',
+  'servers.extra_mode_certificate':
+    'FCP cannot read that transport’s certificate on the profile. Refresh, then try again.',
+  'servers.extra_mode_name_collision':
+    'The Hysteria server name is one of the node’s REALITY names. Give it its own name.',
+  'servers.extra_mode_transport_off':
+    'The node does not run the transport yet. It is turned on with the node’s next look.',
+  'servers.extra_mode_drifted':
+    'Something it was checked under changed (certificate, server name, port or address). It is checked again before members get it.',
+  'servers.extra_mode_failed': 'Turning it on stopped. It is tried again shortly.',
+  'servers.extra_mode_port_moved':
+    'Its transport moved to another port. The node’s firewall must let the new one in first.',
+  'servers.extra_mode_close_failed':
+    'The backend did not turn its address off. It is tried again shortly.',
   'servers.mode_unknown':
     'No such connection mode exists yet, or this backend is not set up for it. Add it under Connection modes first.',
   'servers.family_missing':
@@ -1092,4 +1112,53 @@ export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
     dot: 'amber',
     sentence: `Being renamed from ${r.from} to ${r.to}. ${RENAME_STEP[r.step]}${waiting} Members keep connecting.`,
   };
+}
+
+// --- extra modes ------------------------------------------------------------------------------------
+
+/** A mode a node serves beside its own, as the node page shows it. */
+export interface ExtraModeLike {
+  slug: string;
+  state: 'waiting_firewall' | 'activating' | 'serving' | 'removing';
+  code: string | null;
+  firewall: {
+    port: number;
+    protocol: 'tcp' | 'udp';
+    confirmedBy: 'role' | 'operator';
+    confirmed: boolean;
+  };
+  checked: 'client' | 'rehearsal' | null;
+}
+
+/** Where an extra mode stands, in one sentence, and what (if anything) the operator does. */
+export function extraModeWords(m: ExtraModeLike): { dot: Dot; sentence: string } {
+  const port = portLabel(m.firewall.port, m.firewall.protocol);
+  switch (m.state) {
+    case 'waiting_firewall':
+      return {
+        dot: 'amber',
+        sentence:
+          m.firewall.confirmedBy === 'role'
+            ? `Waiting for the node role to open port ${port} and report it. Run the role on this node. Nothing changes on the node until then.`
+            : `No role runs this node. Open port ${port} in its firewall, then confirm it here. Nothing changes on the node until then.`,
+      };
+    case 'activating':
+      return m.code && m.code !== 'servers.op_running'
+        ? { dot: 'red', sentence: `Not serving it yet: ${serverErrorWords(m.code)}` }
+        : {
+            dot: 'amber',
+            sentence:
+              'Turning it on: its address is made with the certificate pin, then checked in every app format before members get it.',
+          };
+    case 'serving':
+      return {
+        dot: 'green',
+        sentence:
+          m.checked === 'client'
+            ? 'Serving. A real client connected through it, verifying the certificate by its pin.'
+            : 'Serving. Every app format carries the certificate pin. No client check service is set up, so no client connected through it.',
+      };
+    case 'removing':
+      return { dot: 'amber', sentence: 'Being removed: its address first, then the transport.' };
+  }
 }

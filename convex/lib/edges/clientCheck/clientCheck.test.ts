@@ -527,6 +527,53 @@ describe('outboundsForLink', () => {
     expect(r?.skipped.xray).toBe('no_codec');
   });
 
+  test('a pinned Hysteria2 link: sing-box pins the public key it is given, never trusts anyone', () => {
+    const link = `hy2://pw@203.0.113.10:443?sni=quic.example&pinSHA256=${'ab'.repeat(32)}#t`;
+    // The link's pin is the certificate's digest: no sing-box outbound without the key pin.
+    const none = outboundsForLink(link);
+    expect(none?.outbounds['sing-box']).toBeUndefined();
+    expect(none?.skipped['sing-box']).toBe('no_pin');
+    const pinned = outboundsForLink(`${link.replace('#t', '&insecure=1#t')}`, {
+      hysteriaSpkiB64: ['c3BraQ=='],
+    });
+    const ob = pinned?.outbounds['sing-box'] as { tls: Record<string, unknown> };
+    expect(ob.tls).toMatchObject({
+      enabled: true,
+      server_name: 'quic.example',
+      certificate_public_key_sha256: ['c3BraQ=='],
+    });
+    expect(ob.tls.insecure).toBeUndefined();
+    // The service keeps the pin: the sanitizer allowlists it.
+    const clean = sanitizeOutbound('sing-box', ob);
+    expect(clean).toMatchObject({ ok: true });
+    expect((clean as unknown as { outbound: { tls: unknown } }).outbound.tls).toMatchObject({
+      certificate_public_key_sha256: ['c3BraQ=='],
+    });
+  });
+
+  test('the service refuses a Hysteria2 outbound that would lose its pin or skip verification', () => {
+    const base = {
+      type: 'hysteria2',
+      server: '203.0.113.10',
+      server_port: 443,
+      password: 'pw',
+    };
+    const pin = { enabled: true, server_name: 'q.example', certificate_public_key_sha256: ['a'] };
+    expect(sanitizeOutbound('sing-box', { ...base, tls: pin })).toMatchObject({ ok: true });
+    for (const tls of [
+      undefined,
+      { enabled: true, server_name: 'q.example' },
+      { ...pin, insecure: true },
+      { ...pin, certificate_public_key_sha256: [] },
+      // A trust setting the allowlist would drop quietly.
+      { ...pin, certificate: ['-----BEGIN CERTIFICATE-----'] },
+    ])
+      expect(sanitizeOutbound('sing-box', { ...base, tls })).toEqual({
+        ok: false,
+        code: 'invalid_outbound',
+      });
+  });
+
   test('TUIC: an encoded colon belongs to the password', () => {
     const r = outboundsForLink(`tuic://${UUID}:a%3Ab@203.0.113.10:443?sni=node.example#t`);
     expect(r?.outbounds['sing-box']).toMatchObject({ type: 'tuic', uuid: UUID, password: 'a:b' });

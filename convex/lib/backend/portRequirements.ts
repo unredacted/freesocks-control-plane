@@ -107,6 +107,60 @@ export async function confirmFromRole(
   return rows.length;
 }
 
+/**
+ * The role's applied report also confirms the firewall of the node's EXTRA
+ * modes (convex/nodeExtraModes.ts) whose (port, protocol) it names: each moves
+ * from `waiting_firewall` to `activating`, and the node is reconciled so its
+ * transport is turned on. A mode an admin confirms (no role runs the node) is
+ * never confirmed here.
+ */
+export async function confirmExtraModesFromRole(
+  ctx: MutationCtx,
+  intent: Doc<'panelNodeIntents'>,
+  ports: readonly FirewallOpening[],
+): Promise<number> {
+  const open = new Set(ports.map(openingKey));
+  const now = Date.now();
+  let confirmed = 0;
+  const next = (intent.extraModes ?? []).map((m) => {
+    if (
+      m.state !== 'waiting_firewall' ||
+      m.firewall.confirmedBy !== 'role' ||
+      !open.has(openingKey(m.firewall))
+    )
+      return m;
+    confirmed++;
+    return {
+      ...m,
+      state: 'activating' as const,
+      code: undefined,
+      firewall: { ...m.firewall, confirmedAt: now },
+      updatedAt: now,
+    };
+  });
+  if (confirmed === 0) return 0;
+  await ctx.db.patch(intent._id, { extraModes: next, updatedAt: now });
+  const server = await ctx.db.get(intent.backendServerId);
+  for (const m of next)
+    if (m.firewall.confirmedAt === now)
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'servers.node.extra_mode_firewall',
+        targetType: 'panel_node_intent',
+        targetId: intent._id,
+        payload: {
+          backendSlug: server?.slug ?? '',
+          name: intent.name,
+          mode: m.slug,
+          by: 'role',
+          port: m.firewall.port,
+          protocol: m.firewall.protocol,
+        },
+      });
+  await ctx.scheduler.runAfter(0, internal.nodeIntents.reconcileNow, { intentId: intent._id });
+  return confirmed;
+}
+
 function isLoopback(listen: string | null | undefined): boolean {
   if (!listen) return false;
   const l = listen
@@ -173,6 +227,15 @@ export async function firewallPortsFor(
     if (await changeOpen(ctx, r.changeId))
       add(pending, { port: r.port, protocol: r.protocol ?? 'tcp' });
   }
+  // An extra mode's port is asked for from the moment an admin adds it until
+  // its transport is on (then it is `serving` above), confirmed included, so a
+  // role run in between never closes it again.
+  for (const m of intent.extraModes ?? [])
+    if (
+      (m.state === 'waiting_firewall' || m.state === 'activating') &&
+      !serving.has(openingKey(m.firewall))
+    )
+      add(pending, { port: m.firewall.port, protocol: m.firewall.protocol });
   const sorted = (m: Map<string, FirewallOpening>) =>
     [...m.values()].sort((a, b) => a.port - b.port || a.protocol.localeCompare(b.protocol));
   return [

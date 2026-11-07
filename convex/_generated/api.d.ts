@@ -162,6 +162,7 @@ import type * as mirrorCopies from "../mirrorCopies.js";
 import type * as mirrorProviders from "../mirrorProviders.js";
 import type * as mirrorUploads from "../mirrorUploads.js";
 import type * as nodeActivation from "../nodeActivation.js";
+import type * as nodeExtraModes from "../nodeExtraModes.js";
 import type * as nodeIntentOps from "../nodeIntentOps.js";
 import type * as nodeIntents from "../nodeIntents.js";
 import type * as ownExits from "../ownExits.js";
@@ -372,6 +373,7 @@ declare const fullApi: ApiFromModules<{
   mirrorProviders: typeof mirrorProviders;
   mirrorUploads: typeof mirrorUploads;
   nodeActivation: typeof nodeActivation;
+  nodeExtraModes: typeof nodeExtraModes;
   nodeIntentOps: typeof nodeIntentOps;
   nodeIntents: typeof nodeIntents;
   ownExits: typeof ownExits;

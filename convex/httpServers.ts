@@ -39,6 +39,7 @@ import {
   NodeAppliedReport,
   NodeRegistration,
   NodeRenameRequest,
+  ExtraModeRequest,
   PortChangeAcknowledge,
   ProfilePatchApply,
   ProfilePatchPreviewRequest,
@@ -663,6 +664,19 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
               ...actorOf(admin),
             }),
       );
+    // A mode the node serves beside its own (docs/servers.md "A node serving an
+    // extra mode"): add it (staged until its firewall is confirmed), confirm
+    // the firewall of a node no role runs, or remove it.
+    if (verb === 'extra-mode') {
+      const w = parseWrite(ExtraModeRequest, body, {});
+      if (!w.ok) return w.res;
+      const args = { intentId, slug: w.data.mode, ...actorOf(admin) };
+      if (w.data.action === 'add')
+        return json(await ctx.runMutation(internal.nodeExtraModes.add, args));
+      if (w.data.action === 'firewall-confirmed')
+        return json(await ctx.runMutation(internal.nodeExtraModes.acknowledgeFirewall, args));
+      return json(await ctx.runMutation(internal.nodeExtraModes.remove, args));
+    }
     if (verb === 'settings')
       return json(
         await ctx.runMutation(internal.nodeIntents.patchSettings, {

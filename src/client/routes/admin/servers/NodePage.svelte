@@ -35,6 +35,7 @@
   import TransportNames from '../edges/names/TransportNames.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
   import ActivationSection from './components/ActivationSection.svelte';
+  import ExtraModesCard from './components/ExtraModesCard.svelte';
   import HostDialog from './components/HostDialog.svelte';
   import NamesDialog from './components/NamesDialog.svelte';
   import NodeActions from './components/NodeActions.svelte';
@@ -225,6 +226,7 @@
 
     {#if intent && slug}
       <ActivationSection {slug} {intent} origin={!!relaySlug} />
+      <ExtraModesCard {slug} {intent} {canWrite} />
     {/if}
 
     {#if relaySlug}

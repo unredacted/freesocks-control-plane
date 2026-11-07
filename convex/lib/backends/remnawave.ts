@@ -50,6 +50,7 @@ import type {
   ProfilePatchSendOptions,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry, SUBSCRIPTION_PASSTHROUGH_HEADERS } from './types';
+import { hostMapperJson } from '../backend/hostMapper';
 import { changeToken, hysteriaAuthDigest, realityAuthDigest, shapeHash } from '../backend/digest';
 import { applyPatchOps, type PatchOp } from '../backend/patchOps';
 import { PRIVACY_XRAY_LOG } from './xrayPrivacy';
@@ -1580,6 +1581,9 @@ const ObservedHostRow = z.object({
     })
     .nullish(),
   nodes: z.array(z.string()).nullish(),
+  pinnedPeerCertSha256: z.string().nullish(),
+  // Remnawave 3.x: per-client rewrites. Read as data, compared as canonical JSON.
+  mapper: z.unknown().nullish(),
 });
 const ObservedHostsResponse = z.union([
   z.array(ObservedHostRow),
@@ -1742,6 +1746,8 @@ function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): Observed
     configProfileUuid: h.inbound?.configProfileUuid ?? null,
     configProfileInboundUuid: h.inbound?.configProfileInboundUuid ?? null,
     nodeUuids: h.nodes ?? [],
+    pinnedPeerCertSha256: h.pinnedPeerCertSha256 || null,
+    mapperJson: hostMapperJson(h.mapper),
   }));
 }
 
@@ -1793,6 +1799,9 @@ function hostBody(f: BackendAddressFields): Record<string, unknown> {
   if (f.isHidden !== undefined) body.isHidden = f.isHidden;
   if (f.inbound !== undefined) body.inbound = f.inbound;
   if (f.nodeUuids !== undefined) body.nodes = f.nodeUuids;
+  if (f.pinnedPeerCertSha256 !== undefined) body.pinnedPeerCertSha256 = f.pinnedPeerCertSha256;
+  // An empty mapper clears it (the backend has no null for the field).
+  if (f.mapper !== undefined) body.mapper = f.mapper ?? {};
   return body;
 }
 
