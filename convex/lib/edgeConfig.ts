@@ -161,6 +161,17 @@ export interface EdgeConfig {
   clientCheck: {
     enabled: boolean;
   };
+  /**
+   * Drained L7 fronts held up while apps still use them (lib/edges/drainHold.ts,
+   * docs/edges.md "Fronts kept up for apps that have not refreshed").
+   */
+  drainHold: {
+    enabled: boolean;
+    /** The hard maximum from the drain's start (0 = never held). */
+    maxDays: number;
+    /** Released once this many keys or fewer may still hold the front. */
+    releaseAtKeys: number;
+  };
   /** Automatic replacement of a blocked address. */
   replacement: {
     /**
@@ -365,6 +376,11 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   clientCheck: {
     enabled: false,
   },
+  drainHold: {
+    enabled: true,
+    maxDays: 30,
+    releaseAtKeys: 10,
+  },
   replacement: {
     reblockHours: 24,
   },
@@ -548,6 +564,9 @@ export const EDGE_KEYS = {
   'detect.sustainedNetworks': 'edge.detect.sustainedNetworks',
   'detect.sustainedMinutes': 'edge.detect.sustainedMinutes',
   'clientCheck.enabled': 'edge.clientCheck.enabled',
+  'drainHold.enabled': 'edge.drainHold.enabled',
+  'drainHold.maxDays': 'edge.drainHold.maxDays',
+  'drainHold.releaseAtKeys': 'edge.drainHold.releaseAtKeys',
   'replacement.reblockHours': 'edge.replacement.reblockHours',
   'trust.promoteAfterDays': 'edge.trust.promoteAfterDays',
   'trust.windowDays': 'edge.trust.windowDays',
@@ -720,6 +739,16 @@ export function sanitizeRelayConfig(
     },
     clientCheck: {
       enabled: sanitizeBool(raw['clientCheck.enabled'], D.clientCheck.enabled),
+    },
+    drainHold: {
+      enabled: sanitizeBool(raw['drainHold.enabled'], D.drainHold.enabled),
+      maxDays: sanitizeInt(raw['drainHold.maxDays'], 0, 90, D.drainHold.maxDays),
+      releaseAtKeys: sanitizeInt(
+        raw['drainHold.releaseAtKeys'],
+        0,
+        100_000,
+        D.drainHold.releaseAtKeys,
+      ),
     },
     replacement: {
       reblockHours: sanitizeInt(
@@ -1295,6 +1324,8 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'detect.sustainedChecks': { min: 3, max: 500 },
   'detect.sustainedNetworks': { min: 2, max: 10 },
   'detect.sustainedMinutes': { min: 30, max: 2880 },
+  'drainHold.maxDays': { min: 0, max: 90 },
+  'drainHold.releaseAtKeys': { min: 0, max: 100_000 },
   'replacement.reblockHours': { min: 0, max: 168 },
   'trust.promoteAfterDays': { min: 0, max: 365 },
   'trust.windowDays': { min: 1, max: 14 },

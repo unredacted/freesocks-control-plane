@@ -2393,6 +2393,22 @@ export default defineSchema({
     waiting: v.optional(v.object({ step: v.string(), code: v.string(), since: v.number() })),
     burnedAt: v.optional(v.number()),
     drainUntil: v.optional(v.number()),
+    // A drained L7 front held up while apps that fetched during its published
+    // window may still hold it (lib/edges/drainHold.ts, convex/edgeDrainHolds.ts):
+    // the drain start the window ends at, the hard maximum, the last count
+    // (counts only, never a key) and, once let go, why.
+    drainHold: v.optional(
+      v.object({
+        since: v.number(),
+        until: v.number(),
+        at: v.optional(v.number()),
+        holders: v.optional(v.number()),
+        keys: v.optional(v.number()),
+        requestedAt: v.optional(v.number()),
+        releasedAt: v.optional(v.number()),
+        releaseReason: v.optional(v.string()),
+      }),
+    ),
     destroyedAt: v.optional(v.number()),
     // The address this one replaced (set when a replace put it in use): the
     // re-block guard reads it.

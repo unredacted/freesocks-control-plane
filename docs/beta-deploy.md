@@ -978,7 +978,9 @@ Walk
    first connection to the spare. Record block, failover, rotation done, client refresh and
    first dial to the spare; lift the client-side block.
 10. Afterwards: suspicion clears after three passes; nothing was provisioned; the burned edge
-    drains for `edge.burnedDrainMinutes`, then is destroyed (check later, and at the provider).
+    drains for `edge.burnedDrainMinutes`, then is destroyed (check later, and at the provider);
+    an L7 front is first kept up while apps that have not refreshed may still hold it
+    (`edge.drainHold.*`, docs/edges.md "Fronts kept up for apps that have not refreshed").
 11. The opt-in: `bunx convex env remove EDGE_SIMULATOR_ALLOW` (deployer recipe). A live test
     block stops counting at the next pass and new ones are refused (403). Set it again if more
     walks follow.

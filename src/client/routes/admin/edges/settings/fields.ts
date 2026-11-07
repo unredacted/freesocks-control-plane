@@ -174,6 +174,29 @@ export const ROTATION_FIELDS: Field[] = [
       'Sent with the subscription of a fronted node. Apps that honour it fetch their configuration this often, so a replaced address reaches them in time.',
   },
   {
+    kind: 'switch',
+    path: 'drainHold.enabled',
+    label: 'Keep replaced CDN fronts up for apps that have not refreshed',
+    helper:
+      'Most apps never refresh on their own. On: a replaced or blocked CDN front stays up after its drain until the apps that were handed it have refreshed, or until the limit below. Keeping a front up costs next to nothing. Load balancer addresses are never kept.',
+  },
+  {
+    kind: 'number',
+    path: 'drainHold.maxDays',
+    label: 'Keep a replaced CDN front up for at most',
+    unit: 'days',
+    helper:
+      'Counted from when it was replaced. 0 never keeps one. An account at its edge limit lets its oldest kept front go first.',
+  },
+  {
+    kind: 'number',
+    path: 'drainHold.releaseAtKeys',
+    label: 'Let it go when this few apps may still use it',
+    unit: 'apps',
+    helper:
+      'Counted hourly: keys that fetched while the front was in use and not since. A key nobody uses never refreshes, so this is rarely 0.',
+  },
+  {
     kind: 'number',
     path: 'sniDrainMinutes',
     label: 'Drain time of a retired server name',

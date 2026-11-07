@@ -44,6 +44,12 @@ export interface RetiringEdge {
   drainUntil: string | null;
   managed: boolean;
   burnedAt: string | null;
+  /**
+   * A drained CDN front kept up for apps that have not refreshed (absent or
+   * null: none): the latest it is deleted, and how many keys may still use it
+   * at the last count (null: not counted yet).
+   */
+  drainHold?: { until: string; holders: number | null; countedAt: string | null } | null;
 }
 
 /**
@@ -62,6 +68,8 @@ export function retiringWords(
   left: string | null;
   canDelete: boolean;
   canKeep: boolean;
+  /** Kept up past its drain for apps that have not refreshed. */
+  held: boolean;
 } {
   if (e.status === 'destroying')
     return {
@@ -72,6 +80,7 @@ export function retiringWords(
       left: null,
       canDelete: false,
       canKeep: false,
+      held: false,
     };
   const moved = e.burnedAt
     ? 'Replaced as blocked: members are moved off it.'
@@ -79,7 +88,18 @@ export function retiringWords(
   const until = e.drainUntil ? Date.parse(e.drainUntil) : null;
   let when: string;
   let left: string | null = null;
-  if (until === null) when = '';
+  const hold = e.managed && until !== null && until <= now ? (e.drainHold ?? null) : null;
+  if (hold) {
+    const latest = clockWords(new Date(hold.until), new Date(now));
+    const who =
+      hold.holders === null
+        ? ' FCP is counting the apps that may still use it.'
+        : ` ${hold.holders} ${hold.holders === 1 ? 'app' : 'apps'} may still use it.`;
+    left = `until ${latest} at the latest`;
+    when =
+      ` Kept up for apps that have not refreshed since.${who}` +
+      ` Deleted once they have, or at ${latest} at the latest.`;
+  } else if (until === null) when = '';
   else if (until <= now)
     when = e.managed
       ? " Deleted at FCP's next check (every 5 minutes), then billing stops."
@@ -96,6 +116,7 @@ export function retiringWords(
     left,
     canDelete: true,
     canKeep: !e.burnedAt,
+    held: hold !== null,
   };
 }
 
@@ -109,7 +130,8 @@ export function endNowWords(
   address: string,
   now: number = Date.now(),
 ): { label: string; title: string; body: string; done: string } {
-  const left = retiringWords(e, now).left;
+  const r = retiringWords(e, now);
+  const left = r.left;
   if (!e.managed)
     return {
       label: 'Stop tracking',
@@ -125,7 +147,11 @@ export function endNowWords(
     title: `Delete ${address} now?`,
     body:
       'Members who have not refreshed their app since it was replaced still connect through it, and they lose it now; their app connects again once it refreshes.' +
-      (left ? ` Left alone it would be deleted in ${left}.` : '') +
+      (r.held
+        ? ` Left alone it stays up ${left}.`
+        : left
+          ? ` Left alone it would be deleted in ${left}.`
+          : '') +
       ' FCP deletes it at the provider at its next check, within 5 minutes, and billing stops.',
     done: `Deleting ${address}.`,
   };

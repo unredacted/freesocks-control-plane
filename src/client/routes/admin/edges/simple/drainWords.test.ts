@@ -40,6 +40,7 @@ describe('drain words', () => {
       left: '9 h 12 min (around 08:30 tomorrow)',
       canDelete: true,
       canKeep: true,
+      held: false,
     });
     // Past its drain: the next 5-minute check deletes it.
     expect(
@@ -98,7 +99,42 @@ describe('drain words', () => {
       left: null,
       canDelete: false,
       canKeep: false,
+      held: false,
     });
+  });
+
+  test('a CDN front kept up for apps that have not refreshed says how many and the latest', () => {
+    const edge = {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: iso(new Date(2026, 9, 17, 21, 0)),
+      managed: true,
+      burnedAt: iso(new Date(2026, 9, 17, 19, 0)),
+      drainHold: {
+        until: iso(new Date(2026, 10, 16, 19, 0)),
+        holders: 10_163,
+        countedAt: iso(NOW),
+      },
+    };
+    const r = retiringWords(edge, NOW.getTime());
+    expect(r.held).toBe(true);
+    expect(r.line).toBe(
+      'Replaced as blocked: members are moved off it. Kept up for apps that have not refreshed since. ' +
+        '10163 apps may still use it. Deleted once they have, or at 19:00 on 16 Nov at the latest.',
+    );
+    expect(r.canDelete).toBe(true);
+    // Not counted yet.
+    expect(
+      retiringWords({ ...edge, drainHold: { ...edge.drainHold, holders: null } }, NOW.getTime())
+        .line,
+    ).toMatch(/FCP is counting the apps that may still use it\./);
+    // Delete now says it stays up, not when it would be deleted.
+    const end = endNowWords(edge, 'front.example.org', NOW.getTime());
+    expect(end.body).toMatch(/Left alone it stays up until 19:00 on 16 Nov at the latest\./);
+    // Still inside its drain: the ordinary words.
+    expect(
+      retiringWords({ ...edge, drainUntil: iso(new Date(2026, 9, 18, 8, 30)) }, NOW.getTime()).held,
+    ).toBe(false);
   });
 
   test('a replace drains for the origin drain, a burn for the burned drain', () => {

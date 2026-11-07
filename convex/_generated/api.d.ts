@@ -44,6 +44,7 @@ import type * as edgeAudiences from "../edgeAudiences.js";
 import type * as edgeCountry from "../edgeCountry.js";
 import type * as edgeCountryView from "../edgeCountryView.js";
 import type * as edgeDetector from "../edgeDetector.js";
+import type * as edgeDrainHolds from "../edgeDrainHolds.js";
 import type * as edgeFrontKeys from "../edgeFrontKeys.js";
 import type * as edgeHostHides from "../edgeHostHides.js";
 import type * as edgeHostHides from "../edgeHostHides.js";
@@ -254,6 +255,7 @@ declare const fullApi: ApiFromModules<{
   edgeCountry: typeof edgeCountry;
   edgeCountryView: typeof edgeCountryView;
   edgeDetector: typeof edgeDetector;
+  edgeDrainHolds: typeof edgeDrainHolds;
   edgeFrontKeys: typeof edgeFrontKeys;
   edgeHostHides: typeof edgeHostHides;
   edgeHostHides: typeof edgeHostHides;
