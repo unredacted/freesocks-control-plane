@@ -591,8 +591,24 @@ the **server-name family** whose target and names the transport carries:
 | `freedom-reality` | `reality` / `edge-l4`       | VLESS + REALITY on 443                              | through an L4 edge      |
 | `freedom-xhttp`   | `xhttp-reality` / `edge-l4` | VLESS over XHTTP under REALITY on 443 (no sing-box) | through an L4 edge      |
 | `freedom-ws`      | `ws` / `edge-l7`            | VLESS over WebSocket on loopback behind Caddy       | through an L7 edge      |
+| (not by default)  | `hysteria` / `direct`       | Hysteria 2 (QUIC) on UDP 443, pinned certificate    | at the node's addresses |
 
-Every REALITY transport listens on 443: a node serves ONE mode, so they never collide. A mode
+Every REALITY transport listens on TCP 443: a node serves ONE REALITY mode, so they never
+collide. A **Hysteria 2** transport (`hysteria` / `direct`, for the `privacy-hysteria` mode) takes
+no family: its mode carries `hysteria: {serverName, salamander}`, the one name its certificate is
+made for (and apps present) and whether Salamander obfuscation wraps the packets (off by default:
+plain QUIC looks like ordinary HTTP/3). Its inbound is Xray's `hysteria` (version 2) on UDP 443
+under TLS with ALPN `h3`, BBR congestion control (never Brutal) and a plain 404 for anyone without
+a password. The certificate is a self-signed ECDSA P-256 one for about ten years
+(`lib/backend/hysteriaCert.ts`), made inside the claimed attempt like a REALITY key: its private
+key and the Salamander password exist only in the profile. Members verify the node **only by
+pin**: FCP reads the certificate's two pins back from the observed profile
+(`panelProfiles.inbounds[].hysteriaAuth`: `pinHex`, the SHA-256 of the certificate DER that Xray,
+Hysteria and Mihomo pin; `spkiB64`, the SHA-256 of the public key that sing-box pins; plus a keyed
+`digest` that also moves on a new Salamander password). A backend type that cannot serve UDP
+(`udpTransports` in `lib/backends/capabilities.ts`) is refused `servers.unsupported_transport`.
+UDP 443 never collides with REALITY's TCP 443 (firewall ports carry a protocol, § Firewall
+acknowledgement). A mode
 named by a node is the only thing the role needs to know about it (`node_mode`); the machine
 shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape. A node FCP does
 not manage (an operator's node, protected by Edges) may serve two modes on two ports, such as

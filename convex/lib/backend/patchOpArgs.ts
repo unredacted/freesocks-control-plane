@@ -15,6 +15,12 @@ const transportTemplate = v.union(
     acceptProxyProtocol: v.boolean(),
   }),
   v.object({ kind: v.literal('ws'), port: v.number(), path: v.string() }),
+  v.object({
+    kind: v.literal('hysteria'),
+    port: v.number(),
+    serverName: v.string(),
+    salamander: v.boolean(),
+  }),
 );
 
 export const patchOp = v.union(

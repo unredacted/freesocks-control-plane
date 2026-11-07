@@ -409,6 +409,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.origin_zone_inactive':
     'That zone is not active at its provider yet. Finish setting it up there, or pick another zone.',
   'servers.modes_invalid': 'The modes are not usable. Check their names and shapes.',
+  'servers.unsupported_transport': 'This backend type cannot serve a UDP (Hysteria) transport.',
   'servers.mode_unknown':
     'No such connection mode exists yet, or this backend is not set up for it. Add it under Connection modes first.',
   'servers.family_missing':
@@ -528,7 +529,9 @@ export function shapeWords(s: { transport: string; fronting: string }): string {
       ? 'WebSocket'
       : s.transport === 'xhttp-reality'
         ? 'XHTTP + REALITY'
-        : 'REALITY';
+        : s.transport === 'hysteria'
+          ? 'Hysteria 2 (UDP)'
+          : 'REALITY';
   const fronting = s.fronting === 'direct' ? 'direct' : 'fronted through an edge';
   return `${transport}, ${fronting}`;
 }
@@ -1034,6 +1037,7 @@ export function firewallNodeWords(
 const TEMPLATE_WORDS: Record<string, string> = {
   reality: 'VLESS over TCP with REALITY',
   'xhttp-reality': 'VLESS over XHTTP with REALITY',
+  hysteria: 'Hysteria 2 over QUIC (UDP), pinned certificate',
   ws: 'VLESS over WebSocket, on loopback behind the node proxy',
 };
 export const templateWords = (kind: string): string => TEMPLATE_WORDS[kind] ?? kind;

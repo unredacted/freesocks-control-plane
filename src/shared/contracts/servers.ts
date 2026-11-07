@@ -275,6 +275,16 @@ export const TransportTemplateOp = z.discriminatedUnion('kind', [
     acceptProxyProtocol: z.boolean().optional(),
   }),
   z.object({ kind: z.literal('ws'), port: z.number().int(), path: z.string() }),
+  /**
+   * Hysteria 2 (QUIC, UDP 443) on a direct node: the one server name its
+   * self-signed certificate is made for; Salamander obfuscation off by default.
+   */
+  z.object({
+    kind: z.literal('hysteria'),
+    port: z.number().int(),
+    serverName: z.string().min(1).max(253),
+    salamander: z.boolean().default(false),
+  }),
 ]);
 export type TransportTemplateOp = z.infer<typeof TransportTemplateOp>;
 
@@ -409,7 +419,7 @@ export type FirewallPort = z.infer<typeof FirewallPort>;
 // --- bootstrap contract v2: backend setup (modes) --------------------------------------------
 
 /** How a mode's transport reaches members. */
-export const ModeTransport = z.enum(['reality', 'xhttp-reality', 'ws']);
+export const ModeTransport = z.enum(['reality', 'xhttp-reality', 'ws', 'hysteria']);
 export type ModeTransport = z.infer<typeof ModeTransport>;
 export const ModeFronting = z.enum(['direct', 'edge-l4', 'edge-l7']);
 export type ModeFronting = z.infer<typeof ModeFronting>;
@@ -422,7 +432,16 @@ export const MODE_SHAPES: readonly ModeShape[] = [
   { transport: 'reality', fronting: 'edge-l4' },
   { transport: 'xhttp-reality', fronting: 'edge-l4' },
   { transport: 'ws', fronting: 'edge-l7' },
+  /** Hysteria 2 (QUIC, UDP 443) on a direct node, beside its REALITY transport on TCP 443. */
+  { transport: 'hysteria', fronting: 'direct' },
 ];
+
+/** A Hysteria 2 transport's settings: its certificate's server name, Salamander on or off. */
+export const HysteriaModeSetup = z.object({
+  serverName: z.string().min(1).max(253),
+  salamander: z.boolean().default(false),
+});
+export type HysteriaModeSetup = z.infer<typeof HysteriaModeSetup>;
 
 /**
  * One mode a backend is set up for: the connection mode it feeds, the group
@@ -438,6 +457,8 @@ export const ModeSetupInput = z.object({
   acceptProxyProtocol: z.boolean().default(false),
   /** The WebSocket transport's loopback path and port (Caddy proxies to it). */
   ws: z.object({ path: z.string().min(1), port: z.number().int().min(1024).max(65535) }).optional(),
+  /** A Hysteria 2 transport: the server name its self-signed certificate is made for. */
+  hysteria: HysteriaModeSetup.optional(),
 });
 export type ModeSetupInput = z.infer<typeof ModeSetupInput>;
 
@@ -498,6 +519,7 @@ export const ModeSetupView = z.object({
   /** As the mode was asked for (a change of the setup sends them back unchanged). */
   acceptProxyProtocol: z.boolean(),
   ws: z.object({ path: z.string(), port: z.number() }).nullable(),
+  hysteria: z.object({ serverName: z.string(), salamander: z.boolean() }).nullable().default(null),
   tag: z.string(),
   group: z.object({ uuid: z.string().nullable(), renamedFrom: z.string().nullable() }),
   placement: z.enum(['pending', 'bound', 'skipped']),

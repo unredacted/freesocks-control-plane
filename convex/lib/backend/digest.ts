@@ -35,6 +35,7 @@
  */
 import { x25519 } from '@noble/curves/ed25519.js';
 import { hmacSha256Hex, sha256Hex } from '../crypto';
+import { certificatePins } from './hysteriaCert';
 
 /** What replaces a secret leaf in the redacted view. */
 export const REDACTED = '[redacted]';
@@ -167,6 +168,82 @@ export function realityPublicKey(privateKey: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The authentication identity of one Hysteria 2 inbound: what a member's
+ * client verifies (the certificate's two pins, the server name it presents,
+ * the ALPN) and whether Salamander wraps the packets. All public except the
+ * Salamander password, which is only hashed into `digest`.
+ */
+export interface HysteriaAuth {
+  /** Keyed digest over everything below plus the Salamander password; null without a readable certificate. */
+  digest: string | null;
+  /** SHA-256 of the certificate DER, lowercase hex (Xray, Hysteria, Mihomo pins). */
+  pinHex: string | null;
+  /** SHA-256 of the SubjectPublicKeyInfo DER, base64 (sing-box's pin). */
+  spkiB64: string | null;
+  serverName: string | null;
+  alpn: string[];
+  /** Salamander obfuscation is on. */
+  obfs: boolean;
+}
+
+/**
+ * The Hysteria identity of an inbound's `streamSettings` (`tlsSettings` with
+ * an inline certificate, `finalmask.udp` with Salamander). The digest moves on
+ * a new certificate, server name, ALPN, Salamander on/off or a new Salamander
+ * password: every change a member's copied config would stop matching.
+ */
+export async function hysteriaAuthDigest(
+  streamSettings: unknown,
+  key: string,
+): Promise<HysteriaAuth> {
+  const ss = isObj(streamSettings) ? streamSettings : {};
+  const tls = isObj(ss.tlsSettings) ? ss.tlsSettings : {};
+  const certs = Array.isArray(tls.certificates) ? tls.certificates : [];
+  const first = certs.find(isObj);
+  const lines = first?.certificate;
+  const pins =
+    Array.isArray(lines) && lines.every((l) => typeof l === 'string')
+      ? certificatePins(lines as string[])
+      : typeof lines === 'string'
+        ? certificatePins(lines)
+        : null;
+  const serverName =
+    typeof tls.serverName === 'string' && tls.serverName.trim()
+      ? tls.serverName.trim().toLowerCase()
+      : null;
+  const alpn = (Array.isArray(tls.alpn) ? tls.alpn : []).filter(
+    (a): a is string => typeof a === 'string',
+  );
+  const fm = isObj(ss.finalmask) ? ss.finalmask : {};
+  const salamander = (Array.isArray(fm.udp) ? fm.udp : []).find(
+    (u) => isObj(u) && u.type === 'salamander',
+  );
+  const password =
+    isObj(salamander) &&
+    isObj(salamander.settings) &&
+    typeof salamander.settings.password === 'string'
+      ? salamander.settings.password
+      : null;
+  const obfs = !!salamander;
+  if (!pins) return { digest: null, pinHex: null, spkiB64: null, serverName, alpn, obfs };
+  const material = canonicalJson({
+    pinHex: pins.pinHex,
+    spkiB64: pins.spkiB64,
+    serverName,
+    alpn,
+    obfs: password ? await sha256Hex(password) : obfs,
+  });
+  return {
+    digest: await hmacSha256Hex(key, `fcp.panel.hysteria-auth.v1\n${material}`),
+    pinHex: pins.pinHex,
+    spkiB64: pins.spkiB64,
+    serverName,
+    alpn,
+    obfs,
+  };
 }
 
 export interface RealityAuth {

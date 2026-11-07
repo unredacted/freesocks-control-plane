@@ -50,7 +50,7 @@ import type {
   ProfilePatchSendOptions,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry, SUBSCRIPTION_PASSTHROUGH_HEADERS } from './types';
-import { changeToken, realityAuthDigest, shapeHash } from '../backend/digest';
+import { changeToken, hysteriaAuthDigest, realityAuthDigest, shapeHash } from '../backend/digest';
 import { applyPatchOps, type PatchOp } from '../backend/patchOps';
 import { PRIVACY_XRAY_LOG } from './xrayPrivacy';
 import { realityClientBoundsOf } from '../../../src/shared/contracts/realityClients';
@@ -1654,6 +1654,10 @@ export async function observeConfigProfile(
       out.realityAuth = await realityAuthDigest(rs, digestKey);
       out.realityClients = realityClientBoundsOf(rs);
     }
+    // Hysteria 2 (Xray's `hysteria` inbound): its certificate's pins, read back
+    // from the profile, are what members verify the node by.
+    if (inbound.protocol === 'hysteria' || inbound.network === 'hysteria')
+      out.hysteriaAuth = await hysteriaAuthDigest(obj(raw)?.streamSettings, digestKey);
     inbounds.push(out);
   }
   return {

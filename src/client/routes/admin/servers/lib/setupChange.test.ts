@@ -59,6 +59,31 @@ describe('the change sheet starts from the current setup', () => {
     ]);
   });
 
+  test('a Hysteria mode keeps its server name and Salamander setting', () => {
+    const base = view();
+    const withHysteria = view({
+      modes: [
+        ...base.modes,
+        {
+          ...base.modes[0]!,
+          slug: 'privacy-hysteria',
+          name: 'Privacy-Hysteria',
+          shape: { transport: 'hysteria', fronting: 'direct' },
+          familySlug: null,
+          hysteria: { serverName: 'quic.example', salamander: true },
+          tag: 'PRIVACY_HYSTERIA',
+          family: 'none',
+        },
+      ],
+    });
+    const input = setupInputOf(withHysteria)!;
+    const parsed = BackendSetupInput.parse({ ...input, adopt: false });
+    expect(parsed.modes.find((m) => m.slug === 'privacy-hysteria')!.hysteria).toEqual({
+      serverName: 'quic.example',
+      salamander: true,
+    });
+  });
+
   test('nothing to start from without a setup', () => {
     expect(setupInputOf(null)).toBeNull();
     expect(setupInputOf(view({ exists: false, profile: null, modes: [] }))).toBeNull();
