@@ -141,7 +141,7 @@ services:
   # The REALITY target (TLS 1.3, a name only it serves) and the page the
   # tunnels reach, on a network the client is not on.
   compat-reality-target:
-    image: caddy:2.11.8-alpine@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9
+    image: caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
     volumes:
       - ./docker/compat/reality-target.Caddyfile:/etc/caddy/Caddyfile:ro
     networks:

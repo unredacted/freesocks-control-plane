@@ -38,7 +38,7 @@ RUN bun run build
 #   docker buildx imagetools inspect caddy:<version>-alpine
 # CI validates the Caddyfile with this exact image (ci.yml `caddyfile` reads it
 # from this line), so keep it a single `FROM caddy:<tag>@sha256:<digest>`.
-FROM caddy:2.11.8-alpine@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9
+FROM caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
 COPY --from=build /app/dist /srv/dist
 # A default Caddyfile so the image runs standalone; compose bind-mounts the repo
 # copy over it so header tweaks reload without rebuilding the SPA image.
