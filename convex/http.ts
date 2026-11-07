@@ -24,6 +24,7 @@ import { sanitizeConnectionChoice } from './edgeAttribution';
 import {
   deliverBody,
   finishMemberBody,
+  guardBody,
   locateMember,
   type DeliverySubscription,
   type RenderSnapshot,
@@ -1294,10 +1295,17 @@ http.route({
       ctx.runQuery(internal.subscriptions.entryNamingFor, {
         backendServerId: sub.backendServerId ?? undefined,
       });
-    const memberNamed = async <T extends { content: string }>(entry: T): Promise<T> => ({
-      ...entry,
-      content: finishMemberBody(entry.content, await naming()),
-    });
+    // A cached or stale body also passes the Hysteria guard again
+    // (lib/hysteriaGuard.ts) against the pins the backend serves NOW: a node
+    // whose certificate changed since it was cached must not keep handing out
+    // an entry pinned to the old one. A body it cannot repair is refused.
+    const memberServed = async <T extends { content: string }>(
+      entry: T,
+    ): Promise<{ entry: T } | { refuse: string }> => {
+      const guarded = await guardBody(ctx, entry.content, sub.backendServerId);
+      if (guarded.kind === 'refuse') return { refuse: guarded.reason };
+      return { entry: { ...entry, content: finishMemberBody(guarded.content, await naming()) } };
+    };
     // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
     // cache-bypass amplification vector (each distinct UA = a live backend
     // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
@@ -1365,6 +1373,8 @@ http.route({
       ? cached.find((e) => servesHere(e) && now - e.at < SUBSCRIPTION_CACHE_TTL_MS)
       : undefined;
     if (fresh) {
+      const served = await memberServed(fresh);
+      if ('refuse' in served) return unavailableResponse(served.refuse);
       // Cache hit: the served body was generated at the entry's fetch time and
       // rendered against the entry's epoch token.
       await ctx.runMutation(internal.subscriptions.markDelivered, {
@@ -1376,8 +1386,7 @@ http.route({
         lane,
       });
       // fresh + same format → cache hit
-      return (await subscriptionResponse(await memberNamed(fresh), { hints, ifNoneMatch }))
-        .response;
+      return (await subscriptionResponse(served.entry, { hints, ifNoneMatch })).response;
     }
     // Revalidation fast path: a conditional request whose body is still cached
     // under the CURRENT edge token gets its 304 from that entry, with no panel
@@ -1385,8 +1394,10 @@ http.route({
     // leaves no such entry, so a rotation always takes the full path below.
     if (ifNoneMatch && useCache) {
       const held = cached.find((e) => servesHere(e) && now - e.at < SUBSCRIPTION_REVALIDATE_MS);
-      if (held) {
-        const answer = await subscriptionResponse(await memberNamed(held), {
+      const served = held ? await memberServed(held) : null;
+      // A held body the guard refuses takes the full path below.
+      if (held && served && 'entry' in served) {
+        const answer = await subscriptionResponse(served.entry, {
           hints,
           ifNoneMatch,
         });
@@ -1521,6 +1532,8 @@ http.route({
       // Backend blip: serve the last-known content FOR THIS UA rather than break
       // the member's client; only fail hard when nothing is cached for it.
       if (stale && servesHere(stale)) {
+        const served = await memberServed(stale);
+        if ('refuse' in served) return unavailableResponse(served.refuse);
         await ctx.runMutation(internal.subscriptions.markDelivered, {
           subscriptionId: sub._id,
           contentAt: stale.at,
@@ -1529,8 +1542,7 @@ http.route({
           deliveryRev: place.deliveryRev,
           lane,
         });
-        return (await subscriptionResponse(await memberNamed(stale), { hints, ifNoneMatch }))
-          .response;
+        return (await subscriptionResponse(served.entry, { hints, ifNoneMatch })).response;
       }
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,

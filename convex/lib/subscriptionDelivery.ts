@@ -41,6 +41,7 @@ import { relabelMemberEntries, type EntryNaming } from './memberEntryNames';
 import { placeholderBody } from './nodePinning';
 import { isOwnExit } from './ownExits';
 import { askMlkemKeyShare } from './realityKeyShares';
+import { guardHysteria, type GuardOutcome } from './hysteriaGuard';
 import { subscriptionNow, withinValidity } from './subscriptionEtag';
 
 /**
@@ -53,6 +54,24 @@ import { subscriptionNow, withinValidity } from './subscriptionEtag';
  */
 export function finishMemberBody(content: string, naming: EntryNaming | null): string {
   return askMlkemKeyShare(relabelMemberEntries(content, naming).content).content;
+}
+
+/**
+ * The Hysteria guard over a body for one backend (lib/hysteriaGuard.ts): the
+ * pins are read only when the body names Hysteria at all.
+ */
+export async function guardBody(
+  ctx: ActionCtx,
+  content: string,
+  backendServerId: Id<'backendServers'> | null | undefined,
+): Promise<GuardOutcome> {
+  const first = guardHysteria(content, { pinHex: [], spkiB64: [] });
+  // Nothing Hysteria in it: as it was, no read.
+  if (first.kind === 'kept' && first.dropped === 0) return first;
+  const pins = await ctx.runQuery(internal.subscriptions.hysteriaPinsFor, {
+    backendServerId: backendServerId ?? undefined,
+  });
+  return guardHysteria(content, pins);
 }
 
 /** The delivery projection of a subscription: what the decision reads from the row. */
@@ -563,6 +582,25 @@ export async function deliverBody(
     const told = await noticeOf(content, null);
     if (told) return told;
   }
+  // Every Hysteria entry verifies the node by an expected pin, or it goes
+  // (lib/hysteriaGuard.ts): its password is the member's VLESS id. Run on
+  // whatever the steps above produced, the pinner's verbatim body included, so
+  // nothing upstream can hand out an unverified entry. A body it cannot
+  // repair is refused, never served as it came.
+  const guarded = await guardBody(ctx, content, sub.backendServerId);
+  if (guarded.kind === 'refuse') return refuse(guarded.reason);
+  if (guarded.dropped > 0) {
+    try {
+      await ctx.scheduler.runAfter(0, internal.deliveryRefusals.record, {
+        reason: 'hysteria_dropped',
+        ...(node ? { node } : {}),
+        family,
+      });
+    } catch {
+      /* the counter is best effort */
+    }
+  }
+  content = guarded.content;
   // Member-facing names (docs/privacy.md): an entry the backend named after its
   // node and server name gets a neutral label; a Mihomo REALITY entry asks for
   // the key share. Last, because pinning and the edge render both read those

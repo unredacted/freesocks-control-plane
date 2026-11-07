@@ -58,11 +58,19 @@ export function detectBodyFormat(body: string): SubscriptionFormat | 'html' | 'u
   if (t.startsWith('{')) {
     try {
       const j = JSON.parse(t) as { outbounds?: unknown };
-      return Array.isArray(j.outbounds) ? 'singbox-json' : 'unknown';
+      if (!Array.isArray(j.outbounds)) return 'unknown';
+      // An Xray config's outbounds carry `protocol`, sing-box's `type`: an Xray
+      // JSON body is no sing-box one.
+      const xray = j.outbounds.some(
+        (o) => !!o && typeof o === 'object' && 'protocol' in o && !('type' in o),
+      );
+      return xray ? 'unknown' : 'singbox-json';
     } catch {
       return 'unknown';
     }
   }
+  // An array of Xray configs (the backend's Xray JSON subscription): never links.
+  if (t.startsWith('[')) return 'unknown';
   if (t.startsWith('<')) return 'html';
   if (/^proxies:/m.test(t) || /^proxy-groups:/m.test(t)) return 'clash-yaml';
   return 'links';
