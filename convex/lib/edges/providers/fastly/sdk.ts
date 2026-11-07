@@ -491,8 +491,9 @@ export interface FastlyBackendBody {
   ssl_sni_hostname?: string;
   override_host: string;
   comment: string;
+  /** Always sent: on unless the template turns it off (`fastlyBackendBody`). */
+  prefer_ipv6: boolean;
   /** Provider options (templates.ts `FASTLY_TEMPLATE_FIELDS`), sent only when chosen. */
-  prefer_ipv6?: boolean;
   connect_timeout?: number;
   first_byte_timeout?: number;
   max_conn?: number;

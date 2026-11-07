@@ -257,6 +257,7 @@ describe('fastly sdk wrapper: errors never carry bodies', () => {
         use_ssl: true,
         override_host: HOST,
         comment: 'c',
+        prefer_ipv6: true,
       })
       .catch((e) => e);
     expect(err.meta.status).toBe(400);

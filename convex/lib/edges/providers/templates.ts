@@ -1181,6 +1181,7 @@ export const FastlyTemplate = z.object({
   /** Comment stamped on the service (never the public hostname). */
   serviceComment: z.string().max(64).default('origin edge'),
   // Options added with provider options: optional, the adapter applies the default.
+  /** Unset = on (`fastlyBackendBody`). */
   preferIpv6: z.boolean().optional(),
   minTlsVersion: z.enum(TLS_VERSIONS).optional(),
   maxTlsVersion: z.enum(TLS_VERSIONS).optional(),
@@ -1236,8 +1237,10 @@ export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     type: 'boolean',
     group: 'Backend',
     prominent: true,
-    default: false,
-    help: `Connect to the node over IPv6 when its name has an IPv6 address. ${FASTLY_WS_UNPROVEN}`,
+    // On, as Fastly's own form has it ("IP version"); the API alone leaves a
+    // Delivery service on IPv4. Fronts built before this sent nothing (IPv4).
+    default: true,
+    help: `On (the default): connect to the node over IPv6 when its name has an IPv6 address, else IPv4. Off prefers IPv4. Fastly calls either a preference, not a promise, so the node should answer on both. ${FASTLY_WS_UNPROVEN}`,
     wire: { resource: 'backend', field: 'prefer_ipv6' },
     live: 'new_version',
   },
