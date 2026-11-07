@@ -98,7 +98,7 @@
     "@inlang/plugin-message-format": "4.6.0",
     "@internationalized/date": "^3.12.4",
     "@lucide/svelte": "^1.70.0",
-    "@playwright/test": "1.64.1",
+    "@playwright/test": "1.65.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.4",
     "@types/node": "^26.6.6",
