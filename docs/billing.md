@@ -47,6 +47,15 @@ SPA UpgradeMembership ──POST /api/v1/billing/checkout──▶ billing.creat
   only set/not-set booleans). Each field falls back to its env var
   (`NOWPAYMENTS_API_KEY`, …) when the DB row is unset, so an env-configured deploy
   keeps working; `resolveProcessorSecrets` (internal-only) reads DB-then-env.
+- **Plan-card lines** — each tier carries `features` (Admin → Tiers → edit →
+  Card features; `src/shared/contracts/tierFeatures.ts`): ordered lines shown
+  under its bandwidth/device limits on every plan card (Home, /get-account's
+  membership block, the account page, the payment form). A line is a built-in
+  preset (`fasterSpeeds`, `alternateLocations`, `mirrors`, `supportsFree`,
+  translated as `tiers.feature.*`) or the operator's own text (verbatim in every
+  language), with an icon from a fixed list. Unset = the defaults (the free tier:
+  mirrors; any other tier: the four presets); `features: null` on a tier PATCH
+  goes back to them; at most 8 lines of 80 characters, validated server-side.
 - **Orders** — the `billingOrders` table: one row per checkout, bound to the
   member's `userId`. Swept by `retention.expireStalePendingOrders` (pending >48h
   → expired) and `retention.sweepBillingOrders` (terminal > 365d → deleted).

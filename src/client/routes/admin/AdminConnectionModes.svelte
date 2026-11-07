@@ -3,6 +3,7 @@
   import AdminLayout from './AdminLayout.svelte';
   import ConnectionModeEditor from './ConnectionModeEditor.svelte';
   import ConnectionModeFamilyEditor from './ConnectionModeFamilyEditor.svelte';
+  import CountryPreferencesCard from './CountryPreferencesCard.svelte';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Button } from '@client/components/ui/button';
@@ -383,4 +384,9 @@
       </AlertDialog.Footer>
     </AlertDialog.Content>
   </AlertDialog.Root>
+  {#if catalog.data}
+    <div class="mt-6">
+      <CountryPreferencesCard {modes} />
+    </div>
+  {/if}
 </AdminLayout>

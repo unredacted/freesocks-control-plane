@@ -1597,11 +1597,13 @@ http.route({
       member.userId,
       'account.regenerate',
       async (requestId) => {
+        const geoCountry = region ? null : resolveCountry(req);
         const result = await ctx.runAction(internal.account.regenerate, {
           userId: member.userId,
           requestId,
           location,
           region,
+          ...(geoCountry ? { geoCountry } : {}),
         });
         const { regionApplied: _applied, ...rest } = result;
         return json(rest);
@@ -1765,7 +1767,16 @@ http.route({
 async function regionView(ctx: ActionCtx, userId: Id<'users'>, modeSlug?: string) {
   const view = await ctx.runQuery(internal.memberCountry.memberView, { userId, modeSlug });
   const offer = await ctx.runQuery(internal.countryExits.memberExit, { userId });
-  return { ...view, exit: offer ? { label: offer.label } : null };
+  // Sign-up (`?mode=`, before the first key): what each answer would suggest,
+  // so the page re-runs the mode and location suggestion on a pick.
+  const suggestions =
+    modeSlug !== undefined && view.options.length > 0
+      ? await ctx.runQuery(internal.censoredCountries.suggestionsForCountries, {
+          userId,
+          countries: [...view.options, 'ZZ'],
+        })
+      : {};
+  return { ...view, exit: offer ? { label: offer.label } : null, suggestions };
 }
 
 http.route({

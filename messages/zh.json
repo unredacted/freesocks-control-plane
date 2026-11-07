@@ -419,7 +419,6 @@
     "subtitle": "各套餐包含的内容。",
     "yourTier": "你的套餐",
     "gbPerMonth": "每月 {gb} GB",
-    "mirrors": "镜像链接",
     "upgradeCta": "升级"
   },
   "impact": {
@@ -716,7 +715,6 @@
       "about": "关于"
     },
     "impact": {
-      "title": "捐款在行动",
       "cta": "立即捐款"
     },
     "hero": {

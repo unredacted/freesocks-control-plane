@@ -4973,9 +4973,18 @@ re-issues it.
   a server switch) of a FREEDOM-family mode, for a member on Automatic (no location pick of
   their own), whose OWN answer to "Where are you connecting from?" on the key being replaced
   is a mapped country, with ordering by country on (`delivery.country.steer`). Never the
-  guess: a placement chosen by a guess would outlive the guess on the backend, and a
+  stored guess: a placement chosen by a guess would outlive the guess on the backend, and a
   regenerate carries only the answer anyway. The opt-out, no answer, a location pick of their
-  own, a privacy-family mode and the first key at sign-up (no answer yet) are placed as before.
+  own and a privacy-family mode are placed as before.
+- **The first key at sign-up.** It has no key to read an answer from, so it reads the answer
+  sent with it (`region` on the first regenerate) and, with no answer, the country the CDN
+  reports for that one request (`choiceHint` on `countryExits.forIssue`; a listed country
+  only, never stored). The sign-up location picker marks that country's exit locations
+  "Recommended for you" (the sealed `connection-region?mode=` view carries a `suggestions`
+  map per answer, next to the mode it suggests).
+- **Where it is edited.** Admin -> Settings (the per-country slots) and Admin -> Connection
+  modes -> Country preferences (one row per country with its suggested modes,
+  `delivery.country.modes`, see docs/backends.md); both write the same setting.
 - **The narrowing.** Soft, like a member's location pick (`resolvePlacementTarget`
   `exitLocations`): the first code with an eligible backend (active, under its key cap) and
   one of the mode's groups there wins; none of them leaves today's least-loaded choice. A

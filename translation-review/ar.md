@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**190 of 796 strings are missing** (the app currently shows English for
+**234 of 837 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -191,7 +191,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | فشل تسجيل الدخول بمفتاح المرور |
 | `passkey.notNow` | Not now | ليس الآن |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(10 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(12 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -225,6 +225,8 @@ review.
 | `account.refreshMembership` | Already paid? Check for my membership | دفعت بالفعل؟ تحقّق من عضويتي |
 | `account.memberActiveTitle` | Membership active | العضوية نشطة |
 | `account.memberActiveExpiry` | Active until {date} | نشطة حتى {date} |
+| `account.udpUnavailable.title` | UDP connection unavailable right now | ⚠️ **MISSING** |
+| `account.udpUnavailable.body` | Your configuration only has the REALITY connection for now, so you stay connected. Copy your configuration again later to get the faster UDP connection back. | ⚠️ **MISSING** |
 | `account.appNotice.oldTitle` | One of your apps is too old to connect | ⚠️ **MISSING** |
 | `account.appNotice.modeTitle` | One of your apps can't use this connection mode | ⚠️ **MISSING** |
 | `account.appNotice.oldBody` | An app that fetched your link in the last 7 days got a message in place of a connection. Install one of the supported apps and add your link to it. Your other apps are not affected. | ⚠️ **MISSING** |
@@ -326,7 +328,7 @@ review.
 | `hero.resetsInDays [countPlural=one]` | Resets in 1 day | تتم إعادة التعيين في يوم واحد |
 | `hero.resetsInDays [countPlural=other]` | Resets in {count} days | يُعاد ضبطه في {count} يومًا |
 
-## `location` — Miscellaneous strings.
+## `location` — Miscellaneous strings. *(2 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -334,6 +336,8 @@ review.
 | `location.auto` | Automatic (least busy) | تلقائي (الأقل ازدحامًا) |
 | `location.offline` | offline | غير متصل |
 | `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | أين يقع خادم إعدادك. الخيار التلقائي يختار الموقع الأقل ازدحامًا؛ واختر بنفسك موقعًا يعمل بشكل أفضل على شبكتك. |
+| `location.recommended` | Recommended for you | ⚠️ **MISSING** |
+| `location.pickerHintRecommended` | Automatic tries the locations recommended for your country first. Pick one yourself if another works better on your network. | ⚠️ **MISSING** |
 
 ## `usage` — The 30-day usage trend under the traffic stats. *(1 missing)*
 
@@ -372,7 +376,7 @@ review.
 | `switch.confirm` | Switch to {to} | التبديل إلى {to} |
 | `switch.working` | Switching… | جارٍ التبديل… |
 
-## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2). *(5 missing)*
+## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2). *(19 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -408,8 +412,22 @@ review.
 | `get.createFreeSub` | Get my free key | ⚠️ **MISSING** |
 | `get.plansTitle` | What each plan includes | ⚠️ **MISSING** |
 | `get.plansSubtitle` | The free plan is yours already, and your key works either way. Membership is an optional upgrade that supports the network. | ⚠️ **MISSING** |
+| `get.spotlight.titleUnlimited` | No cap. Faster. More places to connect from. | ⚠️ **MISSING** |
+| `get.spotlight.title` | Faster, with more places to connect from. | ⚠️ **MISSING** |
+| `get.spotlight.bodyUnlimited` | No monthly cap, faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
+| `get.spotlight.body` | Faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
+| `get.spotlight.priceNote` | a month, paid ahead for the months you choose | ⚠️ **MISSING** |
+| `get.spotlight.unlimited` | Unlimited bandwidth | ⚠️ **MISSING** |
+| `get.spotlight.freeCompare` | Free accounts get {gb} GB a month | ⚠️ **MISSING** |
+| `get.spotlight.cta` | Get a membership | ⚠️ **MISSING** |
+| `get.spotlight.ctaNote` | The payment options open right here. | ⚠️ **MISSING** |
+| `get.nudge.titleCapped` | Your free key has {gb} GB a month. | ⚠️ **MISSING** |
+| `get.nudge.title` | Want more from FreeSocks? | ⚠️ **MISSING** |
+| `get.nudge.bodyUnlimited` | A membership is unlimited, faster, and lets you pick other locations. | ⚠️ **MISSING** |
+| `get.nudge.body` | A membership is faster and lets you pick other locations. | ⚠️ **MISSING** |
+| `get.nudge.cta` | See membership | ⚠️ **MISSING** |
 
-## `tiers` — The plan-comparison cards (Free vs Membership limits).
+## `tiers` — The plan-comparison cards (Free vs Membership limits). *(5 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -417,8 +435,12 @@ review.
 | `tiers.subtitle` | What each tier includes. | ما تتضمنه كل فئة. |
 | `tiers.yourTier` | Your plan | فئتك |
 | `tiers.gbPerMonth` | {gb} GB / month | {gb} غيغابايت / شهر |
-| `tiers.mirrors` | Mirror URLs | روابط بديلة |
 | `tiers.upgradeCta` | Upgrade | ترقية |
+| `tiers.recommended` | Recommended | ⚠️ **MISSING** |
+| `tiers.feature.fasterSpeeds` | Faster speeds | ⚠️ **MISSING** |
+| `tiers.feature.alternateLocations` | Alternate locations | ⚠️ **MISSING** |
+| `tiers.feature.mirrors` | Mirror links if the main one is blocked | ⚠️ **MISSING** |
+| `tiers.feature.supportsFree` | Helps keep free accounts running | ⚠️ **MISSING** |
 
 ## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts. *(6 missing)*
 
@@ -646,14 +668,18 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(4 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(8 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `setup.title` | Set up your VPN app | إعداد تطبيق الوكيل |
 | `setup.install` | Install | تثبيت |
-| `setup.mainLinkOnly` | Imports your main link: this app can't read a mirror link. | ⚠️ **MISSING** |
+| `setup.mirrorLinkForApp` | Your mirror link for this app: | ⚠️ **MISSING** |
+| `setup.copyMirrorLink` | Copy your mirror link for {app} | ⚠️ **MISSING** |
+| `setup.mirrorNotReady` | Imports your main link for now: your mirror link for this app is still being set up. Check back in a few minutes. | ⚠️ **MISSING** |
 | `setup.xhttpOnly` | Only apps that work with XHTTP are shown. To use a different app, pick another connection mode. | ⚠️ **MISSING** |
+| `setup.hysteriaOnly` | Only apps we have checked with Hysteria are shown. To use a different app, pick another connection mode. | ⚠️ **MISSING** |
+| `setup.hysteriaNoApps` | No app we have checked with Hysteria runs on this platform yet. To connect this device, pick another connection mode. | ⚠️ **MISSING** |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | لا توجد تطبيقات موصى بها لهذه المنصة بعد - استخدم أي عميل متوافق وأضف اشتراكك يدويًا. |
 | `setup.openSource` | Open source | مفتوح المصدر |
 | `setup.ipv6Works` | IPv6 ready | ⚠️ **MISSING** |
@@ -695,7 +721,7 @@ review.
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | تطبيق iOS مدفوع ومغلق المصدر، شائع وموثوق. يستحق الاستخدام إن كنت تملكه أصلًا؛ وتطبيقات المصدر المفتوح بالأعلى تؤدي المهمة نفسها مجانًا. |
 | `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | أبسط تجربة ممكنة: الصق مفتاح الوصول واتصل. يعمل فقط مع مفاتيح وصول Outline (Shadowsocks). |
 
-## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(10 missing)*
+## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(13 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -703,7 +729,9 @@ review.
 | `mirror.explainer` | If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked. | إذا كان رابط الاشتراك العادي لا يتصل في مكانك، أضِف رابط مرآة أدناه. يقدّم المفتاح نفسه من مضيف آخر قد لا يكون محجوبًا. |
 | `mirror.unavailable` | Mirrors aren't available on this deployment right now - there are no mirror links to add. | المرايا غير متاحة على هذا النشر حاليًا — لا توجد روابط مرآة لإضافتها. |
 | `mirror.addedLabel` | Your mirror links | روابط المرآة الخاصة بك |
-| `mirror.addToAppHint` | Add each one as an extra subscription in your app, then try connecting. | أضِف كل رابط كاشتراك إضافي في تطبيقك ثم حاول الاتصال. |
+| `mirror.addYoursHint` | Add the link for your app as an extra subscription, then try connecting. | ⚠️ **MISSING** |
+| `mirror.formatMost` | For most apps | ⚠️ **MISSING** |
+| `mirror.formatFor` | For {apps} | ⚠️ **MISSING** |
 | `mirror.regionLabel` | Your region | منطقتك |
 | `mirror.regionGlobal` | Global (any region) | عالمي (أي منطقة) |
 | `mirror.regionNotStored` | Used only to pick a nearby mirror - it isn't stored. | يُستخدم فقط لاختيار مرآة قريبة - ولا يتم تخزينه. |
@@ -737,11 +765,11 @@ review.
 | `mirrorSuggest.create` | Create a mirror link | ⚠️ **MISSING** |
 | `mirrorSuggest.chooseLabel` | Which link should your app use? | ⚠️ **MISSING** |
 | `mirrorSuggest.optionMirror` | Mirror link | ⚠️ **MISSING** |
-| `mirrorSuggest.optionMirrorHint` | Served from another host, harder to block. sing-box and Clash apps can't read it. | ⚠️ **MISSING** |
+| `mirrorSuggest.optionMirrorHint` | Served from another host, harder to block. | ⚠️ **MISSING** |
 | `mirrorSuggest.optionMain` | Main link | ⚠️ **MISSING** |
 | `mirrorSuggest.optionMainHint` | Served from our main website. | ⚠️ **MISSING** |
 | `mirrorSuggest.recommended` | Recommended | ⚠️ **MISSING** |
-| `mirrorSuggest.chooseHint` | Copy, download, the QR code and the app buttons below use the link you pick. sing-box and Clash apps always import the main link. | ⚠️ **MISSING** |
+| `mirrorSuggest.chooseHint` | Copy, download, the QR code and the app buttons below use the link you pick. Clash and sing-box apps read the mirror in their own format: use the link under each one below. | ⚠️ **MISSING** |
 
 ## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(3 missing)*
 
@@ -784,7 +812,7 @@ review.
 | `region.alsoMirrors` | This also shapes your mirror links. | ⚠️ **MISSING** |
 | `region.automaticMirrorWarn` | Automatic doesn't apply to mirror links. They won't be set up for any country. | ⚠️ **MISSING** |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(26 missing)*
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(28 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -807,6 +835,8 @@ review.
 | `delivery.privacyBody` | Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks. | ⚠️ **MISSING** |
 | `delivery.privacyRealityTitle` | REALITY | ⚠️ **MISSING** |
 | `delivery.privacyRealityBody` | A direct connection with no CDN in the path. | ⚠️ **MISSING** |
+| `delivery.privacyHysteriaTitle` | Hysteria | ⚠️ **MISSING** |
+| `delivery.privacyHysteriaBody` | Uses UDP for quicker connections on Wi-Fi and mobile. Your configuration also includes a REALITY connection to use when UDP is blocked. | ⚠️ **MISSING** |
 | `delivery.transportLabel` | Connection method | ⚠️ **MISSING** |
 | `delivery.recommended` | Recommended | موصى به |
 | `delivery.unavailable` | Not available yet | غير متوفر بعد |
@@ -825,13 +855,12 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(6 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(18 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `home.sections.faq` | FAQ | الأسئلة الشائعة |
 | `home.sections.about` | About | حول |
-| `home.impact.title` | Donations at work | التبرعات تُحدث فرقًا |
 | `home.impact.cta` | Make a donation | قدّم تبرعًا |
 | `home.impact.allowanceTitle` | What every free account gets this month | ⚠️ **MISSING** |
 | `home.impact.allowanceDonations` | Added by donations | ⚠️ **MISSING** |
@@ -870,6 +899,18 @@ review.
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | جهاز واحد كحد أقصى |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | يصل عدد الأجهزة إلى {count} جهازًا |
 | `home.donate.title` | Donations buy bandwidth for free users | ⚠️ **MISSING** |
+| `home.support.heroLine` | Free accounts are paid for by donations and memberships. | ⚠️ **MISSING** |
+| `home.support.heroLink` | Help keep it free | ⚠️ **MISSING** |
+| `home.support.title` | Free accounts run on your support | ⚠️ **MISSING** |
+| `home.support.addMore` | Your donation adds more for everyone. | ⚠️ **MISSING** |
+| `home.support.donateTitle` | Donate | ⚠️ **MISSING** |
+| `home.support.donateBody` | Every donation goes into a shared pool that raises this month's allowance for every free account. Give once, anonymously if you like. | ⚠️ **MISSING** |
+| `home.support.donateCta` | Donate now | ⚠️ **MISSING** |
+| `home.support.donateLink` | See where it goes | ⚠️ **MISSING** |
+| `home.support.memberTitle` | Become a member | ⚠️ **MISSING** |
+| `home.support.memberBodyUnlimited` | No monthly cap, faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
+| `home.support.memberBody` | Faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
+| `home.support.perMonth` | a month | ⚠️ **MISSING** |
 
 ## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 

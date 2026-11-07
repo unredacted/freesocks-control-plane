@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TierFeatureSchema } from './tierFeatures';
 import { BackendId } from './backends';
 import { PublicConnectionMode, PublicConnectionModeFamily } from './connectionModes';
 import { MIRROR_FORMATS } from '../mirrorFormats';
@@ -105,6 +106,9 @@ export const PublicConfig = z.object({
       description: z.string().nullable(),
       monthlyTrafficGb: z.number().int(), // 0 = unlimited
       deviceLimit: z.number().int(),
+      // Plan-card feature lines (src/shared/contracts/tierFeatures.ts). Default
+      // [] keeps an SPA meeting an older server rendering the limits only.
+      features: z.array(TierFeatureSchema).optional().default([]),
     }),
   ),
   /** Free-account lifetime in days (the admin-editable `freetier.expiryDays`

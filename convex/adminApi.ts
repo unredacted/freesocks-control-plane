@@ -28,6 +28,11 @@ import { postureKnob } from './lib/hpke';
 import { resolveRange } from './lib/timeRange';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import {
+  resolveTierFeatures,
+  validateTierFeatures,
+  type TierFeature,
+} from '../src/shared/contracts/tierFeatures';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { applyCountsDelta, readSessionCounts, readUserCounts } from './lib/statusCounters';
 // One shared by-key upsert (Review P3): the local upsertSetting + setBillingConfig's
@@ -95,7 +100,22 @@ const tierUpsertFields = {
   isActive: v.boolean(),
   priority: v.number(),
   expirationDaysAfterMembershipLapse: v.number(),
+  // Plan-card feature lines (validated by normalizeTierFeatures); absent or
+  // null = the built-in defaults.
+  features: v.optional(v.union(v.array(v.any()), v.null())),
 };
+
+/**
+ * Validate the `features` field of a tier write in place: a list is cleaned
+ * (lib in src/shared/contracts/tierFeatures.ts); null stays null (the patch
+ * mapper turns it into "absent" = defaults); absent stays absent.
+ */
+function normalizeTierFeatures(patch: { features?: unknown }): void {
+  if (patch.features === undefined || patch.features === null) return;
+  const checked = validateTierFeatures(patch.features);
+  if (!checked.ok) throw new ConvexError({ code: 'validation', message: checked.message });
+  patch.features = checked.features;
+}
 
 /**
  * Runtime bounds the Convex validators can't express (v.number() accepts any
@@ -157,6 +177,8 @@ function mapTier(t: Doc<'tiers'>) {
     isActive: t.isActive,
     priority: t.priority,
     expirationDaysAfterMembershipLapse: t.expirationDaysAfterMembershipLapse,
+    features: resolveTierFeatures(t.features as TierFeature[] | undefined, t.isDefaultFree),
+    featuresDefault: t.features === undefined,
     createdAt: iso(t._creationTime),
     updatedAt: iso(t.updatedAt),
   };
@@ -290,6 +312,7 @@ export const createTier = internalMutation({
   args: { ...tierUpsertFields, actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a) => {
     checkTierBounds(a);
+    normalizeTierFeatures(a);
     // Slug uniqueness (no UNIQUE constraint in Convex): read-check the index.
     const clash = await ctx.db
       .query('tiers')
@@ -312,6 +335,7 @@ export const createTier = internalMutation({
       isActive: a.isActive,
       priority: a.priority,
       expirationDaysAfterMembershipLapse: a.expirationDaysAfterMembershipLapse,
+      ...(a.features ? { features: a.features as TierFeature[] } : {}),
       updatedAt: Date.now(),
     });
     if (a.isDefaultFree) await clearOtherDefaultFree(ctx, a.backend, id);
@@ -329,7 +353,7 @@ export const createTier = internalMutation({
 });
 
 /** Nullable-optional tier fields whose explicit `null` maps to Convex "absent". */
-const TIER_NULLABLE_KEYS = new Set(['description', 'peerGroup', 'peerTierId']);
+const TIER_NULLABLE_KEYS = new Set(['description', 'peerGroup', 'peerTierId', 'features']);
 
 /**
  * Build a tier patch `fields` object from provided args: skip undefined, map an
@@ -367,10 +391,12 @@ export const updateTier = internalMutation({
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     expirationDaysAfterMembershipLapse: v.optional(v.number()),
+    features: v.optional(v.union(v.array(v.any()), v.null())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { id, actorAdminId, ...patch }) => {
     checkTierBounds(patch);
+    normalizeTierFeatures(patch);
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('tier not found');
     if (patch.slug !== undefined && patch.slug !== existing.slug) {

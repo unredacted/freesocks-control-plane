@@ -27,6 +27,8 @@
   import RedeemCode from '../components/RedeemCode.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import TierComparison from '../components/TierComparison.svelte';
+  import MembershipSpotlight from '../components/MembershipSpotlight.svelte';
+  import MembershipNudge from '../components/MembershipNudge.svelte';
   import { tick } from 'svelte';
   import Link from '../components/Link.svelte';
   import { getLocale, t } from '../lib/i18n/index.svelte';
@@ -45,7 +47,7 @@
   import CountryQuestion from '../components/CountryQuestion.svelte';
   import { asksCountry, isAnswer, prefillAnswer } from '../lib/countryQuestion';
   import { sealingEnabled } from '../lib/hpke';
-  import { freeTier, deviceLimitsShown } from '../lib/tiers';
+  import { freeTier, deviceLimitsShown, membershipTier } from '../lib/tiers';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { subscriptionDisplayUrl } from '../lib/utils';
@@ -137,7 +139,10 @@
   let profileServerBacked = $derived(!!subscription && memberModes.some((m) => m.available));
   // Server-backed → the persisted mode is authoritative (local pref is just an
   // optimistic bridge); otherwise the local choice wins, then the suggestion, else default.
-  let effectiveModeId = $derived(
+  // The mode before the sign-up answer's suggestion: it decides whether the
+  // country question is asked (keying the region view off the final mode would
+  // let a suggestion hide the very question it came from).
+  let baseModeId = $derived(
     resolveEffectiveModeId({
       serverBacked: profileServerBacked,
       connectionModeId: account.data?.user.connectionModeId,
@@ -146,12 +151,6 @@
       fallback: defaultModeId,
       knownIds: connectionModes.map((m) => m.id),
     }),
-  );
-  let actionsDisabled = $derived(account.data?.user.status === 'disabled');
-  let rawConfigFirst = $derived(
-    (account.data?.user.currentMode && account.data.user.currentMode.id === effectiveModeId
-      ? account.data.user.currentMode.deliveryStyle
-      : connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle) === 'rawConfig',
   );
   // "Where are you connecting from?" before the first key (lib/countryQuestion.ts):
   // asked when the deployment asks, this build can seal, and the picked mode
@@ -163,7 +162,7 @@
   // Signed in only: the view is a member route (before the account exists it
   // would answer 401 and stay errored).
   const signupRegion = signupRegionQuery(
-    () => effectiveModeId ?? null,
+    () => baseModeId ?? null,
     () => isAuthed && canSeal && config.data?.countryQuestion === true && !subscription,
   );
   // Until the view answers, whether to ask is unknown: the key waits. A view
@@ -197,6 +196,34 @@
   $effect(() => {
     if (countryAnswer) countryInvalid = false;
   });
+  // What the sign-up answer suggests (mode + locations Automatic tries first),
+  // from the sealed region view: a pick re-runs it on the page, the country
+  // never leaves except sealed with the first key.
+  let answerSuggestion = $derived(
+    !subscription && askCountryNow && countryAnswer
+      ? (signupRegion.data?.suggestions[countryAnswer] ?? null)
+      : null,
+  );
+  let suggestedModeId = $derived(answerSuggestion?.modeId ?? account.data?.suggestedModeId ?? null);
+  let effectiveModeId = $derived(
+    resolveEffectiveModeId({
+      serverBacked: profileServerBacked,
+      connectionModeId: account.data?.user.connectionModeId,
+      pref: connectionModePref(),
+      suggested: suggestedModeId,
+      fallback: defaultModeId,
+      knownIds: connectionModes.map((m) => m.id),
+    }),
+  );
+  // Exit locations place only freedom-family keys: a pick of another family
+  // drops the location recommendation.
+  let effectiveFamily = $derived(connectionModes.find((m) => m.id === effectiveModeId)?.family);
+  let actionsDisabled = $derived(account.data?.user.status === 'disabled');
+  let rawConfigFirst = $derived(
+    (account.data?.user.currentMode && account.data.user.currentMode.id === effectiveModeId
+      ? account.data.user.currentMode.deliveryStyle
+      : connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle) === 'rawConfig',
+  );
   // The key's own answer once it exists (the suggestion below defers to it).
   const keyRegion = connectionRegionQuery(() => canSeal && !!subscription);
 
@@ -217,6 +244,7 @@
   // The membership purchase form stays hidden until the comparison's Upgrade
   // CTA asks for it, so the checkout UI can never read as a required step.
   let showPurchase = $state(false);
+  let billingEnabled = $derived(config.data?.billing?.enabled ?? false);
   async function revealPurchase() {
     showPurchase = true;
     await tick();
@@ -607,11 +635,13 @@
          work; once it closes, the (skippable) passkey offer completes the
          "secure your account" step. -->
     {#if showPasskeyPrompt && !revealOpen && passkeySupported}
-      <div class="max-w-xl space-y-2">
-        <PasskeyManager showList={false} onEnrolled={() => (showPasskeyPrompt = false)} />
+      <!-- One centered column: the offer and "Not now" share a width. -->
+      <div class="mx-auto w-full max-w-md space-y-3">
+        <PasskeyManager showList={false} centered onEnrolled={() => (showPasskeyPrompt = false)} />
         <Button
           variant="outline"
-          class="flex w-full max-w-xs"
+          size="lg"
+          class="w-full"
           onclick={() => (showPasskeyPrompt = false)}
         >
           {t('passkey.notNow')}
@@ -647,6 +677,21 @@
           {/if}
         </div>
 
+        <!-- Where they connect from comes first: the answer re-runs the mode
+             and location suggestion below it (Admin → Connection modes →
+             Country preferences). -->
+        {#if askCountryNow}
+          <CountryQuestion
+            id="get-account-country"
+            options={countryOptions}
+            bind:value={countryAnswer}
+            help={t('region.signupHelp')}
+            prefilled={!!countryPrefill && countryAnswer === countryPrefill}
+            invalid={countryInvalid}
+            disabled={createSubscription.isPending}
+          />
+        {/if}
+
         <!-- Delivery focus - flat (the step panel is the surface). Before the
            first key it's a local pref that shapes issuance; once a key exists
            it re-issues via the confirm modal, exactly like /account. -->
@@ -655,7 +700,7 @@
           families={connectionModeFamilies}
           currentMode={account.data?.user.currentMode ?? null}
           selected={effectiveModeId}
-          suggested={account.data?.suggestedModeId ?? null}
+          suggested={suggestedModeId}
           serverBacked={profileServerBacked}
           deviceCount={0}
           disabled={actionsDisabled}
@@ -669,18 +714,7 @@
             bind:value={pickedLocation}
             disabled={createSubscription.isPending}
             id="get-account-location"
-          />
-        {/if}
-
-        {#if askCountryNow}
-          <CountryQuestion
-            id="get-account-country"
-            options={countryOptions}
-            bind:value={countryAnswer}
-            help={t('region.signupHelp')}
-            prefilled={!!countryPrefill && countryAnswer === countryPrefill}
-            invalid={countryInvalid}
-            disabled={createSubscription.isPending}
+            recommended={effectiveFamily === 'freedom' ? (answerSuggestion?.locations ?? []) : []}
           />
         {/if}
 
@@ -724,24 +758,29 @@
              successful redeem flips isCurrentMember and hides this whole
              section. Paid checkout returns to /account?order=…, which also
              offers first-key create. -->
-        <div class="panel space-y-5">
-          <TierComparison
-            currentTierSlug={account.data?.user.tier.slug ?? 'free'}
-            titleKey="get.plansTitle"
-            subtitleKey="get.plansSubtitle"
-            onUpgrade={revealPurchase}
-          />
-
+        {#if billingEnabled && membershipTier(config.data)}
+          <!-- Billing on: the membership block, its payment form opening below
+               it in place, the gift-code redeem inside it. -->
+          <MembershipSpotlight onUpgrade={revealPurchase}>
+            <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
+          </MembershipSpotlight>
           {#if showPurchase}
-            <div id="get-upgrade" class="scroll-mt-24">
+            <div id="get-upgrade" class="panel scroll-mt-24">
               <UpgradeMembership mode="upgrade" currentTierSlug={account.data?.user.tier.slug} />
             </div>
           {/if}
-
-          <div class="border-t border-border/70 pt-4">
-            <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
+        {:else}
+          <div class="panel space-y-5">
+            <TierComparison
+              currentTierSlug={account.data?.user.tier.slug ?? 'free'}
+              titleKey="get.plansTitle"
+              subtitleKey="get.plansSubtitle"
+            />
+            <div class="border-t border-border/70 pt-4">
+              <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
+            </div>
           </div>
-        </div>
+        {/if}
       {/if}
     </div>
   {:else}
@@ -823,6 +862,9 @@
           modeId={effectiveModeId}
         />
         <RawConfig />
+      {/if}
+      {#if !isCurrentMember}
+        <MembershipNudge />
       {/if}
       <p class="text-sm text-muted-foreground">
         {t('get.manageHintPrefix')}

@@ -379,7 +379,9 @@
     "pickerLabel": "Server location",
     "auto": "Automatic (least busy)",
     "offline": "offline",
-    "pickerHint": "Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network."
+    "pickerHint": "Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network.",
+    "recommended": "Recommended for you",
+    "pickerHintRecommended": "Automatic tries the locations recommended for your country first. Pick one yourself if another works better on your network."
   },
   "usage": {
     "show": "Show usage trend",
@@ -456,15 +458,39 @@
     "redeemBody": "Redeem it now to upgrade your new account instantly.",
     "createFreeSub": "Get my free key",
     "plansTitle": "What each plan includes",
-    "plansSubtitle": "The free plan is yours already, and your key works either way. Membership is an optional upgrade that supports the network."
+    "plansSubtitle": "The free plan is yours already, and your key works either way. Membership is an optional upgrade that supports the network.",
+    "spotlight": {
+      "titleUnlimited": "No cap. Faster. More places to connect from.",
+      "title": "Faster, with more places to connect from.",
+      "bodyUnlimited": "No monthly cap, faster servers and more locations to choose from. Your payment also helps keep free accounts running.",
+      "body": "Faster servers and more locations to choose from. Your payment also helps keep free accounts running.",
+      "priceNote": "a month, paid ahead for the months you choose",
+      "unlimited": "Unlimited bandwidth",
+      "freeCompare": "Free accounts get {gb} GB a month",
+      "cta": "Get a membership",
+      "ctaNote": "The payment options open right here."
+    },
+    "nudge": {
+      "titleCapped": "Your free key has {gb} GB a month.",
+      "title": "Want more from FreeSocks?",
+      "bodyUnlimited": "A membership is unlimited, faster, and lets you pick other locations.",
+      "body": "A membership is faster and lets you pick other locations.",
+      "cta": "See membership"
+    }
   },
   "tiers": {
     "title": "Tiers",
     "subtitle": "What each tier includes.",
     "yourTier": "Your plan",
     "gbPerMonth": "{gb} GB / month",
-    "mirrors": "Mirror URLs",
-    "upgradeCta": "Upgrade"
+    "upgradeCta": "Upgrade",
+    "recommended": "Recommended",
+    "feature": {
+      "fasterSpeeds": "Faster speeds",
+      "alternateLocations": "Alternate locations",
+      "mirrors": "Mirror links if the main one is blocked",
+      "supportsFree": "Helps keep free accounts running"
+    }
   },
   "impact": {
     "title": "Donations support Unredacted",
@@ -884,7 +910,6 @@
       "about": "About"
     },
     "impact": {
-      "title": "Donations at work",
       "cta": "Make a donation",
       "allowanceTitle": "What every free account gets this month",
       "allowanceDonations": "Added by donations",
@@ -960,6 +985,20 @@
     },
     "donate": {
       "title": "Donations buy bandwidth for free users"
+    },
+    "support": {
+      "heroLine": "Free accounts are paid for by donations and memberships.",
+      "heroLink": "Help keep it free",
+      "title": "Free accounts run on your support",
+      "addMore": "Your donation adds more for everyone.",
+      "donateTitle": "Donate",
+      "donateBody": "Every donation goes into a shared pool that raises this month's allowance for every free account. Give once, anonymously if you like.",
+      "donateCta": "Donate now",
+      "donateLink": "See where it goes",
+      "memberTitle": "Become a member",
+      "memberBodyUnlimited": "No monthly cap, faster servers and more locations to choose from. Your payment also helps keep free accounts running.",
+      "memberBody": "Faster servers and more locations to choose from. Your payment also helps keep free accounts running.",
+      "perMonth": "a month"
     }
   },
   "hpke": {

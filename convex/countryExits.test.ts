@@ -270,3 +270,97 @@ describe('rollback', () => {
     });
   });
 });
+
+describe('the first key at sign-up', () => {
+  /** The world without a key: the member is about to get their first one. */
+  async function noKey(o: Parameters<typeof world>[0] = {}) {
+    const w = await world(o);
+    await w.t.run(async (ctx) => {
+      await ctx.db.delete(w.subId);
+      await ctx.db.patch(w.userId, { currentSubscriptionId: undefined });
+    });
+    return w;
+  }
+  const forFirstKey = (w: World, choiceHint: string) =>
+    w.t.query(internal.countryExits.forIssue, {
+      userId: w.userId,
+      backend: 'remnawave',
+      modeId: 'freedom-ws',
+      choiceHint,
+    });
+
+  test('with no key, the sign-up country (a listed one) picks the exit locations', async () => {
+    const w = await noKey();
+    expect(await forFirstKey(w, 'IR')).toEqual(['loc-gone', 'loc-b']);
+    expect(await forFirstKey(w, 'ir')).toEqual(['loc-gone', 'loc-b']);
+    // Not on the list, or the opt-out: today's choice.
+    expect(await forFirstKey(w, 'DE')).toEqual([]);
+    expect(await forFirstKey(w, 'ZZ')).toEqual([]);
+  });
+
+  test("a key's own choice wins over the hint", async () => {
+    const w = await world({ sub: { sniRegion: 'ZZ' } });
+    expect(await forFirstKey(w, 'IR')).toEqual([]);
+  });
+
+  test("the first key lands at the exit of the request's country; an answer wins over it", async () => {
+    const w = await noKey();
+    await w.t.action(internal.account.regenerate, { userId: w.userId, geoCountry: 'IR' });
+    expect((await activeSub(w)).backendPlacement).toBe(SQUAD_B);
+
+    const opted = await noKey();
+    await opted.t.action(internal.account.regenerate, {
+      userId: opted.userId,
+      region: 'ZZ',
+      geoCountry: 'IR',
+    });
+    expect((await activeSub(opted)).backendPlacement).toBe(SQUAD_A);
+  });
+});
+
+describe('suggestions for the sign-up question', () => {
+  test("each answer gets the country's preferred mode and its locations", async () => {
+    const w = await world();
+    await w.t.run((ctx) =>
+      upsertSettingRow(
+        ctx,
+        'delivery.country.modes',
+        JSON.stringify([{ country: 'IR', modes: ['no-such-mode', 'privacy-reality'] }]),
+      ),
+    );
+    const s = await w.t.query(internal.censoredCountries.suggestionsForCountries, {
+      userId: w.userId,
+      countries: ['IR', 'RU', 'ZZ'],
+    });
+    // A privacy-family suggestion: exit locations never place those keys.
+    expect(s.IR).toEqual({ modeId: 'privacy-reality', locations: [] });
+    expect(s.RU!.locations).toEqual([]);
+    expect(s.ZZ!.locations).toEqual([]);
+    expect(s.RU!.modeId).not.toBe('no-such-mode');
+  });
+
+  test("a freedom-family suggestion carries the country's exit locations", async () => {
+    const w = await world();
+    await w.t.run((ctx) =>
+      upsertSettingRow(
+        ctx,
+        'delivery.country.modes',
+        JSON.stringify([{ country: 'IR', modes: ['freedom-ws'] }]),
+      ),
+    );
+    const s = await w.t.query(internal.censoredCountries.suggestionsForCountries, {
+      userId: w.userId,
+      countries: ['IR'],
+    });
+    expect(s.IR).toEqual({ modeId: 'freedom-ws', locations: ['loc-gone', 'loc-b'] });
+  });
+
+  test('locations stay empty with ordering by country off', async () => {
+    const w = await world({ steer: false });
+    const s = await w.t.query(internal.censoredCountries.suggestionsForCountries, {
+      userId: w.userId,
+      countries: ['IR'],
+    });
+    expect(s.IR!.locations).toEqual([]);
+  });
+});

@@ -30,13 +30,17 @@
     value: string;
     disabled?: boolean;
     id?: string;
+    /** Location codes recommended for the member's country (sign-up), in order. */
+    recommended?: readonly string[];
   }
   let {
     locations,
     value = $bindable(),
     disabled = false,
     id = 'location-picker',
+    recommended = [],
   }: Props = $props();
+  let hasRecommended = $derived(recommended.some((code) => locations.some((l) => l.code === code)));
 </script>
 
 <div class="space-y-1.5">
@@ -56,10 +60,13 @@
     <option value="auto">{t('location.auto')}</option>
     {#each locations as loc (loc.code)}
       {@const load = loadText(loc.load)}
+      {@const rec = recommended.includes(loc.code) ? ` · ${t('location.recommended')}` : ''}
       <option value={loc.code}>
-        {loc.label}{load ? ` · ${load}` : ''}{loc.online ? '' : ` (${t('location.offline')})`}
+        {loc.label}{rec}{load ? ` · ${load}` : ''}{loc.online ? '' : ` (${t('location.offline')})`}
       </option>
     {/each}
   </select>
-  <p class="text-xs text-muted-foreground">{t('location.pickerHint')}</p>
+  <p class="text-xs text-muted-foreground">
+    {hasRecommended ? t('location.pickerHintRecommended') : t('location.pickerHint')}
+  </p>
 </div>

@@ -637,6 +637,17 @@ export default defineSchema({
     isActive: v.boolean(),
     priority: v.number(),
     expirationDaysAfterMembershipLapse: v.number(),
+    // Plan-card feature lines (src/shared/contracts/tierFeatures.ts), in
+    // order. Absent = the built-in defaults for the tier's kind; [] = none.
+    features: v.optional(
+      v.array(
+        v.object({
+          preset: v.union(v.string(), v.null()),
+          iconId: v.string(),
+          label: v.union(v.string(), v.null()),
+        }),
+      ),
+    ),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug']) // uniqueness enforced in mutations

@@ -6,6 +6,7 @@
  * settings is exposed (never mode group/backend secrets). A plain query so it can be
  * served reactively or via the GET /api/v1/config HTTP route.
  */
+import { resolveTierFeatures, type TierFeature } from '../src/shared/contracts/tierFeatures';
 import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
 import {
@@ -76,6 +77,8 @@ export const get = query({
         description: t.description ?? null,
         monthlyTrafficGb: t.monthlyTrafficGb,
         deviceLimit: t.deviceLimit,
+        // Plan-card lines (Admin → Tiers); the defaults while none are set.
+        features: resolveTierFeatures(t.features as TierFeature[] | undefined, t.isDefaultFree),
       }));
 
     const labels = settings['subscription.backend_labels'] as {

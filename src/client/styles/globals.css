@@ -218,3 +218,40 @@
     min-height: 2.75rem;
   }
 }
+
+/* Membership highlight: a 2px brand-green border with a brighter streak that
+   travels around it. Two backgrounds on one box: the fill clipped to the
+   padding box, a conic gradient behind it showing only through the
+   transparent border. The angle is a registered custom property so it can be
+   animated; an engine without @property shows the gradient still. Set
+   `--shimmer-fill` when the box is not on the card color. Under reduced motion
+   the global clamp above stops it on one frame (a still green border). */
+@property --shimmer-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes shimmer-border-spin {
+  to {
+    --shimmer-angle: 360deg;
+  }
+}
+.shimmer-border {
+  --shimmer-fill: var(--card);
+  --shimmer-base: color-mix(in oklab, var(--primary) 55%, transparent);
+  --shimmer-glow: color-mix(in oklab, var(--primary) 35%, white);
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--shimmer-fill), var(--shimmer-fill)) padding-box,
+    conic-gradient(
+        from var(--shimmer-angle),
+        var(--shimmer-base) 0deg,
+        var(--shimmer-base) 220deg,
+        var(--primary) 270deg,
+        var(--shimmer-glow) 315deg,
+        var(--primary) 345deg,
+        var(--shimmer-base) 360deg
+      )
+      border-box;
+  animation: shimmer-border-spin 3.5s linear infinite;
+}

@@ -1005,6 +1005,19 @@
            and where (the location globe) on the right. Below lg, one column with
            the mode and region first, since the mode shapes what the pass shows. -->
       <Tabs.Content value="connection">
+        {#if membershipState === 'no-membership'}
+          <!-- A collapsed upgrade bar above the key (renders only while billing
+               is on); expanding it opens the payment form in place. -->
+          <div class="mb-7">
+            <UpgradeMembership
+              mode="upgrade"
+              collapsible
+              shimmer
+              sectionId="upgrade-bar"
+              currentTierSlug={data.user.tier.slug}
+            />
+          </div>
+        {/if}
         <section>
           {#if data.subscription}
             {@const subUrl = subscriptionDisplayUrl(
@@ -1391,13 +1404,19 @@
               </p>
             </div>
 
-            <UpgradeMembership mode="extend" collapsible currentTierSlug={data.user.tier.slug} />
+            <UpgradeMembership
+              mode="extend"
+              collapsible
+              shimmer
+              currentTierSlug={data.user.tier.slug}
+            />
           {:else}
             <!-- Self-service purchase panel (self-gates on billing being enabled).
              'upgrade' for free users, 'extend' for expiring/expired members. The
              panel carries the compact current-vs-membership limits comparison. -->
             <UpgradeMembership
               mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'}
+              shimmer
               currentTierSlug={data.user.tier.slug}
             />
 

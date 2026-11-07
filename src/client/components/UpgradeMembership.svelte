@@ -28,6 +28,8 @@
   import Sparkles from '@lucide/svelte/icons/sparkles';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import DonationAmountPicker from './DonationAmountPicker.svelte';
+  import { resolveTierFeatureIcon } from '../lib/tierFeatureIcons';
+  import { tierFeatureText } from '../lib/tierFeatureCopy';
 
   interface Props {
     /** 'upgrade' for free users, 'extend' for expiring/expired members (heading copy). */
@@ -41,8 +43,19 @@
      *  "current → membership" limits comparison at the top of the form, replacing
      *  the old standalone tier-comparison cards. */
     currentTierSlug?: string;
+    /** A shimmering green border (the account page's membership surfaces). */
+    shimmer?: boolean;
+    /** The section's id (default `upgrade`); a second copy on a page needs its own. */
+    sectionId?: string;
   }
-  let { mode = 'upgrade', collapsible = false, currentTierSlug }: Props = $props();
+  let {
+    mode = 'upgrade',
+    collapsible = false,
+    currentTierSlug,
+    shimmer = false,
+    sectionId = 'upgrade',
+  }: Props = $props();
+  let frame = $derived(shimmer ? 'shimmer-border' : 'border border-primary/30 bg-card');
 
   const config = configQuery();
   let billing = $derived(config.data?.billing);
@@ -81,6 +94,24 @@
   );
   let showComparison = $derived(
     mode === 'upgrade' && !!currentTier && !!memberTier && currentTier.slug !== memberTier.slug,
+  );
+  // The collapsed bar's one-line summary: the membership's bandwidth, then its
+  // first two plan-card lines (Admin → Tiers), e.g. "Unlimited bandwidth ·
+  // Faster speeds · Alternate locations". Falls back to the old fixed phrase.
+  let benefitsLine = $derived.by(() => {
+    if (!memberTier) {
+      return showDevices ? t('upgrade.benefitsShort') : t('upgrade.benefitsShortNoDevices');
+    }
+    const head =
+      memberTier.monthlyTrafficGb === 0
+        ? t('get.spotlight.unlimited')
+        : t('tiers.gbPerMonth', { gb: memberTier.monthlyTrafficGb });
+    return [head, ...memberFeatures.slice(0, 2).map((f) => f.text)].join(' · ');
+  });
+  let memberFeatures = $derived(
+    (memberTier?.features ?? [])
+      .map((f) => ({ iconId: f.iconId, text: tierFeatureText(f) }))
+      .filter((f) => f.text),
   );
   const bandwidthLabel = (gb: number): string =>
     gb === 0 ? t('hero.unlimited') : t('tiers.gbPerMonth', { gb });
@@ -214,6 +245,18 @@
           </span>
         </div>
       {/if}
+      {#if memberFeatures.length > 0}
+        <!-- The membership's plan-card lines (Admin → Tiers), at the moment of paying. -->
+        <ul class="space-y-1.5 px-3 py-2.5">
+          {#each memberFeatures as f, i (i)}
+            {@const Icon = resolveTierFeatureIcon(f.iconId)}
+            <li class="flex items-start gap-2">
+              <Icon class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span class="text-foreground">{f.text}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
 
@@ -332,10 +375,7 @@
   {#if collapsible}
     <!-- Condensed accordion: the trigger shows the price/month + a prompt to
          upgrade; expanding reveals the full payment form (roomy, full-width). -->
-    <section
-      id="upgrade"
-      class="relative overflow-hidden rounded-xl border border-primary/30 bg-card"
-    >
+    <section id={sectionId} class="relative overflow-hidden rounded-xl {frame}">
       <Collapsible.Root bind:open>
         <Collapsible.Trigger
           class="group flex w-full items-center gap-3 p-4 text-start transition hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-5"
@@ -354,7 +394,7 @@
                 >
                 ·
               {/if}
-              {showDevices ? t('upgrade.benefitsShort') : t('upgrade.benefitsShortNoDevices')}
+              {benefitsLine}
             </div>
           </div>
           <ChevronDown
@@ -373,8 +413,8 @@
     </section>
   {:else}
     <section
-      id="upgrade"
-      class="relative space-y-4 overflow-hidden rounded-xl border border-primary/30 bg-card p-4 sm:p-5"
+      id={sectionId}
+      class="relative space-y-4 overflow-hidden rounded-xl p-4 sm:p-5 {frame}"
     >
       <div>
         <h2 class="flex items-center gap-2 font-display text-base font-semibold">
