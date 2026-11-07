@@ -23,7 +23,7 @@ let client: QueryClient;
 let mounted: ReturnType<typeof mountWithQuery> | null = null;
 const props = $state<{
   subscriptionUrl: string;
-  linkListUrl?: string;
+  mirror?: { publicUrl: string; formats?: string[] } | null;
   modeId?: string;
   deviceLimited?: boolean;
 }>({
@@ -33,11 +33,17 @@ const props = $state<{
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(queryKeys.config, {
-    clients: [app('Hiddify', 'hiddify'), app('sing-box', 'sing-box'), app('Clash', 'clash')],
+    clients: [
+      app('Hiddify', 'hiddify', { format: 'links' }),
+      app('sing-box', 'sing-box', { format: 'singbox' }),
+      app('Clash', 'clash', { format: 'clash' }),
+      // Paste only: no import button, so its own mirror link is all it has.
+      app('FlClash', null, { format: 'clash' }),
+    ],
     backends: { list: [] },
   });
   props.subscriptionUrl = MAIN;
-  props.linkListUrl = undefined;
+  props.mirror = undefined;
   props.modeId = undefined;
   props.deviceLimited = undefined;
 });
@@ -47,14 +53,18 @@ afterEach(() => {
   client.clear();
 });
 
-/** Each app's "Open in" link and whether its card carries the main-link note. */
-const cards = (): Record<string, { href: string | undefined; note: boolean }> =>
+/**
+ * Each app's "Open in" link, the mirror link its card shows to copy (if any)
+ * and whether it says its mirror link is not ready yet.
+ */
+const cards = (): Record<string, { href: string | undefined; own: string | null; note: boolean }> =>
   Object.fromEntries(
     [...document.querySelectorAll('li')].map((li) => [
       li.querySelector('p')?.textContent?.trim() ?? '',
       {
         href: [...li.querySelectorAll('a')].find((a) => a.textContent?.includes('Open in'))?.href,
-        note: li.textContent?.includes("this app can't read a mirror link") ?? false,
+        own: li.querySelector('code')?.textContent?.trim() ?? null,
+        note: li.textContent?.includes('still being set up') ?? false,
       },
     ]),
   );
@@ -69,8 +79,27 @@ describe('which link each app imports', () => {
     expect(Object.values(c).some((x) => x.note)).toBe(false);
   });
 
-  test('a mirror picked: link-list apps import it, sing-box and Clash keep the main link', () => {
-    props.linkListUrl = MIRROR;
+  test('a mirror picked: every app imports it in its own format', () => {
+    props.mirror = { publicUrl: MIRROR, formats: ['links', 'clash', 'singbox'] };
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    const c = cards();
+    expect(c['Hiddify']!.href).toContain(MIRROR);
+    expect(c['Hiddify']!.href).not.toContain(`${MIRROR}.`);
+    // The pass shows the plain link: a link-list app needs no link of its own.
+    expect(c['Hiddify']!.own).toBeNull();
+    expect(c['sing-box']!.href).toContain(encodeURIComponent(`${MIRROR}.json`));
+    expect(c['sing-box']!.own).toBe(`${MIRROR}.json`);
+    expect(c['Clash']!.href).toContain(encodeURIComponent(`${MIRROR}.yaml`));
+    expect(c['Clash']!.own).toBe(`${MIRROR}.yaml`);
+    // An app with no import button gets the link to paste.
+    expect(c['FlClash']!.href).toBeUndefined();
+    expect(c['FlClash']!.own).toBe(`${MIRROR}.yaml`);
+    expect(Object.values(c).some((x) => x.note)).toBe(false);
+  });
+
+  test('a mirror from before formats: apps of another format keep the main link, and say why', () => {
+    props.mirror = { publicUrl: MIRROR, formats: ['links'] };
     mounted = mountWithQuery(client, ConnectClient, props);
     flushSync();
     const c = cards();
@@ -79,12 +108,14 @@ describe('which link each app imports', () => {
     for (const name of ['sing-box', 'Clash']) {
       expect(c[name]!.href).toContain(encodeURIComponent(MAIN));
       expect(c[name]!.href).not.toContain(encodeURIComponent(MIRROR));
+      expect(c[name]!.own).toBeNull();
       expect(c[name]!.note).toBe(true);
     }
+    expect(c['FlClash']!.note).toBe(true);
   });
 
   test('the main link picked: the same as no pick', () => {
-    props.linkListUrl = MAIN;
+    props.mirror = { publicUrl: MAIN, formats: ['links', 'clash', 'singbox'] };
     mounted = mountWithQuery(client, ConnectClient, props);
     flushSync();
     const c = cards();

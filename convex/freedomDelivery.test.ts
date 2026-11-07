@@ -345,6 +345,28 @@ describe('the delivery rule', () => {
     expect((await fetch({ pinNode: 'absent-node' })).pinnedNode).toBe(OTHER);
   });
 
+  test("a mirror's other formats prefer the node its link list landed on, when their body names it", async () => {
+    stubPanel(`${OTHER_LINE}\n${COVERED_LINE}`);
+    // A key whose plain pick is the other node.
+    const short = Array.from({ length: 50 }, (_, i) => `short-${i}`).find(
+      (k) => pickNode(k, [OTHER, NODE]) === OTHER,
+    )!;
+    const { t, serverId } = await seed({ keys: [{ token: 'tok_one', short }] });
+    const fetch = (extra: Record<string, unknown>) =>
+      t.action(internal.backends.fetchSubscriptionContent, {
+        backend: 'remnawave',
+        backendServerId: serverId,
+        backendShortId: short,
+        subscriptionUrl: `https://panel.example/sub/${short}`,
+        ...extra,
+      });
+    expect((await fetch({})).pinnedNode).toBe(OTHER);
+    // In the body: that node, whatever the plain pick says.
+    expect((await fetch({ preferNode: NODE })).pinnedNode).toBe(NODE);
+    // Not in the body (a format that cannot carry it): the plain pick.
+    expect((await fetch({ preferNode: 'absent-node' })).pinnedNode).toBe(OTHER);
+  });
+
   test('on: the raw backend URL of a freedom key is never shown', async () => {
     stubPanel(OTHER_LINE);
     const { t, subIds } = await seed();

@@ -1,3 +1,5 @@
+import { mirrorFormatPath, mirrorFormatsOf, type MirrorFormat } from '../../shared/mirrorFormats';
+
 /**
  * The onboarding mirror suggestion (/get-account step 3, MirrorSuggestion):
  * when it shows, and which link the member's app gets once there is a choice.
@@ -78,8 +80,15 @@ export function chosenLink(
  * for a second, unwanted mirror). The refetch then replaces it with the server's.
  */
 export function withMirror<
-  V extends { subscription: { mirrors: { provider: string; publicUrl: string }[] } | null },
->(view: V | undefined, mirror: { provider: string; publicUrl: string }): V | undefined {
+  V extends {
+    subscription: {
+      mirrors: { provider: string; publicUrl: string; formats: MirrorFormat[] }[];
+    } | null;
+  },
+>(
+  view: V | undefined,
+  mirror: { provider: string; publicUrl: string; formats: MirrorFormat[] },
+): V | undefined {
   if (!view?.subscription) return view;
   if (view.subscription.mirrors.some((m) => m.publicUrl === mirror.publicUrl)) return view;
   return {
@@ -98,4 +107,27 @@ export function withoutMirrors<
 >(view: V | undefined): V | undefined {
   if (!view?.subscription || view.subscription.mirrors.length === 0) return view;
   return { ...view, subscription: { ...view.subscription, mirrors: [] } };
+}
+
+/**
+ * One mirror's links, one per format it holds (src/shared/mirrorFormats.ts),
+ * with the catalog apps that read it: `apps: null` for the plain link list
+ * (most apps read it), the app names otherwise. A format no catalog app reads
+ * is left out: nobody would add it.
+ */
+export function mirrorFormatLinks(
+  mirror: { publicUrl: string; formats?: readonly string[] | null },
+  clients: readonly { name: string; format?: MirrorFormat }[],
+): { format: MirrorFormat; url: string; apps: string[] | null }[] {
+  const out: { format: MirrorFormat; url: string; apps: string[] | null }[] = [];
+  for (const format of mirrorFormatsOf(mirror)) {
+    const url = mirrorFormatPath(mirror.publicUrl, format);
+    if (format === 'links') {
+      out.push({ format, url, apps: null });
+      continue;
+    }
+    const apps = [...new Set(clients.filter((c) => c.format === format).map((c) => c.name))];
+    if (apps.length > 0) out.push({ format, url, apps });
+  }
+  return out;
 }

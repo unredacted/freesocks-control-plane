@@ -35,10 +35,35 @@ import {
   type WithheldNote,
 } from './lib/subscriptionDelivery';
 import type { Id } from './_generated/dataModel';
+import type { BackendId } from './lib/backendIds';
+import { appNoticeBody, appNoticeFor, type AppNotice } from './lib/appNotice';
+import {
+  MIRROR_FETCH_UA,
+  mirrorFamily,
+  mirrorFormatsFor,
+  mirrorSetHash,
+  type MirrorFormat,
+} from './lib/mirrorFormats';
+import { mirrorFormatPath, mirrorObjectPaths } from '../src/shared/mirrorFormats';
 
 /** The body a mirror holds when its place is edge-required and nothing can render. */
 export const MIRROR_UNAVAILABLE_STUB =
   '# FreeSocks: this mirror is temporarily unavailable. Refresh later.\n';
+
+/** The words a stub's inert entries carry (no comma: a Clash rule splits on it). */
+const MIRROR_STUB_LINES = ['⚠ This mirror is unavailable', 'Refresh it later in your app'];
+
+/**
+ * The unavailable stub in a mirror object's own format: the plain-text line for
+ * the link list (as every mirror held before formats), and for the Clash and
+ * sing-box objects a config that loads but connects nowhere (the app notice's
+ * inert entries at loopback, every route to them: it fails closed), so the
+ * app neither rejects the object nor sends anything outside the tunnel.
+ */
+export function mirrorStub(format: MirrorFormat): string {
+  if (format === 'links') return MIRROR_UNAVAILABLE_STUB;
+  return appNoticeBody({ family: format, why: 'mode' }, MIRROR_STUB_LINES, '', '');
+}
 
 export interface MirrorValidation {
   policyVersion: number;
@@ -66,17 +91,24 @@ async function mirrorToken(
   ctx: ActionCtx,
   subscriptionId: Id<'subscriptions'>,
   backendServerId: Id<'backendServers'> | null | undefined,
-  node: string | undefined,
+  /** The node each format's body resolved to (they can differ: sing-box has no XHTTP). */
+  nodes: readonly (string | undefined)[],
   read?: { deliveryRev: number; countryRev: number },
 ): Promise<string> {
-  const [place, revs, lane] = await Promise.all([
+  const distinct = [...new Set(nodes)];
+  const [places, revs, lane] = await Promise.all([
     backendServerId
-      ? ctx.runQuery(internal.edgeRender.epochFor, { backendServerId, nodeName: node })
-      : Promise.resolve(null),
+      ? Promise.all(
+          distinct.map((node) =>
+            ctx.runQuery(internal.edgeRender.epochFor, { backendServerId, nodeName: node }),
+          ),
+        )
+      : Promise.resolve([null]),
     read ?? ctx.runQuery(internal.subscriptions.mirrorRevsOf, { subscriptionId }),
     ctx.runQuery(internal.edgeLanes.laneOf, { subscriptionId }),
   ]);
-  return `r${revs?.deliveryRev ?? '-'}|c${revs?.countryRev ?? '-'}|${place ?? ''}|l${lane ?? '-'}`;
+  const place = places.map((p) => p ?? '').join('+');
+  return `r${revs?.deliveryRev ?? '-'}|c${revs?.countryRev ?? '-'}|${place}|l${lane ?? '-'}`;
 }
 
 /**
@@ -94,16 +126,18 @@ async function renderMirrorBody(
   sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
   node: string | undefined,
   content: string,
+  format: MirrorFormat = 'links',
 ): Promise<MirrorRender> {
-  const out = await renderMirrorEndpoints(ctx, sub, node, content);
-  if (out.validated?.stub) return out;
-  // A mirror hands out only verified Hysteria entries too (lib/hysteriaGuard.ts);
-  // a body that cannot be repaired is the unavailable stub, never the raw one.
+  const out = await renderMirrorEndpoints(ctx, sub, node, content, format);
+  if (out.validated?.stub || out.notice) return out;
+  // A mirror hands out only verified Hysteria entries too (lib/hysteriaGuard.ts,
+  // which reads every format's body); a body that cannot be repaired is the
+  // unavailable stub of its format, never the raw one.
   const guarded = await guardBody(ctx, out.content, sub.backendServerId);
   // A refused body is a stub like a refused render: nothing was handed out.
   if (guarded.kind === 'refuse')
     return {
-      content: MIRROR_UNAVAILABLE_STUB,
+      content: mirrorStub(format),
       renderedEpoch: null,
       validated: {
         policyVersion: out.validated?.policyVersion ?? 0,
@@ -132,6 +166,8 @@ interface MirrorRender {
   validated: MirrorValidation | null;
   withheld?: WithheldNote;
   handed?: { subscriptionId: Id<'subscriptions'>; edgeIds: Id<'edges'>[] };
+  /** The body is the app notice (finished as it is, like the main link's). */
+  notice?: true;
 }
 
 /**
@@ -142,11 +178,141 @@ interface MirrorRender {
  * a body that was not uploaded or that a moved policy overtook: an account is
  * never held to an address its mirror did not serve.
  */
-async function noteMirrorAccepted(ctx: ActionCtx, rendered: MirrorRender): Promise<void> {
-  if (rendered.withheld)
-    await noteWithheldEntries(ctx, rendered.withheld.rctx, rendered.withheld.names, Date.now());
-  if (rendered.handed && rendered.handed.edgeIds.length > 0)
-    await ctx.runMutation(internal.edgeTrust.noteExposure, rendered.handed);
+async function noteMirrorAccepted(ctx: ActionCtx, set: MirrorSet): Promise<void> {
+  for (const rendered of set.renders) {
+    if (rendered.withheld)
+      await noteWithheldEntries(ctx, rendered.withheld.rctx, rendered.withheld.names, Date.now());
+    if (rendered.handed && rendered.handed.edgeIds.length > 0)
+      await ctx.runMutation(internal.edgeTrust.noteExposure, rendered.handed);
+  }
+}
+
+/** One object of a mirror: one format's body, as it is uploaded. */
+export interface MirrorObject {
+  format: MirrorFormat;
+  content: string;
+  contentType?: string;
+}
+
+/** A backend body as `backends.fetchSubscriptionContent` returns it. */
+interface FetchedBody {
+  content: string;
+  contentType?: string;
+  pinnedNode?: string;
+}
+
+/** What fetching a key's bodies needs (the refresh item and the provisioning context both carry it). */
+interface MirrorSource {
+  backend: BackendId;
+  backendServerId: Id<'backendServers'> | null;
+  backendShortId: string;
+  subscriptionUrl: string;
+  excludeNode: string | null;
+}
+
+/**
+ * The backend body of every format a key's mirror is kept in
+ * (`mirrorFormatsFor`), `links` first, each fetched as the main link fetches
+ * it for an app of that format: its User-Agent and the same node exclusion.
+ * The other formats are pinned to the `links` body's node whenever their body
+ * names it (`preferNode`), so the recorded pin describes every format; only a
+ * format that cannot carry that node at all resolves to another. Throws when
+ * any fetch fails: a mirror's objects are written together or not at all.
+ */
+async function fetchMirrorBodies(
+  ctx: ActionCtx,
+  src: MirrorSource,
+): Promise<{ format: MirrorFormat; fetched: FetchedBody }[]> {
+  const fetchOne = (format: MirrorFormat, preferNode?: string) =>
+    ctx.runAction(internal.backends.fetchSubscriptionContent, {
+      backend: src.backend,
+      backendServerId: src.backendServerId ?? undefined,
+      backendShortId: src.backendShortId,
+      subscriptionUrl: src.subscriptionUrl,
+      // The same exclusion the live /sub route applies. Node pinning is
+      // deterministic, so fetching without it regenerates the node the
+      // member just switched away from.
+      excludeNode: src.excludeNode ?? undefined,
+      ...(MIRROR_FETCH_UA[format] ? { userAgent: MIRROR_FETCH_UA[format] } : {}),
+      ...(preferNode ? { preferNode } : {}),
+    });
+  const [first, ...rest] = mirrorFormatsFor(src.backend);
+  const links = { format: first!, fetched: await fetchOne(first!) };
+  // The other formats serve the node the plain list landed on (the one the
+  // key's pin records, so a switch moves every format off it) wherever their
+  // body carries it.
+  const others = await Promise.all(
+    rest.map(async (format) => ({
+      format,
+      fetched: await fetchOne(format, links.fetched.pinnedNode ?? undefined),
+    })),
+  );
+  return [links, ...others];
+}
+
+/** Every format of a mirror, rendered. */
+interface MirrorSet {
+  formats: MirrorFormat[];
+  objects: MirrorObject[];
+  /** The ledger's one hash of the objects (`mirrorSetHash`). */
+  hash: string;
+  /** The `links` render: its epoch, validation and stub stand for the copy. */
+  primary: MirrorRender;
+  renders: MirrorRender[];
+}
+
+/**
+ * Render each format's body (`renderMirrorBody`, for that format's client
+ * family), one after another (a first render may mint the key's render key).
+ */
+async function renderMirrorSet(
+  ctx: ActionCtx,
+  sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
+  bodies: readonly { format: MirrorFormat; fetched: FetchedBody }[],
+): Promise<MirrorSet> {
+  const renders: MirrorRender[] = [];
+  const objects: MirrorObject[] = [];
+  const hashes: { format: MirrorFormat; hash: string }[] = [];
+  for (const { format, fetched } of bodies) {
+    const rendered = await renderMirrorBody(
+      ctx,
+      sub,
+      fetched.pinnedNode ?? undefined,
+      fetched.content,
+      format,
+    );
+    renders.push(rendered);
+    objects.push({ format, content: rendered.content, contentType: fetched.contentType });
+    hashes.push({ format, hash: await sha256Hex(rendered.content) });
+  }
+  return {
+    formats: bodies.map((b) => b.format),
+    objects,
+    hash: await mirrorSetHash(hashes),
+    primary: renders[0]!,
+    renders,
+  };
+}
+
+/**
+ * The app notice a mirror object of this format holds in place of a body with
+ * no entry because its app cannot speak what the place serves (sing-box on
+ * XHTTP, lib/appNotice.ts), as the main link answers that app. The words are
+ * the key's (`appNotices.words`); unlike the main link, no record that an app
+ * got it is written: nothing tells FCP that an app read the mirror.
+ */
+async function mirrorNotice(
+  ctx: ActionCtx,
+  subscriptionId: Id<'subscriptions'>,
+  notice: AppNotice,
+  replaced: string,
+): Promise<string> {
+  const said = await ctx.runQuery(internal.appNotices.words, {
+    subscriptionId,
+    family: notice.family,
+    why: notice.why,
+  });
+  return appNoticeBody(notice, said.lines, said.siteName, replaced);
 }
 
 /** The edge-render half of `renderMirrorBody`. */
@@ -155,11 +321,13 @@ async function renderMirrorEndpoints(
   sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
   node: string | undefined,
   content: string,
+  format: MirrorFormat,
 ): Promise<MirrorRender> {
   if (!sub.backendServerId) return { content, renderedEpoch: null, validated: null };
   const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
     subscriptionId: sub.id,
-    family: 'other',
+    // The family whose app reads this object (its per-client render rules).
+    family: mirrorFamily(format),
     nodeName: node,
   });
   if (decision.kind === 'raw') return { content, renderedEpoch: null, validated: null };
@@ -168,7 +336,7 @@ async function renderMirrorEndpoints(
     nodeName: node,
   });
   const stub = (epoch: number): MirrorRender => ({
-    content: MIRROR_UNAVAILABLE_STUB,
+    content: mirrorStub(format),
     renderedEpoch: null,
     validated: {
       policyVersion: policy.bindingVersion ?? 0,
@@ -194,7 +362,22 @@ async function renderMirrorEndpoints(
     edgeCountry: rctx.storedEdgeCountry,
     avoidBlockedIn: rctx.storedAvoidBlockedIn,
   });
-  if (out.delivery.kind !== 'serve') return stub(rctx.epoch);
+  if (out.delivery.kind !== 'serve') {
+    // No entry because this format cannot carry what the place serves: the
+    // app notice, as the main link answers that app (never for `links`).
+    const ua = MIRROR_FETCH_UA[format];
+    const notice =
+      ua && out.delivery.reason === 'no_entries'
+        ? appNoticeFor({ body: content, ua, listeners: rctx.matchers.map((m) => m.proto) })
+        : null;
+    if (!notice) return stub(rctx.epoch);
+    return {
+      content: await mirrorNotice(ctx, sub.id, notice, content),
+      renderedEpoch: rctx.epoch,
+      validated: null,
+      notice: true,
+    };
+  }
   const handed = [out.snapshot.primaryEdgeId, out.snapshot.backupEdgeId].filter(
     (x): x is string => !!x,
   ) as Id<'edges'>[];
@@ -231,6 +414,8 @@ export interface SubscriptionMirror {
   objectPath: string;
   status: 'ok';
   validated?: MirrorValidation;
+  /** The formats written beside `objectPath` (src/shared/mirrorFormats.ts). */
+  formats: MirrorFormat[];
 }
 
 function clientFor(p: S3Provider): S3Client {
@@ -285,35 +470,56 @@ const realSend: S3Send = async (p, op) => {
 };
 
 /**
- * Upload `content` to every given provider in parallel. Returns the successful
- * mirrors in the subscription-mirror shape. No providers → []. All uploads
- * failed → throws (so the saga knows mirroring is broken). The provider list +
- * send fn are injected so this is unit-testable without the Convex runtime.
+ * Upload a mirror's objects (one per format, at its format's path beside
+ * `objectPath`) to every given provider in parallel. A provider succeeds only
+ * when every object was written (and every format it no longer keeps, `drop`,
+ * deleted): a copy is never left with one format behind the others. Returns
+ * the successful mirrors in the subscription-mirror shape. No providers → [].
+ * All uploads failed → throws (so the saga knows mirroring is broken). The
+ * provider list + send fn are injected so this is unit-testable without the
+ * Convex runtime.
  */
 export async function uploadToProviders(
   providers: S3Provider[],
   {
     objectPath,
-    content,
-    contentType,
-  }: { objectPath: string; content: string; contentType?: string },
+    objects,
+    drop,
+  }: {
+    objectPath: string;
+    objects: readonly MirrorObject[];
+    /** Formats this provider's copy held that it no longer keeps (deleted with the upload). */
+    drop?: (provider: string) => readonly MirrorFormat[];
+  },
   send: S3Send = realSend,
 ): Promise<SubscriptionMirror[]> {
   if (providers.length === 0) return [];
   const results = await Promise.allSettled(
     providers.map(async (p): Promise<SubscriptionMirror> => {
-      await send(p, {
-        kind: 'put',
-        key: objectPath,
-        body: content,
-        contentType: contentType ?? 'text/plain',
-        cacheControl: MIRROR_CACHE_CONTROL,
-      });
+      // Every write settles before the provider is judged: a failed one must
+      // not leave a sibling still in flight behind the caller's bookkeeping.
+      const writes = await Promise.allSettled([
+        ...objects.map((o) =>
+          send(p, {
+            kind: 'put',
+            key: mirrorFormatPath(objectPath, o.format),
+            body: o.content,
+            contentType: o.contentType ?? 'text/plain',
+            cacheControl: MIRROR_CACHE_CONTROL,
+          }),
+        ),
+        ...(drop?.(p.name) ?? [])
+          .filter((f) => !objects.some((o) => o.format === f))
+          .map((f) => send(p, { kind: 'delete', key: mirrorFormatPath(objectPath, f) })),
+      ]);
+      const failed = writes.find((w) => w.status === 'rejected');
+      if (failed) throw (failed as PromiseRejectedResult).reason;
       return {
         provider: p.name,
         publicUrl: `${p.publicUrl.replace(/\/$/, '')}/${objectPath}`,
         objectPath,
         status: 'ok',
+        formats: objects.map((o) => o.format),
       };
     }),
   );
@@ -324,8 +530,12 @@ export async function uploadToProviders(
 
 /**
  * Best-effort delete of mirror objects across providers (injected list + send).
- * Never throws; returns the providers whose delete did not go through (an
- * unknown provider is nothing to delete), for a caller that must retry them.
+ * Each item is a mirror's object path: every format's object beside it goes
+ * (src/shared/mirrorFormats.ts `mirrorObjectPaths`; deleting one that was
+ * never written is a no-op), and the item counts as deleted only when all
+ * did. Never throws; returns the providers whose delete did not go through
+ * (an unknown provider is nothing to delete), for a caller that must retry
+ * them.
  */
 export async function deleteFromProviders(
   providers: S3Provider[],
@@ -336,7 +546,9 @@ export async function deleteFromProviders(
     items.map(async (it) => {
       const p = providers.find((x) => x.name === it.provider);
       if (!p) return;
-      await send(p, { kind: 'delete', key: it.objectPath });
+      await Promise.all(
+        mirrorObjectPaths(it.objectPath).map((key) => send(p, { kind: 'delete', key })),
+      );
     }),
   );
   return {
@@ -438,35 +650,48 @@ export function __setMirrorFetchForTests(f: MirrorFetch | null): void {
 const mirrorFetch: MirrorFetch = (url) => (fetchImpl ?? realFetch)(url);
 
 /**
- * Read one copy through the URL the member holds and compare it with what FCP
- * wrote: not found or forbidden is `missing` (the member gets nothing), a body
- * with another hash (or one past the size bound) is `mismatch`, anything else
- * (a timeout, a 5xx) is `unreachable` and decides nothing.
+ * Read one copy through the URLs the member holds (one per format the copy
+ * keeps, src/shared/mirrorFormats.ts) and compare what they serve with what
+ * FCP wrote (`mirrorSetHash` of the objects): any object not found or
+ * forbidden is `missing` (an app of that format gets nothing), bodies whose
+ * set hashes otherwise (or one past the size bound) are `mismatch`, anything
+ * else (a timeout, a 5xx) is `unreachable` and decides nothing.
  */
 export async function verifyCopy(
   fetchFn: MirrorFetch,
   url: string,
   objectHash: string | null,
+  formats: readonly MirrorFormat[] = ['links'],
 ): Promise<VerifyOutcome> {
-  try {
-    const res = await fetchFn(url);
-    if (res.status === 404 || res.status === 403) return { kind: 'missing' };
-    // Far larger than any mirror body: not the object FCP wrote.
-    if (res.oversize) return { kind: 'mismatch', observedHash: 'oversize' };
-    if (res.status !== 200 || res.body === null) return { kind: 'unreachable' };
-    const observed = await sha256Hex(res.body);
-    return observed === objectHash
-      ? { kind: 'match' }
-      : { kind: 'mismatch', observedHash: observed };
-  } catch {
+  // Each read settles on its own: one that times out must not hide another
+  // format's definite answer (a 404 is `missing` whatever its sibling did).
+  const reads = await Promise.all(
+    formats.map(async (format) => ({
+      format,
+      res: await fetchFn(mirrorFormatPath(url, format)).catch(() => null),
+    })),
+  );
+  if (reads.some((r) => r.res && (r.res.status === 404 || r.res.status === 403)))
+    return { kind: 'missing' };
+  // Far larger than any mirror body: not the object FCP wrote.
+  if (reads.some((r) => r.res?.oversize)) return { kind: 'mismatch', observedHash: 'oversize' };
+  // The set hash needs every body: a read that failed decides nothing.
+  if (reads.some((r) => !r.res || r.res.status !== 200 || r.res.body === null))
     return { kind: 'unreachable' };
-  }
+  const observed = await mirrorSetHash(
+    await Promise.all(
+      reads.map(async (r) => ({ format: r.format, hash: await sha256Hex(r.res!.body!) })),
+    ),
+  );
+  return observed === objectHash ? { kind: 'match' } : { kind: 'mismatch', observedHash: observed };
 }
 
 export interface ProvisionResult {
   status: 'ok' | 'capped' | 'exhausted' | 'no_subscription' | 'error';
   publicUrl?: string;
   provider?: string;
+  /** The formats the new mirror holds (src/shared/mirrorFormats.ts). */
+  formats?: MirrorFormat[];
   remaining: number;
 }
 
@@ -502,41 +727,36 @@ export const provisionMirror = internalAction({
     const provider = providers.find((p) => p.name === next.name);
     if (!provider) return { status: 'exhausted', remaining: Math.max(0, cap - used) };
 
-    let fetched: { content: string; contentType?: string; pinnedNode?: string };
+    // Every format's body (the same exclusion the live /sub route and the
+    // refresh apply: provisioning a FIRST mirror without it uploads the very
+    // node the member just switched away from).
+    let bodies: { format: MirrorFormat; fetched: FetchedBody }[];
     try {
-      fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
-        backend: context.backend,
-        backendServerId: context.backendServerId ?? undefined,
-        backendShortId: context.backendShortId,
-        subscriptionUrl: context.subscriptionUrl,
-        // The same exclusion the live /sub route and the refresh apply. Node
-        // pinning is deterministic, so provisioning a FIRST mirror without it
-        // uploads the very node the member just switched away from.
-        excludeNode: context.excludeNode ?? undefined,
-      });
+      bodies = await fetchMirrorBodies(ctx, context);
     } catch {
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
-    // The delivery token the body is rendered under: re-read after the upload
-    // (the mirror barrier below).
-    const tokenOf = () =>
-      mirrorToken(ctx, context.subscriptionId, context.backendServerId, fetched.pinnedNode);
+    const fetched = bodies[0]!.fetched;
+    const nodes = bodies.map((b) => b.fetched.pinnedNode);
+    // The delivery token the bodies are rendered under: re-read after the
+    // upload (the mirror barrier below).
+    const tokenOf = () => mirrorToken(ctx, context.subscriptionId, context.backendServerId, nodes);
     const tokenBefore = await mirrorToken(
       ctx,
       context.subscriptionId,
       context.backendServerId,
-      fetched.pinnedNode,
+      nodes,
       { deliveryRev: context.deliveryRev, countryRev: context.countryRev },
     );
     // The first upload is rendered like every later refresh: a mirror must
     // never hold the template entries (the origin / index-0 address) until the
     // sweep comes round.
-    const rendered = await renderMirrorBody(
+    const set = await renderMirrorSet(
       ctx,
       { id: context.subscriptionId, backendServerId: context.backendServerId },
-      fetched.pinnedNode,
-      fetched.content,
+      bodies,
     );
+    const rendered = set.primary;
     const contentAt = Date.now();
     // The key moved in place while its body was fetched (a mode or server
     // switch): the body is the placement it left, and a new mirror URL must
@@ -547,7 +767,7 @@ export const provisionMirror = internalAction({
       })) !== context.deliveryRev
     )
       return { status: 'error', remaining: Math.max(0, cap - used) };
-    const hash = await sha256Hex(rendered.content);
+    const hash = set.hash;
     // One capability token per sub, reused across providers (stable + unguessable).
     const objectPath = context.objectPath ?? `mirrors/${randomHex(16)}`;
 
@@ -565,19 +785,15 @@ export const provisionMirror = internalAction({
     try {
       const mirrors = await uploadToProviders(
         [provider],
-        {
-          objectPath,
-          content: rendered.content,
-          contentType: fetched.contentType,
-        },
+        { objectPath, objects: set.objects },
         s3Send,
       );
       entry = mirrors[0];
       if (entry && rendered.validated) entry = { ...entry, validated: rendered.validated };
     } catch {
-      // Nothing was written: nothing to repair (unless it replaced an open record of the object).
-      if (obligation.superseded === 0)
-        await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      // Some of the copy's objects may have been written before one failed:
+      // the obligation stays open, and with no row referencing the copy the
+      // repair pass withdraws whatever landed (every format's object).
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
     if (!entry) return { status: 'error', remaining: Math.max(0, cap - used) };
@@ -623,7 +839,7 @@ export const provisionMirror = internalAction({
     // ledger says the copy is stale until it does).
     if ((await tokenOf()) === tokenBefore) {
       await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
-      await noteMirrorAccepted(ctx, rendered);
+      await noteMirrorAccepted(ctx, set);
     } else {
       await ctx.runMutation(internal.mirrorCopies.recordCheck, {
         subscriptionId: context.subscriptionId,
@@ -638,6 +854,7 @@ export const provisionMirror = internalAction({
       status: 'ok',
       publicUrl: entry.publicUrl,
       provider: provider.name,
+      formats: entry.formats,
       remaining: Math.max(0, cap - used - 1),
     };
   },
@@ -816,19 +1033,13 @@ async function refreshOneSubMirrors(
       gone.map((provider) => ({ provider, outcome: { kind: 'provider_missing' } })),
     );
     if (targets.length === 0) return [];
-    let fetched: { content: string; contentType?: string; pinnedNode?: string };
+    // Every format's body. Same exclusion the live /sub route applies, or the
+    // deterministic pin regenerates the node the member switched AWAY from,
+    // and the unchanged hash below would then skip the re-upload, leaving the
+    // mirror pointed at it indefinitely.
+    let bodies: { format: MirrorFormat; fetched: FetchedBody }[];
     try {
-      fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
-        backend: sub.backend,
-        backendServerId: sub.backendServerId ?? undefined,
-        backendShortId: sub.backendShortId,
-        subscriptionUrl: sub.subscriptionUrl,
-        // Same exclusion the live /sub route applies, or the deterministic
-        // pin regenerates the node the member switched AWAY from — and the
-        // unchanged hash below would then skip the re-upload, leaving the
-        // mirror pointed at it indefinitely.
-        excludeNode: sub.excludeNode ?? undefined,
-      });
+      bodies = await fetchMirrorBodies(ctx, sub);
     } catch {
       await record(
         null,
@@ -847,6 +1058,10 @@ async function refreshOneSubMirrors(
     // every copy already holds this body, or every copy was rewritten.
     // Writing it before a failed upload would record a node the member is
     // not on, and their next switch would then exclude the wrong one.
+    // The `links` body's node is the one recorded (what the key's own link
+    // serves an app without a format of its own).
+    const fetched = bodies[0]!.fetched;
+    const nodes = bodies.map((b) => b.fetched.pinnedNode ?? undefined);
     const recordPin = async () => {
       if (!fetched.pinnedNode) return;
       await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
@@ -860,27 +1075,18 @@ async function refreshOneSubMirrors(
     // mode or server switch) means this body was rendered under an older
     // policy, and it never reaches the object; the next refresh renders under
     // the new one (docs/servers.md "Node lifecycle").
-    const tokenOf = () =>
-      mirrorToken(ctx, sub.id, sub.backendServerId, fetched.pinnedNode ?? undefined);
+    const tokenOf = () => mirrorToken(ctx, sub.id, sub.backendServerId, nodes);
     // Baseline at the revision read before the fetch: a switch that landed
     // while the body was fetched never reaches the object (it scheduled its
     // own refresh).
-    const tokenBefore = await mirrorToken(
-      ctx,
-      sub.id,
-      sub.backendServerId,
-      fetched.pinnedNode ?? undefined,
-      { deliveryRev: sub.deliveryRev, countryRev: sub.countryRev },
-    );
+    const tokenBefore = await mirrorToken(ctx, sub.id, sub.backendServerId, nodes, {
+      deliveryRev: sub.deliveryRev,
+      countryRev: sub.countryRev,
+    });
     // Origin rendering (docs/edges.md): a mirror serves the same rendered
-    // endpoints as the fronted route (link-list family: no User-Agent here).
-    const rendered = await renderMirrorBody(
-      ctx,
-      sub,
-      fetched.pinnedNode ?? undefined,
-      fetched.content,
-    );
-    const content = rendered.content;
+    // endpoints as the fronted route, each format for its own client family.
+    const rset = await renderMirrorSet(ctx, sub, bodies);
+    const rendered = rset.primary;
     const contentAt = Date.now();
     // The mirror now provably holds content generated at `contentAt` (and
     // rendered against the current epoch): stamp it exactly where the pin is
@@ -894,13 +1100,19 @@ async function refreshOneSubMirrors(
         deliveryRev: sub.deliveryRev,
       });
     if ((await tokenOf()) !== tokenBefore) return [];
-    const hash = await sha256Hex(content);
+    const hash = rset.hash;
     const served = {
       hash,
       epoch: rendered.renderedEpoch,
       stub: rendered.validated?.stub === true,
     };
     const heldOf = (name: string) => sub.copies.find((c) => c.provider === name)?.objectHash;
+    // Formats a copy held that the key no longer keeps (its backend changed
+    // in a re-issue): deleted with the copy's next upload.
+    const dropOf = (name: string): MirrorFormat[] => {
+      const held = sub.copies.find((c) => c.provider === name)?.formats ?? ['links'];
+      return held.filter((f) => !rset.formats.includes(f));
+    };
     const needing = targets.filter((t) => needsUpload(heldOf(t.name), hash, forced(t.name)));
     const holding = targets.filter((t) => !needing.includes(t));
     const confirmed = holding.map((t) => ({
@@ -912,7 +1124,7 @@ async function refreshOneSubMirrors(
       // and every copy is already correct, so record it.
       await recordPin();
       await stampContent();
-      await noteMirrorAccepted(ctx, rendered);
+      await noteMirrorAccepted(ctx, rset);
       if (sub.rawContentHash !== hash)
         await ctx.runMutation(internal.subscriptions.updateMirrors, {
           subscriptionId: sub.id,
@@ -939,18 +1151,13 @@ async function refreshOneSubMirrors(
     try {
       uploaded = await uploadToProviders(
         needing,
-        {
-          objectPath: sub.objectPath,
-          content,
-          contentType: fetched.contentType,
-        },
+        { objectPath: sub.objectPath, objects: rset.objects, drop: dropOf },
         s3Send,
       );
     } catch {
-      // Nothing was written by THIS upload: its obligation is settled, unless
-      // it replaced an open one of the object (which then still stands for it).
-      if (obligation.superseded === 0)
-        await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      // Every provider failed, but some of a copy's objects may have been
+      // written before another failed (a copy part new, part old): the
+      // obligation stays open, so the repair pass rewrites these copies whole.
       await record(served, [
         ...confirmed,
         ...needing.map((t) => ({
@@ -1024,7 +1231,7 @@ async function refreshOneSubMirrors(
       ]);
       return [...succeeded];
     }
-    await noteMirrorAccepted(ctx, rendered);
+    await noteMirrorAccepted(ctx, rset);
     if (allSucceeded)
       // Nothing moved and every copy was rewritten: the obligation is met (and
       // every earlier one of these copies with it).
@@ -1109,7 +1316,7 @@ async function readBack(
     providers,
   });
   for (const c of targets) {
-    const outcome = await verifyCopy(mirrorFetch, c.publicUrl, c.objectHash);
+    const outcome = await verifyCopy(mirrorFetch, c.publicUrl, c.objectHash, c.formats);
     await ctx.runMutation(internal.mirrorCopies.recordVerify, {
       id: c.id,
       objectHash: c.objectHash,
@@ -1347,7 +1554,7 @@ export const verifyMirrorCopies = internalAction({
       for (let i = 0; i < due.rows.length && Date.now() < deadline; i += VERIFY_CONCURRENCY) {
         const chunk = due.rows.slice(i, i + VERIFY_CONCURRENCY);
         const outcomes = await Promise.all(
-          chunk.map((c) => verifyCopy(mirrorFetch, c.publicUrl, c.objectHash)),
+          chunk.map((c) => verifyCopy(mirrorFetch, c.publicUrl, c.objectHash, c.formats)),
         );
         for (const [j, c] of chunk.entries()) {
           const outcome = outcomes[j]!;
@@ -1410,20 +1617,22 @@ async function seedPages(
   ctx: ActionCtx,
   cursor: string | null,
   deadline: number,
-): Promise<{ keys: number; done: boolean; cursor: string | null }> {
+): Promise<{ keys: number; behind: number; done: boolean; cursor: string | null }> {
   let keys = 0;
+  let behind = 0;
   for (;;) {
     const res: MirrorPage = await ctx.runMutation(internal.mirrorCopies.seedPage, {
       cursor,
       numItems: SEED_PAGE,
     });
     keys += res.items.length;
+    behind += res.behind ?? 0;
     if (res.isDone) {
       await ctx.runMutation(internal.mirrorCopies.markSeeded, {});
-      return { keys, done: true, cursor: null };
+      return { keys, behind, done: true, cursor: null };
     }
     cursor = res.continueCursor;
-    if (Date.now() >= deadline) return { keys, done: false, cursor };
+    if (Date.now() >= deadline) return { keys, behind, done: false, cursor };
   }
 }
 
@@ -1432,15 +1641,34 @@ async function seedPages(
  * every mirror, so the passes (which page the ledger) reach them all. Runs on
  * every deploy, even when the ledger says it was seeded (a rollback to code
  * without the ledger can have added mirrors since); past its time budget it
- * continues in a new run from its cursor.
+ * continues in a new run from its cursor. When it reached the last key and
+ * any copy is not written in every format its key keeps (mirrors from before
+ * formats, the first deploy with them), it starts a pass, so those copies gain
+ * their objects now rather than at the next six-hourly sweep.
  */
 export const seedMirrorLedger = internalAction({
-  args: { cursor: v.optional(v.union(v.string(), v.null())) },
-  handler: async (ctx, { cursor }): Promise<{ keys: number; done: boolean }> => {
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    /** Copies behind on formats found by the earlier runs of this seed. */
+    behind: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    { cursor, behind: before },
+  ): Promise<{ keys: number; behind: number; done: boolean }> => {
     const res = await seedPages(ctx, cursor ?? null, Date.now() + PASS_RUN_BUDGET_MS);
+    const behind = (before ?? 0) + res.behind;
     if (!res.done)
-      await ctx.scheduler.runAfter(0, internal.storage.seedMirrorLedger, { cursor: res.cursor });
-    return { keys: res.keys, done: res.done };
+      await ctx.scheduler.runAfter(0, internal.storage.seedMirrorLedger, {
+        cursor: res.cursor,
+        behind,
+      });
+    else if (behind > 0)
+      await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, {
+        cursor: null,
+        pass: 'start',
+      });
+    return { keys: res.keys, behind, done: res.done };
   },
 });
 

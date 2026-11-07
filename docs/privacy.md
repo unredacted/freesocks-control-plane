@@ -69,8 +69,10 @@ accidentally regress it).
     the key before the mirror is rendered). Both take a listed country or the opt-out, count a
     new country against `account.country.day` like the account card, and give the count back
     when nothing is stored. Neither is a second copy: no field on the account, nothing pending.
-  - **What a mirror object says about it.** One object per key at a random path, never one per
-    country, with no country in its path or metadata, and the body never names the country
+  - **What a mirror object says about it.** One random path per key, with one object per
+    format beside it (the plain path, `.yaml` and `.json`: the suffix names the format only,
+    `docs/mirrors.md` "Formats"), never one per country, with no country or member hint in a
+    path or the metadata, and the body never names the country
     (pinned in `convex/edgeRender.test.ts`). It can still be inferred by whoever holds the URL,
     from the names proven there and the addresses only for that country. The URL is a
     capability as strong as the subscription token (it already hands out the member's key), and
@@ -442,8 +444,9 @@ Freedom XHTTP`, `profile-title`, `docs/backends.md`).
   backend (a test pins it). The sing-box template's local cache is `cache.db` (sing-box's own
   default file name) with store id `default`; before, both were named after the backend
   product. Apps never show these, but anyone holding the subscription URL can fetch the
-  sing-box body and read them (the sealed configuration copy and the S3 mirrors carry the
-  link list, not a template). A changed template reaches each backend on the next bootstrap
+  sing-box body and read them (the sealed configuration copy carries the link list, not a
+  template; a mirror's `.json` and `.yaml` objects are the sing-box and Clash bodies, as the main
+  link serves them, so whoever holds a mirror URL can read them there too). A changed template reaches each backend on the next bootstrap
   sweep, and one changed on the backend is put back within the hour (`docs/servers.md` §
   "Templates after setup"). The new store starts empty, so a sing-box member's app forgets
   once which connection they picked by hand and its remembered fake-IP mappings; the old

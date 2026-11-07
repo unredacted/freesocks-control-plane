@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { BackendId } from './backends';
 import { PublicConnectionMode, PublicConnectionModeFamily } from './connectionModes';
+import { MIRROR_FORMATS } from '../mirrorFormats';
 
 /**
  * CMS-sourced URL fields that flow to href: https-only or '' (unset). The
@@ -391,6 +392,8 @@ export const PublicConfig = z.object({
         /** Admin-set blurb (verbatim in every locale); absent = the SPA's
          *  built-in translated copy for known default apps. */
         description: z.string().optional(),
+        /** The subscription format the app reads: which mirror object it imports. */
+        format: z.enum(MIRROR_FORMATS).optional().default('links'),
       }),
     )
     .optional()

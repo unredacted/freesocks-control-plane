@@ -717,10 +717,14 @@ Constraints to know:
   mode (privacy) the URL is hidden, the import deep-links are suppressed, and the
   raw-config copy path (`/api/v1/subscription/content`) sends no UA → it always
   returns the base64 default, never Clash. Recommend Clash apps for `url` modes (`freedom-ws`).
-- **S3 mirror URLs serve one fixed format** (the base64 default). The mirror
-  refresh/provision jobs fetch with no UA (`convex/storage.ts`) and S3 does no UA
-  negotiation, so a Clash client pointed at a _mirror_ URL gets base64, not YAML.
-  Hand Clash users the primary fronted URL.
+- **S3 mirrors hold one object per format** (`docs/mirrors.md` "Formats"). S3 does
+  no UA negotiation, so the mirror jobs (`convex/storage.ts`) fetch each format with
+  a fixed User-Agent (none for the base64 default, a current Mihomo for Clash YAML,
+  the canonical sing-box app for its JSON; `convex/lib/mirrorFormats.ts`) and write
+  them beside each other: the plain path, `.yaml` and `.json`. The member page hands
+  each app the one in its format (the catalog's `format`, from the app's name by the
+  rules a User-Agent goes by). A legacy Clash core pointed at the `.yaml` gets a
+  Mihomo body it cannot read (the main link would have answered it the app notice).
 - **The per-sub UA cache holds a few buckets** (keyed by exact UA), so a Clash UA
   gets its own bucket and never collapses into another client's format.
 

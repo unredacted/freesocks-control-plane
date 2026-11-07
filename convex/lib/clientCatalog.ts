@@ -13,6 +13,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { BackendId } from './backendIds';
+import { mirrorFormatOfApp, type MirrorFormat } from './mirrorFormats';
 
 export type ClientBackend = BackendId;
 
@@ -54,6 +55,11 @@ export interface CatalogClient {
   // allowlist: on a Hysteria mode only `true` is offered, because an app that
   // ignores the pin hands the member's password to whoever answers.
   hysteria2?: boolean;
+  // The subscription format the app reads: which of a mirror's objects it
+  // imports (docs/mirrors.md "Formats"). Missing = from the app's name, by
+  // the rules a User-Agent goes by (`mirrorFormatOfApp`); set it whenever the
+  // name does not say (a renamed or localized label).
+  format?: MirrorFormat;
   // Admin-set member-facing blurb, shown verbatim in every locale. The defaults
   // deliberately DON'T set it: their copy lives in the SPA's i18n catalog
   // (setup.clientDesc.*) so it translates; an admin value overrides that.
@@ -78,6 +84,12 @@ export interface PublicClient {
   xhttp?: boolean;
   hysteria2?: boolean;
   description?: string;
+  /**
+   * The subscription format the app reads (from its name, by the rules a
+   * User-Agent goes by): which of a mirror's objects it imports
+   * (docs/mirrors.md "Formats").
+   */
+  format: MirrorFormat;
 }
 
 /**
@@ -89,6 +101,7 @@ export interface PublicClient {
 export const DEFAULT_CLIENTS: CatalogClient[] = [
   {
     name: 'Hiddify',
+    format: 'links',
     platforms: ['android', 'ios', 'windows', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://hiddify.com',
@@ -105,6 +118,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
   },
   {
     name: 'Karing',
+    format: 'singbox',
     platforms: ['android', 'ios', 'windows', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://karing.app',
@@ -124,6 +138,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     // Android/Windows/Linux. Distributed via the App Store (the GitHub releases
     // page has no installable assets).
     name: 'Anywhere',
+    format: 'links',
     platforms: ['ios', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://apps.apple.com/us/app/anywhere-vless-proxy/id6758235178',
@@ -140,6 +155,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
   },
   {
     name: 'sing-box',
+    format: 'singbox',
     platforms: ['android', 'ios', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://sing-box.sagernet.org/clients/',
@@ -156,6 +172,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
   },
   {
     name: 'v2rayNG',
+    format: 'links',
     platforms: ['android'],
     backends: ['remnawave'],
     // No Play Store listing anymore (delisted) - the releases page is the
@@ -175,6 +192,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     // The canonical open-source Xray desktop GUI (sibling to v2rayNG). Manual /
     // QR import (no one-tap URL scheme).
     name: 'v2rayN',
+    format: 'links',
     platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://github.com/2dust/v2rayN/releases/latest',
@@ -190,6 +208,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
   },
   {
     name: 'Clash',
+    format: 'clash',
     platforms: ['windows', 'desktop', 'android'],
     backends: ['remnawave'],
     homepageUrl: 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest',
@@ -207,6 +226,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     // Clash-family (mihomo core) → needs the Clash-format subscription. Manual
     // import (paste the subscription URL) to avoid shipping an unverified scheme.
     name: 'FlClash',
+    format: 'clash',
     platforms: ['android', 'windows', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://github.com/chen08209/FlClash/releases/latest',
@@ -223,6 +243,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
   {
     // Clash-family (mihomo core) → needs the Clash-format subscription. Manual import.
     name: 'Mihomo Party',
+    format: 'clash',
     platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://github.com/mihomo-party-org/mihomo-party/releases/latest',
@@ -238,6 +259,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
   },
   {
     name: 'Throne',
+    format: 'links',
     platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://github.com/throneproj/Throne/releases/latest',
@@ -255,6 +277,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     // The one proprietary app we still recommend (popular, capable iOS client) —
     // labeled as such and sorted after every open-source option.
     name: 'Shadowrocket',
+    format: 'links',
     platforms: ['ios'],
     backends: ['remnawave'],
     homepageUrl: 'https://apps.apple.com/app/shadowrocket/id932747118',
@@ -269,6 +292,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
   },
   {
     name: 'Outline',
+    format: 'links',
     platforms: ['android', 'ios', 'windows', 'desktop'],
     backends: ['outline'],
     homepageUrl: 'https://getoutline.org/get-started/#step-3',
@@ -305,6 +329,7 @@ export async function resolveClients(db: DatabaseReader): Promise<CatalogClient[
     ipv6: r.ipv6 ?? undefined,
     xhttp: r.xhttp ?? undefined,
     hysteria2: r.hysteria2 ?? undefined,
+    format: r.format ?? undefined,
     description: r.description ?? undefined,
     enabled: r.enabled,
     priority: r.priority,
@@ -339,6 +364,7 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       xhttp: c.xhttp,
       hysteria2: c.hysteria2,
       description: c.description,
+      format: c.format ?? mirrorFormatOfApp(c.name),
     }));
 }
 

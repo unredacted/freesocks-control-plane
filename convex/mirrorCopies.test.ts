@@ -16,7 +16,13 @@ import { convexTest, type TestConvex } from 'convex-test';
 import schema from './schema';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { __setMirrorFetchForTests, __setS3SendForTests, type S3Op } from './storage';
+import YAML from 'yaml';
+import {
+  MIRROR_UNAVAILABLE_STUB,
+  __setMirrorFetchForTests,
+  __setS3SendForTests,
+  type S3Op,
+} from './storage';
 import { repairBackoffMs, REPAIR_GRACE_MS } from './mirrorUploads';
 import { invalidateDelivery } from './subscriptions';
 import { setStoredCountry } from './memberCountry';
@@ -172,8 +178,13 @@ const scheduled = (t: T, name: string) =>
       f.name.includes(name),
     ),
   );
-const puts = (w: World) => w.calls.filter((c) => c.op.kind === 'put');
-const deletes = (w: World) => w.calls.filter((c) => c.op.kind === 'delete');
+/** A format's object beside a mirror's own (src/shared/mirrorFormats.ts). */
+const formatObject = (key: string) => /\.(?:yaml|json)$/.test(key);
+/** Writes of copies (each writes every format; counted once, by its `links` object). */
+const puts = (w: World) => w.calls.filter((c) => c.op.kind === 'put' && !formatObject(c.op.key));
+/** Deletes of copies (each deletes every format; counted once, by its `links` object). */
+const deletes = (w: World) =>
+  w.calls.filter((c) => c.op.kind === 'delete' && !formatObject(c.op.key));
 const openUploads = (t: T) =>
   t.run((ctx) =>
     ctx.db
@@ -325,7 +336,233 @@ describe('a requested mirror is tracked', () => {
   });
 });
 
+describe('every format of a mirror', () => {
+  const FORMAT_KEYS = ['mirrors/m1', 'mirrors/m1.yaml', 'mirrors/m1.json'];
+
+  test('a new mirror writes one object per format, and the ledger hashes them as one copy', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    const res = await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res).toMatchObject({ status: 'ok', formats: ['links', 'clash', 'singbox'] });
+    const path = (await sub(w.t, subId))!.subscriptionMirrors[0]!.objectPath!;
+    expect(w.calls.filter((c) => c.op.kind === 'put').map((c) => c.op.key)).toEqual(
+      ['', '.yaml', '.json'].map((x) => `${path}${x}`),
+    );
+    expect((await sub(w.t, subId))!.subscriptionMirrors[0]!.formats).toEqual([
+      'links',
+      'clash',
+      'singbox',
+    ]);
+    const [c] = await copies(w.t, subId);
+    expect(c).toMatchObject({ state: 'in_sync' });
+    // Read back: all three URLs serve what was written.
+    await w.t.action(internal.storage.verifyMirrorCopies, {});
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', verify: 'match' });
+    // The member page is handed which formats exist.
+    const view = await w.t.run(async (ctx) => (await ctx.db.get(subId))!.subscriptionMirrors);
+    expect(view[0]!.formats).toHaveLength(3);
+  });
+
+  test('a mirror from before formats gains its format objects at its next refresh, at the same URL', async () => {
+    const w = await world();
+    const { subId } = await member(w);
+    // A links-only object; the ledger holds its hash (what every copy recorded before formats).
+    await mirrored(w, subId, ['p1'], { p1: body('key-shortA') });
+    // The read-back reads the one object it has, and finds it right.
+    await w.t.action(internal.storage.verifyMirrorCopies, {});
+    expect(w.calls).toEqual([]);
+    expect((await copies(w.t, subId))[0]).toMatchObject({ verify: 'match' });
+    await w.t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
+    expect(w.calls.map((c) => c.op.kind === 'put' && c.op.key)).toEqual(FORMAT_KEYS);
+    expect((await sub(w.t, subId))!.subscriptionMirrors[0]).toMatchObject({
+      publicUrl: `${PROVIDERS.p1}/mirrors/m1`,
+      formats: ['links', 'clash', 'singbox'],
+    });
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync' });
+    // Nothing changed since: the next refresh writes nothing.
+    w.calls.length = 0;
+    await w.t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
+    expect(w.calls).toEqual([]);
+  });
+
+  test('one format deleted behind FCP is missing, and the rewrite puts it back', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    const path = (await sub(w.t, subId))!.subscriptionMirrors[0]!.objectPath!;
+    w.objects.delete(`p1:${path}.json`);
+    w.calls.length = 0;
+    await w.t.action(internal.storage.verifyMirrorCopies, {});
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'never', reason: 'missing' });
+    expect(await scheduled(w.t, 'refreshMirrorsForSubscription')).toHaveLength(1);
+    await w.t.action(internal.storage.refreshMirrorsForSubscription, {
+      subscriptionId: subId,
+      forceProviders: ['p1'],
+      verifyAfter: true,
+    });
+    expect(w.objects.has(`p1:${path}.json`)).toBe(true);
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', verify: 'match' });
+  });
+
+  test('a first upload that wrote only some formats leaves its record open, and the repair withdraws them', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    w.fail.fn = (_p, op) => op.kind === 'put' && op.key.endsWith('.json');
+    const res = await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('error');
+    expect((await sub(w.t, subId))!.subscriptionMirrors).toEqual([]);
+    // The two objects that landed are tracked, never forgotten.
+    const landed = [...w.objects.keys()].filter((k) => k.startsWith('p1:mirrors/'));
+    expect(landed).toHaveLength(2);
+    expect(await openUploads(w.t)).toHaveLength(1);
+    w.fail.fn = () => false;
+    await makeDue(w.t);
+    await w.t.action(internal.storage.repairMirrorUploads, {});
+    expect([...w.objects.keys()].filter((k) => k.startsWith('p1:mirrors/'))).toEqual([]);
+    expect(await openUploads(w.t)).toEqual([]);
+  });
+
+  test('an unverifiable Hysteria entry in any format: each object is the stub of its own format', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    const id = '11111111-2222-4333-8444-555555555555';
+    // Every format's body holds only a Hysteria entry with no pin (it trusts
+    // anyone who answers): nothing the guard can keep, so each is refused.
+    const bodies = {
+      links: `hysteria2://${id}@1.1.1.1:443/?sni=q.example&insecure=1#xray1-hy`,
+      clash: [
+        'proxies:',
+        '  - { name: xray1-hy, type: hysteria2, server: 1.1.1.1, port: 443, password: ' +
+          id +
+          ', sni: q.example, skip-cert-verify: true }',
+        'proxy-groups:',
+        '  - { name: Auto, type: select, proxies: [xray1-hy] }',
+        'rules:',
+        '  - MATCH,Auto',
+        '',
+      ].join('\n'),
+      singbox: JSON.stringify({
+        outbounds: [
+          { type: 'selector', tag: 'proxy', outbounds: ['xray1-hy'] },
+          {
+            type: 'hysteria2',
+            tag: 'xray1-hy',
+            server: '1.1.1.1',
+            server_port: 443,
+            password: id,
+            tls: { enabled: true, server_name: 'q.example', insecure: true },
+          },
+        ],
+      }),
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        const ua = new Headers(init?.headers).get('user-agent') ?? '';
+        const body = /^mihomo/i.test(ua)
+          ? bodies.clash
+          : /^SF[A-Z]\//.test(ua)
+            ? bodies.singbox
+            : bodies.links;
+        return new Response(body);
+      }),
+    );
+    const res = await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('ok');
+    const path = (await sub(w.t, subId))!.subscriptionMirrors[0]!.objectPath!;
+    const links = w.objects.get(`p1:${path}`)!;
+    const yaml = w.objects.get(`p1:${path}.yaml`)!;
+    const json = w.objects.get(`p1:${path}.json`)!;
+    for (const body of [links, yaml, json]) {
+      expect(body).not.toContain(id);
+      expect(body.toLowerCase()).not.toContain('hysteria');
+    }
+    expect(links).toBe(MIRROR_UNAVAILABLE_STUB);
+    // A Clash config that loads, every route to inert loopback entries.
+    const clash = YAML.parse(yaml) as {
+      proxies: { type: string; server: string; port: number }[];
+      rules: string[];
+    };
+    expect(clash.proxies.length).toBeGreaterThan(0);
+    expect(clash.proxies.every((p) => p.type === 'socks5' && p.server === '127.0.0.1')).toBe(true);
+    expect(clash.rules).toEqual([expect.stringMatching(/^MATCH,/)]);
+    // A sing-box config that loads, the same.
+    const box = JSON.parse(json) as {
+      outbounds: { type: string; server?: string }[];
+      route: { final: string };
+    };
+    expect(
+      box.outbounds
+        .filter((o) => o.server)
+        .every((o) => o.type === 'socks' && o.server === '127.0.0.1'),
+    ).toBe(true);
+    expect(box.outbounds.some((o) => o.server)).toBe(true);
+    expect(box.route.final).toBe(
+      box.outbounds[0]!.type === 'selector'
+        ? (box.outbounds[0] as { tag?: string }).tag
+        : undefined,
+    );
+    // The ledger knows the copy holds the stub.
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', stub: true });
+  });
+
+  test("removing a member's mirrors deletes every format's object", async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    const path = (await sub(w.t, subId))!.subscriptionMirrors[0]!.objectPath!;
+    expect([...w.objects.keys()].filter((k) => k.startsWith(`p1:${path}`))).toHaveLength(3);
+    await w.t.action(internal.storage.clearMirrorsForUser, { userId });
+    expect([...w.objects.keys()].filter((k) => k.startsWith(`p1:${path}`))).toEqual([]);
+  });
+
+  test('a copy whose key no longer keeps a format deletes that object with its next upload', async () => {
+    const w = await world();
+    const { subId } = await member(w);
+    await mirrored(w, subId, ['p1'], { p1: 'old' });
+    await w.t.run(async (ctx) => {
+      const s = (await ctx.db.get(subId))!;
+      await ctx.db.patch(subId, {
+        subscriptionMirrors: s.subscriptionMirrors.map((m) => ({
+          ...m,
+          formats: ['links' as const, 'clash' as const, 'singbox' as const],
+        })),
+      });
+    });
+    w.objects.set('p1:mirrors/m1.yaml', 'proxies: []');
+    w.objects.set('p1:mirrors/m1.json', '{}');
+    // An Outline key carries the mirror now (a re-issue across backends): one bare key.
+    await w.t.run((ctx) => ctx.db.patch(subId, { backend: 'outline' }));
+    await w.t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
+    expect(w.calls.map((c) => [c.op.kind, c.op.key])).toEqual([
+      ['put', 'mirrors/m1'],
+      ['delete', 'mirrors/m1.yaml'],
+      ['delete', 'mirrors/m1.json'],
+    ]);
+    expect((await sub(w.t, subId))!.subscriptionMirrors[0]!.formats).toEqual(['links']);
+  });
+});
+
 describe('the post-deploy seed', () => {
+  test('starts a pass when a mirror is not yet written in every format', async () => {
+    const w = await world();
+    const { subId } = await member(w);
+    await mirrored(w, subId, ['p1'], { p1: 'old' });
+    expect(await w.t.action(internal.storage.seedMirrorLedger, {})).toMatchObject({
+      behind: 1,
+      done: true,
+    });
+    expect(await scheduled(w.t, 'drainMirrors')).toHaveLength(1);
+  });
+
+  test('starts none once every mirror holds every format', async () => {
+    const w = await world();
+    const { userId } = await member(w);
+    await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(await w.t.action(internal.storage.seedMirrorLedger, {})).toMatchObject({ behind: 0 });
+    expect(await scheduled(w.t, 'drainMirrors')).toHaveLength(0);
+  });
+
   test('gives a mirror without ledger rows its rows even when the ledger says it was seeded', async () => {
     // A rollback to code without the ledger can add mirrors after the first seed.
     const w = await world();
@@ -333,12 +570,18 @@ describe('the post-deploy seed', () => {
     await w.t.run((ctx) =>
       ctx.db.patch(subId, {
         subscriptionMirrors: [
-          { provider: 'p1', publicUrl: `${PROVIDERS.p1}/mirrors/r1`, objectPath: 'mirrors/r1' },
+          {
+            provider: 'p1',
+            publicUrl: `${PROVIDERS.p1}/mirrors/r1`,
+            objectPath: 'mirrors/r1',
+            // Written in every format: the seed has no pass to start for it.
+            formats: ['links', 'clash', 'singbox'],
+          },
         ],
       }),
     );
     expect(await copies(w.t, subId)).toEqual([]);
-    expect(await w.t.action(internal.storage.seedMirrorLedger, {})).toEqual({
+    expect(await w.t.action(internal.storage.seedMirrorLedger, {})).toMatchObject({
       keys: 1,
       done: true,
     });

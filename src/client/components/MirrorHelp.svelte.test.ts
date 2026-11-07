@@ -31,13 +31,25 @@ beforeAll(() => {
 let client: QueryClient;
 let app: ReturnType<typeof mountWithQuery> | null = null;
 const props = $state({
-  mirrors: [A] as { provider: string; publicUrl: string }[],
+  mirrors: [A] as { provider: string; publicUrl: string; formats?: string[] }[],
   subscriptionUrl: 'https://site.example/api/v1/sub/token-1',
   available: true,
 });
 
+/** The catalog the labels name apps from (src/shared/mirrorFormats.ts formats). */
+const CATALOG = {
+  clients: [
+    { name: 'Hiddify', format: 'links' },
+    { name: 'Clash', format: 'clash' },
+    { name: 'FlClash', format: 'clash' },
+    { name: 'sing-box', format: 'singbox' },
+  ],
+  backends: { list: [] },
+};
+
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(queryKeys.config, CATALOG);
   props.mirrors = [A];
   props.subscriptionUrl = 'https://site.example/api/v1/sub/token-1';
   vi.mocked(apiClient.post).mockReset();
@@ -112,5 +124,34 @@ describe("the member's mirror list follows the server", () => {
     props.mirrors = [B];
     flushSync();
     expect(text()).toContain(B.publicUrl);
+  });
+});
+
+describe('each mirror is listed in every format it holds', () => {
+  const codes = () => [...document.querySelectorAll('code')].map((c) => c.textContent?.trim());
+
+  test('a link per format, each labelled with the apps that read it', () => {
+    props.mirrors = [{ ...A, formats: ['links', 'clash', 'singbox'] }];
+    show();
+    expect(codes()).toEqual([A.publicUrl, `${A.publicUrl}.yaml`, `${A.publicUrl}.json`]);
+    expect(text()).toContain('For most apps');
+    expect(text()).toContain('For Clash and FlClash');
+    expect(text()).toContain('For sing-box');
+    expect(text()).toContain('Add the link for your app');
+  });
+
+  test('a mirror from before formats: its one link, until its next upload', () => {
+    show();
+    expect(codes()).toEqual([A.publicUrl]);
+  });
+
+  test('a format no catalog app reads is not offered', () => {
+    client.setQueryData(queryKeys.config, {
+      ...CATALOG,
+      clients: CATALOG.clients.filter((c) => c.format !== 'singbox'),
+    });
+    props.mirrors = [{ ...A, formats: ['links', 'clash', 'singbox'] }];
+    show();
+    expect(codes()).toEqual([A.publicUrl, `${A.publicUrl}.yaml`]);
   });
 });

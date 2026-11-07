@@ -24,6 +24,8 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { sha256Hex } from './lib/crypto';
+import { MIRROR_FORMATS, mirrorSetHash } from './lib/mirrorFormats';
+import { mirrorFormatPath } from '../src/shared/mirrorFormats';
 
 const modules = import.meta.glob('./**/*.*s');
 const ENDPOINT = process.env.FCP_S3_TEST_ENDPOINT ?? '';
@@ -139,6 +141,28 @@ async function member(t: T, short: string) {
   });
 }
 
+/**
+ * What the member's apps read at a mirror URL, every format's object (each
+ * through its own URL): the set hash the ledger records, and each body.
+ */
+async function servedSet(url: string) {
+  const reads = await Promise.all(
+    MIRROR_FORMATS.map(async (format) => ({
+      format,
+      got: await memberGet(mirrorFormatPath(url, format)),
+    })),
+  );
+  return {
+    statuses: reads.map((r) => r.got.status),
+    texts: reads.map((r) => r.got.text),
+    hash: await mirrorSetHash(
+      await Promise.all(
+        reads.map(async (r) => ({ format: r.format, hash: await sha256Hex(r.got.text) })),
+      ),
+    ),
+  };
+}
+
 const copy = async (t: T, subId: Id<'subscriptions'>) =>
   (await t.run((ctx) => ctx.db.query('mirrorCopies').collect())).find(
     (c) => c.subscriptionId === subId,
@@ -176,16 +200,20 @@ describe.skipIf(!ENDPOINT)('S3 mirrors against a real store', () => {
     expect(got.status).toBe(200);
     expect(got.text).toContain('key-walkA');
     expect(got.cacheControl).toBe('no-cache');
+    // Every format's object is in the bucket, each at its own URL.
+    let set = await servedSet(url);
+    expect(set.statuses).toEqual([200, 200, 200]);
+    for (const text of set.texts) expect(text).toContain('key-walkA');
     let c = await copy(t, subId);
-    expect(c).toMatchObject({ state: 'in_sync', objectHash: await sha256Hex(got.text) });
+    expect(c).toMatchObject({ state: 'in_sync', objectHash: set.hash });
 
     // 2. What the member is served changes: the sweep rewrites the object.
     backend.set('walkA', body('key-walkA-v2'));
     const sweep = await t.action(internal.storage.refreshActiveMirrors, {});
     expect(sweep).toMatchObject({ scanned: 1, refreshed: 1 });
-    got = await memberGet(url);
-    expect(got.text).toContain('key-walkA-v2');
-    expect((await copy(t, subId))!.objectHash).toBe(await sha256Hex(got.text));
+    set = await servedSet(url);
+    for (const text of set.texts) expect(text).toContain('key-walkA-v2');
+    expect((await copy(t, subId))!.objectHash).toBe(set.hash);
 
     // 3. Nothing changed: the next sweep confirms and writes nothing.
     expect(await t.action(internal.storage.refreshActiveMirrors, {})).toMatchObject({
@@ -242,11 +270,24 @@ describe.skipIf(!ENDPOINT)('S3 mirrors against a real store', () => {
     c = await copy(t, subId);
     expect(c!.state).toBe('in_sync');
 
-    // 7. The member removes their mirrors: the object is gone from the bucket.
+    // 6b. One format's object deleted behind FCP's back: the copy is missing it, and the
+    //     rewrite puts it back (the others stay as they are).
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKETS[0], Key: `${key}.json` }));
+    await readAgainSoon(t);
+    expect(await t.action(internal.storage.verifyMirrorCopies, {})).toMatchObject({ missing: 1 });
+    await t.action(internal.storage.refreshMirrorsForSubscription, {
+      subscriptionId: subId,
+      forceProviders: ['p1'],
+      verifyAfter: true,
+    });
+    expect((await servedSet(url)).statuses).toEqual([200, 200, 200]);
+    expect(await copy(t, subId)).toMatchObject({ state: 'in_sync', verify: 'match' });
+
+    // 7. The member removes their mirrors: every format's object is gone from the bucket.
     expect(await t.action(internal.storage.clearMirrorsForUser, { userId })).toEqual({
       removed: 1,
     });
-    expect((await memberGet(url)).status).toBe(404);
+    expect((await servedSet(url)).statuses).toEqual([404, 404, 404]);
     expect(await copy(t, subId)).toBeUndefined();
   });
 
@@ -266,7 +307,8 @@ describe.skipIf(!ENDPOINT)('S3 mirrors against a real store', () => {
     expect(
       await t.action(internal.storage.withdrawProviderMirrors, { providerId: p1._id }),
     ).toEqual({ withdrawn: 1, done: true });
-    expect((await memberGet(res.publicUrl!)).status).toBe(404);
+    // Every format's object goes with the copy.
+    expect((await servedSet(res.publicUrl!)).statuses).toEqual([404, 404, 404]);
     expect((await t.run((ctx) => ctx.db.get(subId)))!.subscriptionMirrors).toEqual([]);
     expect(await t.run((ctx) => ctx.db.get(p1._id))).toBeNull();
   });

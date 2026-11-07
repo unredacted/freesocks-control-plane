@@ -8,6 +8,8 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 import schema from '../../convex/schema';
+import { makeFunctionReference } from 'convex/server';
+import { mirrorFormatPath } from '../../src/shared/mirrorFormats';
 import { defaultRouteFaults } from '../../convex/lib/backend/subscriptionTemplates/defaultRoute';
 import { clients } from './manifest';
 import { assertSubscription, subscriptionEntries } from './assertions';
@@ -406,6 +408,81 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
       await expect(httpsProbe()).rejects.toThrow();
     } finally {
       stopEngine();
+    }
+  });
+  /**
+   * A subscription mirror (docs/mirrors.md "Formats"): static objects, one per
+   * format, rendered as the main link answers an app of that format. Each
+   * format's object is imported by its own engine, as the app that reads it
+   * would, and carries HTTPS through each of the three proxies. The bucket is
+   * a map behind the storage seam; the panel and the engines are real.
+   */
+  test('a mirror: each format imports in its engine and every proxy carries HTTPS', async () => {
+    // By path, not the typed API and module: this suite's typecheck stays out
+    // of convex/ (the root config is stricter than convex/tsconfig.json).
+    const provisionMirror = makeFunctionReference<'action'>('storage:provisionMirror');
+    const clearMirrorsForUser = makeFunctionReference<'action'>('storage:clearMirrorsForUser');
+    const storagePath = '../../convex/storage';
+    const { __setS3SendForTests } = (await import(/* @vite-ignore */ storagePath)) as {
+      __setS3SendForTests: (
+        send:
+          ((p: unknown, op: { kind: string; key: string; body?: string }) => Promise<void>) | null,
+      ) => void;
+    };
+    const objects = new Map<string, string>();
+    __setS3SendForTests(async (_p, op) => {
+      if (op.kind === 'put') objects.set(op.key, op.body ?? '');
+      else objects.delete(op.key);
+    });
+    const userId = await t.run(async (ctx) => {
+      await ctx.db.insert('mirrorProviders', {
+        name: 'compat-bucket',
+        endpoint: 'https://s3.compat.invalid',
+        bucket: 'compat',
+        publicUrl: 'https://mirror.compat.invalid',
+        region: 'auto',
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        isActive: true,
+        priority: 0,
+        updatedAt: Date.now(),
+      });
+      return (await ctx.db.query('subscriptions').first())!.userId;
+    });
+    try {
+      const res = await t.action(provisionMirror, { userId, countryCode: null });
+      expect(res).toMatchObject({ status: 'ok', formats: ['links', 'clash', 'singbox'] });
+      const base = (await t.run(async (ctx) => (await ctx.db.query('subscriptions').first())!))
+        .subscriptionMirrors[0]!.objectPath!;
+      const links = objects.get(mirrorFormatPath(base, 'links'))!;
+      assertSubscription(links, 'links', COMPAT_ENDPOINTS);
+      expectMemberNames(links, 'links');
+      for (const [format, engine] of [
+        ['clash', 'mihomo'],
+        ['singbox', 'singbox'],
+      ] as const) {
+        const body = objects.get(mirrorFormatPath(base, format))!;
+        assertSubscription(body, engine, COMPAT_ENDPOINTS);
+        expectMemberNames(body, engine);
+        expect(defaultRouteFaults(body, 'FreeSocks')).toEqual([]);
+        const config = sandboxed(engine, body);
+        try {
+          await startEngine(engine, config);
+          await httpsProbe();
+          for (const entry of subscriptionEntries(body, engine)) {
+            await startEngine(engine, selectProxy(engine, config, entry.name));
+            await httpsProbe();
+          }
+        } finally {
+          stopEngine();
+        }
+      }
+    } finally {
+      __setS3SendForTests(null);
+      await t.action(clearMirrorsForUser, { userId });
+      await t.run(async (ctx) => {
+        for (const p of await ctx.db.query('mirrorProviders').collect()) await ctx.db.delete(p._id);
+      });
     }
   });
   for (const client of clients.filter((c) => c.format === 'singbox' || c.format === 'mihomo')) {

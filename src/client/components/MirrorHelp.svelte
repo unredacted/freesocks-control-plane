@@ -10,7 +10,7 @@
   import Flag from '@lucide/svelte/icons/flag';
   import { ApiCallError, apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
-  import { t } from '../lib/i18n/index.svelte';
+  import { getLocale, t } from '../lib/i18n/index.svelte';
   import { COUNTRY_CODES } from '../lib/countries';
   import MirrorRegionSelect from './MirrorRegionSelect.svelte';
   import { MirrorRequestResponse, MirrorClearResponse } from '../../shared/contracts/mirror';
@@ -22,6 +22,8 @@
   import MirrorSetFor from './MirrorSetFor.svelte';
   import { MIRROR_REQUEST_KEY, withoutMirrors } from '../lib/mirrorSuggestion';
   import { copyText } from '../lib/utils';
+  import { configQuery } from '../lib/queries';
+  import { mirrorFormatLinks } from '../lib/mirrorSuggestion';
   import { createMutation, useIsMutating, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
 
@@ -45,9 +47,13 @@
    * already has, with Save (the account card's route): the server rewrites them
    * at the same URLs. Off, or for a key whose mode holds no country, the old
    * transient region picker stays.
+   *
+   * Each mirror is listed once per format it holds (src/shared/mirrorFormats.ts),
+   * each labelled with the catalog apps that read it, so a Clash or sing-box
+   * user adds the one in their app's format.
    */
   interface Props {
-    mirrors: { provider: string; publicUrl: string }[];
+    mirrors: { provider: string; publicUrl: string; formats?: readonly string[] }[];
     geoCountry?: string | null;
     subscriptionUrl: string;
     /** Whether the deployment has any active mirror provider (publicConfig
@@ -156,7 +162,7 @@
   // overlays bridge the moment before that refetch lands: a mirror just added
   // (`pending`) and the ones just removed (`removed`). Each entry goes once the
   // server agrees, so a later withdrawal never brings a pending one back.
-  let pending = $state<{ provider: string; publicUrl: string }[]>([]);
+  let pending = $state<{ provider: string; publicUrl: string; formats?: readonly string[] }[]>([]);
   let removed = $state<string[]>([]);
   const fromServer = $derived(
     mirrors.filter((x) => x.publicUrl && x.publicUrl !== subscriptionUrl),
@@ -208,7 +214,10 @@
       }
       if (res.status === 'ok' && res.publicUrl) {
         if (!added.some((m) => m.publicUrl === res.publicUrl)) {
-          pending = [...pending, { provider: res.provider ?? '', publicUrl: res.publicUrl }];
+          pending = [
+            ...pending,
+            { provider: res.provider ?? '', publicUrl: res.publicUrl, formats: res.formats },
+          ];
         }
         status = res.remaining > 0 ? 'idle' : 'capped';
         void qc.invalidateQueries({ queryKey: queryKeys.account });
@@ -238,6 +247,19 @@
   }));
 
   const exhausted = $derived(status === 'capped' || status === 'exhausted');
+
+  // Which catalog apps read each format, for the labels.
+  const config = configQuery();
+  const listFormat = $derived(new Intl.ListFormat(getLocale(), { type: 'conjunction' }));
+  function linksOf(m: { publicUrl: string; formats?: readonly string[] }) {
+    return mirrorFormatLinks(m, config.data?.clients ?? []).map((l) => ({
+      url: l.url,
+      label:
+        l.apps === null
+          ? t('mirror.formatMost')
+          : t('mirror.formatFor', { apps: listFormat.format(l.apps) }),
+    }));
+  }
   // A request from either mirror button (this one or the onboarding
   // suggestion) holds both, and the remove, until it settles.
   const requesting = useIsMutating({ mutationKey: MIRROR_REQUEST_KEY });
@@ -311,27 +333,36 @@
               {t('mirror.addedLabel')}
             </p>
             {#each added as m (m.publicUrl)}
-              <div class="flex gap-2">
-                <code
-                  class="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm text-foreground"
-                >
-                  {m.publicUrl}
-                </code>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="min-h-11"
-                  onclick={() => copy(m.publicUrl)}
-                >
-                  {#if copiedUrl === m.publicUrl}
-                    <Check class="size-3.5" />
-                  {:else}
-                    <Copy class="size-3.5" />
-                  {/if}
-                </Button>
+              <div class="space-y-2">
+                {#each linksOf(m) as l (l.url)}
+                  <div class="space-y-1">
+                    <p class="text-sm text-muted-foreground">{l.label}</p>
+                    <div class="flex gap-2">
+                      <code
+                        dir="ltr"
+                        class="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm text-foreground"
+                      >
+                        {l.url}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        class="min-h-11"
+                        aria-label={l.label}
+                        onclick={() => copy(l.url)}
+                      >
+                        {#if copiedUrl === l.url}
+                          <Check class="size-3.5" />
+                        {:else}
+                          <Copy class="size-3.5" />
+                        {/if}
+                      </Button>
+                    </div>
+                  </div>
+                {/each}
               </div>
             {/each}
-            <p class="text-sm text-muted-foreground/80">{t('mirror.addToAppHint')}</p>
+            <p class="text-sm text-muted-foreground/80">{t('mirror.addYoursHint')}</p>
           </div>
         {/if}
 

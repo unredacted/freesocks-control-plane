@@ -39,12 +39,14 @@ import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from '
 import { memberFamilyOf } from './lib/memberFamily';
 import { memberLaneOfUser } from './edgeLanes';
 import { noteExposures } from './edgeTrust';
+import { mirrorFormatValidator } from './lib/mirrorFormats';
 
 const mirror = v.object({
   provider: v.string(),
   publicUrl: v.string(),
   objectPath: v.optional(v.string()),
   status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
+  formats: v.optional(v.array(mirrorFormatValidator)),
   validated: v.optional(
     v.object({
       policyVersion: v.number(),

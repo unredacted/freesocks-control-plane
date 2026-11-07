@@ -538,7 +538,12 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   ledger (`convex/mirrorCopies.ts`: per copy, does the object hold what FCP would serve now; counts,
   attention past an hour, per-copy detail and re-check on Admin -> Storage and the dashboard), read
   back through its public URL (`mirror-verify`), withdrawn when its provider is removed, and
-  written with `Cache-Control: no-cache`. A mirror is shaped only by the member's own answer to
+  written with `Cache-Control: no-cache`. Each mirror is one object per format at sibling paths
+  of one random id (`mirrors/<id>` base64 links, `.yaml` Clash/Mihomo, `.json` sing-box;
+  `src/shared/mirrorFormats.ts`, `convex/lib/mirrorFormats.ts`), each rendered as the main link
+  answers an app of that format, tracked as one copy (one combined hash), read back and deleted
+  together; the member page hands each app the one in its format (`publicConfig.clients[].format`).
+  A mirror is shaped only by the member's own answer to
   "Where are you connecting from?"; with `delivery.country.ask` on (off by default) the member is
   asked it at sign-up and when a key with no answer gets a mirror (`region` on the regenerate and
   mirror requests, sealed only; docs/privacy.md). **`docs/mirrors.md`** is the full description.
