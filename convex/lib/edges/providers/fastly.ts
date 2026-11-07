@@ -409,6 +409,10 @@ export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): Fa
     // address when the node only answers to its own name.
     override_host: tpl.overrideHost === 'hostname' ? hostname : address,
     comment: spec.name,
+    // Always sent, on unless the template says off: a Delivery service's API
+    // default is IPv4 first (Fastly's own form ticks IPv6). Applied here, not
+    // by the parse, so no stored template's hash moves (options.ts HASH RULE).
+    prefer_ipv6: tpl.preferIpv6 ?? true,
     // The options the template (or the node) chose; nothing unset is sent.
     ...(wireBody(EDGE_TEMPLATES.fastly.fields, 'backend', tpl) as Partial<FastlyBackendBody>),
   };

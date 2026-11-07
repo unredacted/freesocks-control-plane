@@ -428,6 +428,8 @@ describe('fastly: request bodies', () => {
       ssl_sni_hostname: ORIGIN,
       override_host: HOST,
       comment: spec.name,
+      // Never left to the API either: a Delivery service defaults to IPv4 first.
+      prefer_ipv6: true,
     });
   });
 
@@ -482,7 +484,8 @@ describe('fastly: request bodies', () => {
   });
 
   test('backend options reach their API fields; none is sent unchosen', () => {
-    // The fixed fields only: the port and the origin's TLS name are always sent.
+    // The fixed fields only: the port, the IP preference and the origin's TLS
+    // name are always sent.
     expect(Object.keys(fastlyBackendBody(spec, tpl)).sort()).toEqual(
       [
         'address',
@@ -490,6 +493,7 @@ describe('fastly: request bodies', () => {
         'name',
         'override_host',
         'port',
+        'prefer_ipv6',
         'ssl_cert_hostname',
         'ssl_sni_hostname',
         'use_ssl',
@@ -521,6 +525,16 @@ describe('fastly: request bodies', () => {
       tcp_keepalive_interval: 5,
       tcp_keepalive_probes: 4,
     });
+  });
+
+  test('the front prefers IPv6 to the node unless the template turns it off', () => {
+    // Fastly's API default for a Delivery service is IPv4 first, so FCP always
+    // says which it wants.
+    expect(fastlyBackendBody(spec, tpl).prefer_ipv6).toBe(true);
+    const off = fastlyProvider.templateSchema.parse({ preferIpv6: false });
+    expect(fastlyBackendBody(spec, off).prefer_ipv6).toBe(false);
+    // The parse adds nothing, so no stored template's hash moves.
+    expect(fastlyProvider.templateSchema.parse({})).not.toHaveProperty('preferIpv6');
   });
 
   test("by default the node never sees the member's address, on any path", () => {
