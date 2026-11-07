@@ -56,17 +56,12 @@ async function seed(opts: { bindHysteria?: boolean; serving?: boolean } = {}) {
   const t = convexTest(schema, modules);
   await t.mutation(internal.seed.seedConnectionModes, {});
   const ids = await t.run(async (ctx) => {
-    await ctx.db.insert('connectionModes', {
-      slug: 'privacy-hysteria',
-      familySlug: 'privacy',
-      deliveryStyle: 'rawConfig',
-      enabled: true,
-      isFamilyDefault: false,
-      backends: ['remnawave'],
-      order: 5,
-      fallbackModeSlug: 'privacy-reality',
-      updatedAt: Date.now(),
-    });
+    // The built-in ships dark: turned on here.
+    const hysteria = (await ctx.db
+      .query('connectionModes')
+      .withIndex('by_slug', (q) => q.eq('slug', 'privacy-hysteria'))
+      .unique())!;
+    await ctx.db.patch(hysteria._id, { enabled: true });
     const serverId = await ctx.db.insert('backendServers', {
       backend: 'remnawave',
       name: 'test',
@@ -324,6 +319,42 @@ describe('the pin', () => {
     expect(
       await t.query(internal.subscriptions.otherPinTargets, { subscriptionId: subId }),
     ).toEqual([]);
+    const degraded = () =>
+      t.query(internal.subscriptions.extraModeDegraded, { subscriptionId: subId });
+    expect(await degraded()).toBe(false);
+    // A pin still under the node's former name (a rename not drained yet) is
+    // that node's: still served, and still nowhere else to switch to.
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const renameId = await ctx.db.insert('panelNodeRenames', {
+        backendServerId: serverId,
+        nodeUuid: 'n-a',
+        from: 'old-node-a',
+        to: 'node-a',
+        relayIds: [],
+        state: 'running',
+        step: 'subscriptions',
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert('panelNodeAliases', {
+        backendServerId: serverId,
+        formerName: 'old-node-a',
+        name: 'node-a',
+        nodeUuid: 'n-a',
+        renameId,
+        at: now,
+      });
+      await ctx.db.patch(subId, { pinnedNode: 'old-node-a' });
+    });
+    expect(await degraded()).toBe(false);
+    expect(
+      await t.query(internal.subscriptions.otherPinTargets, { subscriptionId: subId }),
+    ).toEqual([]);
+    await t.run(async (ctx) => {
+      for (const a of await ctx.db.query('panelNodeAliases').collect()) await ctx.db.delete(a._id);
+      await ctx.db.patch(subId, { pinnedNode: 'node-a' });
+    });
     // While no node serves it (its address closed for a re-check), it pins
     // among its backup mode's nodes: the member keeps the backup entry.
     await t.run(async (ctx) => {
@@ -335,6 +366,8 @@ describe('the pin', () => {
       });
     });
     expect((await rules()).servable).toEqual(['node-a', 'node-b']);
+    // The account view says the UDP connection is unavailable right now.
+    expect(await degraded()).toBe(true);
     expect(
       await t.query(internal.subscriptions.otherPinTargets, { subscriptionId: subId }),
     ).toEqual(['node-b']);

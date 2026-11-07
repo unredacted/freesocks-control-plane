@@ -91,7 +91,7 @@ balanced nothing in a real fleet: a Remnawave internal mode group is a set of tr
 with **issuance-time node placement**. The generic backend layer is now **mode group-free** — it
 carries an opaque **`placement` handle** (`subscriptions.backendPlacement`); only Remnawave-local
 code maps it to a mode group UUID. A **connection mode** (renamed from "connection profile"; leaf ids
-`freedom-ws` / `freedom-reality` / `privacy-reality` under the parent families `freedom` /
+`freedom-ws` / `freedom-reality` / `freedom-xhttp` / `privacy-reality` / `privacy-hysteria` under the parent families `freedom` /
 `privacy`, data-driven with a `deliveryStyle` capability flag and an admin `enabled` toggle at
 both levels) binds a **pool of per-node mode groups**
 (`remnawave.modePlacement.<id>.squads`), and issuance homes each new key to the **least-loaded

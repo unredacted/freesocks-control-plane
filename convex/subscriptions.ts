@@ -21,7 +21,7 @@ import {
   type MirrorPage,
 } from './mirrorCopies';
 import { randomHex } from './lib/crypto';
-import { otherPinTargetsOf } from './lib/extraModeNodes';
+import { extraModeDegradedOf, otherPinTargetsOf } from './lib/extraModeNodes';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
@@ -657,6 +657,15 @@ export const rotateNodePin = internalMutation({
     const sub = await ctx.db.get(subscriptionId);
     if (!sub?.pinnedNode) return null;
     return invalidateDelivery(ctx, sub, { excludePin: true, refreshMirrors: true });
+  },
+});
+
+/** A two-group key served only its backup's entry right now (lib/extraModeNodes.ts). */
+export const extraModeDegraded = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<boolean> => {
+    const sub = await ctx.db.get(subscriptionId);
+    return sub ? extraModeDegradedOf(ctx.db, sub) : false;
   },
 });
 

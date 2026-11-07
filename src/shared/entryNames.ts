@@ -9,10 +9,13 @@
  * locale (a member's language is not known where a body is made).
  *
  *   <flag> <place> · Direct[ <n>]                        a node, dialled directly
+ *   <flag> <place> · UDP[ <n>]                           a node, dialled directly over UDP (Hysteria)
  *   <flag> <place> via <front>[ <letter>][ · <form>][ #<n>]   a node, through an edge
  *
  *   🇨🇦 Example City · Direct                  a node, dialled directly (`Direct 2`,
  *                                              `Direct 3` for further server names)
+ *   🇨🇦 Example City · UDP                     the same node over UDP (Hysteria 2), beside
+ *                                              its `Direct` backup; numbered on its own
  *   🇨🇦 Example City via Example Town          a load balancer address (L4) in that place
  *   🇨🇦 Example City via Example Town A / B    two addresses in the same place
  *   🇨🇦 Example City via relay A               an address whose location has no member-facing name
@@ -62,8 +65,11 @@ export interface MemberPlace {
 
 /** What one connection goes through. */
 export type EntryRoute =
-  /** A node, dialled directly. `n` counts from 1 within its place (1 carries no number). */
-  | { kind: 'direct'; place: MemberPlace; n: number }
+  /**
+   * A node, dialled directly. `n` counts from 1 within its place and transport
+   * kind (1 carries no number); `via: 'udp'` is a UDP transport (Hysteria 2).
+   */
+  | { kind: 'direct'; place: MemberPlace; n: number; via?: 'udp' }
   /**
    * A load balancer address. `letter` tells two addresses of one place apart;
    * `exit` is the node's own place (where the traffic leaves), null = unknown.
@@ -138,7 +144,8 @@ function placeHead(place: MemberPlace): string {
 export function entryBase(route: EntryRoute): string {
   switch (route.kind) {
     case 'direct': {
-      const how = route.n > 1 ? `Direct ${route.n}` : 'Direct';
+      const word = route.via === 'udp' ? 'UDP' : 'Direct';
+      const how = route.n > 1 ? `${word} ${route.n}` : word;
       const head = placeHead(route.place);
       return head ? `${head}${ENTRY_NAME_SEP}${how}` : how;
     }

@@ -358,6 +358,7 @@ entry that names a node (`lib/memberEntryNames.ts`):
 | ------------ | ------------------------------------------------------------- |
 | One          | `<flag> <place> · Direct`                                     |
 | Several      | `<flag> <place> · Direct`, then `· Direct 2`, `· Direct 3`, … |
+| A UDP entry  | `<flag> <place> · UDP`, then `· UDP 2`, … (numbered apart)    |
 
 - The scheme is the one every connection mode uses (`docs/edges.md` § "Names in apps",
   `src/shared/entryNames.ts`). `<place>` is the backend's member-facing location label up to its
@@ -585,13 +586,13 @@ feeds (`slug`, which must exist in the catalog), the group on the backend (`name
 characters; the transport tag is that name upper-cased), a **shape** and, for REALITY transports,
 the **server-name family** whose target and names the transport carries:
 
-| Mode (default)    | Shape                       | Transport                                           | Members reach it        |
-| ----------------- | --------------------------- | --------------------------------------------------- | ----------------------- |
-| `privacy-reality` | `reality` / `direct`        | VLESS + REALITY on 443                              | at the node's addresses |
-| `freedom-reality` | `reality` / `edge-l4`       | VLESS + REALITY on 443                              | through an L4 edge      |
-| `freedom-xhttp`   | `xhttp-reality` / `edge-l4` | VLESS over XHTTP under REALITY on 443 (no sing-box) | through an L4 edge      |
-| `freedom-ws`      | `ws` / `edge-l7`            | VLESS over WebSocket on loopback behind Caddy       | through an L7 edge      |
-| (not by default)  | `hysteria` / `direct`       | Hysteria 2 (QUIC) on UDP 443, pinned certificate    | at the node's addresses |
+| Mode (default)     | Shape                       | Transport                                           | Members reach it        |
+| ------------------ | --------------------------- | --------------------------------------------------- | ----------------------- |
+| `privacy-reality`  | `reality` / `direct`        | VLESS + REALITY on 443                              | at the node's addresses |
+| `freedom-reality`  | `reality` / `edge-l4`       | VLESS + REALITY on 443                              | through an L4 edge      |
+| `freedom-xhttp`    | `xhttp-reality` / `edge-l4` | VLESS over XHTTP under REALITY on 443 (no sing-box) | through an L4 edge      |
+| `freedom-ws`       | `ws` / `edge-l7`            | VLESS over WebSocket on loopback behind Caddy       | through an L7 edge      |
+| `privacy-hysteria` | `hysteria` / `direct`       | Hysteria 2 (QUIC) on UDP 443, pinned certificate    | at the node's addresses |
 
 Every REALITY transport listens on TCP 443: a node serves ONE REALITY mode, so they never
 collide. A **Hysteria 2** transport (`hysteria` / `direct`, for the `privacy-hysteria` mode) takes

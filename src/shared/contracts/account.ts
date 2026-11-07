@@ -112,6 +112,10 @@ export const AccountResponse = z.object({
        *  it last moved. Absent from an older server: fall back to the backend's
        *  capability. */
       canSwitchServer: z.boolean().optional(),
+      /** A Hysteria key whose UDP connection no node serves for it right now:
+       *  its configuration carries the REALITY backup only. Optional for
+       *  rolling-deploy compat. */
+      udpUnavailable: z.boolean().optional().default(false),
       /** An app that fetched this key's link was sent the app notice lately
        *  (a config whose only entries say the app can't connect): the kind of
        *  app (the format it reads) and when. Null when none was within the

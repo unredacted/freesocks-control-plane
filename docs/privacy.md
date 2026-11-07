@@ -406,7 +406,7 @@ included, so what it names is part of the posture.
   and FCP's remarks carry the node name and the server name (`<node> | <server name>`).
   Every body a member receives (the fronted route, the sealed configuration copy, every
   S3 mirror) renames those entries to `🇨🇦 <place> · Direct`, `· Direct 2` for further
-  server names (`convex/lib/memberEntryNames.ts`, `docs/servers.md` § "A direct node's
+  server names, and a Hysteria entry to `· UDP` (`convex/lib/memberEntryNames.ts`, `docs/servers.md` § "A direct node's
   addresses"). `<place>` is the backend's member-facing location label, which the location
   picker already shows, and the flag the country the backend lists for its nodes; the number
   is the entry's place in the panel's list, which the body shows anyway, so a name tells a member nothing

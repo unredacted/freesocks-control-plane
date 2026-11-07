@@ -218,6 +218,10 @@
     "refreshMembership": "Already paid? Check for my membership",
     "memberActiveTitle": "Membership active",
     "memberActiveExpiry": "Active until {date}",
+    "udpUnavailable": {
+      "title": "UDP connection unavailable right now",
+      "body": "Your configuration only has the REALITY connection for now, so you stay connected. Copy your configuration again later to get the faster UDP connection back."
+    },
     "appNotice": {
       "oldTitle": "One of your apps is too old to connect",
       "modeTitle": "One of your apps can't use this connection mode",
@@ -835,6 +839,8 @@
     "privacyBody": "Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks.",
     "privacyRealityTitle": "REALITY",
     "privacyRealityBody": "A direct connection with no CDN in the path.",
+    "privacyHysteriaTitle": "Hysteria",
+    "privacyHysteriaBody": "Uses UDP for quicker connections on Wi-Fi and mobile. Your configuration also includes a REALITY connection to use when UDP is blocked.",
     "transportLabel": "Connection method",
     "recommended": "Recommended",
     "unavailable": "Not available yet",

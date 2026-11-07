@@ -111,6 +111,23 @@ export const DEFAULT_CONNECTION_MODES: readonly DefaultModeRow[] = [
     backends: ['remnawave'],
     order: 0,
   },
+  {
+    // Hysteria 2 (QUIC over UDP) on the Privacy nodes, beside their REALITY
+    // (docs/privacy.md §5c). Every key is also placed in REALITY's group, so
+    // its config carries that entry as the backup when UDP is blocked. Ships
+    // dark: it is available only once a node serves it beside REALITY, and the
+    // operator turns it on once the client catalog says which apps verify its
+    // certificate pin.
+    slug: 'privacy-hysteria',
+    familySlug: 'privacy',
+    deliveryStyle: 'rawConfig',
+    enabled: false,
+    isFamilyDefault: false,
+    backends: ['remnawave'],
+    order: 1,
+    fallbackModeSlug: 'privacy-reality',
+    since: 3,
+  },
 ] as const;
 
 /**
@@ -118,7 +135,7 @@ export const DEFAULT_CONNECTION_MODES: readonly DefaultModeRow[] = [
  * deployment does not have yet, once per version, without resurrecting one
  * an admin removed on purpose after that version.
  */
-export const BUILT_IN_MODES_VERSION = 2;
+export const BUILT_IN_MODES_VERSION = 3;
 
 export const DEFAULT_CONNECTION_MODE = 'freedom-ws';
 
@@ -139,6 +156,7 @@ export const BUILT_IN_MODE_NAMES_EN: Readonly<Record<string, string>> = {
   'freedom-reality': 'REALITY',
   'freedom-xhttp': 'XHTTP',
   'privacy-reality': 'REALITY',
+  'privacy-hysteria': 'Hysteria',
 };
 
 /** Built-in slugs: rows the SPA has compiled i18n copy for (label may stay

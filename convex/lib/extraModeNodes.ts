@@ -10,6 +10,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
+import { formerNamesByName } from './backend/nodeAliases';
 import { poolFromConfig } from './remnawavePlacement';
 
 export interface ExtraModeTiers {
@@ -68,6 +69,36 @@ export function preferredTier(
 }
 
 /**
+ * Whether a two-group key gets only its backup's entry right now: no node
+ * serves its mode, or the node it is pinned to does not (its address closed
+ * for a re-check). The account view says so ("UDP unavailable right now").
+ */
+export async function extraModeDegradedOf(
+  db: DatabaseReader,
+  sub: Parameters<typeof extraModeTiersOf>[1] & Pick<Doc<'subscriptions'>, 'pinnedNode'>,
+): Promise<boolean> {
+  const tiers = await extraModeTiersOf(db, sub);
+  if (!tiers) return false;
+  const pinned = await pinnedNameOf(db, sub);
+  return pinned ? !tiers.serving.includes(pinned) : tiers.serving.length === 0;
+}
+
+/**
+ * The current name of the node a key is pinned to: a pin recorded under a
+ * name the node had before a rename (kept until the rename drains its pins)
+ * is that node's.
+ */
+async function pinnedNameOf(
+  db: DatabaseReader,
+  sub: Pick<Doc<'subscriptions'>, 'pinnedNode' | 'backendServerId'>,
+): Promise<string | null> {
+  if (!sub.pinnedNode || !sub.backendServerId) return sub.pinnedNode ?? null;
+  for (const [name, formers] of await formerNamesByName(db, sub.backendServerId))
+    if (formers.includes(sub.pinnedNode)) return name;
+  return sub.pinnedNode;
+}
+
+/**
  * The nodes "Switch server" may move a two-group key's pin to: those of the
  * tier the pinner picks from, other than the key's pin. Null for a key not in
  * two groups (its group's node count decides).
@@ -78,5 +109,6 @@ export async function otherPinTargetsOf(
 ): Promise<string[] | null> {
   const tiers = await extraModeTiersOf(db, sub);
   if (!tiers) return null;
-  return (preferredTier(tiers, new Set()) ?? []).filter((n) => n !== sub.pinnedNode);
+  const pinned = await pinnedNameOf(db, sub);
+  return (preferredTier(tiers, new Set()) ?? []).filter((n) => n !== pinned);
 }

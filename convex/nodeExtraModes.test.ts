@@ -73,18 +73,6 @@ async function seed(opts: { hysteriaName?: string } = {}) {
   const serverId = await insertPanelServer(t);
   const panel = installFakeBackend({ applyNodeUpdates: true });
   await t.mutation(internal.seed.seedConnectionModes, {});
-  await t.run(async (ctx) => {
-    await ctx.db.insert('connectionModes', {
-      slug: 'privacy-hysteria',
-      familySlug: 'privacy',
-      deliveryStyle: 'rawConfig',
-      enabled: false,
-      isFamilyDefault: false,
-      backends: ['remnawave'],
-      order: 5,
-      updatedAt: Date.now(),
-    });
-  });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
   await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
   await t.mutation(internal.sniFamilies.create, {

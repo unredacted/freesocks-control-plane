@@ -422,6 +422,11 @@ interface AccountView {
     /** "Switch server" would move this key right now (`switchServerAvailable`). */
     canSwitchServer: boolean;
     /**
+     * A key in two groups (a Hysteria key with its REALITY backup) whose mode
+     * no node serves for it right now: its config carries the backup only.
+     */
+    udpUnavailable: boolean;
+    /**
      * An app that fetched this key's link got the app notice within the hint
      * window (lib/appNotice.ts `appNoticeShown`): the kind of app and when
      * (ISO). Null otherwise.
@@ -567,6 +572,9 @@ export const getAccountView = internalAction({
           ? { code: server.location, label: server.locationLabel ?? server.location }
           : null,
         canSwitchServer: await ctx.runQuery(internal.account.switchServerAvailable, { userId }),
+        udpUnavailable: await ctx.runQuery(internal.subscriptions.extraModeDegraded, {
+          subscriptionId: sub._id,
+        }),
         appNotice: appNoticeHint,
         devices: live.devices.map((d) => ({
           hwid: d.hwid,
