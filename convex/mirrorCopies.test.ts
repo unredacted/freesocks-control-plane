@@ -16,7 +16,13 @@ import { convexTest, type TestConvex } from 'convex-test';
 import schema from './schema';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { __setMirrorFetchForTests, __setS3SendForTests, type S3Op } from './storage';
+import YAML from 'yaml';
+import {
+  MIRROR_UNAVAILABLE_STUB,
+  __setMirrorFetchForTests,
+  __setS3SendForTests,
+  type S3Op,
+} from './storage';
 import { repairBackoffMs, REPAIR_GRACE_MS } from './mirrorUploads';
 import { invalidateDelivery } from './subscriptions';
 import { setStoredCountry } from './memberCountry';
@@ -414,6 +420,90 @@ describe('every format of a mirror', () => {
     await w.t.action(internal.storage.repairMirrorUploads, {});
     expect([...w.objects.keys()].filter((k) => k.startsWith('p1:mirrors/'))).toEqual([]);
     expect(await openUploads(w.t)).toEqual([]);
+  });
+
+  test('an unverifiable Hysteria entry in any format: each object is the stub of its own format', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    const id = '11111111-2222-4333-8444-555555555555';
+    // Every format's body holds only a Hysteria entry with no pin (it trusts
+    // anyone who answers): nothing the guard can keep, so each is refused.
+    const bodies = {
+      links: `hysteria2://${id}@1.1.1.1:443/?sni=q.example&insecure=1#xray1-hy`,
+      clash: [
+        'proxies:',
+        '  - { name: xray1-hy, type: hysteria2, server: 1.1.1.1, port: 443, password: ' +
+          id +
+          ', sni: q.example, skip-cert-verify: true }',
+        'proxy-groups:',
+        '  - { name: Auto, type: select, proxies: [xray1-hy] }',
+        'rules:',
+        '  - MATCH,Auto',
+        '',
+      ].join('\n'),
+      singbox: JSON.stringify({
+        outbounds: [
+          { type: 'selector', tag: 'proxy', outbounds: ['xray1-hy'] },
+          {
+            type: 'hysteria2',
+            tag: 'xray1-hy',
+            server: '1.1.1.1',
+            server_port: 443,
+            password: id,
+            tls: { enabled: true, server_name: 'q.example', insecure: true },
+          },
+        ],
+      }),
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        const ua = new Headers(init?.headers).get('user-agent') ?? '';
+        const body = /^mihomo/i.test(ua)
+          ? bodies.clash
+          : /^SF[A-Z]\//.test(ua)
+            ? bodies.singbox
+            : bodies.links;
+        return new Response(body);
+      }),
+    );
+    const res = await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('ok');
+    const path = (await sub(w.t, subId))!.subscriptionMirrors[0]!.objectPath!;
+    const links = w.objects.get(`p1:${path}`)!;
+    const yaml = w.objects.get(`p1:${path}.yaml`)!;
+    const json = w.objects.get(`p1:${path}.json`)!;
+    for (const body of [links, yaml, json]) {
+      expect(body).not.toContain(id);
+      expect(body.toLowerCase()).not.toContain('hysteria');
+    }
+    expect(links).toBe(MIRROR_UNAVAILABLE_STUB);
+    // A Clash config that loads, every route to inert loopback entries.
+    const clash = YAML.parse(yaml) as {
+      proxies: { type: string; server: string; port: number }[];
+      rules: string[];
+    };
+    expect(clash.proxies.length).toBeGreaterThan(0);
+    expect(clash.proxies.every((p) => p.type === 'socks5' && p.server === '127.0.0.1')).toBe(true);
+    expect(clash.rules).toEqual([expect.stringMatching(/^MATCH,/)]);
+    // A sing-box config that loads, the same.
+    const box = JSON.parse(json) as {
+      outbounds: { type: string; server?: string }[];
+      route: { final: string };
+    };
+    expect(
+      box.outbounds
+        .filter((o) => o.server)
+        .every((o) => o.type === 'socks' && o.server === '127.0.0.1'),
+    ).toBe(true);
+    expect(box.outbounds.some((o) => o.server)).toBe(true);
+    expect(box.route.final).toBe(
+      box.outbounds[0]!.type === 'selector'
+        ? (box.outbounds[0] as { tag?: string }).tag
+        : undefined,
+    );
+    // The ledger knows the copy holds the stub.
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', stub: true });
   });
 
   test("removing a member's mirrors deletes every format's object", async () => {

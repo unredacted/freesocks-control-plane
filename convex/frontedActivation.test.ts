@@ -48,7 +48,24 @@ import { __setStageOpsForTests, type StageOps } from './edgeSetupRuns';
 import { __setPlanOpsForTests, ORIGIN_PROBE_ATTEMPTS } from './edgeSetupPlan';
 import { __setFrontIngressCheckForTests } from './nodeIntentOps';
 import { __setFrontChecker } from './frontQualifyOps';
-import { MIRROR_UNAVAILABLE_STUB, __setS3SendForTests, type S3Op } from './storage';
+import { MIRROR_UNAVAILABLE_STUB, __setS3SendForTests, mirrorStub, type S3Op } from './storage';
+import { mirrorFormatPath, type MirrorFormat } from '../src/shared/mirrorFormats';
+
+/** The last write of a mirror's object in one format (the `links` one by default). */
+function lastPut(
+  calls: readonly { op: S3Op }[],
+  format: MirrorFormat = 'links',
+): { key: string; body: string } {
+  const suffix = mirrorFormatPath('', format);
+  const put = calls
+    .map((c) => c.op)
+    .filter(
+      (op): op is Extract<S3Op, { kind: 'put' }> =>
+        op.kind === 'put' && (suffix ? op.key.endsWith(suffix) : !/\.(?:yaml|json)$/.test(op.key)),
+    )
+    .at(-1)!;
+  return { key: put.key, body: put.body };
+}
 import { REPAIR_GRACE_MS } from './mirrorUploads';
 import { markOf } from './edgeTrust';
 import { onSetupRunEnded } from './edgeSetupRuns';
@@ -1089,7 +1106,7 @@ describe("a live node's replacement stays a candidate until its commit", () => {
       subscriptionId: live.subId,
       force: true,
     });
-    const put = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const put = lastPut(w.calls.s3);
     expect(put.body).toContain(e1Address);
     expect(put.body).not.toContain(e2Address);
 
@@ -2618,7 +2635,7 @@ describe('the mirror barrier', () => {
       subscriptionId: live.subId,
       force: true,
     });
-    const stale = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const stale = lastPut(w.calls.s3);
     expect(stale.body).toContain(await edgeAddress(t, live.e1));
     const open = await openMirrorUploads(t, { subscriptionId: live.subId });
     expect(open).toHaveLength(1);
@@ -2631,7 +2648,7 @@ describe('the mirror barrier', () => {
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toHaveLength(1);
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
-    const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const repaired = lastPut(w.calls.s3);
     expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
@@ -2650,7 +2667,7 @@ describe('the mirror barrier', () => {
     expect(open.map((o) => o.kind)).toEqual(['initial']);
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
-    const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const repaired = lastPut(w.calls.s3);
     expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
@@ -2710,7 +2727,7 @@ describe('the mirror barrier', () => {
       subscriptionId: live.subId,
       force: true,
     });
-    const stale = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const stale = lastPut(w.calls.s3);
     expect(stale.body).toContain(await edgeAddress(t, live.e1));
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toHaveLength(1);
     // An upload a move overtook was never accepted: the account is not held to it.
@@ -2718,7 +2735,7 @@ describe('the mirror barrier', () => {
     w.hooks.duringPut = null;
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
-    const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const repaired = lastPut(w.calls.s3);
     expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
@@ -2752,7 +2769,7 @@ describe('the mirror barrier', () => {
     w.hooks.duringPut = null;
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
-    const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const repaired = lastPut(w.calls.s3);
     expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
@@ -2874,7 +2891,7 @@ describe('the mirror barrier', () => {
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
     expect(w.calls.s3.filter((x) => x.op.kind === 'delete').length).toBe(deletesBefore);
-    const rewritten = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    const rewritten = lastPut(w.calls.s3);
     expect(rewritten.body).toBe(MIRROR_UNAVAILABLE_STUB);
     expect(await openMirrorUploads(t, { subscriptionId: newSub })).toEqual([]);
   });
@@ -2937,7 +2954,10 @@ describe('the mirror barrier', () => {
     await t.finishInProgressScheduledFunctions();
     const puts = w.calls.s3.slice(before).filter((x) => x.op.kind === 'put');
     expect(puts.length).toBeGreaterThan(0);
-    expect((puts.at(-1)!.op as { body: string }).body).toBe(MIRROR_UNAVAILABLE_STUB);
+    expect(lastPut(puts).body).toBe(MIRROR_UNAVAILABLE_STUB);
+    // Every format's object is the stub of its own format.
+    expect(lastPut(puts, 'clash').body).toBe(mirrorStub('clash'));
+    expect(lastPut(puts, 'singbox').body).toBe(mirrorStub('singbox'));
   });
 
   test('an upload under a stable policy settles at once', async () => {

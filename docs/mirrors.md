@@ -81,7 +81,12 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   mirror. The pass pages the ledger, so its cost follows the mirrors members asked for, not every
   active key, and it continues in new runs until it reaches the last one.
 - **What the object holds.** An edge-required place with nothing renderable gets the unavailable
-  stub, never the origin body (in every format's object). Every object is written with `Cache-Control: no-cache`, so a cache
+  stub, never the origin body, and so does a body the Hysteria guard cannot repair
+  (`lib/hysteriaGuard.ts`, which reads the link list, Mihomo YAML and sing-box JSON alike: an
+  entry without the expected pin is dropped, or the body refused). The stub is valid in its
+  object's format (`mirrorStub`): the plain-text line for the link list, and for `.yaml` and
+  `.json` a config that loads but whose only entries are inert ones at loopback, every route to
+  them, so the app fails closed. Every object is written with `Cache-Control: no-cache`, so a cache
   in front of a bucket revalidates instead of serving an old body (a withdrawn address, the stub
   and a re-issued key all depend on that). An upload whose delivery policy moved while it was in
   flight (the place's epoch, the key's own revision, the member's country or address lane) is
