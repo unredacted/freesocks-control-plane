@@ -95,9 +95,10 @@ async function setup(opts: { maxLiveEdges?: number } = {}) {
   return { t, r, accountId, now, drainStart, publishedAt, insertEdge, insertKey };
 }
 
-const getEdge = (t: ReturnType<typeof convexTest>, id: Id<'edges'>) =>
-  t.run((ctx) => ctx.db.get(id));
-const audits = (t: ReturnType<typeof convexTest>, action: string) =>
+type T = Awaited<ReturnType<typeof setup>>['t'];
+
+const getEdge = (t: T, id: Id<'edges'>) => t.run((ctx) => ctx.db.get(id));
+const audits = (t: T, action: string) =>
   t.run((ctx) =>
     ctx.db
       .query('auditLog')
