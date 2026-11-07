@@ -49,9 +49,9 @@
     "test:compat:browser": "playwright test --config tests/compat/playwright.config.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-acm": "3.1162.0",
-    "@aws-sdk/client-cloudfront": "3.1162.0",
-    "@aws-sdk/client-s3": "^3.1162.0",
+    "@aws-sdk/client-acm": "3.1163.0",
+    "@aws-sdk/client-cloudfront": "3.1163.0",
+    "@aws-sdk/client-s3": "^3.1163.0",
     "@cap.js/wasm": "0.0.8",
     "@cap.js/widget": "0.1.58",
     "@fontsource/atkinson-hyperlegible-mono": "^5.3.0",
@@ -93,11 +93,11 @@
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
-    "@inlang/paraglide-js": "3.1.0",
+    "@inlang/paraglide-js": "3.2.0",
     "@inlang/plugin-m-function-matcher": "2.4.3",
     "@inlang/plugin-message-format": "4.6.0",
     "@internationalized/date": "^3.12.4",
-    "@lucide/svelte": "^1.69.0",
+    "@lucide/svelte": "^1.70.0",
     "@playwright/test": "1.64.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.4",
