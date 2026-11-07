@@ -1477,11 +1477,11 @@ apps that honour it fetch again this often. Bodies FCP does not render
 From the moment a rotation finishes, with the defaults (drain of a replaced edge 24 h, of a
 burned edge 2 h, refresh hint 1 h):
 
-| App refreshes                                | Routine rotation                                 | Burn (blocked)                                                                | Members inside the blocking country                                                                                                                                                          |
-| -------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| About every minute (an app that revalidates) | moves within a poll; the drain is not needed     | the same                                                                      | rely on their backup entry until the next poll                                                                                                                                               |
-| Hourly (honours the hint)                    | within an hour, far inside the drain             | within about an hour, inside the 2 h drain                                    | an app with an automatic group can fail over to the backup when its health check notices (each app's interval differs); a link-list app needs a refresh or a manual pick of the backup entry |
-| Never                                        | keeps the old address 24 h, then only the backup | keeps a dead address (it still works elsewhere for 2 h), then only the backup | backup only; a later rotation of the backup leaves them without a working entry until they refresh by hand                                                                                   |
+| App refreshes                                | Routine rotation                                                                                  | Burn (blocked)                                                                                                        | Members inside the blocking country                                                                                                                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| About every minute (an app that revalidates) | moves within a poll; the drain is not needed                                                      | the same                                                                                                              | rely on their backup entry until the next poll                                                                                                                                               |
+| Hourly (honours the hint)                    | within an hour, far inside the drain                                                              | within about an hour, inside the 2 h drain                                                                            | an app with an automatic group can fail over to the backup when its health check notices (each app's interval differs); a link-list app needs a refresh or a manual pick of the backup entry |
+| Never                                        | keeps the old address 24 h, then only the backup (an L7 front: kept up until they refresh, below) | keeps a dead address (it still works elsewhere for 2 h; an L7 front: until they refresh, below), then only the backup | backup only; a later rotation of the backup leaves them without a working entry until they refresh by hand                                                                                   |
 
 On top of that come detection (the detector runs every 5 minutes over a 30-minute report
 window; probes every 15 minutes, fresh for two intervals) and the rotation itself (an L4 replace
@@ -1490,6 +1490,42 @@ for affected-country evidence). The safety net for apps that never refresh is th
 on a different provider (`render.preferDistinctProviders`, `lib/edges/assignment.ts`); it only
 exists while the pool has published edges on two providers. With one provider the backup is
 another address on the same provider.
+
+**Fronts kept up for apps that have not refreshed** (`convex/edgeDrainHolds.ts`, rules in
+`lib/edges/drainHold.ts`). Most apps never refresh on their own: in a real fleet, most keys
+of a node had not fetched again 12 hours after a burn, so most of the keys handed the burned
+name still held it when the 2 h drain destroyed it. An L4 address costs money to keep; an L7
+front (a CDN hostname) costs next to nothing, and a burned one still works outside the country
+that blocked it. So when the drain of a managed L7 front ends, the reconcile asks
+`edgeDrainHolds.judge` before destroying it, and a held front stays `draining` (never handed out,
+the CDN keeps forwarding) until:
+
+- few enough keys may still hold it: a key in use on the node whose last edge render
+  (`lastRenderedAt`, or `lastRender.at`) fell in the front's published window `[publishedAt, drain
+start)` counts, and the front goes once `edge.drainHold.releaseAtKeys` (default 10) or fewer
+  remain. Counted at most hourly per node (`edgeDrainHolds.count`, the node's keys by
+  `by_backend_server_pinned`, `FRONT_KEYS_PAGE` a page; never during a node rename, whose pins
+  move page by page). It counts keys, not apps: a body of that window may not have carried this
+  front (which only lengthens a hold), but one key can serve several apps and the first to fetch
+  moves the key's one render stamp, so an app on another device that never refreshes leaves the
+  count while it still holds the front. Only the hard maximum covers that app;
+- its hard maximum passes: `edge.drainHold.maxDays` (default 30, 0..90; 0 never holds) from the
+  drain's start, frozen on the edge when the hold begins;
+- its account, or its location, is at its live-edge cap: the held front whose drain began first
+  goes, and no other while an edge there is still being destroyed (its slot is on its way), so a
+  held front never takes the slot a replacement needs;
+- its listener is retired or gone, or its origin is being deleted.
+
+Never held: an L4 address, an observe-only edge, one that was never published, and a drain of no
+length (an operator's "Delete now", an origin delete with force, a spare taken out). "Delete now"
+on the node page ends a hold at once. The edge carries `drainHold` (`since`, `until`, the last
+count `at` / `holders` / `keys`, and `releasedAt` / `releaseReason` once let go): counts only,
+never a key. Audited `edge.drain_hold.started` (`until`) and `edge.drain_hold.released`
+(`reason`, `holders`, `keys`); the admin edge projection carries `drainHold` (`until`,
+`holders`, `keys`, `countedAt`) while a hold is on, and the node page's address row says how many
+apps may still use it and the latest it is deleted. `edge.drainHold.enabled` (default on) switches
+it off. It does not help members inside the blocking country, whose blocked name is the
+hostname itself: only a refresh reaches them.
 
 The burned drain is twice the hint so an hourly app outside the blocking country never races
 the destroy. Saving a drain under two refresh intervals (`edge.drain_below_refresh`), a burned
@@ -5099,7 +5135,10 @@ the fleet value (the edit dialog sends that when a value is changed to the fleet
 `edge.updateIntervalHours` (default 1 h) is the refresh hint of an edge-rendered subscription
 and `edge.burnedDrainMinutes` (default 120) the drain of a burned edge; neither has a per-origin
 override, and a drain shorter than the hint allows is saved with a warning (§ "How fast members
-move").
+move"). `edge.drainHold.enabled` (default on), `edge.drainHold.maxDays` (default 30, 0..90) and
+`edge.drainHold.releaseAtKeys` (default 10, 0..100000) keep a drained L7 front up for apps that
+have not refreshed (§ "How fast members move", "Fronts kept up for apps that have not
+refreshed").
 `desiredPublishedDefault` seeds an origin's `desiredPublished`, which is pool state (setup and
 re-protect runs widen it), bounded 1..64 (`MAX_DESIRED_PUBLISHED`); the fleet default stays
 within 1..64 and defaults to 2.

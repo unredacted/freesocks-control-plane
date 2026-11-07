@@ -638,6 +638,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.edge_pick': ['relaySlug', 'version'],
   'relay.lanes': ['relaySlug', 'open', 'trusted', 'tainted'],
   'edge.lane_retired': ['relaySlug', 'edgeId', 'epoch'],
+  // A drained L7 front held up for apps that have not refreshed: counts only.
+  'edge.drain_hold.started': ['relaySlug', 'edgeId', 'until'],
+  'edge.drain_hold.released': ['relaySlug', 'edgeId', 'reason', 'holders', 'keys'],
   // Server-name families: slugs and COUNTS only, never a hostname.
   'edge.sni.config.update': ['changedKeys'],
   'edge.sni.family.create': ['slug', 'targetKind', 'network'],

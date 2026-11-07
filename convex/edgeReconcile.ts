@@ -52,6 +52,7 @@ import {
   uncoveredListeners,
 } from './lib/edges/pool';
 import { hasPublishableAddress } from './lib/edges/ip';
+import { heldCandidate } from './lib/edges/drainHold';
 import { parseIntent } from './lib/edges/intent';
 import { sharedTeardownLockKey, stepLockKey } from './edgeRotations';
 import { setupRunsPass } from './edgeSetupRuns';
@@ -108,6 +109,8 @@ export interface ReconcileReport {
   started: number;
   published: number;
   finalizedDeletes: number;
+  /** Drained L7 fronts kept up this pass for apps that have not refreshed (convex/edgeDrainHolds.ts). */
+  drainHeld: number;
   errors: number;
 }
 
@@ -197,6 +200,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     started: 0,
     published: 0,
     finalizedDeletes: 0,
+    drainHeld: 0,
     errors: 0,
   };
   const cfg = await ctx.runQuery(internal.edgeReconcileMutations.configSnapshot, {});
@@ -340,8 +344,17 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         if (fresh?.status === 'destroying') await destroyStep(ctx, cfg, fresh, report);
       };
       if (drained) {
-        await destroyNow();
-        continue;
+        // A drained L7 front may be held up while apps that fetched during its
+        // published window still hold it (lib/edges/drainHold.ts); a held one
+        // goes on to the health refresh below like any live edge.
+        const held =
+          heldCandidate(edge, now) &&
+          (await ctx.runMutation(internal.edgeDrainHolds.judge, { edgeId: edge._id })).hold;
+        if (!held) {
+          await destroyNow();
+          continue;
+        }
+        report.drainHeld++;
       }
       if ((edge.status === 'failed' || edge.status === 'cancelled') && !inRotation) {
         // Only once every step is settled (done or confirmed absent): unresolved

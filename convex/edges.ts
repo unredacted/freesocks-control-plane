@@ -264,6 +264,20 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     failure: e.failure ?? null,
     burnedAt: e.burnedAt ? new Date(e.burnedAt).toISOString() : null,
     drainUntil: e.drainUntil ? new Date(e.drainUntil).toISOString() : null,
+    // A drained L7 front held up for apps that have not refreshed (counts only).
+    drainHold:
+      e.drainHold &&
+      e.drainHold.releasedAt === undefined &&
+      e.status === 'draining' &&
+      // A record of an earlier drain (kept as a spare, published, drained again) says nothing.
+      e.drainHold.since === e.statusChangedAt
+        ? {
+            until: new Date(e.drainHold.until).toISOString(),
+            holders: e.drainHold.holders ?? null,
+            keys: e.drainHold.keys ?? null,
+            countedAt: e.drainHold.at ? new Date(e.drainHold.at).toISOString() : null,
+          }
+        : null,
     destroyedAt: e.destroyedAt ? new Date(e.destroyedAt).toISOString() : null,
     progress: edgeProgress(e),
     createdAt: new Date(e._creationTime).toISOString(),

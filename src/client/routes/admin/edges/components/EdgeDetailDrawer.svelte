@@ -271,6 +271,15 @@
       { label: 'Published', value: when(edge.publishedAt) },
       { label: 'Last provider check', value: when(edge.lastHealthAt) },
       { label: 'Draining until', value: when(edge.drainUntil) },
+      {
+        label: 'Kept up for stale apps until',
+        value: edge.drainHold ? when(edge.drainHold.until) : '',
+        hint: 'At the latest: deleted sooner once the apps that may still use it have refreshed.',
+      },
+      {
+        label: 'Apps that may still use it',
+        value: edge.drainHold?.holders ?? '',
+      },
       { label: 'Burned', value: when(edge.burnedAt) },
       { label: 'Destroyed', value: when(edge.destroyedAt) },
       { label: 'Destroy attempts', value: edge.destroyAttempts > 0 ? edge.destroyAttempts : '' },

@@ -1263,6 +1263,17 @@ export const EdgeAdmin = z.object({
     .nullable(),
   burnedAt: isoN,
   drainUntil: isoN,
+  /** A drained L7 front kept up for apps that have not refreshed (absent from an older server: none). */
+  drainHold: z
+    .object({
+      until: iso,
+      /** Keys that may still hold it at the last count (null = not counted yet). */
+      holders: z.number().nullable(),
+      keys: z.number().nullable(),
+      countedAt: isoN,
+    })
+    .nullable()
+    .default(null),
   destroyedAt: isoN,
   progress: z.object({ done: z.number(), total: z.number(), percent: z.number() }),
   createdAt: iso,
@@ -2515,6 +2526,10 @@ export const EdgeConfigView = z.object({
       /** FCP's own client check confirms and replaces (absent from an older server: off). */
       clientCheck: z.object({ enabled: z.boolean() }).default({ enabled: false }),
       replacement: z.object({ reblockHours: z.number() }).default({ reblockHours: 24 }),
+      /** Drained L7 fronts kept up for apps that have not refreshed (absent from an older server: the defaults). */
+      drainHold: z
+        .object({ enabled: z.boolean(), maxDays: z.number(), releaseAtKeys: z.number() })
+        .default({ enabled: true, maxDays: 30, releaseAtKeys: 10 }),
       /** Address lanes (absent from an older server: the defaults). */
       trust: z
         .object({
