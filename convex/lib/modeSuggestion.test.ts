@@ -64,4 +64,26 @@ describe('suggestModeFor', () => {
       }),
     ).toBe('ws');
   });
+
+  test("the operator's modes for a country win, first available first, listed or not", () => {
+    expect(
+      suggestModeFor({ ...base, country: 'IR', cells: { ws: 'available' }, preferred: ['xhttp'] }),
+    ).toBe('xhttp');
+    // Not on the censored list: the preference still applies.
+    expect(suggestModeFor({ ...base, country: 'CN', cells: null, preferred: ['reality'] })).toBe(
+      'reality',
+    );
+    // An unavailable or unknown mode is skipped; none left keeps the matrix rule.
+    const modes = MODES.map((m) => (m.id === 'xhttp' ? { ...m, available: false } : m));
+    expect(
+      suggestModeFor({ ...base, modes, country: 'IR', cells: null, preferred: ['xhttp', 'ws'] }),
+    ).toBe('ws');
+    expect(
+      suggestModeFor({ ...base, modes, country: 'IR', cells: null, preferred: ['xhttp', 'gone'] }),
+    ).toBe('reality');
+    // No country: no preference applies.
+    expect(suggestModeFor({ ...base, country: null, cells: null, preferred: ['xhttp'] })).toBe(
+      'ws',
+    );
+  });
 });

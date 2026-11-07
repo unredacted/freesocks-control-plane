@@ -1,5 +1,9 @@
 <script lang="ts">
   import Check from '@lucide/svelte/icons/check';
+  import Gauge from '@lucide/svelte/icons/gauge';
+  import InfinityIcon from '@lucide/svelte/icons/infinity';
+  import { resolveTierFeatureIcon } from '../lib/tierFeatureIcons';
+  import { tierFeatureText } from '../lib/tierFeatureCopy';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { configQuery } from '../lib/queries';
@@ -75,18 +79,33 @@
       <Skeleton class="h-48 w-full" />
     </div>
   {:else}
-    <div class="grid gap-3 sm:grid-cols-2">
+    <div class="grid items-start gap-3 sm:grid-cols-2">
       {#each tiers as tier (tier.slug)}
         {@const isCurrent = tier.slug === currentTierSlug}
         {@const isMembership = tier.slug === membershipSlug}
+        {@const spotlight = isMembership && billingEnabled}
         <div
-          class="relative space-y-4 overflow-hidden rounded-xl border bg-card p-5 {isCurrent
-            ? 'border-primary/30 ring-1 ring-primary/30'
-            : isMembership && billingEnabled
-              ? 'border-primary/30 ring-1 ring-primary/30'
-              : 'border-border'}"
+          class="relative overflow-hidden rounded-lg bg-card {spotlight
+            ? 'border-2 border-primary'
+            : isCurrent
+              ? 'border border-primary/40'
+              : 'border border-border'}"
         >
-          {#if isCurrent}
+          {#if spotlight}
+            <!-- The membership card leads with a solid strip: what it is + price. -->
+            <div
+              class="flex items-center justify-between gap-3 bg-primary px-5 py-2.5 text-primary-foreground"
+            >
+              <span class="text-xs font-extrabold uppercase tracking-[0.1em] rtl:tracking-normal">
+                {isCurrent ? t('tiers.yourTier') : t('tiers.recommended')}
+              </span>
+              {#if fromPerMonth}
+                <span class="text-sm font-bold tabular-nums">
+                  {t('upgrade.fromPerMonth', { price: fromPerMonth })}
+                </span>
+              {/if}
+            </div>
+          {:else if isCurrent}
             <div
               class="absolute start-0 top-0 rounded-ee-lg bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-secondary-foreground"
             >
@@ -94,40 +113,49 @@
             </div>
           {/if}
 
-          <div class="space-y-1 pt-3">
-            <h3 class="font-display text-lg font-semibold">{tier.name}</h3>
-            {#if isMembership && billingEnabled && fromPerMonth}
-              <p class="text-sm tabular-nums text-muted-foreground">
-                {t('upgrade.perMonth', { price: fromPerMonth })}
-              </p>
-            {/if}
-            {#if tier.description}
-              <p class="text-sm text-muted-foreground">{tier.description}</p>
+          <div class="space-y-4 p-5 {spotlight ? '' : 'pt-8'}">
+            <div class="space-y-1">
+              <h3 class="font-display text-lg font-semibold">{tier.name}</h3>
+              {#if tier.description}
+                <p class="text-sm text-muted-foreground">{tier.description}</p>
+              {/if}
+            </div>
+
+            <ul class="space-y-2.5 text-sm {spotlight ? 'text-foreground' : ''}">
+              <li class="flex items-start gap-2.5">
+                {#if tier.monthlyTrafficGb === 0}
+                  <InfinityIcon class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                {:else}
+                  <Gauge class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                {/if}
+                <span class="tabular-nums {spotlight ? 'font-bold' : ''}"
+                  >{bandwidthLabel(tier.monthlyTrafficGb)}</span
+                >
+              </li>
+              {#if showDevices}
+                <li class="flex items-start gap-2.5">
+                  <Check class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <span class="tabular-nums">{deviceLabel(tier.deviceLimit)}</span>
+                </li>
+              {/if}
+              {#each tier.features as f, i (i)}
+                {@const Icon = resolveTierFeatureIcon(f.iconId)}
+                {@const text = tierFeatureText(f)}
+                {#if text}
+                  <li class="flex items-start gap-2.5">
+                    <Icon class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                    <span>{text}</span>
+                  </li>
+                {/if}
+              {/each}
+            </ul>
+
+            {#if isMembership && !isCurrent && billingEnabled && onUpgrade}
+              <Button size="lg" class="w-full" onclick={onUpgrade}>
+                {t('tiers.upgradeCta')}
+              </Button>
             {/if}
           </div>
-
-          <ul class="space-y-2 text-sm">
-            <li class="flex items-start gap-2">
-              <Check class="mt-0.5 size-4 shrink-0 text-primary" />
-              <span class="tabular-nums">{bandwidthLabel(tier.monthlyTrafficGb)}</span>
-            </li>
-            {#if showDevices}
-              <li class="flex items-start gap-2">
-                <Check class="mt-0.5 size-4 shrink-0 text-primary" />
-                <span class="tabular-nums">{deviceLabel(tier.deviceLimit)}</span>
-              </li>
-            {/if}
-            <li class="flex items-start gap-2">
-              <Check class="mt-0.5 size-4 shrink-0 text-primary" />
-              <span class="text-muted-foreground">{t('tiers.mirrors')}</span>
-            </li>
-          </ul>
-
-          {#if isMembership && !isCurrent && billingEnabled && onUpgrade}
-            <Button variant="default" class="w-full min-h-11" size="sm" onclick={onUpgrade}>
-              {t('tiers.upgradeCta')}
-            </Button>
-          {/if}
         </div>
       {/each}
     </div>

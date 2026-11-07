@@ -10,6 +10,11 @@
     type TierAdmin,
     type TierUpsert,
   } from '../../../shared/contracts/admin';
+  import {
+    defaultTierFeatures,
+    type TierFeatureWire,
+  } from '../../../shared/contracts/tierFeatures';
+  import TierFeaturesEditor from './TierFeaturesEditor.svelte';
 
   /**
    * Tier editor. Edit mode exposes EVERY field except `slug` (the immutable
@@ -69,13 +74,47 @@
   let draft = $state<TierUpsert>(
     ((t: TierAdmin | null) => {
       if (t) {
-        const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = $state.snapshot(t);
+        const {
+          id: _id,
+          createdAt: _c,
+          updatedAt: _u,
+          features: _f,
+          featuresDefault: _fd,
+          ...rest
+        } = $state.snapshot(t);
         return { ...rest };
       }
       // Create mode: pre-filled (duplicate) or blank defaults.
-      return initial ? { ...initial } : { ...CREATE_DEFAULTS };
+      if (initial) {
+        const { features: _f, ...rest } = initial;
+        return { ...rest };
+      }
+      return { ...CREATE_DEFAULTS };
     })(tier),
   );
+
+  // Card features live beside the draft: sent only once touched, so saving an
+  // unrelated field never freezes the built-in defaults into a stored list.
+  // `featuresReset` = save "back to the defaults" (null).
+  let features = $state<TierFeatureWire[]>(
+    ((t: TierAdmin | null) =>
+      t
+        ? $state.snapshot(t.features).map((f) => ({ ...f }))
+        : initial?.features
+          ? initial.features.map((f) => ({ ...f }))
+          : defaultTierFeatures(false))(tier),
+  );
+  let featuresTouched = $state(!tier && !!initial?.features);
+  let featuresReset = $state(false);
+  let featuresIsDefault = $derived(
+    featuresReset || (!featuresTouched && (tier ? tier.featuresDefault : !initial?.features)),
+  );
+  function save() {
+    onSave({
+      ...draft,
+      ...(featuresTouched ? { features: featuresReset ? null : features } : {}),
+    });
+  }
 
   // Disable Save when nothing changed (edit) / required identity missing (create).
   let isPristine = $derived(
@@ -83,10 +122,17 @@
       ? JSON.stringify(draft) ===
           JSON.stringify(
             ((t: TierAdmin) => {
-              const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = t;
+              const {
+                id: _id,
+                createdAt: _c,
+                updatedAt: _u,
+                features: _f,
+                featuresDefault: _fd,
+                ...rest
+              } = t;
               return rest;
             })(tier!),
-          )
+          ) && !featuresTouched
       : false,
   );
   let canSave = $derived(!isPristine && !!draft.name && (isEdit || !!draft.slug));
@@ -113,7 +159,7 @@
 </script>
 
 <Dialog.Root bind:open {onOpenChange}>
-  <Dialog.Content class="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+  <Dialog.Content class="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
     <Dialog.Header>
       <Dialog.Title>
         {isEdit ? `Edit tier · ${tier?.name}` : initial ? 'Duplicate tier' : 'New tier'}
@@ -279,6 +325,20 @@
           />
         </div>
       </div>
+      <TierFeaturesEditor
+        {features}
+        isDefault={featuresIsDefault}
+        onChange={(next) => {
+          features = next;
+          featuresTouched = true;
+          featuresReset = false;
+        }}
+        onReset={() => {
+          features = defaultTierFeatures(draft.isDefaultFree);
+          featuresTouched = true;
+          featuresReset = true;
+        }}
+      />
       <label class="flex items-center gap-3 text-sm">
         <Checkbox
           checked={draft.isActive}
@@ -297,7 +357,7 @@
 
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
-      <Button onclick={() => onSave(draft)} disabled={!canSave || busy}>
+      <Button onclick={save} disabled={!canSave || busy}>
         {busy ? 'Saving…' : isEdit ? (isPristine ? 'No changes' : 'Save') : 'Create tier'}
       </Button>
     </Dialog.Footer>

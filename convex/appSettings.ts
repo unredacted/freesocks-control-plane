@@ -75,6 +75,10 @@ export const SETTINGS_DEFAULTS = {
   // freedom-family key of a member on Automatic whose OWN country choice has an
   // entry narrows softly to them (steering on); never a guess, never a move.
   'delivery.country.exits': [] as Array<{ country: string; locations: string[] }>,
+  // Suggested modes by country (lib/countryModes.ts): per country, the mode
+  // slugs the picker suggests, in order; the first one the member's backend
+  // serves wins over the status-page matrix. Edited on Admin → Connection modes.
+  'delivery.country.modes': [] as Array<{ country: string; modes: string[] }>,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA

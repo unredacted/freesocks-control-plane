@@ -466,5 +466,14 @@ export const ConnectionRegionResponse = z.object({
    * (POST account/move-to-exit). Optional for rolling-deploy compat.
    */
   exit: z.object({ label: z.string() }).nullable().optional().default(null),
+  /**
+   * Sign-up only (`?mode=`, before the first key): per answer the question
+   * offers (`ZZ` included), the mode to suggest and the location codes
+   * Automatic tries first (empty: least loaded). Optional for deploy skew.
+   */
+  suggestions: z
+    .record(z.string(), z.object({ modeId: z.string(), locations: z.array(z.string()) }))
+    .optional()
+    .default({}),
 });
 export type ConnectionRegionResponse = z.infer<typeof ConnectionRegionResponse>;

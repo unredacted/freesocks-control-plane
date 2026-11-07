@@ -8,7 +8,7 @@ import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
-import { backendIdValidator } from './lib/backendIds';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import {
@@ -21,6 +21,15 @@ import {
   validateCensoredCountries,
 } from './lib/censoredCountries';
 import { suggestModeFor } from './lib/modeSuggestion';
+import {
+  COUNTRY_MODES_KEY,
+  parseCountryModes,
+  preferredModesFor,
+  type CountryModes,
+} from './lib/countryModes';
+import { ELSEWHERE } from './lib/memberCountry';
+import { resolveCountryExits } from './countryExits';
+import { resolveMemberCountryConfig } from './memberCountry';
 import { effectiveDefaultFor, resolveCatalogWithAvailability } from './lib/placement';
 import { resolveDefaultModeId } from './lib/connectionModes';
 import { resolveStatusConfig } from './lib/statusPage';
@@ -230,6 +239,48 @@ export const set = internalMutation({
   },
 });
 
+/** Everything the mode suggestion reads, once per request. */
+async function suggestionInputs(db: DatabaseReader, backend: BackendId) {
+  const [listed, catalog, status, countryModes] = await Promise.all([
+    resolveCensoredCountries(db),
+    resolveCatalogWithAvailability(db),
+    resolveStatusConfig(db),
+    resolveCountryModes(db),
+  ]);
+  const defaultId = effectiveDefaultFor(catalog, backend) ?? (await resolveDefaultModeId(db));
+  const modes = catalog.modes.map((m) => ({
+    id: m.id,
+    isCensorshipRecommended: m.isCensorshipRecommended,
+    available: m.availableBackends.includes(backend),
+  }));
+  return { listed: listed.codes, status, countryModes, defaultId, modes };
+}
+
+function suggestIn(inputs: Awaited<ReturnType<typeof suggestionInputs>>, code: string | null) {
+  return suggestModeFor({
+    country: code,
+    listed: inputs.listed,
+    cells: inputs.status.censorshipRows.find((r) => r.countryCode === code)?.cells ?? null,
+    modes: inputs.modes,
+    defaultId: inputs.defaultId,
+    preferred: preferredModesFor(inputs.countryModes, code),
+  });
+}
+
+/** The stored `delivery.country.modes` setting, fail-safe (lib/countryModes.ts). */
+export async function resolveCountryModes(db: DatabaseReader): Promise<CountryModes[]> {
+  const row = await db
+    .query('appSettings')
+    .withIndex('by_key', (q) => q.eq('key', COUNTRY_MODES_KEY))
+    .unique();
+  if (!row) return [];
+  try {
+    return parseCountryModes(JSON.parse(row.value));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The connection mode to highlight for a member of `backend` whose request the
  * CDN places in `country` (lib/modeSuggestion.ts). Only the verdict leaves.
@@ -237,24 +288,43 @@ export const set = internalMutation({
 export const suggestMode = internalQuery({
   args: { backend: backendIdValidator, country: v.union(v.string(), v.null()) },
   handler: async (ctx, { backend, country }): Promise<string> => {
-    const [listed, catalog, status] = await Promise.all([
-      resolveCensoredCountries(ctx.db),
-      resolveCatalogWithAvailability(ctx.db),
-      resolveStatusConfig(ctx.db),
-    ]);
-    const defaultId = effectiveDefaultFor(catalog, backend) ?? (await resolveDefaultModeId(ctx.db));
     const code = country ? country.trim().toUpperCase() : null;
-    return suggestModeFor({
-      country: code,
-      listed: listed.codes,
-      cells: status.censorshipRows.find((r) => r.countryCode === code)?.cells ?? null,
-      modes: catalog.modes.map((m) => ({
-        id: m.id,
-        isCensorshipRecommended: m.isCensorshipRecommended,
-        available: m.availableBackends.includes(backend),
-      })),
-      defaultId,
-    });
+    return suggestIn(await suggestionInputs(ctx.db, backend), code);
+  },
+});
+
+/**
+ * Sign-up, before the first key: for each country the question offers, the
+ * mode to suggest and the locations Automatic tries first (the exit locations
+ * of that country while ordering by country is on, else none). Read only by
+ * the sealed region view, so a member's pick re-runs the suggestion on the
+ * page without sending the country anywhere.
+ */
+export const suggestionsForCountries = internalQuery({
+  args: { userId: v.id('users'), countries: v.array(v.string()) },
+  handler: async (
+    ctx,
+    { userId, countries },
+  ): Promise<Record<string, { modeId: string; locations: string[] }>> => {
+    const user = await ctx.db.get(userId);
+    const tier = user ? await ctx.db.get(user.tierId) : null;
+    if (!tier) return {};
+    const inputs = await suggestionInputs(ctx.db, tier.backend);
+    const [exits, steer] = await Promise.all([
+      resolveCountryExits(ctx.db),
+      resolveMemberCountryConfig(ctx.db).then((c) => c.steer),
+    ]);
+    const out: Record<string, { modeId: string; locations: string[] }> = {};
+    for (const raw of countries.slice(0, MAX_CENSORED_COUNTRIES + 1)) {
+      const up = raw.trim().toUpperCase();
+      const code = up === ELSEWHERE ? ELSEWHERE : normalizeCode(up);
+      if (!code) continue;
+      out[code] = {
+        modeId: suggestIn(inputs, code === ELSEWHERE ? null : code),
+        locations: steer ? (exits.find((e) => e.country === code)?.locations ?? []) : [],
+      };
+    }
+    return out;
   },
 });
 

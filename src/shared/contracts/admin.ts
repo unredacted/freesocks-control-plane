@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { MIRROR_FORMATS } from '../mirrorFormats';
 import { UserStatus } from './common';
 import { BackendId } from './backends';
+import { TierFeatureSchema } from './tierFeatures';
 
 export const TrafficStrategy = z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']);
 export type TrafficStrategy = z.infer<typeof TrafficStrategy>;
@@ -34,6 +35,10 @@ export const TierAdmin = z.object({
   isActive: z.boolean(),
   priority: z.number().int(),
   expirationDaysAfterMembershipLapse: z.number().int().nonnegative(),
+  /** Plan-card feature lines, resolved (the defaults while none are set). */
+  features: z.array(TierFeatureSchema).optional().default([]),
+  /** True while the tier shows the built-in defaults (no list saved). */
+  featuresDefault: z.boolean().optional().default(true),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -43,6 +48,10 @@ export const TierUpsert = TierAdmin.omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  featuresDefault: true,
+}).extend({
+  /** null = back to the built-in defaults. */
+  features: z.array(TierFeatureSchema).nullable().optional(),
 });
 export type TierUpsert = z.infer<typeof TierUpsert>;
 

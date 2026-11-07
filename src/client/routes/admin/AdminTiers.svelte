@@ -27,8 +27,15 @@
   // Duplicate: copy a tier's fields into a fresh create form. The slug must be
   // unique, so suffix it; never inherit the default-free flag (one per backend).
   function cloneDraft(src: TierAdmin): TierUpsert {
-    const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = src;
-    return { ...rest, slug: `${src.slug}-copy`, name: `${src.name} (copy)`, isDefaultFree: false };
+    const { id: _id, createdAt: _c, updatedAt: _u, featuresDefault, features, ...rest } = src;
+    return {
+      ...rest,
+      // A copy keeps the source's own list; a source on the defaults stays on them.
+      ...(featuresDefault ? {} : { features }),
+      slug: `${src.slug}-copy`,
+      name: `${src.name} (copy)`,
+      isDefaultFree: false,
+    };
   }
 
   function invalidate() {

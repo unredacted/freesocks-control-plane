@@ -537,6 +537,17 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   never empty. Admin, Connection modes shows
   both (`configuredDefault` is the admin's pick) and says "no node in its pool"
   on a bound pool without one.
+- **The suggestion by country** (`convex/lib/modeSuggestion.ts`): the picker's
+  "Suggested" mark. A country with a row in `delivery.country.modes` (Admin,
+  Connection modes, Country preferences: per country, mode slugs in order) gets
+  the first of them available on the member's backend, censored-country list or
+  not; otherwise a listed country is ranked by the status page's availability
+  matrix, then the censorship-recommended mode; anywhere else, the effective
+  default. The country is the member's own answer, else the request's CDN
+  country (never stored). At sign-up the sealed region view
+  (`connection-region?mode=`) carries a `suggestions` map, one verdict per answer
+  the question offers, so a pick re-runs the suggestion on the page. The same
+  card edits the exit locations (docs/edges.md, "Exit location by country").
 - At issuance FCP picks the **least-loaded node** of the mode's pool
   (`pickByNodeLoad`): per-mode group node load — `usersOnline` (primary) + optional
   realtime bandwidth (secondary; weights `remnawave.nodePlacement.*_weight`, default

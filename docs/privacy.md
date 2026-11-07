@@ -137,8 +137,10 @@ accidentally regress it).
     response), so an older client and a backend not yet updated both still work.
   - **Where a new key is placed** (`delivery.country.exits`, off until an admin maps a
     country): a new freedom-family key of a member on Automatic whose OWN answer is a mapped
-    country goes to that country's exit location when it can. Never the guess, never the
-    opt-out. The country is stored nowhere new, but the placement encodes it coarsely: the
+    country goes to that country's exit location when it can. Never the stored guess, never
+    the opt-out. The first key at sign-up, which has no answer on a key yet, uses the answer
+    sent with it, else the CDN country of that one request (used for the pick, kept nowhere).
+    The country is stored nowhere new, but the placement encodes it coarsely: the
     backend that holds the key, and that backend's own user record, imply the region the
     operator mapped the answer to. That stays after the member changes or clears the answer,
     until the key moves, the same as if the member had picked that location themselves. FCP
@@ -152,8 +154,11 @@ accidentally regress it).
     names and **kept nowhere**: the body is not written to the content cache, is served
     `private, no-store`, is not part of the render snapshot, and never orders the member's
     addresses. The mode suggestion uses it the
-    same way. In a country on the censored-country list the status page's availability matrix
-    picks the suggestion; only the suggested mode id leaves the server.
+    same way. A country the operator gave suggested modes (`delivery.country.modes`, Admin ->
+    Connection modes -> Country preferences) gets the first of them its backend serves;
+    otherwise, in a country on the censored-country list the status page's availability matrix
+    picks the suggestion. Only the suggested mode id leaves the server (at sign-up, the sealed
+    region view carries the suggestion for each answer the question offers).
 - **Device identification (HWID) is opt-in and backend-side.** When the admin
   enables device-limit enforcement, a proxy app that sends `x-hwid` gets that
   device id forwarded to the Remnawave backend, which keeps its own device rows;

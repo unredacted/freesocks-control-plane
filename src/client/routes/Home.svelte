@@ -10,7 +10,8 @@
    *
    * Layout: full-width sections on the site-wrap column, alternating the page
    * and band backgrounds, each separated by a top rule. In order: the hero
-   * with its picture, what donations are doing for free accounts right now,
+   * with its picture, the support section (what donations are doing for free
+   * accounts right now, then donate and membership side by side),
    * how it works, what we store, membership, the FAQ (general + threat
    * model), and the donate box. Each claim appears exactly once.
    *
@@ -33,6 +34,10 @@
   import { slide, fly, fade } from 'svelte/transition';
   import { onMount } from 'svelte';
   import Plus from '@lucide/svelte/icons/plus';
+  import Heart from '@lucide/svelte/icons/heart';
+  import Zap from '@lucide/svelte/icons/zap';
+  import { formatMoney } from '../lib/i18n/format';
+  import { baselinePerMonth } from '../lib/billing';
   import Minus from '@lucide/svelte/icons/minus';
 
   const me = meQuery();
@@ -81,8 +86,6 @@
   const donation = $derived(config.data?.billing?.donation);
   const donationsLive = $derived(billingEnabled && !!donation?.enabled);
   const bonusGb = $derived(donation?.currentBonusGb ?? 0);
-  // Operator-tunable (1-365); never hardcode the window into donor-facing copy.
-  const impactWindowDays = $derived(donation?.bonusWindowDays ?? 30);
   function goDonate() {
     // Anonymous visitors get the public donate page (sign in OR give
     // anonymously) - not the account-creation funnel.
@@ -118,6 +121,14 @@
   const memberTier = $derived(membershipTier(config.data));
   const memberInfo = $derived(tierLimits(memberTier));
   const membershipLimits = $derived(limitsText(memberInfo, deviceLimitsShown(config.data)));
+  // The membership's monthly price (the shortest term's per-month, as on the
+  // plan cards), for the support section's membership card.
+  const memberPrice = $derived.by(() => {
+    const cents = baselinePerMonth(config.data?.billing?.durations ?? []);
+    return cents !== null
+      ? formatMoney(Math.round(cents), config.data?.billing?.currency ?? 'USD')
+      : null;
+  });
 
   // Step numbers in the visitor's own digits (Persian and Arabic included).
   const stepNumber = $derived(new Intl.NumberFormat(getLocale()));
@@ -287,76 +298,158 @@
           </Link>
         {/if}
       </div>
+      {#if donationsLive || billingEnabled}
+        <p class="mt-6 flex items-start gap-2.5 text-base text-muted-foreground">
+          <Heart class="mt-1 size-[18px] shrink-0 text-primary" aria-hidden="true" />
+          <span>
+            {t('home.support.heroLine')}
+            <a
+              class="link-brand text-foreground"
+              href="/#support"
+              onclick={(e) => void goToSection(e, 'support')}>{t('home.support.heroLink')}</a
+            >
+          </span>
+        </p>
+      {/if}
     </div>
 
     <HomeImage />
   </div>
 </section>
 
-<!-- WHAT DONATIONS ARE DOING: free accounts reached, and what every free
-     account gets this month (the free allowance plus the shared donation
-     bonus, as a stacked bar). GB and account counts only, never money. -->
-{#if donationsLive && donation}
-  <section id="impact" class="scroll-mt-6 {BAND}">
-    <div class="site-wrap grid items-start gap-12 {PAD} md:grid-cols-2 md:gap-16 md:py-20">
-      <div>
-        <h2 class={H2}>{t('home.impact.title')}</h2>
-        <p class="mt-7 flex flex-wrap items-baseline gap-x-3.5 gap-y-1">
-          <span
-            class="font-display text-[clamp(56px,7vw,92px)] font-bold leading-none tracking-[-0.04em] text-foreground rtl:tracking-normal"
-          >
-            <CountUp value={donation.freeUsersHelped} start />
-          </span>
-          <span class="font-display text-[26px] font-bold text-primary">
-            {t('impact.usersHelped')}
-          </span>
-        </p>
-        <p class="mt-4 max-w-[28em] text-body">
-          {t('impact.collectiveBody', { days: impactWindowDays })}
-        </p>
-      </div>
-
-      <div>
-        <p class="mt-1.5 mb-3.5 text-[15px] text-muted-foreground">
-          {t('home.impact.allowanceTitle')}
-        </p>
-        {#if freeGb > 0}
-          <div class="flex h-3.5 gap-[3px]" aria-hidden="true">
-            <div class="bg-primary" style="flex: {freeGb}"></div>
-            {#if bonusGb > 0}
-              <div class="bg-primary/45" style="flex: {bonusGb}"></div>
-            {/if}
+<!-- SUPPORT: what donations are doing for free accounts right now (people
+     reached, this month's allowance plus the shared donation bonus), then the
+     two ways to help side by side: donate, or become a member. GB and people
+     counts only, never money (the membership price is a price, not a total). -->
+{#if donationsLive || (billingEnabled && memberTier)}
+  <section id="support" class="scroll-mt-6 {BAND}">
+    <div class="site-wrap space-y-10 {PAD} md:py-20">
+      {#if donationsLive && donation}
+        <div class="grid items-end gap-10 md:grid-cols-2 md:gap-16">
+          <div>
+            <h2 class={H2}>{t('home.support.title')}</h2>
+            <p class="mt-7 flex flex-wrap items-baseline gap-x-3.5 gap-y-1">
+              <span
+                class="font-display text-[clamp(56px,7vw,92px)] font-bold leading-none tracking-[-0.04em] text-foreground rtl:tracking-normal"
+              >
+                <CountUp value={donation.freeUsersHelped} start />
+              </span>
+              <span class="font-display text-[26px] font-bold text-primary">
+                {t('impact.usersHelped')}
+              </span>
+            </p>
           </div>
+
+          <div>
+            <p class="mb-3.5 text-[15px] text-muted-foreground">
+              {t('home.impact.allowanceTitle')}
+            </p>
+            {#if freeGb > 0}
+              <div class="flex h-4 gap-[3px]" aria-hidden="true">
+                <div class="bg-primary" style="flex: {freeGb}"></div>
+                {#if bonusGb > 0}
+                  <div class="bg-primary/45" style="flex: {bonusGb}"></div>
+                {/if}
+                <!-- Room the next donation fills, for everyone. -->
+                <div
+                  class="border-2 border-dashed border-primary/60"
+                  style="flex: {Math.max(Math.round(freeGb / 2), 1)}"
+                ></div>
+              </div>
+            {/if}
+            <dl class="mt-4">
+              {@render allowanceRow(
+                t('home.freeCard.title'),
+                freeGb > 0 ? t('tiers.gbPerMonth', { gb: freeGb }) : t('hero.unlimited'),
+                'bg-primary',
+              )}
+              {#if bonusGb > 0}
+                {@render allowanceRow(
+                  t('home.impact.allowanceDonations'),
+                  t('home.impact.bonusGb', { gb: bonusGb }),
+                  'bg-primary/45',
+                )}
+              {/if}
+            </dl>
+            <p class="mt-3 flex items-center gap-3 text-[15px] text-muted-foreground">
+              <span
+                class="size-[11px] shrink-0 border-2 border-dashed border-primary/60"
+                aria-hidden="true"
+              ></span>
+              {bonusGb > 0 ? t('home.support.addMore') : t('impact.empty')}
+            </p>
+          </div>
+        </div>
+      {:else}
+        <h2 class={H2}>{t('home.support.title')}</h2>
+      {/if}
+
+      <div
+        class="grid gap-5 {donationsLive && billingEnabled && memberTier ? 'md:grid-cols-2' : ''}"
+      >
+        {#if donationsLive}
+          <article
+            class="flex flex-col gap-4 rounded-lg border-2 border-primary bg-background p-[clamp(24px,3vw,32px)]"
+          >
+            <span
+              class="flex size-12 items-center justify-center rounded-sm bg-primary/15 text-primary"
+            >
+              <Heart class="size-6" aria-hidden="true" />
+            </span>
+            <h3
+              class="font-display text-[30px] font-bold leading-tight tracking-[-0.02em] text-foreground rtl:tracking-normal"
+            >
+              {t('home.support.donateTitle')}
+            </h3>
+            <p class="max-w-[30em] text-[17px] leading-relaxed text-body">
+              {t('home.support.donateBody')}
+            </p>
+            <div class="mt-auto flex flex-wrap gap-3 pt-2">
+              <Button size="lg" class="h-13 px-6 text-[17px]" onclick={goDonate}>
+                {t('home.support.donateCta')}
+              </Button>
+              <Link href="/donate">
+                <Button size="lg" variant="outline" class="h-13 text-[15px]">
+                  {t('home.support.donateLink')}
+                </Button>
+              </Link>
+            </div>
+          </article>
         {/if}
-        <dl class="mt-4">
-          {@render allowanceRow(
-            t('home.freeCard.title'),
-            freeGb > 0 ? t('tiers.gbPerMonth', { gb: freeGb }) : t('hero.unlimited'),
-            'bg-primary',
-          )}
-          {#if bonusGb > 0}
-            {@render allowanceRow(
-              t('home.impact.allowanceDonations'),
-              t('home.impact.bonusGb', { gb: bonusGb }),
-              'bg-primary/45',
-            )}
-          {/if}
-          {#if memberTier}
-            {@render allowanceRow(
-              t('home.membership.title'),
-              memberInfo.unlimitedBandwidth
-                ? t('hero.unlimited')
-                : t('tiers.gbPerMonth', { gb: memberInfo.gb }),
-              '',
-            )}
-          {/if}
-        </dl>
-        {#if bonusGb <= 0}
-          <p class="mt-4 text-sm text-muted-foreground">{t('impact.empty')}</p>
+        {#if billingEnabled && memberTier}
+          <article
+            class="flex flex-col gap-4 rounded-lg border-2 border-primary bg-background p-[clamp(24px,3vw,32px)]"
+          >
+            <span
+              class="flex size-12 items-center justify-center rounded-sm bg-primary/15 text-primary"
+            >
+              <Zap class="size-6" aria-hidden="true" />
+            </span>
+            <h3
+              class="font-display text-[30px] font-bold leading-tight tracking-[-0.02em] text-foreground rtl:tracking-normal"
+            >
+              {t('home.support.memberTitle')}
+            </h3>
+            <p class="max-w-[30em] text-[17px] leading-relaxed text-body">
+              {memberInfo.unlimitedBandwidth
+                ? t('home.support.memberBodyUnlimited')
+                : t('home.support.memberBody')}
+            </p>
+            {#if memberPrice}
+              <p class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <bdi class="font-display text-[44px] font-extrabold leading-none text-foreground"
+                  >{memberPrice}</bdi
+                >
+                <span class="text-muted-foreground">{t('home.support.perMonth')}</span>
+              </p>
+            {/if}
+            <div class="mt-auto pt-2">
+              <Button size="lg" class="h-13 px-6 text-[17px]" onclick={goUpgrade}>
+                {t('home.cta.getMembership')}
+              </Button>
+            </div>
+          </article>
         {/if}
-        <p class="mt-4 text-[15px]">
-          <Link class="link-brand text-foreground" href="/donate">{t('home.hero.impactLink')}</Link>
-        </p>
       </div>
     </div>
   </section>

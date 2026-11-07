@@ -56,13 +56,20 @@ async function exitsOf(
   user: Doc<'users'>,
   backend: Doc<'subscriptions'>['backend'],
   modeId: string | null,
+  /**
+   * The first key only (no key to read a choice from): the country the member
+   * answered at sign-up, else the one their request came from. Used when it is
+   * a listed country; never stored here.
+   */
+  choiceHint?: string | null,
 ): Promise<{ codes: string[]; choice: string | null; sub: Doc<'subscriptions'> | null }> {
   const sub = await currentOrActiveSub(db, user);
   if (!capabilitiesOf(backend).placement) return { codes: [], choice: null, sub };
   const exits = await resolveCountryExits(db);
   if (exits.length === 0) return { codes: [], choice: null, sub };
   const listed = (await resolveCensoredCountries(db)).codes;
-  const choice = sub ? liveChoice(sub, listed) : null;
+  const hint = choiceHint ? choiceHint.trim().toUpperCase() : null;
+  const choice = sub ? liveChoice(sub, listed) : hint && listed.includes(hint) ? hint : null;
   const codes = exitLocationsFor({
     exits,
     steer: (await resolveMemberCountryConfig(db)).steer,
@@ -75,19 +82,21 @@ async function exitsOf(
 
 /**
  * The location codes a NEW key of this member narrows to, in order ([] =
- * today's choice). Read from the key being replaced, so the first key at
- * sign-up (no choice yet) is placed as before.
+ * today's choice). Read from the key being replaced; the first key at sign-up
+ * has none, so it reads `choiceHint` (the sign-up answer, else the request's
+ * country) instead.
  */
 export const forIssue = internalQuery({
   args: {
     userId: v.id('users'),
     backend: backendIdValidator,
     modeId: v.union(v.string(), v.null()),
+    choiceHint: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, backend, modeId }): Promise<string[]> => {
+  handler: async (ctx, { userId, backend, modeId, choiceHint }): Promise<string[]> => {
     const user = await ctx.db.get(userId);
     if (!user) return [];
-    return (await exitsOf(ctx.db, user, backend, modeId)).codes;
+    return (await exitsOf(ctx.db, user, backend, modeId, choiceHint)).codes;
   },
 });
 

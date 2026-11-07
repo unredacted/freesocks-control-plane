@@ -183,6 +183,7 @@ async function resolveIssueTarget(
   modeId: string | null,
   location: string | null,
   userId?: Id<'users'>,
+  choiceHint?: string,
 ): Promise<{
   placement: string | null;
   extraPlacements: string[];
@@ -192,7 +193,12 @@ async function resolveIssueTarget(
     return { placement: null, extraPlacements: [], serverId: null };
   const exitLocations =
     !location && userId
-      ? await ctx.runQuery(internal.countryExits.forIssue, { userId, backend, modeId })
+      ? await ctx.runQuery(internal.countryExits.forIssue, {
+          userId,
+          backend,
+          modeId,
+          ...(choiceHint ? { choiceHint } : {}),
+        })
       : [];
   // Mint the anti-herding randomness HERE (actions may use the CSPRNG; queries
   // must stay deterministic) and thread it through the resolution.
@@ -765,10 +771,13 @@ export const regenerate = internalAction({
     // country or `ZZ`. Stored on the new key only when its mode is
     // freedom-family; `regionApplied` says whether it was.
     region: v.optional(v.string()),
+    // The country the CDN reports for this request (transient, never stored):
+    // with no answer, the first key's location preference reads it.
+    geoCountry: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { userId, requestId, location, region },
+    { userId, requestId, location, region, geoCountry },
   ): Promise<{ subscriptionUrl: string; shortUuid: string; regionApplied: boolean }> => {
     const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) throw new Error('user not found');
@@ -794,12 +803,15 @@ export const regenerate = internalAction({
     }
     // Node placement from the member's chosen mode's pool, narrowed to their
     // preferred location (Remnawave only; fail-soft to any location).
+    // The first key (none to replace) is placed for the member's country: the
+    // answer given with it, else the request's (lib/countryExits.ts).
     const target = await resolveIssueTarget(
       ctx,
       tier.backend,
       user.connectionModeId ?? null,
       effectiveLocation,
       userId,
+      oldSub ? undefined : (region ?? geoCountry),
     );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {

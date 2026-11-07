@@ -20,7 +20,16 @@
    * one-shot "add a passkey" prompt. Either way it leads with the sync/anonymity
    * warning - a passkey is opt-in and the account number stays the recovery secret.
    */
-  let { showList = true, onEnrolled }: { showList?: boolean; onEnrolled?: () => void } = $props();
+  let {
+    showList = true,
+    centered = false,
+    onEnrolled,
+  }: {
+    showList?: boolean;
+    /** Sign-up step: a centered card, the name field and button stacked. */
+    centered?: boolean;
+    onEnrolled?: () => void;
+  } = $props();
 
   const supported = passkeysSupported();
   let deviceLabel = $state('');
@@ -64,14 +73,24 @@
   const fmt = (iso: string | null) => (iso ? formatDate(iso) : '');
 </script>
 
-<div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-4">
-  <div class="flex items-start gap-3">
-    <KeyRound class="size-5 text-primary mt-0.5 shrink-0" aria-hidden="true" />
-    <div class="space-y-1">
-      <p class="text-sm font-medium">{t('passkey.title')}</p>
-      <p class="text-xs text-muted-foreground leading-snug">{t('passkey.desc')}</p>
+<div class="rounded-lg border border-border bg-card p-4 sm:p-5 space-y-4">
+  {#if centered}
+    <div class="flex flex-col items-center gap-3 text-center">
+      <span class="flex size-11 items-center justify-center rounded-lg bg-primary/15 text-primary">
+        <KeyRound class="size-5" aria-hidden="true" />
+      </span>
+      <p class="font-display text-xl font-bold">{t('passkey.title')}</p>
+      <p class="text-[15px] leading-snug text-muted-foreground">{t('passkey.desc')}</p>
     </div>
-  </div>
+  {:else}
+    <div class="flex items-start gap-3">
+      <KeyRound class="size-5 text-primary mt-0.5 shrink-0" aria-hidden="true" />
+      <div class="space-y-1">
+        <p class="text-sm font-medium">{t('passkey.title')}</p>
+        <p class="text-xs text-muted-foreground leading-snug">{t('passkey.desc')}</p>
+      </div>
+    </div>
+  {/if}
 
   {#if !supported}
     <p class="text-xs text-muted-foreground">{t('passkey.unsupported')}</p>
@@ -118,7 +137,7 @@
       {/if}
     {/if}
 
-    <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+    <div class="flex flex-col gap-2 {centered ? '' : 'sm:flex-row sm:items-end'}">
       <div class="flex-1">
         <label for="passkey-device" class="mb-1 block text-xs text-muted-foreground">
           {t('passkey.deviceLabelLabel')}
@@ -129,9 +148,15 @@
           placeholder={t('passkey.deviceLabelPlaceholder')}
           autocomplete="off"
           maxlength={64}
+          class={centered ? 'min-h-11' : ''}
         />
       </div>
-      <Button class="min-h-11 shrink-0" disabled={add.isPending} onclick={() => add.mutate()}>
+      <Button
+        class="min-h-11 shrink-0 {centered ? 'w-full' : ''}"
+        size={centered ? 'lg' : 'default'}
+        disabled={add.isPending}
+        onclick={() => add.mutate()}
+      >
         <KeyRound class="size-4" />
         {add.isPending ? t('passkey.adding') : t('passkey.add')}
       </Button>

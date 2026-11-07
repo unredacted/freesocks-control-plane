@@ -1,8 +1,11 @@
 /**
  * Which connection mode the picker highlights for a member (pure; unit-tested).
  *
- * The country is the one the CDN reports for the request (transient, never
- * stored). Elsewhere, or with no country, the suggestion is the default. In a
+ * The country is the member's own (their answer, else the one the CDN reports
+ * for the request: transient, never stored). When the operator listed modes
+ * for that country (lib/countryModes.ts), the first one available on the
+ * member's backend wins, listed on the censored list or not. Otherwise:
+ * elsewhere, or with no country, the suggestion is the default. In a
  * country on the censored list, the status page's availability matrix decides:
  * the modes available on the member's backend are ranked by that country's
  * cell (`available` before `partial`; `blocked` and no cell never win), ties go
@@ -35,10 +38,16 @@ export function suggestModeFor(args: {
   /** Catalog order. */
   modes: readonly SuggestibleMode[];
   defaultId: string;
+  /** The operator's ordered modes for `country` (lib/countryModes.ts), if any. */
+  preferred?: readonly string[] | null;
 }): string {
-  const { country, listed, cells, modes, defaultId } = args;
-  if (!country || !listed.includes(country)) return defaultId;
+  const { country, listed, cells, modes, defaultId, preferred } = args;
   const available = modes.filter((m) => m.available);
+  if (country && preferred) {
+    const first = preferred.find((id) => available.some((m) => m.id === id));
+    if (first) return first;
+  }
+  if (!country || !listed.includes(country)) return defaultId;
   const recommended = available.find((m) => m.isCensorshipRecommended)?.id;
   const ranked = available
     .map((m, order) => ({ m, order, rank: cells?.[m.id] ? CELL_RANK[cells[m.id]] : null }))
