@@ -22,6 +22,7 @@
   import { adminModeName } from '../../lib/connectionModeCopy';
   import {
     LOCATION_SLOTS,
+    MAX_PREFERENCE_COUNTRIES,
     MODE_SLOTS,
     moved,
     preferencePatch,
@@ -109,7 +110,13 @@
     <CardTitle class="text-lg flex flex-wrap items-center justify-between gap-2">
       <span>Country preferences</span>
       {#if !editing}
-        <Button size="sm" onclick={startNew} disabled={!settings.data}>Add country</Button>
+        <Button
+          size="sm"
+          onclick={startNew}
+          disabled={!settings.data || rows.length >= MAX_PREFERENCE_COUNTRIES}
+        >
+          Add country
+        </Button>
       {/if}
     </CardTitle>
   </CardHeader>

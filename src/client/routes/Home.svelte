@@ -121,6 +121,9 @@
   const memberTier = $derived(membershipTier(config.data));
   const memberInfo = $derived(tierLimits(memberTier));
   const membershipLimits = $derived(limitsText(memberInfo, deviceLimitsShown(config.data)));
+  // The support section (and the hero line linking to it) shows when it has a
+  // card to show: donations on, or a membership tier to sell.
+  const supportShown = $derived(donationsLive || (billingEnabled && !!memberTier));
   // The membership's monthly price (the shortest term's per-month, as on the
   // plan cards), for the support section's membership card.
   const memberPrice = $derived.by(() => {
@@ -298,7 +301,7 @@
           </Link>
         {/if}
       </div>
-      {#if donationsLive || billingEnabled}
+      {#if supportShown}
         <p class="mt-6 flex items-start gap-2.5 text-base text-muted-foreground">
           <Heart class="mt-1 size-[18px] shrink-0 text-primary" aria-hidden="true" />
           <span>
@@ -321,7 +324,7 @@
      reached, this month's allowance plus the shared donation bonus), then the
      two ways to help side by side: donate, or become a member. GB and people
      counts only, never money (the membership price is a price, not a total). -->
-{#if donationsLive || (billingEnabled && memberTier)}
+{#if supportShown}
   <section id="support" class="scroll-mt-6 {BAND}">
     <div class="site-wrap space-y-10 {PAD} md:py-20">
       {#if donationsLive && donation}

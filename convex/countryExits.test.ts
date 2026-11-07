@@ -332,10 +332,27 @@ describe('suggestions for the sign-up question', () => {
       userId: w.userId,
       countries: ['IR', 'RU', 'ZZ'],
     });
-    expect(s.IR).toEqual({ modeId: 'privacy-reality', locations: ['loc-gone', 'loc-b'] });
+    // A privacy-family suggestion: exit locations never place those keys.
+    expect(s.IR).toEqual({ modeId: 'privacy-reality', locations: [] });
     expect(s.RU!.locations).toEqual([]);
     expect(s.ZZ!.locations).toEqual([]);
     expect(s.RU!.modeId).not.toBe('no-such-mode');
+  });
+
+  test("a freedom-family suggestion carries the country's exit locations", async () => {
+    const w = await world();
+    await w.t.run((ctx) =>
+      upsertSettingRow(
+        ctx,
+        'delivery.country.modes',
+        JSON.stringify([{ country: 'IR', modes: ['freedom-ws'] }]),
+      ),
+    );
+    const s = await w.t.query(internal.censoredCountries.suggestionsForCountries, {
+      userId: w.userId,
+      countries: ['IR'],
+    });
+    expect(s.IR).toEqual({ modeId: 'freedom-ws', locations: ['loc-gone', 'loc-b'] });
   });
 
   test('locations stay empty with ordering by country off', async () => {

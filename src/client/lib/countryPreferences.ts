@@ -9,6 +9,8 @@ import { exitRows, EXIT_SLOTS } from './countryExits';
 
 /** The server's MAX_MODES_PER_COUNTRY. */
 export const MODE_SLOTS = 6;
+/** The server's MAX_COUNTRY_MODE_COUNTRIES and MAX_EXIT_COUNTRIES: rows past it are never read. */
+export const MAX_PREFERENCE_COUNTRIES = 64;
 export const LOCATION_SLOTS = EXIT_SLOTS;
 
 export interface CountryPreferenceRow {
@@ -64,8 +66,10 @@ export function preferencePatch(rows: readonly CountryPreferenceRow[]): {
   for (const r of rows) {
     const m = clean(r.modes, MODE_SLOTS);
     const l = clean(r.locations, LOCATION_SLOTS);
-    if (m.length > 0) modes.push({ country: r.country, modes: m });
-    if (l.length > 0) exits.push({ country: r.country, locations: l });
+    if (m.length > 0 && modes.length < MAX_PREFERENCE_COUNTRIES)
+      modes.push({ country: r.country, modes: m });
+    if (l.length > 0 && exits.length < MAX_PREFERENCE_COUNTRIES)
+      exits.push({ country: r.country, locations: l });
   }
   return { 'delivery.country.modes': modes, 'delivery.country.exits': exits };
 }

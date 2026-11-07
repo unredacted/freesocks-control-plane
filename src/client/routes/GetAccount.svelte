@@ -215,6 +215,9 @@
       knownIds: connectionModes.map((m) => m.id),
     }),
   );
+  // Exit locations place only freedom-family keys: a pick of another family
+  // drops the location recommendation.
+  let effectiveFamily = $derived(connectionModes.find((m) => m.id === effectiveModeId)?.family);
   let actionsDisabled = $derived(account.data?.user.status === 'disabled');
   let rawConfigFirst = $derived(
     (account.data?.user.currentMode && account.data.user.currentMode.id === effectiveModeId
@@ -711,7 +714,7 @@
             bind:value={pickedLocation}
             disabled={createSubscription.isPending}
             id="get-account-location"
-            recommended={answerSuggestion?.locations ?? []}
+            recommended={effectiveFamily === 'freedom' ? (answerSuggestion?.locations ?? []) : []}
           />
         {/if}
 

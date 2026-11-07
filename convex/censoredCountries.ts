@@ -31,7 +31,7 @@ import { ELSEWHERE } from './lib/memberCountry';
 import { resolveCountryExits } from './countryExits';
 import { resolveMemberCountryConfig } from './memberCountry';
 import { effectiveDefaultFor, resolveCatalogWithAvailability } from './lib/placement';
-import { resolveDefaultModeId } from './lib/connectionModes';
+import { resolveDefaultModeId, resolveModeCatalog } from './lib/connectionModes';
 import { resolveStatusConfig } from './lib/statusPage';
 
 // --- the keys the list replaced ---------------------------------------------------------------------
@@ -310,18 +310,27 @@ export const suggestionsForCountries = internalQuery({
     const tier = user ? await ctx.db.get(user.tierId) : null;
     if (!tier) return {};
     const inputs = await suggestionInputs(ctx.db, tier.backend);
-    const [exits, steer] = await Promise.all([
+    const [exits, steer, modeCatalog] = await Promise.all([
       resolveCountryExits(ctx.db),
       resolveMemberCountryConfig(ctx.db).then((c) => c.steer),
+      resolveModeCatalog(ctx.db),
     ]);
+    // Exit locations only place freedom-family keys (lib/countryExits.ts), so
+    // a suggestion into another family recommends none.
+    const isFreedom = (id: string) =>
+      modeCatalog.modes.find((m) => m.id === id)?.family === 'freedom';
     const out: Record<string, { modeId: string; locations: string[] }> = {};
     for (const raw of countries.slice(0, MAX_CENSORED_COUNTRIES + 1)) {
       const up = raw.trim().toUpperCase();
       const code = up === ELSEWHERE ? ELSEWHERE : normalizeCode(up);
       if (!code) continue;
+      const modeId = suggestIn(inputs, code === ELSEWHERE ? null : code);
       out[code] = {
-        modeId: suggestIn(inputs, code === ELSEWHERE ? null : code),
-        locations: steer ? (exits.find((e) => e.country === code)?.locations ?? []) : [],
+        modeId,
+        locations:
+          steer && isFreedom(modeId)
+            ? (exits.find((e) => e.country === code)?.locations ?? [])
+            : [],
       };
     }
     return out;

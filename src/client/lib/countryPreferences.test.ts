@@ -49,4 +49,15 @@ describe('country preferences', () => {
     expect(moved(['a', 'b', 'c'], 0, 1)).toEqual(['b', 'a', 'c']);
     expect(moved(['a', 'b'], 0, -1)).toEqual(['a', 'b']);
   });
+
+  test('the patch keeps at most the server limit of countries per setting', () => {
+    const rows = Array.from({ length: 70 }, (_, i) => ({
+      country: `C${i}`,
+      modes: ['m'],
+      locations: ['l'],
+    }));
+    const patch = preferencePatch(rows);
+    expect(patch['delivery.country.modes']).toHaveLength(64);
+    expect(patch['delivery.country.exits']).toHaveLength(64);
+  });
 });

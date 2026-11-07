@@ -109,6 +109,11 @@
   let featuresIsDefault = $derived(
     featuresReset || (!featuresTouched && (tier ? tier.featuresDefault : !initial?.features)),
   );
+  // What the card will show: while the tier is on the defaults, the server picks
+  // them by the default-free flag, so the editor follows the checkbox too.
+  let shownFeatures = $derived(
+    featuresIsDefault ? defaultTierFeatures(draft.isDefaultFree) : features,
+  );
   function save() {
     onSave({
       ...draft,
@@ -326,7 +331,7 @@
         </div>
       </div>
       <TierFeaturesEditor
-        {features}
+        features={shownFeatures}
         isDefault={featuresIsDefault}
         onChange={(next) => {
           features = next;
