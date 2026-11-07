@@ -266,7 +266,11 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     drainUntil: e.drainUntil ? new Date(e.drainUntil).toISOString() : null,
     // A drained L7 front held up for apps that have not refreshed (counts only).
     drainHold:
-      e.drainHold && e.drainHold.releasedAt === undefined && e.status === 'draining'
+      e.drainHold &&
+      e.drainHold.releasedAt === undefined &&
+      e.status === 'draining' &&
+      // A record of an earlier drain (kept as a spare, published, drained again) says nothing.
+      e.drainHold.since === e.statusChangedAt
         ? {
             until: new Date(e.drainHold.until).toISOString(),
             holders: e.drainHold.holders ?? null,

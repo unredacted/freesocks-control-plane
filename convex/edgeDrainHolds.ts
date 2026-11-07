@@ -20,11 +20,13 @@ import { writeAuditLog } from './lib/audit';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { liveEdgesOfAccount } from './relays';
 import { liveEdgesOfRelay } from './lib/edges/relayGuards';
+import { liveEdgesOfLocation } from './edgeLocations';
 import { FRONT_KEYS_PAGE, keyInUse } from './lib/edges/frontKeys';
 import {
   DRAIN_HOLD_EVERY_MS,
   drainHoldDecision,
   heldCandidate,
+  heldToFree,
   keyMayHoldEdge,
   type DrainHoldRecord,
 } from './lib/edges/drainHold';
@@ -48,19 +50,24 @@ async function listenerLive(db: DatabaseReader, id: Id<'relayListeners'>): Promi
 
 /**
  * Whether this front is the one its account lets go when the account is at its
- * live-edge cap: the held front whose drain began first (one a pass, so the
- * next replacement finds a slot without every held front going at once).
+ * live-edge cap (`heldToFree`: the held front whose drain began first, and
+ * only while no other edge of the account is already being destroyed).
  */
 async function accountFullOldest(db: DatabaseReader, edge: Edge, now: number): Promise<boolean> {
   if (!edge.accountId) return false;
   const account = await db.get(edge.accountId);
   if (!account) return false;
   const live = (await liveEdgesOfAccount(db, edge.accountId)).filter((e) => e.managed);
-  if (live.length < account.maxLiveEdges) return false;
-  const held = live
-    .filter((e) => heldCandidate(e, now))
-    .sort((a, b) => a.statusChangedAt - b.statusChangedAt || (a._id < b._id ? -1 : 1));
-  return held[0]?._id === edge._id;
+  return heldToFree(live, account.maxLiveEdges, now) === edge._id;
+}
+
+/** The same for the edge's location's own cap, when it has one (edge creation refuses at it too). */
+async function locationFullOldest(db: DatabaseReader, edge: Edge, now: number): Promise<boolean> {
+  if (!edge.locationId) return false;
+  const location = await db.get(edge.locationId);
+  if (!location || location.maxLiveEdges === undefined) return false;
+  const live = (await liveEdgesOfLocation(db, location)).filter((e) => e.managed);
+  return heldToFree(live, location.maxLiveEdges, now) === edge._id;
 }
 
 /**
@@ -84,6 +91,7 @@ export const judge = internalMutation({
       originDeleting: origin?.deleting === true,
       listenerLive: await listenerLive(ctx.db, edge.listenerId),
       accountFullOldest: await accountFullOldest(ctx.db, edge, now),
+      locationFullOldest: await locationFullOldest(ctx.db, edge, now),
     });
     const slug = origin?.slug ?? null;
     if (!decision.hold) {
@@ -152,7 +160,9 @@ export const countTarget = internalQuery({
   handler: async (ctx, { relayId }) => {
     const origin = await ctx.db.get(relayId);
     const node = nodeOf(origin);
-    if (!node) return null;
+    // A node rename moves the keys' pins page by page: a count now would see
+    // only part of them and could let a front go early. Counted after it.
+    if (!node || origin?.renaming) return null;
     const now = Date.now();
     const windows: CountWindow[] = (await liveEdgesOfRelay(ctx.db, relayId))
       .filter(
@@ -200,14 +210,22 @@ export const countPage = internalQuery({
   },
 });
 
-/** Store the counts on each held front that is still in the same drain. */
+/**
+ * Store the counts on each held front that is still in the same drain. A count
+ * a node rename overlapped (it started, or the name moved, while it paged) is
+ * dropped: it saw only part of the keys.
+ */
 export const record = internalMutation({
   args: {
+    relayId: v.id('relays'),
+    nodeName: v.string(),
     at: v.number(),
     keys: v.number(),
     counts: v.array(v.object({ edgeId: v.id('edges'), since: v.number(), holders: v.number() })),
   },
-  handler: async (ctx, { at, keys, counts }) => {
+  handler: async (ctx, { relayId, nodeName, at, keys, counts }) => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin || origin.renaming || origin.nodeName !== nodeName) return null;
     for (const c of counts) {
       const e = await ctx.db.get(c.edgeId);
       const held = e?.drainHold;
@@ -257,6 +275,8 @@ export const count = internalAction({
       }
     }
     await ctx.runMutation(internal.edgeDrainHolds.record, {
+      relayId,
+      nodeName: t.nodeName,
       at: now,
       keys,
       counts: t.windows.map((w, i) => ({ edgeId: w.edgeId, since: w.to, holders: holders[i]! })),

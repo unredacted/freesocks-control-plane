@@ -194,6 +194,81 @@ describe('edgeDrainHolds', () => {
     });
   });
 
+  test('a full account lets one go at a time: none while another edge is being destroyed', async () => {
+    const { t, drainStart, insertEdge } = await setup({ maxLiveEdges: 3 });
+    const older = await insertEdge('front-old', { drainStart: drainStart - DAY });
+    await insertEdge('front-new');
+    const gone = await insertEdge('front-going', { drainStart: drainStart - 2 * DAY });
+    await t.run((ctx) => ctx.db.patch(gone, { status: 'destroying' }));
+    expect(await t.mutation(internal.edgeDrainHolds.judge, { edgeId: older })).toEqual({
+      hold: true,
+    });
+  });
+
+  test('a location at its own cap lets its oldest held front go', async () => {
+    const { t, drainStart, insertEdge } = await setup();
+    const older = await insertEdge('front-old', { drainStart: drainStart - DAY });
+    const newer = await insertEdge('front-new');
+    const accountId = (await getEdge(t, older))!.accountId!;
+    const locationId = await t.run((ctx) =>
+      ctx.db.insert('edgeLocations', {
+        accountId,
+        provider: 'gcore',
+        placeKey: '11:22',
+        placement: { type: 'gcore', projectId: 11, regionId: 22 } as never,
+        placementHash: 'h-loc',
+        label: 'loc',
+        enabled: true,
+        qualified: true,
+        maxLiveEdges: 2,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(older, { locationId });
+      await ctx.db.patch(newer, { locationId });
+    });
+    expect(await t.mutation(internal.edgeDrainHolds.judge, { edgeId: newer })).toEqual({
+      hold: true,
+    });
+    expect(await t.mutation(internal.edgeDrainHolds.judge, { edgeId: older })).toEqual({
+      hold: false,
+      reason: 'location_full',
+    });
+  });
+
+  test('no count during a node rename, and a count it overlapped is dropped', async () => {
+    const { t, r, drainStart, insertEdge, insertKey } = await setup();
+    const edgeId = await insertEdge('front-a');
+    await insertKey({ renderedAt: drainStart - DAY });
+    await t.mutation(internal.edgeDrainHolds.judge, { edgeId });
+    await t.run(async (ctx) => {
+      const relay = (await ctx.db.get(r.relayId))!;
+      const renameId = await ctx.db.insert('panelNodeRenames', {
+        backendServerId: relay.backendServerId!,
+        nodeUuid: 'n-1',
+        from: FIXTURE_NODE,
+        to: 'node-two',
+        relayIds: [r.relayId],
+        state: 'running',
+        step: 'subscriptions',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(r.relayId, { renaming: { renameId, since: Date.now() } });
+    });
+    expect(await t.action(internal.edgeDrainHolds.count, { relayId: r.relayId })).toBeNull();
+    await t.mutation(internal.edgeDrainHolds.record, {
+      relayId: r.relayId,
+      nodeName: FIXTURE_NODE,
+      at: Date.now(),
+      keys: 1,
+      counts: [{ edgeId, since: drainStart, holders: 0 }],
+    });
+    expect((await getEdge(t, edgeId))!.drainHold!.holders).toBeUndefined();
+  });
+
   test('a count only touches fronts still in the same drain', async () => {
     const { t, r, drainStart, insertEdge, insertKey } = await setup();
     const edgeId = await insertEdge('front-a');

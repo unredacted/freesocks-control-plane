@@ -14,9 +14,12 @@
  * Who may hold it: a key in use on the edge's node whose last edge render fell
  * inside the edge's published window, `[publishedAt, drain start)`. A body
  * rendered before the window never had it; one rendered after the drain began
- * leaves it out. The count is conservative (a body of that window may not
- * have carried this edge: the pick, a country's steering), so a hold can only
- * last longer than needed, never shorter.
+ * leaves it out. It counts KEYS, not apps: a body of that window may not have
+ * carried this edge (the pick, a country's steering), which only lengthens a
+ * hold; but one key can serve several apps, and the first of them to fetch
+ * moves the key's single render stamp, so an app on another device that never
+ * refreshes is no longer counted. That app is covered by the hard maximum
+ * only, so `maxDays` is the real promise and the count the early exit.
  *
  * Pure: the rules here, the reads and writes in convex/edgeDrainHolds.ts.
  */
@@ -63,6 +66,7 @@ export type DrainReleaseReason =
   | 'listener_gone'
   | 'max_age'
   | 'account_full'
+  | 'location_full'
   | 'refreshed';
 
 export type DrainHoldDecision =
@@ -89,8 +93,8 @@ export interface DrainHoldEdge {
  *     listener retired or gone (the front points at nothing it serves, and a
  *     registration that rebinds it would wait on the front), lets go;
  *  4. the hard maximum;
- *  5. the account at its live-edge cap lets its oldest held front go (a held
- *     front never takes the slot a replacement needs);
+ *  5. the account or the edge's location at its live-edge cap lets its oldest
+ *     held front go (a held front never takes the slot a replacement needs);
  *  6. held until counted, then released once few enough keys may hold it.
  */
 export function drainHoldDecision(a: {
@@ -104,6 +108,8 @@ export function drainHoldDecision(a: {
   listenerLive: boolean;
   /** The account is at its live-edge cap and this is its held front that drained first. */
   accountFullOldest: boolean;
+  /** The same for the edge's location's own cap (absent = no such cap). */
+  locationFullOldest?: boolean;
 }): DrainHoldDecision {
   const { edge, cfg, now } = a;
   if (!cfg.enabled || cfg.maxDays <= 0) return { hold: false, reason: 'off' };
@@ -121,6 +127,7 @@ export function drainHoldDecision(a: {
   const until = prev?.until ?? since + cfg.maxDays * DAY;
   if (now >= until) return { hold: false, reason: 'max_age' };
   if (a.accountFullOldest) return { hold: false, reason: 'account_full' };
+  if (a.locationFullOldest) return { hold: false, reason: 'location_full' };
   const record: DrainHoldRecord = prev ?? { since, until };
   const counted = record.at !== undefined && record.holders !== undefined;
   if (counted && record.holders! <= cfg.releaseAtKeys) return { hold: false, reason: 'refreshed' };
@@ -141,6 +148,33 @@ export function keyMayHoldEdge(
 ): boolean {
   const at = renderedAt(key);
   return at >= window.from && at < window.to;
+}
+
+/**
+ * At a live-edge cap (an account's or a location's), the held front to let go:
+ * the one whose drain began first. None while the cap has room, and none while
+ * another edge there is already being destroyed: its slot is on its way, and
+ * a `destroying` edge still counts as live, so without this every held front
+ * of a full account would be let go in one pass.
+ */
+export function heldToFree(
+  live: ReadonlyArray<{
+    _id: string;
+    layer?: string;
+    managed: boolean;
+    status: string;
+    drainUntil?: number;
+    statusChangedAt: number;
+  }>,
+  cap: number,
+  now: number,
+): string | null {
+  if (live.length < cap) return null;
+  if (live.some((e) => e.status === 'destroying')) return null;
+  const held = live
+    .filter((e) => heldCandidate(e, now))
+    .sort((a, b) => a.statusChangedAt - b.statusChangedAt || (a._id < b._id ? -1 : 1));
+  return held[0]?._id ?? null;
 }
 
 /** Whether an edge row is a drained L7 front the hold may apply to (cheap pre-filter). */

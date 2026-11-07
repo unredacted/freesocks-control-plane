@@ -1500,12 +1500,16 @@ the CDN keeps forwarding) until:
   (`lastRenderedAt`, or `lastRender.at`) fell in the front's published window `[publishedAt, drain
 start)` counts, and the front goes once `edge.drainHold.releaseAtKeys` (default 10) or fewer
   remain. Counted at most hourly per node (`edgeDrainHolds.count`, the node's keys by
-  `by_backend_server_pinned`, `FRONT_KEYS_PAGE` a page); the count is conservative (a body of that
-  window may not have carried this front), so a hold only ever lasts longer than needed;
+  `by_backend_server_pinned`, `FRONT_KEYS_PAGE` a page; never during a node rename, whose pins
+  move page by page). It counts keys, not apps: a body of that window may not have carried this
+  front (which only lengthens a hold), but one key can serve several apps and the first to fetch
+  moves the key's one render stamp, so an app on another device that never refreshes leaves the
+  count while it still holds the front. Only the hard maximum covers that app;
 - its hard maximum passes: `edge.drainHold.maxDays` (default 30, 0..90; 0 never holds) from the
   drain's start, frozen on the edge when the hold begins;
-- its account is at its live-edge cap: the held front whose drain began first goes, one a pass,
-  so a held front never takes the slot a replacement needs;
+- its account, or its location, is at its live-edge cap: the held front whose drain began first
+  goes, and no other while an edge there is still being destroyed (its slot is on its way), so a
+  held front never takes the slot a replacement needs;
 - its listener is retired or gone, or its origin is being deleted.
 
 Never held: an L4 address, an observe-only edge, one that was never published, and a drain of no
