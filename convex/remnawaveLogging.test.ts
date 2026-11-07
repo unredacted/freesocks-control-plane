@@ -18,6 +18,8 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { LOGGING_CHECK_STATE_KEY } from './backendServers';
 import { hardenXrayLoggingConfig, PRIVACY_XRAY_LOG } from './lib/backends/remnawave';
+import { buildTransport } from './lib/backend/profileTemplate';
+import { generateHysteriaCertificate } from './lib/backend/hysteriaCert';
 import { jsonRes, mockFetch, type FetchStub } from './lib/edges/testing/mockFetch';
 import { markBackendSetUp } from './lib/edges/testing/fixtures';
 import { panelDigestKey } from './lib/backend/key';
@@ -56,6 +58,25 @@ describe('hardenXrayLoggingConfig', () => {
     expect(config.routing).toEqual(src.routing);
     // input is not mutated
     expect(src.log).toEqual({ loglevel: 'info' });
+  });
+
+  test('a Hysteria transport beside REALITY comes through whole: its certificate, key and auth list', () => {
+    const cert = generateHysteriaCertificate('hy.example');
+    const hysteria = buildTransport(
+      {
+        slug: 'privacy-hysteria',
+        name: 'Privacy-Hysteria',
+        shape: { transport: 'hysteria', fronting: 'direct' },
+        hysteria: { serverName: 'hy.example', salamander: true },
+      },
+      undefined,
+      { certificate: cert.certificate, key: cert.key, obfsPassword: 'p' },
+    );
+    const src = { ...baseConfig(), inbounds: [...baseConfig().inbounds, hysteria] };
+    const { config, changed } = hardenXrayLoggingConfig(src);
+    expect(changed).toBe(true);
+    expect(config.inbounds).toEqual(src.inbounds);
+    expect(JSON.stringify(config.inbounds)).toBe(JSON.stringify(src.inbounds));
   });
 
   test('is idempotent — an already-hardened config reports no change', () => {

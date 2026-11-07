@@ -46,6 +46,14 @@ export interface CatalogClient {
   // XHTTP. true = works, false = can't (hidden from members on an XHTTP
   // mode), missing = untested (still shown). Same tri-state as `ipv6`.
   xhttp?: boolean;
+  // Hysteria 2 (the `privacy-hysteria` mode) as FCP delivers it, pin included:
+  // true = recorded evidence that the app imports FCP's raw config, connects
+  // over UDP and refuses a server with another certificate
+  // (tests/compat/application-evidence.json, the `hysteria2` check); false =
+  // it can't, or drops the pin; missing = untested. Unlike `xhttp` this is an
+  // allowlist: on a Hysteria mode only `true` is offered, because an app that
+  // ignores the pin hands the member's password to whoever answers.
+  hysteria2?: boolean;
   // Admin-set member-facing blurb, shown verbatim in every locale. The defaults
   // deliberately DON'T set it: their copy lives in the SPA's i18n catalog
   // (setup.clientDesc.*) so it translates; an admin value overrides that.
@@ -68,6 +76,7 @@ export interface PublicClient {
   easeOfUse?: ClientEase;
   ipv6?: boolean;
   xhttp?: boolean;
+  hysteria2?: boolean;
   description?: string;
 }
 
@@ -90,6 +99,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     sourceUrl: 'https://github.com/hiddify/hiddify-app',
     easeOfUse: 'easy',
     xhttp: true, // its sing-box fork carries XHTTP from app v4.0.4 (2026-02)
+    hysteria2: false, // its link parser ignores pinSHA256, so the pin never reaches the core
     enabled: true,
     priority: 10,
   },
@@ -294,6 +304,7 @@ export async function resolveClients(db: DatabaseReader): Promise<CatalogClient[
     easeOfUse: r.easeOfUse ?? undefined,
     ipv6: r.ipv6 ?? undefined,
     xhttp: r.xhttp ?? undefined,
+    hysteria2: r.hysteria2 ?? undefined,
     description: r.description ?? undefined,
     enabled: r.enabled,
     priority: r.priority,
@@ -326,6 +337,21 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       easeOfUse: c.easeOfUse,
       ipv6: c.ipv6,
       xhttp: c.xhttp,
+      hysteria2: c.hysteria2,
       description: c.description,
     }));
+}
+
+/**
+ * The backends on which at least one enabled catalog app has recorded
+ * Hysteria 2 evidence (`hysteria2: true`). A Hysteria mode is available only
+ * there (lib/placement.ts), and the CMS refuses to turn one on where it is
+ * empty: a member would be offered no app, since the setup page offers only
+ * those (src/shared/hysteriaModes.ts).
+ */
+export function hysteriaAppBackends(clients: readonly CatalogClient[]): Set<ClientBackend> {
+  const out = new Set<ClientBackend>();
+  for (const c of clients)
+    if (c.enabled && c.hysteria2 === true) for (const b of c.backends) out.add(b);
+  return out;
 }

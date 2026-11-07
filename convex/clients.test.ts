@@ -185,6 +185,35 @@ describe('clients CRUD', () => {
     expect(plain.xhttp).toBeNull();
   });
 
+  test('hysteria2 tri-state round-trips, and the projection carries it', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.clients.create, {
+      name: 'HyApp',
+      platforms: ['android'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://hy.example',
+      hysteria2: true,
+    });
+    expect(created.hysteria2).toBe(true);
+    const id = created.id as Id<'clients'>;
+    expect((await t.mutation(internal.clients.update, { id, priority: 2 })).hysteria2).toBe(true);
+    expect((await t.mutation(internal.clients.update, { id, hysteria2: false })).hysteria2).toBe(
+      false,
+    );
+    expect(
+      (await t.mutation(internal.clients.update, { id, hysteria2: null })).hysteria2,
+    ).toBeNull();
+    const up = await t.mutation(internal.clients.upsertByName, { name: 'HyApp', hysteria2: true });
+    expect(up.hysteria2).toBe(true);
+    const pub = await t.run(async (ctx) => publicClients(await resolveClients(ctx.db)));
+    expect(pub.find((c) => c.name === 'HyApp')?.hysteria2).toBe(true);
+  });
+
+  test('hysteria2 defaults: none claimed without evidence, Hiddify recorded unable', () => {
+    for (const c of DEFAULT_CLIENTS)
+      expect(c.hysteria2, c.name).toBe(c.name === 'Hiddify' ? false : undefined);
+  });
+
   test('description round-trips (trimmed + capped), null clears it', async () => {
     const t = convexTest(schema, modules);
     const created = await t.mutation(internal.clients.create, {

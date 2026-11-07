@@ -3,7 +3,7 @@
 # panel-managed node, a TLS 1.3 target and a pinned Xray client
 # (docker-compose.remnawave-node-test.yml), then the node-side contract tests.
 #
-#   bun run test:integration:remnawave-node
+#   bun run test:integration:remnawave-node [test file ...]
 #
 # What it establishes that the panel-only run cannot: whether and when a node
 # APPLIES a config profile, how many server names production Xray accepts, and
@@ -44,4 +44,4 @@ echo "[node-integration] starting the node and the target"
 
 export REMNAWAVE_TEST_NODE=1
 echo "[node-integration] running the node-side tests"
-bunx vitest run --config vitest.node-integration.config.ts
+bunx vitest run --config vitest.node-integration.config.ts "$@"

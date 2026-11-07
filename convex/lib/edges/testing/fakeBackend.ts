@@ -156,7 +156,8 @@ function unsetPath(o: any, path: string) {
   }
   if (at && typeof at === 'object') delete at[keys[keys.length - 1]!];
 }
-function applyMapper<T extends object>(target: T, ops: any[] | undefined, flat = false): T {
+/** A Host `mapper` list applied as the backend does: a dotted path, or (`flat`) a link query key. */
+export function applyMapper<T extends object>(target: T, ops: any[] | undefined, flat = false): T {
   for (const op of ops ?? []) {
     if (flat && String(op.to).startsWith('$link.')) continue;
     if (op.op === 'set')

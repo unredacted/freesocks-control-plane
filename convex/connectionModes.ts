@@ -34,6 +34,8 @@ import {
   freedomEdgesOnly,
 } from './lib/edges/freedomDelivery';
 import { poolFromConfig } from './lib/remnawavePlacement';
+import { hysteriaAppBackends, resolveClients } from './lib/clientCatalog';
+import { isHysteriaMode } from '../src/shared/hysteriaModes';
 
 // --- reads --------------------------------------------------------------------
 
@@ -433,6 +435,27 @@ const modeUpsertFields = {
 };
 
 /**
+ * A Hysteria mode turned on needs, on every backend it offers, an enabled
+ * catalog app with recorded Hysteria evidence: the setup page offers only
+ * those (src/shared/hysteriaModes.ts), and an app that drops the pin would
+ * hand the member's password to whoever answers. Availability holds the same
+ * rule (lib/placement.ts); this says why at the switch.
+ */
+async function refuseHysteriaWithoutApp(
+  ctx: MutationCtx,
+  slug: string,
+  backends: readonly string[],
+): Promise<void> {
+  if (!isHysteriaMode(slug)) return;
+  const have = hysteriaAppBackends(await resolveClients(ctx.db));
+  const missing = backends.filter((b) => !have.has(b as BackendId));
+  if (missing.length > 0)
+    validationError(
+      `no enabled app has recorded Hysteria support on ${missing.join(', ')}: members would be offered no app that checks the certificate pin. Record one and set Client apps → Hysteria support to Works first (docs/client-compatibility.md).`,
+    );
+}
+
+/**
  * A backup mode must be another mode of the same family that offers at least
  * the same backends, and has no backup of its own (no chains): a key is placed
  * in its own group and that one group more, nothing further.
@@ -696,6 +719,7 @@ export const createMode = internalMutation({
       validationError('a label is required (new ids have no built-in translation)');
     }
     if (a.family === FREEDOM_FAMILY && (a.enabled ?? true)) await refuseFreedomDirect(ctx, slug);
+    if (a.enabled ?? true) await refuseHysteriaWithoutApp(ctx, slug, a.backends);
     if (a.fallbackModeSlug)
       await checkFallback(
         ctx,
@@ -807,6 +831,9 @@ export const updateMode = internalMutation({
     const enabled = patch.enabled ?? row.enabled;
     if (family === FREEDOM_FAMILY && enabled && (row.familySlug !== FREEDOM_FAMILY || !row.enabled))
       await refuseFreedomDirect(ctx, row.slug);
+    // Turned on, or given another backend while on.
+    if (enabled && (!row.enabled || a.backends !== undefined))
+      await refuseHysteriaWithoutApp(ctx, row.slug, patch.backends ?? row.backends);
     await ctx.db.patch(row._id, patch);
     if (a.isFamilyDefault) {
       await clearOtherFamilyDefault(ctx, patch.familySlug ?? row.familySlug, row._id);

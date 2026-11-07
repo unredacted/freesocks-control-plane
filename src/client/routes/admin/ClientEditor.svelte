@@ -45,6 +45,8 @@
     ipv6: c?.ipv6 === true ? 'yes' : c?.ipv6 === false ? 'no' : '',
     // The same tri-state for XHTTP: '' untested, 'yes' works, 'no' can't.
     xhttp: c?.xhttp === true ? 'yes' : c?.xhttp === false ? 'no' : '',
+    // And for Hysteria 2, where only 'yes' is offered to members.
+    hysteria2: c?.hysteria2 === true ? 'yes' : c?.hysteria2 === false ? 'no' : '',
     description: c?.description ?? '',
     enabled: c?.enabled ?? true,
     priority: c?.priority ?? 0,
@@ -62,6 +64,7 @@
   let easeOfUse = $state(init.easeOfUse);
   let ipv6 = $state(init.ipv6);
   let xhttp = $state(init.xhttp);
+  let hysteria2 = $state(init.hysteria2);
   let description = $state(init.description);
   let enabled = $state(init.enabled);
   let priority = $state(init.priority);
@@ -87,6 +90,7 @@
       easeOfUse: easeOfUse || null,
       ipv6: ipv6 === 'yes' ? true : ipv6 === 'no' ? false : null,
       xhttp: xhttp === 'yes' ? true : xhttp === 'no' ? false : null,
+      hysteria2: hysteria2 === 'yes' ? true : hysteria2 === 'no' ? false : null,
       description: description.trim() || null,
       enabled,
       priority,
@@ -230,6 +234,26 @@
           XHTTP under REALITY as this app receives it from FCP, not what its core could do: an app
           served sing-box bodies can't use it. Members on an XHTTP connection mode don't see apps
           marked "Can't use it".
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-hysteria2"
+          >Hysteria support</label
+        >
+        <select
+          id="cl-hysteria2"
+          bind:value={hysteria2}
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="">Untested (hidden on Hysteria)</option>
+          <option value="yes">Works, pin checked (recorded)</option>
+          <option value="no">Can't use it, or ignores the pin</option>
+        </select>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          Members on a Hysteria connection mode see only apps marked "Works". Set it only with a
+          recorded test of this app's version: it imported the raw config, connected over UDP, and
+          refused to connect once one character of the entry's pin was changed. An app that ignores
+          the pin would send the member's password to any server.
         </p>
       </div>
       <div>
