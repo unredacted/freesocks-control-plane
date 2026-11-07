@@ -123,6 +123,8 @@ export const AdminConnectionMode = z.object({
   availableBackends: z.array(z.string()).optional().default([]),
   order: z.number().int().optional().default(0),
   builtIn: z.boolean().optional().default(false),
+  /** The backup mode a key of this mode is also placed in (null: none). */
+  fallbackModeSlug: z.string().nullable().optional().default(null),
   placements: z.array(ModePlacementSummary).optional().default([]),
   /** Legacy any-backend bound flag (older servers). */
   bound: z.boolean().optional().default(false),
@@ -176,6 +178,12 @@ export const ModeUpsert = z.object({
   order: z.number().int().optional(),
   /** Point the global default at this mode (refused while it is disabled). */
   makeDefault: z.boolean().optional(),
+  /**
+   * The backup mode a key of this mode is also placed in (same family and
+   * backends, no backup of its own); null clears it. A Hysteria mode's backup
+   * is its REALITY mode: members get both entries.
+   */
+  fallbackModeSlug: ModeSlug.nullable().optional(),
 });
 export type ModeUpsert = z.infer<typeof ModeUpsert>;
 

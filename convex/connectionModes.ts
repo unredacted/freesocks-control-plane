@@ -8,7 +8,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { ConvexError, v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
-import type { MutationCtx } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
@@ -33,6 +33,7 @@ import {
   freedomDirectRefusal,
   freedomEdgesOnly,
 } from './lib/edges/freedomDelivery';
+import { poolFromConfig } from './lib/remnawavePlacement';
 
 // --- reads --------------------------------------------------------------------
 
@@ -58,6 +59,7 @@ export const list = internalQuery({
       backends: m.backends,
       availableBackends: m.availableBackends,
       bound: m.backends.some((b) => boundByBackend.get(b)?.has(m.id) ?? false),
+      fallbackModeSlug: m.fallbackModeSlug,
     }));
   },
 });
@@ -185,18 +187,101 @@ export const resolveIssueTarget = internalQuery({
     // pick needs randomness, but a query must stay deterministic for OCC.
     rand: v.optional(v.number()),
   },
-  handler: (
+  handler: async (
     ctx,
     { backend, modeId, location, exitLocations, onlyServerId, excludePlacement, rand },
-  ) =>
-    resolverFor(backend).resolveTarget(ctx.db, modeId, {
+  ) => {
+    const t = await resolverFor(backend).resolveTarget(ctx.db, modeId, {
       location: location ?? null,
       ...(exitLocations?.length ? { exitLocations } : {}),
       onlyServerId: (onlyServerId as string | null | undefined) ?? null,
       excludePlacement: excludePlacement ?? null,
       rand: typeof rand === 'number' ? () => rand : undefined,
-    }),
+    });
+    const withBackup = { ...t, ...(await fallbackPlacementOf(ctx.db, backend, modeId, t)) };
+    if (!withBackup.fallbackUnresolved || onlyServerId) return withBackup;
+    // The pick landed on a backend that does not host the backup group: try,
+    // in turn, the backends that do, so a valid target is never missed.
+    const slug = await modeSlugFor(ctx.db, backend, modeId);
+    const backup = slug ? (await modeRowOf(ctx.db, slug))?.fallbackModeSlug : null;
+    if (!backup) return withBackup;
+    for (const sid of await backendsHosting(ctx.db, backup)) {
+      if (sid === t.serverId) continue;
+      const alt = await resolverFor(backend).resolveTarget(ctx.db, modeId, {
+        location: location ?? null,
+        ...(exitLocations?.length ? { exitLocations } : {}),
+        onlyServerId: sid,
+        excludePlacement: excludePlacement ?? null,
+        rand: typeof rand === 'number' ? () => rand : undefined,
+      });
+      if (!alt.placement) continue;
+      const f = await fallbackPlacementOf(ctx.db, backend, modeId, alt);
+      if (!f.fallbackUnresolved) return { ...alt, ...f };
+    }
+    return withBackup;
+  },
 });
+
+/**
+ * The group a key of `modeId` is ALSO placed in (its mode's
+ * `fallbackModeSlug`), on the SAME backend as its own: a Hysteria key's
+ * REALITY backup group. `fallbackUnresolved`: the mode names a backup that is
+ * not bound there; the key must not issue without it (the caller refuses).
+ */
+async function fallbackPlacementOf(
+  db: DatabaseReader,
+  backend: BackendId,
+  modeId: string | null,
+  target: { placement: string | null; serverId: string | null },
+): Promise<{ extraPlacements: string[]; fallbackUnresolved: boolean }> {
+  if (!target.placement) return { extraPlacements: [], fallbackUnresolved: false };
+  // No choice: the mode the key issues into is the effective default.
+  const slug = await modeSlugFor(db, backend, modeId);
+  const row = slug ? await modeRowOf(db, slug) : null;
+  const fallback = row?.fallbackModeSlug;
+  if (!fallback) return { extraPlacements: [], fallbackUnresolved: false };
+  if (!target.serverId) return { extraPlacements: [], fallbackUnresolved: true };
+  const f = await resolverFor(backend).resolveTarget(db, fallback, {
+    location: null,
+    onlyServerId: target.serverId,
+    excludePlacement: null,
+  });
+  return f.placement && f.placement !== target.placement
+    ? { extraPlacements: [f.placement], fallbackUnresolved: false }
+    : { extraPlacements: [], fallbackUnresolved: true };
+}
+
+/** The mode a key issues into: the chosen one, else the effective default on `backend`. */
+async function modeSlugFor(
+  db: DatabaseReader,
+  backend: BackendId,
+  modeId: string | null,
+): Promise<string | null> {
+  return modeId ?? effectiveDefaultFor(await resolveCatalogWithAvailability(db), backend);
+}
+
+const modeRowOf = (db: DatabaseReader, slug: string) =>
+  db
+    .query('connectionModes')
+    .withIndex('by_slug', (q) => q.eq('slug', slug))
+    .unique();
+
+/** The backends a mode's pool has a group on (attributed through the node stats). */
+async function backendsHosting(db: DatabaseReader, slug: string): Promise<string[]> {
+  const row = await db
+    .query('modePlacements')
+    .withIndex('by_mode_backend', (q) => q.eq('modeSlug', slug).eq('backend', 'remnawave'))
+    .unique();
+  const out = new Set<string>();
+  for (const placement of row ? poolFromConfig(row.config) : []) {
+    const stats = await db
+      .query('remnawaveNodeStats')
+      .withIndex('by_placement', (q) => q.eq('placement', placement))
+      .unique();
+    if (stats) out.add(stats.backendServerId as string);
+  }
+  return [...out];
+}
 
 /** The re-issue anti-downgrade gate for `backend` (see PlacementResolver). */
 export const effectiveGate = internalQuery({
@@ -343,7 +428,33 @@ const modeUpsertFields = {
   backends: v.optional(v.array(backendIdValidator)),
   order: v.optional(v.number()),
   makeDefault: v.optional(v.boolean()),
+  // The backup mode a key of this mode is also placed in; null clears it.
+  fallbackModeSlug: v.optional(v.union(v.string(), v.null())),
 };
+
+/**
+ * A backup mode must be another mode of the same family that offers at least
+ * the same backends, and has no backup of its own (no chains): a key is placed
+ * in its own group and that one group more, nothing further.
+ */
+async function checkFallback(
+  ctx: MutationCtx,
+  self: { slug: string; family: string; backends: readonly string[] },
+  fallback: string,
+): Promise<void> {
+  if (fallback === self.slug) validationError('a mode cannot be its own backup');
+  const row = await modeBySlug(ctx, fallback);
+  if (!row) return validationError(`unknown backup mode "${fallback}"`);
+  if (row.familySlug !== self.family) validationError('a backup mode must be in the same family');
+  if (!self.backends.every((b) => row.backends.includes(b as never)))
+    validationError('a backup mode must offer every backend this mode does');
+  if (row.fallbackModeSlug) validationError('a backup mode cannot have a backup of its own');
+  const leaning = await ctx.db
+    .query('connectionModes')
+    .collect()
+    .then((rows) => rows.some((r) => r.fallbackModeSlug === self.slug));
+  if (leaning) validationError('another mode uses this one as its backup');
+}
 
 function validationError(message: string): never {
   throw new ConvexError({ code: 'validation', message });
@@ -584,6 +695,12 @@ export const createMode = internalMutation({
       validationError('a label is required (new ids have no built-in translation)');
     }
     if (a.family === FREEDOM_FAMILY && (a.enabled ?? true)) await refuseFreedomDirect(ctx, slug);
+    if (a.fallbackModeSlug)
+      await checkFallback(
+        ctx,
+        { slug, family: a.family, backends: a.backends },
+        a.fallbackModeSlug,
+      );
     const id = await ctx.db.insert('connectionModes', {
       slug,
       familySlug: a.family,
@@ -595,6 +712,7 @@ export const createMode = internalMutation({
       isCensorshipRecommended: a.isCensorshipRecommended || undefined,
       backends: a.backends,
       order: a.order ?? 0,
+      ...(a.fallbackModeSlug ? { fallbackModeSlug: a.fallbackModeSlug } : {}),
       updatedAt: Date.now(),
     });
     if (a.isFamilyDefault) await clearOtherFamilyDefault(ctx, a.family, id);
@@ -647,6 +765,36 @@ export const updateMode = internalMutation({
       patch.backends = a.backends;
     }
     if (a.order !== undefined) patch.order = a.order;
+    if (a.fallbackModeSlug !== undefined) patch.fallbackModeSlug = a.fallbackModeSlug ?? undefined;
+    // This mode may be another one's backup: it must stay in that mode's family
+    // and keep offering every backend that mode does.
+    if (a.family !== undefined || a.backends !== undefined) {
+      const family = patch.familySlug ?? row.familySlug;
+      const backends = patch.backends ?? row.backends;
+      for (const r of await ctx.db.query('connectionModes').collect()) {
+        if (r.fallbackModeSlug !== row.slug) continue;
+        if (r.familySlug !== family)
+          validationError(`"${r.slug}" uses this mode as its backup: it must stay in its family`);
+        if (!r.backends.every((b) => backends.includes(b)))
+          validationError(
+            `"${r.slug}" uses this mode as its backup: it must keep every backend that mode offers`,
+          );
+      }
+    }
+    const fallback = a.fallbackModeSlug === undefined ? row.fallbackModeSlug : a.fallbackModeSlug;
+    if (
+      fallback &&
+      (a.fallbackModeSlug !== undefined || a.family !== undefined || a.backends !== undefined)
+    )
+      await checkFallback(
+        ctx,
+        {
+          slug: row.slug,
+          family: patch.familySlug ?? row.familySlug,
+          backends: patch.backends ?? row.backends,
+        },
+        fallback,
+      );
 
     // Guard: disabling the resolved default in the same patch as makeDefault
     // makes no sense; and makeDefault on a mode being disabled is refused.
@@ -688,6 +836,11 @@ export const removeMode = internalMutation({
     await materializeDefaultsIfEmpty(ctx);
     const row = await modeBySlug(ctx, a.slug);
     if (!row) validationError(`unknown mode "${a.slug}"`);
+    // A mode another mode uses as its backup: its keys are placed in it too.
+    const leaning = (await ctx.db.query('connectionModes').collect()).find(
+      (r) => r.fallbackModeSlug === row.slug,
+    );
+    if (leaning) validationError(`"${leaning.slug}" uses this mode as its backup`);
 
     // Occupied guard: a member sitting on this slug would be silently re-homed
     // to the default on their next read — strand nobody, make the admin move

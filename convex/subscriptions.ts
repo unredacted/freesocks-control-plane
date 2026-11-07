@@ -21,6 +21,7 @@ import {
   type MirrorPage,
 } from './mirrorCopies';
 import { randomHex } from './lib/crypto';
+import { otherPinTargetsOf } from './lib/extraModeNodes';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
@@ -203,6 +204,9 @@ export const insertSubscription = internalMutation({
     // the chosen mode group) — read back by lifecycle.activeSubAndTier so tier pushes
     // never re-home a live key.
     placement: v.optional(v.string()),
+    // The other groups the key was issued into (its mode's fallback mode's),
+    // stored with `placement` (lib/placementSet.ts).
+    extraPlacements: v.optional(v.array(v.string())),
     // The node the PREVIOUS key was pinned to (regenerate) — avoided on the
     // next fetch's pin pick so the new key lands on a different node.
     excludeNode: v.optional(v.string()),
@@ -287,6 +291,7 @@ export const insertSubscription = internalMutation({
     }
     const {
       placement,
+      extraPlacements,
       carrySubTokenFromId: _carry,
       carryCountryFromId: _carryCountry,
       region: _region,
@@ -298,6 +303,7 @@ export const insertSubscription = internalMutation({
       ...carried,
       // Map the generic arg onto the schema field name.
       backendPlacement: placement,
+      ...(placement && extraPlacements?.length ? { backendExtraPlacements: extraPlacements } : {}),
       subToken,
       // Origin-edge assignment key: the account's seat (`seatOf`), never the
       // subToken (so neither a fronted-URL rotation nor a re-issue reshuffles
@@ -651,6 +657,15 @@ export const rotateNodePin = internalMutation({
     const sub = await ctx.db.get(subscriptionId);
     if (!sub?.pinnedNode) return null;
     return invalidateDelivery(ctx, sub, { excludePin: true, refreshMirrors: true });
+  },
+});
+
+/** Where "Switch server" may move a two-group key's pin (lib/extraModeNodes.ts). */
+export const otherPinTargets = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<string[] | null> => {
+    const sub = await ctx.db.get(subscriptionId);
+    return sub ? otherPinTargetsOf(ctx.db, sub) : null;
   },
 });
 
@@ -1236,10 +1251,16 @@ export const setBackendServer = internalMutation({
 });
 
 export const setPlacementAndClearCache = internalMutation({
-  args: { subscriptionId: v.id('subscriptions'), placement: v.union(v.string(), v.null()) },
-  handler: async (ctx, { subscriptionId, placement }) => {
+  args: {
+    subscriptionId: v.id('subscriptions'),
+    placement: v.union(v.string(), v.null()),
+    // The whole set, always: absent = none (lib/placementSet.ts).
+    extraPlacements: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, { subscriptionId, placement, extraPlacements }) => {
     await ctx.db.patch(subscriptionId, {
       backendPlacement: placement ?? undefined,
+      backendExtraPlacements: placement && extraPlacements?.length ? extraPlacements : undefined,
       subCache: undefined,
       updatedAt: Date.now(),
     });

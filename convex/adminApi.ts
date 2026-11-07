@@ -2526,6 +2526,7 @@ export const getConnectionModes = internalQuery({
         availableBackends: m.availableBackends,
         order: m.order,
         builtIn: m.builtIn,
+        fallbackModeSlug: m.fallbackModeSlug,
         placements: summaries[m.id] ?? [],
       })),
     };

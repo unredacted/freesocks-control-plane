@@ -33,6 +33,7 @@ import {
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { currentOrActiveSub } from './subscriptions';
+import { placementSetOf } from './lib/placementSet';
 import { appNoticeShown, type AppNoticeFamily } from './lib/appNotice';
 import {
   crossPanelMoveProven,
@@ -181,8 +182,13 @@ async function resolveIssueTarget(
   modeId: string | null,
   location: string | null,
   userId?: Id<'users'>,
-): Promise<{ placement: string | null; serverId: Id<'backendServers'> | null }> {
-  if (!capabilitiesOf(backend).placement) return { placement: null, serverId: null };
+): Promise<{
+  placement: string | null;
+  extraPlacements: string[];
+  serverId: Id<'backendServers'> | null;
+}> {
+  if (!capabilitiesOf(backend).placement)
+    return { placement: null, extraPlacements: [], serverId: null };
   const exitLocations =
     !location && userId
       ? await ctx.runQuery(internal.countryExits.forIssue, { userId, backend, modeId })
@@ -208,7 +214,19 @@ async function resolveIssueTarget(
         'Node placement is still resolving on this deployment. Please try again in a few minutes.',
     });
   }
-  return { placement: t.placement, serverId: (t.serverId as Id<'backendServers'> | null) ?? null };
+  // A mode with a backup group (a Hysteria key's REALITY one) never issues
+  // without it: the member would hold a key with no fallback entry.
+  if (t.fallbackUnresolved) {
+    throw new ConvexError({
+      code: 'mode.fallback_unbound',
+      message: 'This connection mode is not available on this server right now.',
+    });
+  }
+  return {
+    placement: t.placement,
+    extraPlacements: t.extraPlacements,
+    serverId: (t.serverId as Id<'backendServers'> | null) ?? null,
+  };
 }
 
 /**
@@ -787,6 +805,8 @@ export const regenerate = internalAction({
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
         placement: target.placement,
+        // The groups it also needs (a Hysteria key's REALITY backup).
+        extraPlacements: target.extraPlacements,
       },
       pinServerId: target.serverId,
       // The node the OLD key was pinned to — avoided on the new key's first
@@ -933,6 +953,8 @@ export const switchBackend = internalAction({
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], peerTier),
         tag: peerTier.slug,
         placement: issueTarget.placement,
+        // The groups it also needs (a Hysteria key's REALITY backup).
+        extraPlacements: issueTarget.extraPlacements,
       },
       pinServerId: issueTarget.serverId,
       // A backend switch is not a rotation: carry the fronted-URL token so the
@@ -1125,6 +1147,8 @@ export const switchMode = internalAction({
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
           tag: tier.slug,
           placement: issueTarget.placement,
+          // The groups it also needs (a Hysteria key's REALITY backup).
+          extraPlacements: issueTarget.extraPlacements,
         },
         pinServerId: issueTarget.serverId,
         // A mode switch is not a rotation: carry the fronted-URL token so the
@@ -1179,14 +1203,18 @@ export const switchMode = internalAction({
       // The in-place PATCH lands on the key's OWN backend, so the new mode's
       // placement must exist there — a hard `onlyServerId` pin.
       const pinServerId = await resolveOwnPanel(ctx, oldSub, tier.backend);
-      const { placement: nodePlacement } = await ctx.runQuery(
-        internal.connectionModes.resolveIssueTarget,
-        {
-          backend: tier.backend,
-          modeId: target,
-          onlyServerId: pinServerId as Id<'backendServers'> | null,
-        },
-      );
+      const {
+        placement: nodePlacement,
+        extraPlacements: nodeExtras,
+        fallbackUnresolved,
+      } = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+        backend: tier.backend,
+        modeId: target,
+        onlyServerId: pinServerId as Id<'backendServers'> | null,
+      });
+      // A mode whose backup group is not bound on this backend never moves a
+      // key in without it (lib/placementSet.ts); the re-issue path decides.
+      if (fallbackUnresolved) return reissue();
       // null when no pool is bound anywhere OR the target mode has no mode group on
       // this key's backend; the re-issue path owns both (it may move backends and
       // owns the mode group-less-key audit), so fall through to it rather than PATCH
@@ -1200,21 +1228,27 @@ export const switchMode = internalAction({
         // order (PATCH → persist) let such a push silently revert the mode group
         // move while the DB recorded it. On PATCH failure we restore the old
         // persisted placement so the DB never claims a move that didn't happen.
+        // The WHOLE set moves: switching to Hysteria brings its REALITY backup
+        // group, switching away leaves only the target mode's own groups.
         await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
           subscriptionId: oldSub._id,
           placement: nodePlacement,
+          extraPlacements: nodeExtras,
         });
         try {
           await ctx.runAction(internal.backends.updateUser, {
             backend: tier.backend,
             backendUserId: oldSub.backendUserId,
-            patch: { placement: nodePlacement },
+            patch: { placementSet: { primary: nodePlacement, extras: nodeExtras } },
           });
         } catch (e) {
           console.warn('[switchMode] in-place placement update failed; re-issuing', e);
+          // Restored as it was, both halves together.
+          const was = placementSetOf(oldSub);
           await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
             subscriptionId: oldSub._id,
-            placement: oldSub.backendPlacement ?? null,
+            placement: was.primary,
+            extraPlacements: was.extras,
           });
           return reissue();
         }
@@ -1433,7 +1467,14 @@ export const switchServer = internalAction({
     // owns its user records. Separate from `reissue` itself so the caller can ask
     // "is there anywhere else to go?" WITHOUT minting a key to find out.
     const resolveCrossPanelTarget = async () => {
-      if (!canPlace) return { placement: null, serverId: null, unattributedMultiPanel: false };
+      if (!canPlace)
+        return {
+          placement: null,
+          serverId: null,
+          unattributedMultiPanel: false,
+          extraPlacements: [] as string[],
+          fallbackUnresolved: false,
+        };
       const rand = new Uint32Array(1);
       crypto.getRandomValues(rand);
       // A member on Automatic who chose a country: its exit locations first.
@@ -1470,6 +1511,16 @@ export const switchServer = internalAction({
           status: 503,
         };
       }
+      // The mode's backup group is not bound where the key would land: never a
+      // key without it (lib/placementSet.ts).
+      if (target.fallbackUnresolved) {
+        return {
+          ok: false,
+          code: 'mode.fallback_unbound',
+          message: 'This connection mode is not available on another server right now.',
+          status: 409,
+        };
+      }
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
       const issued = await issueNewSubscription(ctx, {
         userId,
@@ -1486,6 +1537,8 @@ export const switchServer = internalAction({
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
           tag: tier.slug,
           placement: target.placement,
+          // The groups it also needs (a Hysteria key's REALITY backup).
+          extraPlacements: target.extraPlacements,
         },
         pinServerId: (target.serverId as Id<'backendServers'> | null) ?? undefined,
         // Land on a different node than the one being left, for the same reason
@@ -1526,13 +1579,16 @@ export const switchServer = internalAction({
       const pinServerId = ownPanelId;
       const rand = new Uint32Array(1);
       crypto.getRandomValues(rand);
-      const { placement } = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
-        backend: tier.backend,
-        modeId,
-        onlyServerId: pinServerId as Id<'backendServers'> | null,
-        excludePlacement: oldSub.backendPlacement ?? null,
-        rand: rand[0]! / 2 ** 32,
-      });
+      const { placement, extraPlacements, fallbackUnresolved } = await ctx.runQuery(
+        internal.connectionModes.resolveIssueTarget,
+        {
+          backend: tier.backend,
+          modeId,
+          onlyServerId: pinServerId as Id<'backendServers'> | null,
+          excludePlacement: oldSub.backendPlacement ?? null,
+          rand: rand[0]! / 2 ** 32,
+        },
+      );
       // A legacy row (issued before placements were persisted — a state
       // lifecycle.legacyPushPlacement still supports) has NO source placement to
       // compare against, so "different from null" proves nothing: the key may
@@ -1541,26 +1597,29 @@ export const switchServer = internalAction({
       // The unknown case still falls through to the pin rotation and the
       // cross-backend re-issue, both of which prove a move on their own terms.
       const sourcePlacement = oldSub.backendPlacement ?? null;
-      if (inPlaceMoveProven(sourcePlacement, placement)) {
+      if (!fallbackUnresolved && inPlaceMoveProven(sourcePlacement, placement)) {
         // DB before backend, as in switchMode: a concurrent pushTierToBackend
         // re-sends the PERSISTED placement, so this ordering keeps the two
         // convergent. Restore on failure so the DB never claims a move that
-        // didn't happen.
+        // didn't happen. The whole set moves (lib/placementSet.ts).
         await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
           subscriptionId: oldSub._id,
           placement,
+          extraPlacements,
         });
         try {
           await ctx.runAction(internal.backends.updateUser, {
             backend: tier.backend,
             backendUserId: oldSub.backendUserId,
-            patch: { placement },
+            patch: { placementSet: { primary: placement, extras: extraPlacements } },
           });
         } catch (e) {
           console.warn('[switchServer] in-place placement update failed; re-issuing', e);
+          const was = placementSetOf(oldSub);
           await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
             subscriptionId: oldSub._id,
-            placement: oldSub.backendPlacement ?? null,
+            placement: was.primary,
+            extraPlacements: was.extras,
           });
           return reissue();
         }
@@ -1612,7 +1671,15 @@ export const switchServer = internalAction({
             placement: oldSub.backendPlacement,
           })
         : null;
-    const hasOtherNode = groupHasOtherNode(placementStats, Date.now());
+    // A key in two groups pins only among its mode's tier (lib/extraModeNodes.ts):
+    // the group's count overstates where its pin can go.
+    const otherTargets =
+      canPinBackend && placementStats
+        ? await ctx.runQuery(internal.subscriptions.otherPinTargets, {
+            subscriptionId: oldSub._id,
+          })
+        : null;
+    const hasOtherNode = groupHasOtherNode(placementStats, Date.now(), otherTargets);
     const leftNode = hasOtherNode
       ? await ctx.runMutation(internal.subscriptions.rotateNodePin, {
           subscriptionId: oldSub._id,
@@ -1744,6 +1811,8 @@ export const moveToCountryExit = internalAction({
         })
       : null;
     if (!target.placement || server?.location !== offer.code) return nothing;
+    // A mode whose backup group is not bound there: never a key without it.
+    if (target.fallbackUnresolved) return nothing;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
@@ -1761,6 +1830,8 @@ export const moveToCountryExit = internalAction({
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
         placement: target.placement,
+        // The groups it also needs (a Hysteria key's REALITY backup).
+        extraPlacements: target.extraPlacements,
       },
       pinServerId: target.serverId as Id<'backendServers'>,
       excludeNode: oldSub.pinnedNode ?? undefined,

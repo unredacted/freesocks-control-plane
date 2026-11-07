@@ -15,6 +15,7 @@ import type { Doc } from '../_generated/dataModel';
 import { capabilitiesOf } from './backends/capabilities';
 import { resolverFor } from './placement';
 import { NODE_STATS_STALE_MS } from './remnawavePlacement';
+import { otherPinTargetsOf } from './extraModeNodes';
 
 /** Lever 1: the in-place pick is a different group than a KNOWN source. A
  *  legacy row with no recorded group proves nothing either way. */
@@ -23,12 +24,20 @@ export function inPlaceMoveProven(source: string | null, picked: string | null):
 }
 
 /** Lever 2's precondition: a FRESH stats snapshot shows another node in the
- *  key's group. Unknown or stale counts as unproven. */
+ *  key's group. Unknown or stale counts as unproven. A key in two groups also
+ *  needs another node in the tier its pin is picked from (`otherTargets`,
+ *  lib/extraModeNodes.ts `otherPinTargetsOf`; null for any other key). */
 export function groupHasOtherNode(
   stats: { nodeCount: number; lastStatsAt: number } | null,
   now: number,
+  otherTargets: readonly string[] | null = null,
 ): boolean {
-  return stats != null && now - stats.lastStatsAt < NODE_STATS_STALE_MS && stats.nodeCount > 1;
+  return (
+    stats != null &&
+    now - stats.lastStatsAt < NODE_STATS_STALE_MS &&
+    stats.nodeCount > 1 &&
+    (otherTargets === null || otherTargets.length > 0)
+  );
 }
 
 /** Lever 3: the unpinned pick lands somewhere provably different: another
@@ -90,7 +99,7 @@ export async function switchServerAvailable(
       .query('remnawaveNodeStats')
       .withIndex('by_placement', (q) => q.eq('placement', source))
       .unique();
-    if (groupHasOtherNode(stats, now)) return true;
+    if (groupHasOtherNode(stats, now, await otherPinTargetsOf(db, sub))) return true;
   }
 
   if (canPlace) {

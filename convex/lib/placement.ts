@@ -18,6 +18,7 @@ import {
   effectiveDefaultId,
   publicProjection,
   resolveModeCatalog,
+  type ConnectionMode,
   type ModeCatalog,
   type ModeWithAvailability,
   type PublicConnectionMode,
@@ -176,9 +177,23 @@ export async function resolveCatalogWithAvailability(
   const usableOn = (b: BackendId, slug: string) =>
     !CAPABILITIES[b].placement ||
     (boundByBackend.get(b)!.has(slug) && servedByBackend.get(b)!.has(slug));
+  // A mode with a backup mode (a Hysteria key also placed in REALITY's group):
+  // usable only where the backup is too, and while some node serves the mode
+  // beside the backup, its address checked (nodeExtraModes.ts `serving`).
+  const extraServing = new Set<string>();
+  if (catalog.modes.some((m) => m.fallbackModeSlug))
+    for (const i of await db.query('panelNodeIntents').collect())
+      for (const x of i.extraModes ?? []) if (x.state === 'serving') extraServing.add(x.slug);
+  const withBackup = (b: BackendId, m: ConnectionMode) =>
+    !m.fallbackModeSlug ||
+    (!!catalog.modes.find((f) => f.id === m.fallbackModeSlug && f.enabled) &&
+      usableOn(b, m.fallbackModeSlug) &&
+      (!CAPABILITIES[b].placement || extraServing.has(m.id)));
   const modes: ModeWithAvailability[] = catalog.modes.map((m) => ({
     ...m,
-    availableBackends: m.enabled ? m.backends.filter((b) => usableOn(b, m.id)) : [],
+    availableBackends: m.enabled
+      ? m.backends.filter((b) => usableOn(b, m.id) && withBackup(b, m))
+      : [],
   }));
   const configuredDefaultId = catalog.modes.find((m) => m.isDefault)?.id ?? null;
   const effective = effectiveDefaultId(modes, (m) => m.availableBackends.length > 0);

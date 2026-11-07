@@ -1281,9 +1281,11 @@ export async function remnawaveUpdateUser(
     body.hwidDeviceLimit = patch.hwidDeviceLimit;
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.tag !== undefined) body.tag = toRemnawaveTag(patch.tag);
-  if (patch.placement !== undefined) {
-    // The placement handle IS the mode group UUID; present+null/'' clears it, a value sets it.
-    body.activeInternalSquads = patch.placement ? [patch.placement] : [];
+  if (patch.placementSet !== undefined) {
+    // The placement handles ARE mode group UUIDs: the key's whole membership,
+    // its mode's group first. A null primary clears every group.
+    const { primary, extras } = patch.placementSet;
+    body.activeInternalSquads = primary ? [...new Set([primary, ...extras])] : [];
   }
   await call(cfg, {
     method: 'PATCH',

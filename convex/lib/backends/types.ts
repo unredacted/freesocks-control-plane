@@ -178,9 +178,12 @@ export interface UpdateUserPatch {
   description?: string;
   hwidDeviceLimit?: number | null;
   trafficLimitStrategy?: TrafficLimitStrategy;
-  // Opaque backend placement handle (see IssueUserSpec.placement). Present+null/''
-  // clears it; Remnawave maps it to activeInternalSquads.
-  placement?: string | null;
+  // The key's whole placement: the opaque handle of its mode (see
+  // IssueUserSpec.placement) and the extra handles it also needs (a Hysteria
+  // key's REALITY backup group). Always sent whole: Remnawave REPLACES the
+  // key's groups with `[primary, ...extras]`, so a writer that knew only the
+  // primary would silently drop the backup. A null primary clears them all.
+  placementSet?: { primary: string | null; extras: string[] };
   // Status changes go through the dedicated `setStatus` provider op
   // (Remnawave's /actions/{enable|disable}), not this field-update patch.
 }
