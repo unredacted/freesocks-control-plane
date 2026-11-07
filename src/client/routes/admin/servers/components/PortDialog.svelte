@@ -18,7 +18,7 @@
   import { invalidateServers, previewProfilePatch, stagePortChange } from '@client/lib/serversApi';
   import type { ProfilePatchPreview, TransportView } from '../../../../../shared/contracts/servers';
   import { codeOf } from '../lib/run';
-  import { portChangeTitle, serverErrorWords } from '../lib/words';
+  import { portChangeTitle, portLabel, serverErrorWords } from '../lib/words';
 
   interface Props {
     open: boolean;
@@ -130,15 +130,16 @@
               transportTag: inbound.tag,
               fromPort: inbound.port,
               toPort: fw?.port ?? Number(port),
+              protocol: fw?.protocol,
             })}
           </p>
           {#if !fw || fw.nodes.length === 0}
             <p>No node serves this transport, so nothing has to wait. It is sent at once.</p>
           {:else}
             <p>
-              Nothing is sent until every node below lets port {fw.port} in. Members keep the old port
-              meanwhile. Then the nodes close for maintenance and come back once they are verified and
-              approved on the new port.
+              Nothing is sent until every node below lets port {portLabel(fw.port, fw.protocol)} in. Members
+              keep the old port meanwhile. Then the nodes close for maintenance and come back once they
+              are verified and approved on the new port.
             </p>
             <ul class="bg-muted/30 space-y-1 rounded-md border p-3">
               {#each byRole as n (n.name)}

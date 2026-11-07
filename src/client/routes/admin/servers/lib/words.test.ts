@@ -7,6 +7,7 @@ import {
   portChangeTitle,
   portChangeWords,
   portChangeable,
+  portLabel,
   protectionWords,
   renameWords,
   retireConfirmWords,
@@ -798,6 +799,14 @@ describe('port changes in words', () => {
     // A recovery says nothing about whether the port moved.
     expect(portChangeWords({ ...change, state: 'recovered' })).toMatchObject({ dot: 'red' });
     expect(portChangeWords({ ...change, state: 'recovered' }).sentence).toMatch(/is not known/);
+    // A UDP port reads as such: the firewall opens it separately from TCP.
+    const udp = { ...change, protocol: 'udp' as const };
+    expect(portChangeTitle(udp)).toBe('Move PRIVACY_REALITY from port 443 to 8443 (UDP)');
+    expect(portChangeWords({ ...udp, state: 'waiting' }).sentence).toBe(
+      'Nothing is sent until every node lets port 8443 (UDP) in. Waiting for 1 node.',
+    );
+    expect(portLabel(443)).toBe('443');
+    expect(portLabel(443, 'tcp')).toBe('443');
     expect(
       portChangeWords({ ...change, state: 'refused', code: 'servers.profile_changed' }).sentence,
     ).toMatch(/^Not sent: The profile changed/);

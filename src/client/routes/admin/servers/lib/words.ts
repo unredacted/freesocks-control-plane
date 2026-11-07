@@ -951,16 +951,28 @@ export interface PortChangeLike {
   transportTag: string;
   fromPort: number | null;
   toPort: number;
+  /** Absent = TCP. */
+  protocol?: 'tcp' | 'udp';
   state: 'waiting' | 'applying' | 'applied' | 'refused' | 'cancelled' | 'recovered';
   code: string | null;
   nodes: { name: string; confirmedBy: 'role' | 'operator'; state: string }[];
 }
 
+/**
+ * A port as the operator reads it: `443` for TCP (every transport before QUIC
+ * ones), `443 (UDP)` for a UDP port, which a firewall opens separately.
+ */
+export function portLabel(port: number, protocol?: 'tcp' | 'udp'): string {
+  return protocol === 'udp' ? `${port} (UDP)` : `${port}`;
+}
+
 /** "Move PRIVACY_REALITY from port 443 to 8443". */
-export function portChangeTitle(c: Pick<PortChangeLike, 'transportTag' | 'fromPort' | 'toPort'>) {
+export function portChangeTitle(
+  c: Pick<PortChangeLike, 'transportTag' | 'fromPort' | 'toPort' | 'protocol'>,
+) {
   return c.fromPort === null
-    ? `Move ${c.transportTag} to port ${c.toPort}`
-    : `Move ${c.transportTag} from port ${c.fromPort} to ${c.toPort}`;
+    ? `Move ${c.transportTag} to port ${portLabel(c.toPort, c.protocol)}`
+    : `Move ${c.transportTag} from port ${c.fromPort} to ${portLabel(c.toPort, c.protocol)}`;
 }
 
 /** Where a port change stands, and what (if anything) the operator should do. */
@@ -972,13 +984,16 @@ export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string
         return c.code === 'servers.op_running' || c.code === 'servers.op_uncertain'
           ? {
               dot: 'amber',
-              sentence: `Every node lets port ${c.toPort} in. Waiting for another change to this profile to finish.`,
+              sentence: `Every node lets port ${portLabel(c.toPort, c.protocol)} in. Waiting for another change to this profile to finish.`,
             }
-          : { dot: 'amber', sentence: `Every node lets port ${c.toPort} in. Sending it now.` };
+          : {
+              dot: 'amber',
+              sentence: `Every node lets port ${portLabel(c.toPort, c.protocol)} in. Sending it now.`,
+            };
       const n = waiting.length === 1 ? '1 node' : `${waiting.length} nodes`;
       return {
         dot: 'amber',
-        sentence: `Nothing is sent until every node lets port ${c.toPort} in. Waiting for ${n}.`,
+        sentence: `Nothing is sent until every node lets port ${portLabel(c.toPort, c.protocol)} in. Waiting for ${n}.`,
       };
     }
     case 'applying':
@@ -990,7 +1005,7 @@ export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string
     case 'applied':
       return {
         dot: 'green',
-        sentence: `Done. The nodes listen on port ${c.toPort}, and come back once verified and approved.`,
+        sentence: `Done. The nodes listen on port ${portLabel(c.toPort, c.protocol)}, and come back once verified and approved.`,
       };
     case 'refused':
       return { dot: 'grey', sentence: `Not sent: ${serverErrorWords(c.code)}` };
@@ -999,7 +1014,7 @@ export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string
     case 'recovered':
       return {
         dot: 'red',
-        sentence: `Settled by hand. Whether the nodes listen on port ${c.toPort} is not known: look at the profile and the nodes.`,
+        sentence: `Settled by hand. Whether the nodes listen on port ${portLabel(c.toPort, c.protocol)} is not known: look at the profile and the nodes.`,
       };
   }
 }
@@ -1007,7 +1022,7 @@ export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string
 /** One node a port change waits for, in words. */
 export function firewallNodeWords(
   n: { confirmedBy: 'role' | 'operator'; state: string },
-  port: number,
+  port: number | string,
 ): string {
   if (n.state === 'confirmed') return `Lets port ${port} in.`;
   if (n.state === 'cancelled') return 'Not needed any more.';

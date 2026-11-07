@@ -4748,6 +4748,9 @@ export default defineSchema({
     inboundUuid: v.string(),
     fromPort: v.optional(v.number()),
     toPort: v.number(),
+    // The IP protocol the moved transport listens on (absent = tcp, the rows
+    // written before UDP transports existed).
+    protocol: v.optional(v.union(v.literal('tcp'), v.literal('udp'))),
     ops: v.string(),
     baseToken: v.string(),
     expectedToken: v.string(),
@@ -4781,6 +4784,9 @@ export default defineSchema({
     nodeName: v.string(),
     intentId: v.optional(v.id('panelNodeIntents')),
     port: v.number(),
+    // Absent = tcp. A role report confirms a requirement only for the protocol
+    // it names, so a role that only opens TCP never confirms a UDP port.
+    protocol: v.optional(v.union(v.literal('tcp'), v.literal('udp'))),
     confirmedBy: v.union(v.literal('role'), v.literal('operator')),
     state: v.union(v.literal('waiting'), v.literal('confirmed'), v.literal('cancelled')),
     confirmedAt: v.optional(v.number()),

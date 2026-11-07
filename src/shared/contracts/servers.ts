@@ -327,6 +327,13 @@ export const ProfilePatchApply = z.object({
 });
 export type ProfilePatchApply = z.infer<typeof ProfilePatchApply>;
 
+/**
+ * The IP protocol a firewall opening is for. TCP and UDP are separate port
+ * spaces: `443/udp` (a QUIC transport such as Hysteria 2) is not `443/tcp`.
+ */
+export const FirewallProtocol = z.enum(['tcp', 'udp']);
+export type FirewallProtocol = z.infer<typeof FirewallProtocol>;
+
 /** Who confirms that a node's firewall lets a port in: the node role, or an admin. */
 export const FirewallConfirmer = z.enum(['role', 'operator']);
 export type FirewallConfirmer = z.infer<typeof FirewallConfirmer>;
@@ -342,6 +349,8 @@ export const PortChangeView = z.object({
   transportTag: z.string(),
   fromPort: z.number().nullable(),
   toPort: z.number(),
+  /** What the moved transport listens on; the nodes must let `toPort` in for this protocol. */
+  protocol: FirewallProtocol.default('tcp'),
   /** `recovered`: settled by a recorded recovery, which does not say whether the port moved. */
   state: z.enum(['waiting', 'applying', 'applied', 'refused', 'cancelled', 'recovered']),
   code: z.string().nullable(),
@@ -391,7 +400,7 @@ export const NodeRenameList = z.object({ renames: z.array(NodeRenameView) });
 /** A port a node's firewall must let in, as the node role reads it. */
 export const FirewallPort = z.object({
   port: z.number(),
-  protocol: z.literal('tcp'),
+  protocol: FirewallProtocol,
   /** `serving`: a transport (or the node's own proxy) listens there; `pending`: a staged change waits for it. */
   reason: z.enum(['serving', 'pending']),
 });
@@ -567,13 +576,20 @@ export const NodeAppliedReport = z.object({
   nodeStarted: z.boolean(),
   /**
    * The ports the node's firewall lets in for FCP after this run (every port the
-   * node's view listed, once opened). Confirms the pending port changes of this
-   * node whose port is listed. A role that omits it confirms nothing.
+   * node's view listed, once opened), each with the protocol it was opened for.
+   * Confirms the pending port changes of this node whose (port, protocol) is
+   * listed: `443/tcp` never confirms `443/udp`. A port without a protocol is
+   * TCP. A role that omits `firewall` confirms nothing.
    */
   firewall: z
     .object({
       ports: z
-        .array(z.object({ port: z.number().int().min(1).max(65535), protocol: z.literal('tcp') }))
+        .array(
+          z.object({
+            port: z.number().int().min(1).max(65535),
+            protocol: FirewallProtocol.default('tcp'),
+          }),
+        )
         .max(64),
     })
     .optional(),
@@ -850,6 +866,7 @@ export const ProfilePatchPreview = z.object({
   firewall: z
     .object({
       port: z.number(),
+      protocol: FirewallProtocol.default('tcp'),
       nodes: z.array(
         z.object({
           name: z.string(),

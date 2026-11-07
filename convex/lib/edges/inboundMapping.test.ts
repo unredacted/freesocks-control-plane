@@ -12,6 +12,7 @@ import type { Id } from '../../_generated/dataModel';
 import type { BackendTransport } from '../backends/types';
 import { isSlotKey } from './hosts';
 import {
+  inboundPortProtocol,
   listenerKeyForTag,
   mapTransportsToListeners,
   parseRealityTarget,
@@ -43,6 +44,24 @@ function inbound(over: Partial<BackendTransport> & { tag: string }): BackendTran
 async function map(inbounds: BackendTransport[], existingKeys: string[] = []) {
   return mapTransportsToListeners(inbounds, { existingKeys, origin: ORIGIN });
 }
+
+describe('inboundPortProtocol', () => {
+  test('QUIC protocols and the hysteria stream listen on UDP; everything else on TCP', () => {
+    expect(inboundPortProtocol({ protocol: 'hysteria', network: 'hysteria' })).toBe('udp');
+    // The protocol alone decides, whatever stream the backend reports.
+    expect(inboundPortProtocol({ protocol: 'hysteria', network: 'tcp' })).toBe('udp');
+    expect(inboundPortProtocol({ protocol: 'tuic', network: 'tcp' })).toBe('udp');
+    expect(inboundPortProtocol({ protocol: 'vless', network: 'hysteria' })).toBe('udp');
+    // UDP streams under any protocol: a port clash with Hysteria is a real one.
+    expect(inboundPortProtocol({ protocol: 'vless', network: 'kcp' })).toBe('udp');
+    expect(inboundPortProtocol({ protocol: 'vmess', network: 'mKCP' })).toBe('udp');
+    expect(inboundPortProtocol({ protocol: 'vless', network: 'quic' })).toBe('udp');
+    expect(inboundPortProtocol({ protocol: 'vless', network: 'raw' })).toBe('tcp');
+    expect(inboundPortProtocol({ protocol: 'vless', network: 'xhttp' })).toBe('tcp');
+    expect(inboundPortProtocol({ protocol: 'trojan', network: 'ws' })).toBe('tcp');
+    expect(inboundPortProtocol({ protocol: 'shadowsocks', network: null })).toBe('tcp');
+  });
+});
 
 describe('listenerKeyForTag', () => {
   test('is deterministic, at most 16 chars, and a valid slot key', async () => {

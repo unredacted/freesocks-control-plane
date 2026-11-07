@@ -22,6 +22,7 @@
     firewallNodeWords,
     portChangeTitle,
     portChangeWords,
+    portLabel,
     serverErrorWords,
   } from '../lib/words';
 
@@ -78,7 +79,9 @@
             {#each c.nodes as n (n.name)}
               <li class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span class="font-medium break-all">{n.name}</span>
-                <span class="text-muted-foreground">{firewallNodeWords(n, c.toPort)}</span>
+                <span class="text-muted-foreground"
+                  >{firewallNodeWords(n, portLabel(c.toPort, c.protocol))}</span
+                >
                 {#if canWrite && n.confirmedBy === 'operator' && n.state === 'waiting'}
                   <Button
                     variant="outline"
@@ -90,7 +93,7 @@
                         `${n.name}: confirmed.`,
                       )}
                   >
-                    Its firewall lets {c.toPort} in
+                    Its firewall lets {portLabel(c.toPort, c.protocol)} in
                   </Button>
                 {/if}
               </li>
