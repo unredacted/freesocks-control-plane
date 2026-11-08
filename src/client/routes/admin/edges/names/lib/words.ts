@@ -87,9 +87,54 @@ export const CHECK_WORDS: Record<string, string> = {
   q_tls12: 'The cover site does not offer TLS 1.3 for this name.',
   q_no_h2: 'The cover site does not offer HTTP/2 for this name.',
   q_off_network:
-    'This name resolves outside the list’s network, or not at all: someone looking it up would see another network than the address it is shown to.',
+    'This server name (SNI) resolves outside the list’s network, or not at all: someone looking it up would see another network than the address it is shown to.',
   q_target_off_network: 'The cover site resolves outside the list’s network.',
+  q_name_unresolved:
+    'This server name (SNI) no longer resolves at all. It is used anyway outside the list’s network, but not while it does not resolve.',
 };
+
+/** The few fields of a row "Use anyway" reads (`SniNameRow`). */
+interface UseAnywayRow {
+  status: string;
+  code: string | null;
+  offNetwork: boolean;
+  useAnyway: { at: string; by: string | null; reason: string | null } | null;
+}
+
+/**
+ * Whether a row offers "Use anyway": it failed only because it resolves
+ * outside the list's network, and nobody said "use anyway" yet. A burned or
+ * retired server name is out of use for other reasons.
+ */
+export function offersUseAnyway(n: UseAnywayRow): boolean {
+  return (
+    !n.useAnyway &&
+    n.code === 'q_off_network' &&
+    (n.status === 'active' || n.status === 'suspended')
+  );
+}
+
+/**
+ * The line that keeps a "use anyway" in sight on its row, or null without one:
+ * what it is, who said so and when, and the reason they gave.
+ */
+export function useAnywayWords(n: UseAnywayRow, now = Date.now()): string | null {
+  const u = n.useAnyway;
+  if (!u) return null;
+  const head = n.offNetwork
+    ? 'Used anyway: it resolves outside the list’s network.'
+    : 'Use anyway is on: it may resolve outside the list’s network.';
+  const who = `Set by ${u.by ?? 'an admin'} ${ago(u.at, now)}.`;
+  return [head, who, u.reason ? `Reason: ${u.reason}` : null].filter(Boolean).join(' ');
+}
+
+/** What "Use anyway" or "Stop using anyway" did. */
+export function useAnywayDoneWords(on: boolean, count: number): string {
+  if (count === 0) return 'Nothing changed.';
+  return on
+    ? 'Used anyway. It is checked again in a few minutes.'
+    : 'Back to the normal check. It is checked again in a few minutes.';
+}
 
 /** The report hint under a name. It suggests; the operator judges. */
 export function suspectWords(countries: readonly string[]): string {
@@ -240,6 +285,7 @@ const ERROR_WORDS: Record<string, string> = {
     "The list's network has no address ranges yet. Read them again, or add ranges by hand.",
   'edge.sni.network_edges_off':
     "Some addresses in use on this port are not on the list's network. Replace them first.",
+  'edge.sni.no_network': 'This list has no network, so every server name (SNI) is on it already.',
   'edge.network.bad_asn': 'Each ASN is a number, at most eight of them.',
   'edge.network.bad_prefix': 'Each range is an address and a length, like 192.0.2.0/24.',
   'edge.network.empty': 'A network needs an ASN or a range.',

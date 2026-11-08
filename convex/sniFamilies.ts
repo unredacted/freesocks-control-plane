@@ -408,6 +408,14 @@ export const detail = internalQuery({
         ]);
       }
     const labels = await listLabels(ctx.db);
+    // Who said "use anyway" (an admin's display name, for the page).
+    const admins = new Map<Id<'adminUsers'>, string>();
+    for (const n of names) {
+      const by = n.networkOverride?.by;
+      if (!by || admins.has(by)) continue;
+      const u = await ctx.db.get(by);
+      if (u) admins.set(by, u.displayName || u.username);
+    }
     return {
       family: {
         ...summarize(f, names, bindings.length, await networkView(ctx, f)),
@@ -439,6 +447,14 @@ export const detail = internalQuery({
         tlsVersion: n.qualification.tlsVersion ?? null,
         alpn: n.qualification.alpn ?? null,
         checkedAt: n.checkedAt ? new Date(n.checkedAt).toISOString() : null,
+        offNetwork: n.qualification.offNetwork === true,
+        useAnyway: n.networkOverride
+          ? {
+              at: new Date(n.networkOverride.at).toISOString(),
+              by: n.networkOverride.by ? (admins.get(n.networkOverride.by) ?? null) : null,
+              reason: n.networkOverride.reason ?? null,
+            }
+          : null,
         delivery: deliveryOf(n),
       })),
       suggestions: await familyUsable(ctx.db, f._id),
@@ -568,6 +584,14 @@ export const update = internalMutation({
         changed.push('network');
       }
     }
+    // An operator's "use anyway" was about the old network: it goes with it,
+    // and so does the mark it left.
+    if (networkMoved)
+      for (const n of await namesOf(ctx, f._id))
+        if (n.networkOverride || n.qualification.offNetwork) {
+          const { offNetwork: _off, ...qualification } = n.qualification;
+          await ctx.db.patch(n._id, { networkOverride: undefined, qualification });
+        }
     // The bar moved: every name is judged again. A new network is a new claim
     // about every name (where it lives), so none counts as qualified until it
     // was checked against it: a rebind must not hand out names judged under
@@ -750,6 +774,63 @@ export const setNames = internalMutation({
   },
 });
 
+/** The longest reason an operator may give for "use anyway". */
+const USE_ANYWAY_REASON_MAX = 300;
+
+/**
+ * An operator's "use anyway" on names of a family on a network (docs/edges.md
+ * "Using a server name off the network anyway"): `on` lets each name qualify
+ * although it resolves outside the network; off puts the normal check back.
+ * Either way the names are checked again on the next qualification pass. Only
+ * this mutation writes `networkOverride`, and only an admin route calls it:
+ * no hunt, check or auto-confirm ever does. A burned name is left alone.
+ */
+export const setUseAnyway = internalMutation({
+  args: {
+    slug: v.string(),
+    names: v.array(v.string()),
+    on: v.boolean(),
+    reason: v.optional(v.string()),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const f = await familyBySlug(ctx, a.slug);
+    if (a.on && !f.networkId)
+      refuse('edge.sni.no_network', 'This list has no network, so every server name is on it');
+    const wanted = new Set(a.names.map((n) => normalizeName(n)).filter((n): n is string => !!n));
+    const reason = a.reason?.trim().slice(0, USE_ANYWAY_REASON_MAX) || undefined;
+    const now = Date.now();
+    let count = 0;
+    for (const n of await namesOf(ctx, f._id)) {
+      if (!wanted.has(n.name) || n.status === 'burned') continue;
+      if (!a.on && !n.networkOverride) continue;
+      // Taken back: the mark it left goes too (the next check judges it afresh).
+      const { offNetwork: _off, ...qualification } = n.qualification;
+      await ctx.db.patch(n._id, {
+        networkOverride: a.on
+          ? {
+              at: now,
+              ...(a.actorAdminId ? { by: a.actorAdminId } : {}),
+              ...(reason ? { reason } : {}),
+            }
+          : undefined,
+        ...(a.on ? {} : { qualification }),
+        checkedAt: 0,
+        updatedAt: now,
+      });
+      count++;
+    }
+    // Counts only: the reason is free text and may name the cover site.
+    await audit(ctx, 'edge.sni.names.use_anyway', a.actorAdminId, {
+      slug: f.slug,
+      on: a.on,
+      count,
+      withReason: a.on && !!reason,
+    });
+    return { count };
+  },
+});
+
 // --- per-country judgement ----------------------------------------------------------------------------
 
 /** The marks of one name, as they are copied onto a listener's entry for it. */
@@ -897,6 +978,8 @@ export const dueForQualification = internalQuery({
       requireH2: boolean;
       /** The family's network (its key in `networks`), when it has one. */
       network?: string;
+      /** An operator's "use anyway": the name may resolve off the network. */
+      useAnyway?: true;
     }[] = [];
     const families = new Map<string, Doc<'sniFamilies'> | null>();
     // A family's network once per family; `null` = it has no ranges yet.
@@ -931,6 +1014,7 @@ export const dueForQualification = internalQuery({
         port: f.target.port,
         requireH2: f.requireH2,
         ...(f.networkId ? { network: f.networkId as string } : {}),
+        ...(f.networkId && n.networkOverride ? { useAnyway: true as const } : {}),
       });
       if (out.length >= cfg.qualifyPerTick) break;
     }
@@ -972,6 +1056,8 @@ export const recordQualification = internalMutation({
     code: v.optional(v.string()),
     tlsVersion: v.optional(v.string()),
     alpn: v.optional(v.string()),
+    /** Under `networkOverride`: the name resolved outside its family's network. */
+    offNetwork: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const n = await ctx.db.get(a.id);
@@ -1002,6 +1088,7 @@ export const recordQualification = internalMutation({
         ...(a.code ? { code: a.code } : {}),
         ...(a.tlsVersion ? { tlsVersion: a.tlsVersion } : {}),
         ...(a.alpn ? { alpn: a.alpn } : {}),
+        ...(a.offNetwork ? { offNetwork: true } : {}),
       },
       checkedAt: Date.now(),
       updatedAt: Date.now(),

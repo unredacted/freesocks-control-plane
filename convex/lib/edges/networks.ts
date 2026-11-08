@@ -158,6 +158,33 @@ export function qualificationNetworkCode(
 }
 
 /**
+ * The network check of one name in the qualification pass, with an operator's
+ * "use anyway" on that name (`sniNames.networkOverride`, docs/edges.md "Using a
+ * server name off the network anyway"). Without it, exactly
+ * `qualificationNetworkCode`. With it, a name that resolves, but outside the
+ * network, passes this check (`offNetwork` says so, for the page), and nothing
+ * else changes: the target must still be on the network, and a name that does
+ * not resolve at all is refused (`q_name_unresolved`): the operator vouched for
+ * a site that lives elsewhere, not for one that is gone. Only an operator sets
+ * `useAnyway`; nothing automatic ever does.
+ */
+export function qualificationNetworkVerdict(
+  targetAddresses: readonly string[],
+  nameAddresses: readonly string[],
+  p: NetworkPrefixes,
+  opts: { useAnyway: boolean },
+): {
+  code: 'q_target_off_network' | 'q_off_network' | 'q_name_unresolved' | null;
+  offNetwork: boolean;
+} {
+  const code = qualificationNetworkCode(targetAddresses, nameAddresses, p);
+  if (code !== 'q_off_network') return { code, offNetwork: false };
+  if (!opts.useAnyway) return { code, offNetwork: true };
+  if (nameAddresses.length === 0) return { code: 'q_name_unresolved', offNetwork: false };
+  return { code: null, offNetwork: true };
+}
+
+/**
  * The announced ranges in a RIPEstat `announced-prefixes` answer
  * (`{status, data: {prefixes: [{prefix}]}}`). A malformed answer is an error,
  * never an empty network.

@@ -224,6 +224,192 @@ describe('qualification', () => {
   });
 });
 
+describe('use anyway: a server name off the list network, on an operator say', () => {
+  async function onNetwork() {
+    const env = await seed();
+    await env.t.run((ctx) =>
+      ctx.db.insert('edgeNetworks', {
+        slug: 'net-a',
+        label: 'Net A',
+        asns: [64500],
+        announced: { v4: [], v6: [] },
+        manualPrefixes: ['192.0.2.0/24'],
+        prefixes: { v4: ['192.0.2.0/24'], v6: [] },
+        updatedAt: Date.now(),
+      }),
+    );
+    await env.call('POST', 'families', { ...family, network: 'net-a' });
+    await env.call('POST', 'families/fam-a/names', { lines: ['off.example', 'other.example'] });
+    await env.call('PATCH', 'config', { enabled: true, suspendAfterFails: 2 });
+    return env;
+  }
+  const row = async (call: Awaited<ReturnType<typeof seed>>['call'], name = 'off.example') =>
+    (await (await call('GET', 'families/fam-a')).json()).names.find(
+      (n: { name: string }) => n.name === name,
+    );
+
+  test('without it, the refusal holds: the pass is told nothing, and the failure suspends', async () => {
+    const { t, call } = await onNetwork();
+    const due = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
+    expect(due.every((n) => n.useAnyway === undefined)).toBe(true);
+    const id = due.find((n) => n.name === 'off.example')!.id;
+    for (let i = 0; i < 2; i++)
+      await t.mutation(internal.sniFamilies.recordQualification, {
+        id,
+        ok: false,
+        code: 'q_off_network',
+      });
+    expect(await row(call)).toMatchObject({
+      status: 'suspended',
+      qualification: 'failed',
+      code: 'q_off_network',
+      useAnyway: null,
+    });
+  });
+
+  test('with it: checked again, passes, comes back, stays marked with who, when and why', async () => {
+    const { t, call } = await onNetwork();
+    const id = (await t.query(internal.sniFamilies.dueForQualification, {})).names.find(
+      (n) => n.name === 'off.example',
+    )!.id;
+    for (let i = 0; i < 2; i++)
+      await t.mutation(internal.sniFamilies.recordQualification, {
+        id,
+        ok: false,
+        code: 'q_off_network',
+      });
+    const set = await call('POST', 'families/fam-a/names/use-anyway', {
+      snis: ['Off.Example'],
+      on: true,
+      reason: '  Works from inside the country  ',
+    });
+    expect(await set.json()).toEqual({ count: 1 });
+    // Due again at once, and the pass is told this one may resolve elsewhere.
+    const due = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
+    expect(due.find((n) => n.name === 'off.example')).toMatchObject({ useAnyway: true });
+    expect(due.find((n) => n.name === 'other.example')?.useAnyway).toBeUndefined();
+    // The pass lifts only the network check: the handshake passed.
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id,
+      ok: true,
+      tlsVersion: 'TLSv1.3',
+      alpn: 'h2',
+      offNetwork: true,
+    });
+    const r = await row(call);
+    expect(r).toMatchObject({
+      status: 'active',
+      qualification: 'ok',
+      offNetwork: true,
+      useAnyway: { by: 'Op', reason: 'Works from inside the country' },
+    });
+    expect(Date.parse(r.useAnyway.at)).toBeGreaterThan(0);
+    // Every other check still applies: a bad certificate fails it as ever.
+    await t.mutation(internal.sniFamilies.recordQualification, { id, ok: false, code: 'q_cert' });
+    expect(await row(call)).toMatchObject({ qualification: 'failed', code: 'q_cert' });
+    // Stopped resolving at all: refused, the say stays for when it resolves again.
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id,
+      ok: false,
+      code: 'q_name_unresolved',
+    });
+    expect(await row(call)).toMatchObject({
+      status: 'suspended',
+      code: 'q_name_unresolved',
+      useAnyway: { by: 'Op' },
+    });
+  });
+
+  test('taking it back puts the normal check back; a burned name and a list with no network refuse it', async () => {
+    const { t, call } = await onNetwork();
+    await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'], on: true });
+    const id = (await t.query(internal.sniFamilies.dueForQualification, {})).names.find(
+      (n) => n.name === 'off.example',
+    )!.id;
+    await t.mutation(internal.sniFamilies.recordQualification, { id, ok: true, offNetwork: true });
+    expect(await row(call)).toMatchObject({ useAnyway: { reason: null } });
+    const off = await call('POST', 'families/fam-a/names/use-anyway', {
+      snis: ['off.example'],
+      on: false,
+    });
+    expect(await off.json()).toEqual({ count: 1 });
+    // The mark goes with it (the next check judges it afresh).
+    expect(await row(call)).toMatchObject({ useAnyway: null, offNetwork: false });
+    const due = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
+    expect(due.find((n) => n.name === 'off.example')).toBeDefined();
+    expect(due.find((n) => n.name === 'off.example')?.useAnyway).toBeUndefined();
+    // Taking back what was never set changes nothing.
+    expect(
+      await (
+        await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'], on: false })
+      ).json(),
+    ).toEqual({ count: 0 });
+    // `on` is required.
+    expect(
+      (await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'] })).status,
+    ).toBe(400);
+    // A burned name never comes back, this way either.
+    await call('POST', 'families/fam-a/names/burn', { snis: ['other.example'] });
+    expect(
+      await (
+        await call('POST', 'families/fam-a/names/use-anyway', { snis: ['other.example'], on: true })
+      ).json(),
+    ).toEqual({ count: 0 });
+    // No network: nothing to be off.
+    await call('POST', 'families', { ...family, slug: 'fam-b', targetAddress: 'b.example' });
+    await call('POST', 'families/fam-b/names', { lines: ['b1.example'] });
+    const refused = await call('POST', 'families/fam-b/names/use-anyway', {
+      snis: ['b1.example'],
+      on: true,
+    });
+    expect((await refused.json()).error.code).toBe('edge.sni.no_network');
+  });
+
+  test('a network change drops it: it was said about the old network', async () => {
+    const { t, call } = await onNetwork();
+    await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'], on: true });
+    await call('PATCH', 'families/fam-a', { network: null });
+    expect(await row(call)).toMatchObject({ useAnyway: null, qualification: 'pending' });
+    const n = await t.run(async (ctx) =>
+      (await ctx.db.query('sniNames').collect()).find((x) => x.name === 'off.example'),
+    );
+    expect(n?.networkOverride).toBeUndefined();
+  });
+
+  test('audited with the admin, counts only: never the hostname or the reason', async () => {
+    const { t, call } = await onNetwork();
+    await call('POST', 'families/fam-a/names/use-anyway', {
+      snis: ['off.example'],
+      on: true,
+      reason: 'off.example works there',
+    });
+    await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'], on: false });
+    const rows = (await auditRows(t)).filter((a) => a.action === 'edge.sni.names.use_anyway');
+    expect(rows.map((a) => a.payload)).toEqual([
+      { slug: 'fam-a', on: true, count: 1, withReason: true },
+      { slug: 'fam-a', on: false, count: 1, withReason: false },
+    ]);
+    expect(rows.every((a) => a.actorType === 'admin' && !!a.actorId)).toBe(true);
+    expect(JSON.stringify(rows)).not.toMatch(/off\.example/);
+  });
+
+  test('never automatic: only the operator mutation and a network change write it', () => {
+    const sources = import.meta.glob<string>(['./**/*.ts', '!./**/*.test.ts', '!./_generated/**'], {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    });
+    const writers = Object.entries(sources)
+      .filter(([, text]) => /networkOverride:/.test(text))
+      .map(([path]) => path)
+      .sort();
+    expect(writers).toEqual(['./schema.ts', './sniFamilies.ts']);
+    const text = sources['./sniFamilies.ts']!;
+    // In sniFamilies.ts: `setUseAnyway` sets or clears it, `update` clears it.
+    expect(text.match(/networkOverride:/g)).toHaveLength(2);
+  });
+});
+
 describe('binding a family to a transport', () => {
   test('refused while dormant, on a non-REALITY transport, and when the targets differ', async () => {
     const { call } = await seed();

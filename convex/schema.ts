@@ -3306,7 +3306,22 @@ export default defineSchema({
       // A code word (`q_cert`, `q_tls12`, ...), never a handshake error string.
       code: v.optional(v.string()),
       consecutiveFails: v.number(),
+      // Under `networkOverride` only: the last check saw the name resolve
+      // outside its family's network (the page keeps it marked).
+      offNetwork: v.optional(v.boolean()),
     }),
+    // An operator's "use anyway" (docs/edges.md "Using a server name off the
+    // network anyway"): the name may qualify although it resolves outside its
+    // family's network. Every other check still applies. Only an operator sets
+    // it (never a hunt, a check or auto-confirm); a family's network change
+    // drops it.
+    networkOverride: v.optional(
+      v.object({
+        by: v.optional(v.id('adminUsers')),
+        at: v.number(),
+        reason: v.optional(v.string()),
+      }),
+    ),
     // 0 = never checked; the qualify cron takes the oldest first.
     checkedAt: v.number(),
     // What the country lists say about this name (lib/edges/lists/facts.ts):

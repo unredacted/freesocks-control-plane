@@ -13,6 +13,7 @@ import {
   onNetwork,
   parseAnnouncedPrefixes,
   qualificationNetworkCode,
+  qualificationNetworkVerdict,
 } from './networks';
 
 const NET = { v4: ['192.0.2.0/24', '198.51.100.0/25'], v6: ['2001:db8:10::/48'] };
@@ -87,6 +88,39 @@ describe('membership', () => {
     );
     // A name that does not resolve is not a site on the network.
     expect(qualificationNetworkCode(['192.0.2.1'], [], NET)).toBe('q_off_network');
+  });
+  test('use anyway lifts only the name resolving elsewhere', () => {
+    const off = qualificationNetworkVerdict;
+    // Without it: the refusal holds, exactly as before.
+    expect(off(['192.0.2.1'], ['203.0.113.9'], NET, { useAnyway: false })).toEqual({
+      code: 'q_off_network',
+      offNetwork: true,
+    });
+    expect(off(['192.0.2.1'], [], NET, { useAnyway: false }).code).toBe('q_off_network');
+    // With it: a name resolving outside the network passes this check, marked.
+    expect(off(['192.0.2.1'], ['203.0.113.9'], NET, { useAnyway: true })).toEqual({
+      code: null,
+      offNetwork: true,
+    });
+    expect(off(['192.0.2.1'], ['192.0.2.9', '203.0.113.9'], NET, { useAnyway: true })).toEqual({
+      code: null,
+      offNetwork: true,
+    });
+    // A name that stopped resolving at all is refused even so.
+    expect(off(['192.0.2.1'], [], NET, { useAnyway: true })).toEqual({
+      code: 'q_name_unresolved',
+      offNetwork: false,
+    });
+    // The target off the network is never lifted.
+    expect(off(['203.0.113.1'], ['203.0.113.9'], NET, { useAnyway: true }).code).toBe(
+      'q_target_off_network',
+    );
+    // On the network: nothing to mark, with or without it.
+    for (const useAnyway of [true, false])
+      expect(off(['192.0.2.1'], ['192.0.2.9'], NET, { useAnyway })).toEqual({
+        code: null,
+        offNetwork: false,
+      });
   });
 });
 
