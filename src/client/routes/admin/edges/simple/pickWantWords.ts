@@ -27,11 +27,11 @@ export function wantPreviewLines(p: PickWantPreview): string[] {
   const out: string[] = [];
   if (p.tooLarge) {
     out.push(
-      `The node would then ask for ${p.total} addresses in use; one node publishes at most ${MAX_DESIRED_PUBLISHED}. Lower the count.`,
+      `The node would then want ${p.total} addresses in use, over the limit of ${MAX_DESIRED_PUBLISHED}. Lower the count.`,
     );
     return out;
   }
-  if (p.adds === 0) out.push('No new address: the location holds that many already.');
+  if (p.adds === 0) out.push('No new address. The location has that many already.');
   else {
     const n = p.adds === 1 ? '1 more address' : `${p.adds} more addresses`;
     const each = p.each;
@@ -45,10 +45,10 @@ export function wantPreviewLines(p: PickWantPreview): string[] {
     if (p.fits < p.adds)
       out.push(
         p.fits === 0
-          ? "None of them fits under this account's monthly cap: raise the cap, or upkeep adds none."
+          ? "None of them fits under this account's monthly cap. Raise the cap, or upkeep adds none."
           : `Only ${p.fits} of ${p.adds} fit under this account's monthly cap.`,
       );
   }
-  out.push('Lowering a count later retires nothing: rebalance frees what is no longer needed.');
+  out.push('Lowering a count later retires nothing. Rebalance frees what is no longer needed.');
   return out;
 }

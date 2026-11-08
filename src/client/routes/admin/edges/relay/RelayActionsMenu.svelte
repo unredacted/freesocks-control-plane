@@ -41,8 +41,8 @@
       run: () => probeRelay(relay.id),
       success: (res: { runIds: string[]; skipped: string[] }) =>
         res.runIds.length > 0
-          ? `${res.runIds.length} probe run(s) requested${res.skipped.length > 0 ? `, ${res.skipped.length} target(s) skipped` : ''}. Results arrive within a minute or two.`
-          : 'No probe was started. Check that probes are on, a source is enabled and the hourly budget is not used up.',
+          ? `${res.runIds.length} probe run(s) requested${res.skipped.length > 0 ? `, ${res.skipped.length} target(s) skipped` : ''}. Results in a minute or two.`
+          : 'No probe started. Check that probes are on, a source is enabled and the hourly budget is not used up.',
       also: invalidateProbes,
     });
   }
@@ -103,7 +103,7 @@
   title={`Disable origin ${relay.slug}?`}
   body={relay.origin.kind === 'manual'
     ? 'Rotations and automatic provisioning stop for this relay. Its edges stay where they are.'
-    : 'Rendering stops for this origin. Because delivery is edge-required, members on it go dark: their subscription is answered "temporarily unavailable" until the relay is enabled again. Edges stay provisioned and keep billing.'}
+    : 'Members on this origin get "temporarily unavailable" until you enable it again, because delivery is edge-required. Edges stay provisioned and keep billing.'}
   confirmLabel="Disable relay"
   danger
   run={() =>
@@ -118,8 +118,8 @@
   bind:open={autoRotateOpen}
   title={relay.autoRotate ? 'Turn auto rotate off?' : 'Turn auto rotate on?'}
   body={relay.autoRotate
-    ? 'The block detector keeps watching this relay but never replaces an edge on its own. A suspected block then waits for you on the overview.'
-    : 'When the block detector suspects a block on this relay, it replaces the affected edge by itself, within the cooldown and the daily cap. Each replacement can spend provider budget. The fleet-wide switch in Settings must be on as well.'}
+    ? 'The block detector keeps watching but never replaces an edge on its own. A suspected block waits for you on the overview.'
+    : 'The block detector replaces a suspected blocked edge on its own, within the cooldown and daily cap. Each replacement can cost provider budget. The fleet switch in Settings must also be on.'}
   confirmLabel={relay.autoRotate ? 'Turn off' : 'Turn on'}
   run={() =>
     act.mutateAsync({

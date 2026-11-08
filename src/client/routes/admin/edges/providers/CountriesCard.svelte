@@ -77,9 +77,9 @@
   <CardHeader>
     <CardTitle class="text-base">Countries</CardTitle>
     <CardDescription>
-      How addresses in each location fare from the countries you check. Censors block ranges, so
-      addresses of one location tend to share their fate. A mark counts for every address in the
-      location and wins over the checks.
+      How each location's addresses fare from the countries you check. Censors block ranges, so a
+      location's addresses tend to share a fate. A mark covers every address in the location and
+      wins over the checks.
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-3">
@@ -99,7 +99,7 @@
     {:else}
       {#if !data.enabled}
         <p class="text-muted-foreground text-sm">
-          Checks from each country are switched off, so nothing new is recorded. Turn them on in the
+          Checks from each country are off, so nothing new is recorded. Turn them on in the
           <Link href={edgesPaths.settings({ section: 'probes' })} class="underline"
             >probe settings</Link
           >.

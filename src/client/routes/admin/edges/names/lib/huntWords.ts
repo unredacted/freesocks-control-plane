@@ -62,18 +62,17 @@ export function candidateWords(c: SniCandidateRow): { dot: Dot; sentence: string
   if (c.state === 'added')
     return {
       dot: 'green',
-      sentence: c.inFamily ? `In the family ${c.inFamily.label}.` : 'In a family.',
+      sentence: c.inFamily ? `In the SNI list ${c.inFamily.label}.` : 'In an SNI list.',
     };
   if (c.state === 'ignored') return { dot: 'grey', sentence: 'Ignored.' };
-  if (c.state === 'gone')
-    return { dot: 'grey', sentence: 'It moved off its network: it now resolves outside it.' };
+  if (c.state === 'gone') return { dot: 'grey', sentence: 'It now resolves outside its network.' };
   if (!c.check) return { dot: 'grey', sentence: 'Not checked yet.' };
   if (!ready(c))
     return {
       dot: 'red',
       sentence:
         (c.check.code && CHECK_WORDS[c.check.code]) ??
-        'It fails the check this family would run on it.',
+        'It fails the check an SNI list would run on it.',
     };
   return { dot: 'green', sentence: checkPassWords(c) };
 }
@@ -151,9 +150,8 @@ export function listWords(facts: readonly HuntListFact[]): string[] {
     const block = here.filter((f) => f.regime === 'blocklist').map((f) => f.label);
     if (allow.length > 0 && block.length > 0)
       out.push(`${cc}: country lists disagree (${[...allow, ...block].join(', ')})`);
-    else if (allow.length > 0)
-      out.push(`${cc}: name on a list of what works (${allow.join(', ')})`);
-    else out.push(`${cc}: name on a block list (${block.join(', ')})`);
+    else if (allow.length > 0) out.push(`${cc}: on a list of what works (${allow.join(', ')})`);
+    else out.push(`${cc}: on a block list (${block.join(', ')})`);
   }
   return out;
 }
@@ -164,7 +162,7 @@ export function siteOoniWords(c: SniCandidateRow): string | null {
     .filter((o) => o.status === 'blocked' || o.status === 'likely_blocked')
     .map((o) => o.cc);
   return blocked.length > 0
-    ? `OONI sees the site ${c.site} blocked in ${blocked.join(', ')} (its main address, not necessarily this name).`
+    ? `OONI sees the site ${c.site} blocked in ${blocked.join(', ')}. That is its main hostname, not necessarily this SNI.`
     : null;
 }
 
@@ -185,16 +183,16 @@ export function sourcesWords(c: SniCandidateRow): string {
 
 export function sweepWords(s: SniHuntOverview['sweep']): string {
   if (!s) return 'No search has run yet.';
-  const found = plural(s.hits, 'name');
+  const found = plural(s.hits, 'hostname');
   switch (s.state) {
     case 'downloading':
       return 'Downloading the top-sites list.';
     case 'running':
-      return `Looking up the top-sites list: ${num(s.cursor)} of ${num(s.total)} names, ${found} found on a network.`;
+      return `Looking up the top-sites list: ${num(s.cursor)} of ${num(s.total)} hostnames, ${found} found on a network.`;
     case 'done':
-      return `The last search looked up ${num(s.total)} names and found ${found} on a network.`;
+      return `The last search looked up ${num(s.total)} hostnames and found ${found} on a network.`;
     case 'cancelled':
-      return `The last search was stopped after ${num(s.cursor)} names.`;
+      return `The last search was stopped after ${num(s.cursor)} hostnames.`;
     case 'failed':
       return `The last search failed (${SWEEP_ERROR_WORDS[s.error ?? ''] ?? 'an error'}).`;
   }
@@ -220,16 +218,16 @@ export const CT_STATE_WORDS: Record<SniHuntCtRow['state'], string> = {
 };
 
 export function ctWords(r: SniHuntCtRow): string {
-  return `${r.domain}: ${CT_STATE_WORDS[r.state]}, ${plural(r.pages, 'page')}, ${plural(r.names, 'name')} found.`;
+  return `${r.domain}: ${CT_STATE_WORDS[r.state]}, ${plural(r.pages, 'page')}, ${plural(r.names, 'hostname')} found.`;
 }
 
 /** What an import did. */
 export function huntImportWords(r: SniHuntImported): string {
-  const parts = [`${plural(r.added, 'name')} added`];
+  const parts = [`${plural(r.added, 'SNI')} added`];
   if (r.known) parts.push(`${r.known} already here`);
-  if (r.inFamily) parts.push(`${r.inFamily} already in a family`);
+  if (r.inFamily) parts.push(`${r.inFamily} already in an SNI list`);
   if (r.ignored) parts.push(`${r.ignored} ignored before`);
-  if (r.invalid) parts.push(`${r.invalid} not a host name`);
+  if (r.invalid) parts.push(`${r.invalid} not a hostname`);
   if (r.capped) parts.push(`${r.capped} over the limit`);
   return `${parts.join(', ')}.`;
 }
@@ -259,8 +257,8 @@ export function familySlugFor(name: string): string {
 /** Under the finding-names switch: what is true now. */
 export function huntSwitchLine(on: boolean, sweepEveryDays: number): string {
   return on
-    ? `On. FCP reads certificates and certificate logs when asked and checks what it finds. The top-sites search runs only when started, or every ${sweepEveryDays} days while a network is searched.`
-    : 'Off. Nothing is looked up, checked or measured. Names found before stay listed.';
+    ? `On. FCP reads certificates and certificate logs when asked, and checks what it finds. The top-sites search runs when started, or every ${sweepEveryDays} days while a network is included.`
+    : 'Off. Nothing is looked up, checked or measured. SNIs found before stay listed.';
 }
 
 /** What the top-sites search costs, said before it starts (AAAA lookups counted: the worst case). */
@@ -272,7 +270,7 @@ export function sweepCostWords(c: {
   const lookups = (c.depth + Math.min(c.wwwDepth, c.depth)) * 2;
   // The pauses between steps add about a tenth.
   const hours = Math.max(1, Math.round((lookups / Math.max(1, c.lookupsPerSecond) / 3600) * 1.1));
-  return `It looks up the ${num(c.depth)} most visited sites in DNS: up to ${num(lookups)} lookups over about ${plural(hours, 'hour')}. Most setups do not need it: a cover site's certificate and certificate logs come first.`;
+  return `It looks up the ${num(c.depth)} most visited sites in DNS, up to ${num(lookups)} lookups over about ${plural(hours, 'hour')}. Most setups do not need it. Try the cover site's certificate and certificate logs first.`;
 }
 
 /** Where a network's nodes are, for timing names from there. */
@@ -280,7 +278,7 @@ export function placeLine(
   place: { country: string; city?: string } | null,
   placeFrom: 'node' | null,
 ): string {
-  if (!place) return 'Not set: names on it are not timed from near its nodes.';
+  if (!place) return 'Not set. SNIs on it are not timed from near its nodes.';
   const where = place.city ? `${place.city} (${place.country})` : place.country;
   return `Timed from ${where}${placeFrom === 'node' ? ', taken from a node on it' : ''}.`;
 }

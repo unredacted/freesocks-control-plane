@@ -96,8 +96,8 @@
   {:else if shown.length === 0}
     <AdminListState
       emptyText={relay.origin.kind === 'panel-node'
-        ? 'No listener yet. Front the node from Edges to add its transports, or use Add listener to describe one by hand.'
-        : 'No listener yet. Use Add listener to describe the port this origin answers on.'}
+        ? 'No listener yet. Front the node from Edges, or use Add listener to add one by hand.'
+        : 'No listener yet. Use Add listener to add one.'}
     />
   {:else}
     {#each shown as l (l.id)}
@@ -120,15 +120,13 @@
       <Card.Header>
         <Card.Title>Hosts plan</Card.Title>
         <Card.Description>
-          You write the backend Hosts of this origin. After every publish or rotation, make the
-          Hosts in the backend say exactly this, or members keep dialling the old edge.
+          You write this origin's backend Hosts. After every publish or rotation, make them match
+          this exactly, or members keep using the old edge.
         </Card.Description>
       </Card.Header>
       <Card.Content>
         {#if hostsPlan.hosts.length === 0}
-          <AdminListState
-            emptyText="Nothing to write yet. Publish an edge for a listener and its Host appears here."
-          />
+          <AdminListState emptyText="Nothing to write yet. Publish an edge to see its Host here." />
         {:else}
           <div class="overflow-x-auto">
             <Table.Root>
@@ -137,7 +135,7 @@
                   <Table.Head>Listener</Table.Head>
                   <Table.Head>Remark</Table.Head>
                   <Table.Head>Address</Table.Head>
-                  <Table.Head>Server name</Table.Head>
+                  <Table.Head>SNI</Table.Head>
                   <Table.Head>Host header</Table.Head>
                   <Table.Head>Transport</Table.Head>
                 </Table.Row>

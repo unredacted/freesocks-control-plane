@@ -105,7 +105,7 @@ export function matrixCell(target: ProbeMatrixTarget, country: string): MatrixCe
   }
   const extras: string[] = [];
   if (c.v6Verdict) extras.push(`IPv6 ${verdictLabel(c.v6Verdict).toLowerCase()}`);
-  if (c.nameVerdict) extras.push(`by name ${verdictLabel(c.nameVerdict).toLowerCase()}`);
+  if (c.nameVerdict) extras.push(`by hostname ${verdictLabel(c.nameVerdict).toLowerCase()}`);
   return {
     probed: true,
     label: verdictLabel(c.verdict),
@@ -182,7 +182,7 @@ export function groupRounds(runs: readonly ProbeRunAdmin[]): ProbeRound[] {
 
 /** A run that dialled a hostname has no observed family: the vantage resolved the name. */
 export const familyLabel = (ipVersion: 4 | 6 | null): string =>
-  ipVersion === null ? 'by name' : `IPv${ipVersion}`;
+  ipVersion === null ? 'by hostname' : `IPv${ipVersion}`;
 
 export const PROBE_SOURCE_LABELS: Record<string, string> = {
   globalping: 'Globalping',
@@ -194,7 +194,7 @@ export const PROBE_CHECK_LABELS: Record<string, string> = {
   tcp: 'TCP connect',
   tls: 'TLS handshake',
   https: 'HTTP GET',
-  'tls-sni': 'TLS with the real name',
+  'tls-sni': 'TLS with the real SNI',
 };
 export const PROBE_RUN_STATUS_LABELS: Record<string, string> = {
   requested: 'Requested',
@@ -213,9 +213,9 @@ export const PROBE_TRIGGER_LABELS: Record<string, string> = {
 /** Why a requested target was not probed, in words. */
 export const PROBE_SKIP_COPY: Record<string, string> = {
   'probe.udp_unsupported': 'not probed (UDP)',
-  'probe.budget_exhausted': 'not probed (the hourly probe budget is used up)',
+  'probe.budget_exhausted': 'not probed (hourly budget used up)',
   'probe.no_listeners': 'not probed (no listener port yet)',
-  'probe.no_source': 'not probed (no source in use can check that address family)',
+  'probe.no_source': 'not probed (no source for that address family)',
   'edge.no_address': 'not probed (no address yet)',
   not_found: 'not probed (the target no longer exists)',
 };

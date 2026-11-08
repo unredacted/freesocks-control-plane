@@ -134,12 +134,12 @@
             })}
           </p>
           {#if !fw || fw.nodes.length === 0}
-            <p>No node serves this transport, so nothing has to wait. It is sent at once.</p>
+            <p>No node serves this transport. It is sent at once.</p>
           {:else}
             <p>
               Nothing is sent until every node below lets port {portLabel(fw.port, fw.protocol)} in. Members
-              keep the old port meanwhile. Then the nodes close for maintenance and come back once they
-              are verified and approved on the new port.
+              keep the old port until then. The nodes then close for maintenance and reopen once verified
+              and approved on the new port.
             </p>
             <ul class="bg-muted/30 space-y-1 rounded-md border p-3">
               {#each byRole as n (n.name)}
@@ -177,9 +177,9 @@
             <div class="space-y-1">
               <p>
                 {preview.otherAddresses.length === 1
-                  ? 'This address keeps'
-                  : 'These addresses keep'}
-                the port it names. Change it yourself if nothing in front of the node maps the port:
+                  ? 'This address keeps its port'
+                  : 'These addresses keep their port'}. Change it yourself unless something in front
+                of the node maps the port:
               </p>
               <ul class="text-muted-foreground">
                 {#each preview.otherAddresses as h (h.remark + h.address)}

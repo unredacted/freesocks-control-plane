@@ -140,8 +140,8 @@
         {#if data.steered}
           {orderedLine(countryName(data.country, 'en'), data)}
         {:else}
-          Names chosen for a member in {countryName(data.country, 'en')}. Addresses are not ordered
-          by country: that is off under Settings, Where members connect from.
+          Entry names for a member in {countryName(data.country, 'en')}. Addresses are not ordered
+          by country. Turn that on under Settings, Where members connect from.
         {/if}
       </p>
     {/if}
@@ -154,7 +154,7 @@
       <CodeNote
         issue={{
           code: unavailable.reason,
-          detail: 'Members on this relay receive a temporary failure instead of a subscription.',
+          detail: 'Members on this relay get a temporary failure instead of a subscription.',
         }}
         tone="blocker"
       />
@@ -185,8 +185,8 @@
       <section class="space-y-1" aria-labelledby="preview-names">
         <h4 id="preview-names" class="text-sm font-medium">Names in apps</h4>
         <p class="text-muted-foreground text-xs">
-          What a member's app lists, in this order. The sample member's flags and places come from
-          each location's "Name in apps".
+          What a member's app lists, in order. Flags and places come from each location's "Name in
+          apps".
         </p>
         <ul class="space-y-0.5 rounded-md border p-2 text-sm">
           {#each data.names.groups as g (g)}
@@ -200,7 +200,7 @@
     {/if}
 
     <div class="grid gap-3 lg:grid-cols-2">
-      {#each [{ title: 'What the panel serves', hint: 'The input: it still dials the origin.', text: data.input }, { title: 'What members receive', hint: 'The output: origin entries replaced by edge entries.', text: data.body }] as pane (pane.title)}
+      {#each [{ title: 'What the panel serves', hint: 'The input, still pointing at the origin.', text: data.input }, { title: 'What members receive', hint: 'The output, with origin entries replaced by edge entries.', text: data.body }] as pane (pane.title)}
         <section class="min-w-0 space-y-1">
           <div class="flex items-center justify-between gap-2">
             <div>

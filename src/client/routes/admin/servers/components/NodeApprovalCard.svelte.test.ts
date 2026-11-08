@@ -75,14 +75,16 @@ describe('What you approve', () => {
     const approve = button('Approve go-live')!;
     expect(approve.disabled).toBe(false);
     expect(document.body.textContent).toMatch(
-      /Approving closes this node for members until it goes live/,
+      /Approving closes this node to members for about a minute/,
     );
     expect(document.querySelector('.text-amber-700')).toBeNull();
 
     approve.click();
     flushSync();
     await tick();
-    expect(document.body.textContent).toMatch(/This closes node-a for members until it goes live/);
+    expect(document.body.textContent).toMatch(
+      /This closes node-a to members for about a minute, until it goes live/,
+    );
     const input = document.querySelector<HTMLInputElement>('[role="alertdialog"] input')!;
     input.value = 'node-a';
     input.dispatchEvent(new Event('input', { bubbles: true }));

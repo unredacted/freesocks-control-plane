@@ -131,8 +131,8 @@
     <Dialog.Header>
       <Dialog.Title>{list ? `Edit ${list.label}` : 'Add a country list'}</Dialog.Title>
       <Dialog.Description>
-        A list of names and addresses reported to work, or to be blocked, in one country. It is
-        evidence only: it never changes what members get by itself.
+        Hostnames and addresses reported to work, or to be blocked, in one country. It is evidence
+        only and never changes what members get.
       </Dialog.Description>
     </Dialog.Header>
     <form

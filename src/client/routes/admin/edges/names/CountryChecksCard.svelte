@@ -48,17 +48,16 @@
       <div>
         <h2 class="text-base font-medium">Checks from inside countries</h2>
         <p class="text-muted-foreground mt-1">
-          Measurement services try each name against one of your published addresses from inside the
-          countries you turn on, alongside the address's other names. The name list pages then
-          suggest where a name works or is blocked. You decide what is applied.
+          Measurement services try each SNI on one of your published addresses from inside the
+          countries you turn on. SNI list pages then suggest where an SNI works or is blocked, and
+          you decide what is applied.
         </p>
       </div>
       <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-        These checks run on other people's machines inside those countries, often home connections.
-        Each one is a single handshake, shaped like a member's, with a name a large site really
-        serves, at most once every few days per name. Nothing in it names FreeSocks, but whoever
-        runs a vantage sees the address and the name. Turn a country on only if that is acceptable
-        there.
+        These checks run on other people's machines in those countries, often home connections. Each
+        is one member-like handshake with an SNI a large site serves, at most every few days per
+        SNI. Nothing in it names FreeSocks, but whoever runs a vantage sees the address and the SNI.
+        Turn a country on only if that is acceptable there.
       </p>
       <div class="flex items-start gap-3">
         <Switch
@@ -121,8 +120,8 @@
         <div>
           <Label for={`${uid}-auto`}>Apply suggestions by themselves</Label>
           <p class="text-muted-foreground">
-            Only where nobody has judged the name in that country, never over a mark an operator
-            set, and never a block that would leave a node with no usable name there.
+            Only where nobody has judged the SNI in that country. Never over an operator's mark, and
+            never a block that would leave a node with no usable SNI there.
           </p>
         </div>
       </div>
@@ -139,18 +138,16 @@
             )}
         />
         <div>
-          <Label for={`${uid}-real`}>Also check each name against its real site</Label>
+          <Label for={`${uid}-real`}>Also check each SNI against its real site</Label>
           <p class="text-muted-foreground">
-            The same vantages also try each name on the site that really serves it (its public
-            address, found and checked from FCP first). That tells a blocked name from a blocked
-            address, and shows when the censor checks a name against its real address. It is an
-            ordinary visit to that site, and it doubles the checks each batch spends. Shown on
-            Countries; nothing is applied from it.
+            The same vantages also try each SNI on its real site. That tells a blocked SNI from a
+            blocked address. It is an ordinary visit to that site, but it doubles the checks each
+            batch spends. Results show on Countries and are never applied.
           </p>
         </div>
       </div>
       <p class="text-muted-foreground">
-        At most {vantage.hourlyBudget} checks an hour, each name again after
+        At most {vantage.hourlyBudget} checks an hour, each SNI again after
         {vantage.intervalHours} hours, from up to {vantage.perCountryLimit} vantages.
       </p>
     </CardContent>

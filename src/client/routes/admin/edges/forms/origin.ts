@@ -78,7 +78,7 @@ export function addressIssue(raw: string): string | null {
   const s = raw.trim();
   if (s === '') return 'Enter the address edges should dial.';
   if (/[\s/]/.test(s) || s.includes('://'))
-    return 'Enter a bare IP address or DNS name, without a scheme, a path or a port.';
+    return 'Enter only an IP address or hostname, with no scheme, path or port.';
   const v4 = ipv4Octets(s);
   if (v4) return privateV4(v4) ? 'This is a private or reserved address. Use a public one.' : null;
   if (/^\d+(\.\d+)*$/.test(s)) return 'This is not a valid IPv4 address.';
@@ -89,7 +89,7 @@ export function addressIssue(raw: string): string | null {
   const name = normalizeHostname(s);
   if (!name) return 'This is not a valid DNS name.';
   if (name === 'localhost' || /\.(local|localhost|internal|lan|home\.arpa)$/.test(name))
-    return 'This name only resolves on a private network. Use a public one.';
+    return 'This hostname only resolves on a private network. Use a public one.';
   return null;
 }
 

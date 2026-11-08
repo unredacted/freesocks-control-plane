@@ -90,9 +90,8 @@
       <Badge variant="danger">Decision needed</Badge>
     </Card.Title>
     <Card.Description>
-      A rotation changed the backend Hosts of this origin and could neither finish nor undo it. FCP
-      stopped touching the origin so it cannot make things worse: no rotation, publish or unpublish
-      runs until you say which binding is the real one.
+      A rotation changed this origin's backend Hosts and could not finish or undo it. FCP runs no
+      rotation, publish or unpublish here until you choose which binding is real.
     </Card.Description>
     {#if relay.quarantine}
       <Card.Action>
@@ -130,8 +129,8 @@
       <span class="text-xs text-muted-foreground">
         {view?.inspectedAt
           ? `Last inspected ${relativeTime(view.inspectedAt)}.`
-          : 'Not inspected yet: the middle column is empty until you do.'}
-        This reads the live panel, so it is limited to a few calls per minute.
+          : 'Not inspected yet, so the middle column is empty.'}
+        Limited to a few reads per minute.
       </span>
     </div>
     {#if inspect.error}
@@ -145,7 +144,7 @@
     {:else if view}
       {#if view.listeners.length === 0}
         <AdminListState
-          emptyText="The rotation recorded no Host for any listener. Either binding is safe to keep: choose the current one unless you know the rotation never published its edge."
+          emptyText="The rotation recorded no Host for any listener, so either binding is safe. Choose current unless the rotation never published its edge."
         />
       {/if}
       {#each view.listeners as l (l.listenerKey)}
@@ -192,15 +191,14 @@
 
       {#if view.extraHosts.length > 0}
         <section class="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
-          <h3 class="font-medium">Other Hosts under this origin's names</h3>
+          <h3 class="font-medium">Other Hosts under this origin's remarks</h3>
           <p class="text-xs text-muted-foreground">
-            The backend serves these too and no listener claims them: duplicates or leftovers from
-            an earlier setup. Members may be handed them. Remove them in the backend if they are not
-            meant to exist.
+            The backend serves these but no listener claims them. They are likely duplicates or
+            leftovers, and members may get them. Remove any you do not want in the backend.
           </p>
           <ul class="space-y-0.5 font-mono text-xs">
             {#each view.extraHosts as h (h.uuid)}
-              <li>{h.remark}: {tupleLine(h)}, server name {h.sni ?? 'none'} ({h.uuid})</li>
+              <li>{h.remark}: {tupleLine(h)}, SNI {h.sni ?? 'none'} ({h.uuid})</li>
             {/each}
           </ul>
         </section>
@@ -221,11 +219,11 @@
         </Button>
         <span class="text-xs text-muted-foreground">
           {#if recommended}
-            Every listener matches the {recommended} binding, so that is the safe choice.
+            Every listener matches the {recommended} binding. That is the safe choice.
           {:else if view.inspectedAt}
             The listeners do not agree on one binding. Look at each row before deciding.
           {:else}
-            Inspect the panel first so the choice rests on what it really serves.
+            Inspect the panel first to see what it serves.
           {/if}
         </span>
       </div>
@@ -238,8 +236,8 @@
     open={true}
     title={keep === 'previous' ? 'Keep the previous binding?' : 'Keep the current binding?'}
     body={keep === 'previous'
-      ? 'FCP records that members are on the edges from before the rotation: the old edge stays published and the new one becomes an unpublished standby. FCP does not write to the panel here, so the panel must already serve the previous Hosts.'
-      : 'FCP records that the rotation did take effect: the new edge is published and the old one drains. FCP does not write to the panel here, so the panel must already serve the current Hosts.'}
+      ? 'The old edge stays published and the new one becomes an unpublished standby. FCP does not write to the panel, so it must already serve the previous Hosts.'
+      : 'The new edge is published and the old one drains. FCP does not write to the panel, so it must already serve the current Hosts.'}
     confirmLabel={keep === 'previous' ? 'Keep previous' : 'Keep current'}
     danger={recommended !== null && recommended !== keep}
     disabled={reason.trim().length > REASON_MAX}
@@ -255,7 +253,7 @@
       </p>
     {/if}
     <div class="space-y-1.5">
-      <Label for="quarantine-reason">Justification (goes to the audit log, edit as needed)</Label>
+      <Label for="quarantine-reason">Reason, for the audit log</Label>
       <textarea
         id="quarantine-reason"
         bind:value={reason}

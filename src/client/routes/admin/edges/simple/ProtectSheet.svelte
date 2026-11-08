@@ -549,10 +549,10 @@
         {#if runId}
           You can close this. It keeps going.
         {:else if step === 'node'}
-          Pick the node members should reach through a provider address instead of its own.
+          Pick the node to front with provider addresses.
         {:else if step === 'account'}
-          The locations the node's addresses come from. Pick locations at different providers so
-          members get a backup elsewhere.
+          Pick where the node's addresses come from. Locations at different providers give members a
+          backup.
         {:else}
           One last look before anything is created.
         {/if}
@@ -699,9 +699,9 @@
             <fieldset class="space-y-3 rounded-md border p-3 text-sm">
               <legend class="px-1 font-medium">Which transports?</legend>
               <p>
-                This node has {frontable.length} transports a provider address can carry. One run fronts
-                up to {SETUP_RUN_MAX_LISTENERS}: pick the ones members need most. The others keep
-                the direct address, or are hidden if you consent on the review.
+                This node has {frontable.length} frontable transports, and one run fronts up to
+                {SETUP_RUN_MAX_LISTENERS}. Pick the ones members need most. The others keep the
+                direct address, or are hidden if you agree on the review.
               </p>
               <ul class="space-y-1">
                 {#each frontable as i (i.listenerKey)}
@@ -732,10 +732,7 @@
           {:else if plan}
             <div class="space-y-3 rounded-md border p-3 text-sm">
               {#if required.length === 0}
-                <p>
-                  No transport on this node can be carried by a provider address yet. It cannot be
-                  fronted this way.
-                </p>
+                <p>No transport on this node can be fronted yet.</p>
               {:else}
                 <p class="font-medium">
                   {required.length === 1 ? 'This transport gets' : 'These transports get'} a fronted address
@@ -824,13 +821,13 @@
             <div class="space-y-2 rounded-md border p-3 text-sm">
               <Label for="protect-origin">Public IP address of the node</Label>
               <p class="text-muted-foreground text-xs">
-                FCP does not manage this node. Its new addresses send members on to this address, so
-                give the IP address the node answers on from the internet.
+                FCP does not manage this node. Give the public IP address it answers on. Its new
+                addresses forward members there.
                 {#if plan?.originSource === 'panel'}
                   The panel lists {plan.originAddress}{plan.originPrivate
                     ? ', a private address no provider can reach.'
                     : plan.originName
-                      ? ', a name: a load balancer forwards to an IP address only.'
+                      ? ', a hostname. A load balancer forwards only to an IP address.'
                       : '. Leave this empty to use it.'}
                 {/if}
               </p>
@@ -869,7 +866,7 @@
         {:else}
           {#if accounts.length === 0}
             <p class="text-muted-foreground text-sm">
-              No provider account yet. Add one: FCP creates the addresses in it.
+              No provider account yet. Add one for FCP to create the addresses in.
             </p>
           {:else}
             <fieldset class="space-y-2">
@@ -968,12 +965,12 @@
                                 {#if !l.compatible}
                                   {l.reasons.map(reasonLabel).join('. ')}.
                                 {:else if l.certificateRefusal}
-                                  {reasonLabel(l.certificateRefusal)} (the account's own certificate).
-                                  Another can be chosen under Options.
+                                  {reasonLabel(l.certificateRefusal)} for the account's own certificate.
+                                  Choose another under Options.
                                 {:else if l.qualified}
                                   Trusted.
                                 {:else}
-                                  Not trusted yet: the check before going live trusts it.
+                                  Not trusted yet. The check before going live trusts it.
                                 {/if}
                               </span>
                               {#if grades.length > 0}
@@ -1013,8 +1010,8 @@
                               <div class="pl-7">
                                 {#if a.originHost}
                                   <span class="text-muted-foreground block text-xs">
-                                    The node answers only to its own name, so its addresses here
-                                    send it that name.
+                                    The node answers only to its own hostname. Addresses here send
+                                    that hostname.
                                   </span>
                                 {/if}
                                 <PickOptions
@@ -1071,10 +1068,7 @@
             <!-- What the picks make: addresses per location, coverage, backups elsewhere. -->
             <div aria-live="polite">
               {#if picks.length === 0}
-                <p class="text-muted-foreground text-xs">
-                  Pick one location or more. Locations at different providers give members a backup
-                  elsewhere.
-                </p>
+                <p class="text-muted-foreground text-xs">Pick one or more locations.</p>
               {:else if planM.isPending || !setW}
                 <p class="text-muted-foreground text-sm" role="status">
                   Working out what these locations need.
@@ -1109,8 +1103,8 @@
             </div>
             {#if compatible.length === 0}
               <p class="text-muted-foreground text-xs">
-                No account can carry this node's transports as it is. Follow a link above to fix
-                one, or add another.
+                No account can carry this node's transports. Fix one through a link above, or add
+                another.
               </p>
             {/if}
           {/if}
@@ -1134,11 +1128,13 @@
             role="status"
           >
             <p>
-              Members cannot pick {plan.modesOff
-                .map((m) => adminModeName({ id: m.slug, label: m.label }))
-                .join(', ')} yet: {plan.modesOff.length === 1 ? 'the mode is' : 'the modes are'} turned
-              off. The node is fronted, but nobody is given it until {plan.modesOff.length === 1
-                ? 'it is'
+              {plan.modesOff.map((m) => adminModeName({ id: m.slug, label: m.label })).join(', ')}
+              {plan.modesOff.length === 1 ? 'is' : 'are'} off, so members cannot pick {plan.modesOff
+                .length === 1
+                ? 'it'
+                : 'them'} yet. The node is fronted, but nobody gets it until {plan.modesOff
+                .length === 1
+                ? 'that mode is'
                 : 'they are'} on.
             </p>
             <Link href="/admin/connection-modes" class={`${LINK} mt-1 inline-block`}
@@ -1155,8 +1151,8 @@
             <p class="mt-1">{r.why}</p>
             <p class="mt-1">{r.fix}</p>
             <p class="text-muted-foreground mt-1 text-xs">
-              You can front the node all the same. Once it is live, it shows this warning until
-              these clients can connect.
+              You can still front the node. Once live, it shows this warning until these clients can
+              connect.
             </p>
           </div>
         {/each}
@@ -1166,9 +1162,8 @@
             <p>
               Members reach this node today through {plan.frontHosts.length === 1
                 ? 'a front'
-                : 'fronts'} FCP did not build. Once the node is live they get the new addresses instead
-              and no longer get {plan.frontHosts.length === 1 ? 'it' : 'them'}, so you can then
-              delete {plan.frontHosts.length === 1 ? 'it' : 'them'} at the provider.
+                : 'fronts'} FCP did not build. Once the node is live, members get the new addresses instead
+              and you can delete {plan.frontHosts.length === 1 ? 'it' : 'them'} at the provider.
             </p>
             <p class="text-muted-foreground mt-1 text-xs">
               {plan.frontHosts.map((h) => h.remark).join(', ')}

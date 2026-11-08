@@ -85,14 +85,14 @@ export function untilLine(until: number | null, now = Date.now()): string | null
 export const ADDRESS_BASIS_WORDS: Record<CountryViewAddressBasis, string> = {
   mark: 'An operator marked this address for this country.',
   location_mark: 'An operator marked its whole provider location for this country.',
-  checks: 'Its own checks from there, with control countries beside them, decided it.',
+  checks: 'Decided by its checks from there, compared with control countries.',
   handshake:
-    'Connections reach it from there, but no server name gets through the handshake: blocked by name.',
+    'Connections reach it from there, but no SNI gets through the handshake, so it is blocked by SNI.',
   never_reached:
-    'Nothing from there has ever reached it, over hours and from several networks, while it is reached elsewhere.',
+    'Never reached from there in hours of checks from several networks, though it is reached elsewhere.',
   location: 'Nothing is decided for it yet, and its provider location is blocked there.',
   probes:
-    'Not graded: this is what the outside probes alone see from there. Nothing acts on it until the country checks decide.',
+    'Not graded. This is what outside probes alone see from there, and nothing acts on it until the country checks decide.',
   none: 'Nothing has checked it from there yet.',
 };
 
@@ -104,11 +104,11 @@ export function addressWhy(a: CountryViewAddress): string {
     if (a.state === 'blocked')
       return `${base} Every probe there failed while other countries reached it.`;
     if (p.verdict === 'unreachable')
-      return `${base} Probes there failed, but it fails elsewhere too: broken, not blocked.`;
+      return `${base} Probes there failed, but it fails elsewhere too, so it is broken, not blocked.`;
     if (p.verdict === 'mixed')
       return `${base} Some vantages there reached it and some did not, so it is not judged.`;
     if (p.verdict === 'unknown' && p.okVantages > 0 && p.failVantages === 0)
-      return `${base} Too few vantages there reached it to call it working: that takes one on a residential network, or two others.`;
+      return `${base} Too few vantages there reached it to call it working. That takes one on a home network, or two others.`;
     if (p.verdict === 'unknown' && p.failVantages > 0)
       return `${base} Probes there failed, but from too few networks to call it blocked.`;
   }
@@ -156,9 +156,9 @@ export function staleAnswersLine(a: CountryViewAddress, now = Date.now()): strin
 /** One sentence per basis: why a name counts as it does from there. */
 export const NAME_BASIS_WORDS: Record<CountryViewNameBasis, string> = {
   mark: 'An operator marked it for this country.',
-  checks_mark: 'The checks from inside the country marked it by themselves.',
+  checks_mark: 'The checks from inside the country marked it on their own.',
   checks:
-    'The checks from inside the country suggest this. Not applied: members are not affected yet.',
+    'The checks from inside the country suggest this. Not applied yet, so members are not affected.',
   none: 'Nobody has judged it there.',
 };
 
@@ -200,9 +200,9 @@ export function handshakeLine(a: CountryViewAddress, now = Date.now()): string |
   const h = a.evidence.handshake;
   if (!h) return null;
   if (h.state === 'blocked')
-    return `Name checks: no name got through in ${plural(h.batches, 'paired check')}, last ${relativeTime(h.lastBatchAt ?? null, now)}.`;
+    return `SNI checks: no SNI got through in ${plural(h.batches, 'paired check')}, last ${relativeTime(h.lastBatchAt ?? null, now)}.`;
   return h.lastBatchAt
-    ? `Name checks: names got through, last ${relativeTime(h.lastBatchAt, now)}.`
+    ? `SNI checks: SNIs got through, last ${relativeTime(h.lastBatchAt, now)}.`
     : null;
 }
 
@@ -235,8 +235,8 @@ export function checksLine(n: CountryViewName, now = Date.now()): string | null 
   else if (c.latest === 'failing')
     seen =
       c.failVantages > 0
-        ? `failed from ${plural(c.failVantages, 'vantage')} on ${plural(c.failNetworks, 'network')} while other names got through`
-        : 'no name of that address got through, so the address may be the problem';
+        ? `failed from ${plural(c.failVantages, 'vantage')} on ${plural(c.failNetworks, 'network')} while other SNIs got through`
+        : 'no SNI on that address got through, so the address may be the problem';
   else if (c.latest === 'mixed') seen = 'some checks got through and some did not';
   else seen = 'nothing conclusive yet';
   const reason =
@@ -253,27 +253,27 @@ export function checksLine(n: CountryViewName, now = Date.now()): string | null 
 export const REAL_HOST_WORDS: Record<RealHostReading, { short: string; sentence: string }> = {
   works: {
     short: 'works',
-    sentence: 'The name gets through to its real site and to this address alike.',
+    sentence: 'The SNI gets through to its real site and to this address alike.',
   },
   name_blocked: {
-    short: 'the name is blocked',
+    short: 'the SNI is blocked',
     sentence:
-      'The name fails on its real site too, from vantages that reach other names: the name itself is blocked here.',
+      'The SNI also fails on its real site, from vantages that reach other SNIs. The SNI itself is blocked here.',
   },
   address_blocked: {
     short: 'the address is blocked',
     sentence:
-      'Its real site works from the same vantages, but this address does not even connect: the address is blocked here, not the name.',
+      'Its real site works from the same vantages, but this address does not connect. The address is blocked here, not the SNI.',
   },
   ip_name_match: {
-    short: 'the name is checked against its real address',
+    short: 'the SNI is checked against its real address',
     sentence:
-      'Its real site works from the same vantages, and this address connects, but the handshake with the name fails: the censor likely checks the name against its real address or network.',
+      'Its real site works and this address connects, but the handshake fails. The censor likely checks the SNI against its real address or network.',
   },
   ours_only: {
     short: 'works only here',
     sentence:
-      'Its real site cannot be reached from here, but the name gets through on this address.',
+      'Its real site cannot be reached from here, but the SNI gets through on this address.',
   },
   mixed: { short: 'mixed', sentence: 'The vantages disagree.' },
   thin: { short: 'too few answers', sentence: 'Too few vantages answered to say anything.' },
@@ -295,7 +295,7 @@ export const TARGET_ADDS_FLAG_MS = 50;
 
 /** The proposed threshold the page states with the figure (the owner decides). */
 export const TARGET_ADDS_FLAG_WORDS =
-  'Over 50 ms on at least 3 vantages is flagged: a gap that size is something a censor can measure (a proposed threshold).';
+  'Flagged when over 50 ms on at least 3 vantages, a gap a censor can measure. The threshold is a proposal.';
 
 /**
  * How much longer a handshake takes from here on a transport's addresses than
@@ -309,8 +309,8 @@ export function targetAddsLine(l: CountryViewListener, now = Date.now()): string
   if (!t) return null;
   const head =
     t.ms <= 0
-      ? 'A handshake on this transport’s addresses takes no measurably longer from here than on its names’ real sites'
-      : `A handshake on this transport’s addresses takes about ${t.ms} ms longer from here than on its names’ real sites`;
+      ? 'A handshake on this transport’s addresses takes no measurably longer from here than on its SNIs’ real sites'
+      : `A handshake on this transport’s addresses takes about ${t.ms} ms longer from here than on its SNIs’ real sites`;
   const a = t.addresses;
   const spread =
     a && a.timed > 1 && a.highMs - a.lowMs >= TARGET_ADDS_FLAG_MS
@@ -321,7 +321,7 @@ export function targetAddsLine(l: CountryViewListener, now = Date.now()): string
     : a && a.clear > 0
       ? ' Flagged: the slow addresses sit far from the node. An address under the threshold shows the node’s own leg to its target is short.'
       : ' Flagged: the node sits far from its target, or every address measured sits far from the node.';
-  return `${head} (the addresses ${t.oursMs} ms beyond one round trip, the names’ real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'name')}, ${relativeTime(t.at, now)}).${spread}${flag}`;
+  return `${head} (the addresses ${t.oursMs} ms beyond one round trip, the SNIs’ real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'SNI')}, ${relativeTime(t.at, now)}).${spread}${flag}`;
 }
 
 /**
@@ -334,14 +334,14 @@ export function addressTimingLine(a: CountryViewAddress, now = Date.now()): stri
   if (!t) return null;
   const head =
     t.ms <= 0
-      ? 'A handshake on it takes no measurably longer from here than on the names’ real sites'
-      : `A handshake on it takes about ${t.ms} ms longer from here than on the names’ real sites`;
+      ? 'A handshake on it takes no measurably longer from here than on the SNIs’ real sites'
+      : `A handshake on it takes about ${t.ms} ms longer from here than on the SNIs’ real sites`;
   const flag = !t.flagged
     ? ''
     : a.kind === 'origin'
       ? ' Flagged: the node sits far from its target.'
-      : ' Flagged: this address sits far from the node (an address that accepts the connection itself puts its leg to the node inside the handshake), or the node far from its target.';
-  return `${head} (it ${t.oursMs} ms beyond one round trip, the real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'name')}, ${relativeTime(t.at, now)}).${flag}`;
+      : ' Flagged: this address sits far from the node, or the node far from its target.';
+  return `${head} (it ${t.oursMs} ms beyond one round trip, the real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'SNI')}, ${relativeTime(t.at, now)}).${flag}`;
 }
 
 /** What the real-host controls of the names checked on an address say about it. */
@@ -353,7 +353,7 @@ export function addressRealHostLine(a: CountryViewAddress, now = Date.now()): st
   const parts = [...by.entries()]
     .sort((x, y) => y[1] - x[1])
     .map(([reading, count]) => `${count} ${REAL_HOST_WORDS[reading].short}`);
-  return `Real-site checks of ${plural(r.names.length, 'name')} on it: ${parts.join(', ')}, ${relativeTime(r.at, now)}.`;
+  return `Real-site checks of ${plural(r.names.length, 'SNI')} on it: ${parts.join(', ')}, ${relativeTime(r.at, now)}.`;
 }
 
 /** Member reports about a name from there (null: none in the window). */
@@ -362,20 +362,20 @@ export function reportsLine(n: CountryViewName): string | null {
   if (!r) return null;
   const weight = Number.isInteger(r.weight) ? String(r.weight) : r.weight.toFixed(1);
   return r.suspect
-    ? `Members there report problems with it more than with its other names (${weight} reports).`
-    : `Members there reported problems that may involve it (${weight} reports), no more than its other names.`;
+    ? `Members there report problems with it more than with its other SNIs (${weight} reports).`
+    : `Members there reported problems that may involve it (${weight} reports), no more than its other SNIs.`;
 }
 
 /** What the country lists for this country say about a name (null: none holds it). */
 export function listsLine(n: CountryViewName): string | null {
   const l = n.lists;
   if (!l) return null;
-  if (l.allow && l.block) return 'Country lists for here disagree about this name.';
+  if (l.allow && l.block) return 'Country lists for here disagree about this SNI.';
   if (l.block)
     return l.suggestion
-      ? 'A block list for here holds this name, so it may be blocked here. Mark it on its family page.'
-      : 'A block list for here holds this name.';
-  return 'A list of what works here holds this name. That is about the name only, not the address.';
+      ? 'A block list for here holds this SNI, so it may be blocked here. Mark it on its SNI list page.'
+      : 'A block list for here holds this SNI.';
+  return 'A list of what works here holds this SNI. That says nothing about the address.';
 }
 
 /** One watched allowlist about one address (docs/edges.md "Edge addresses against allowlists"). */
@@ -410,7 +410,7 @@ export function namesOnListsLine(l: CountryViewListener): string | null {
   if (active.length === 0) return null;
   if (!l.addresses.some((a) => a.lists.length > 0) && !active.some((n) => n.lists)) return null;
   const held = active.filter((n) => n.lists?.allow).length;
-  return `${held} of ${active.length} server ${active.length === 1 ? 'name is' : 'names are'} on a list of what works here. Where only listed addresses and names get through, only those work.`;
+  return `${held} of ${active.length} ${active.length === 1 ? 'SNI is' : 'SNIs are'} on a list of what works here. Where only listed addresses and SNIs get through, only those work.`;
 }
 
 const HANDED_REASON_WORDS: Record<CountryViewHandedReason, string> = {
@@ -429,8 +429,8 @@ export function handedWords(m: CountryViewHanded): string[] {
   const addresses = m.primary.length;
   out.push(
     m.steered
-      ? `Addresses are chosen for this country: members here are spread over ${plural(addresses, 'address', 'addresses')}, blocked ones only when nothing else is left.`
-      : `Addresses are not chosen by country here: members here are spread over ${plural(addresses, 'address', 'addresses')}, whatever they count as here.`,
+      ? `Addresses are chosen for this country. Members here are spread over ${plural(addresses, 'address', 'addresses')}, using blocked ones only when nothing else is left.`
+      : `Addresses are not chosen by country here. Members here are spread over ${plural(addresses, 'address', 'addresses')}, whatever their state here.`,
   );
   if (m.onBlockedAddress > 0)
     out.push(
@@ -442,14 +442,14 @@ export function handedWords(m: CountryViewHanded): string[] {
     out.push(`${percent(m.none)} of members here get no address at all on this transport.`);
   out.push(
     m.namesByCountry
-      ? 'Server names are chosen for this country: never one blocked here.'
-      : 'Server names are not chosen for this country here (a transport on the legacy pick, or a country off the list).',
+      ? 'SNIs are chosen for this country, never one blocked here.'
+      : 'SNIs are not chosen for this country. The transport uses the legacy pick, or the country is off the list.',
   );
   if (m.onBlockedName > 0)
-    out.push(`${percent(m.onBlockedName)} of members here hold a server name blocked here.`);
+    out.push(`${percent(m.onBlockedName)} of members here hold an SNI blocked here.`);
   if (m.steered && m.onMeantFirst > 0)
     out.push(
-      `${percent(m.onMeantFirst)} of members here start on a location meant for this country.`,
+      `${percent(m.onMeantFirst)} of members here start on a location set for this country.`,
     );
   return out;
 }
@@ -489,7 +489,7 @@ export function meantForWords(l: CountryViewMeantFor): { state: string; detail: 
 
 /** Said once per country page: who the "handed" lines describe. */
 export const HANDED_SCOPE =
-  'What a member is handed below is for members of the freedom modes whose country is set to this one, worked out by the same assignment their subscriptions use over a sample of keys. Members of other modes get names and addresses chosen without a country.';
+  'The handed lines below are for freedom-mode members whose country is set to this one, estimated over a sample of keys. Members of other modes get SNIs and addresses chosen without a country.';
 
 /** What is switched off, and what the view lacks because of it. */
 export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | null): string[] {
@@ -497,19 +497,19 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
   if (!s.probes) out.push('Probes are off: nothing measures the addresses from outside.');
   if (!s.countryChecks)
     out.push(
-      'Country checks are off: no address is graded, so the states below come from the outside probes alone and delivery does not act on them.',
+      'Country checks are off. The states below come from outside probes only, and delivery does not act on them.',
     );
   if (!s.render) out.push('Rendering is off: members are not handed fronted addresses.');
   if (s.render && !s.steering)
     out.push('Delivery by country is off: members are not steered away from blocked addresses.');
-  if (!s.names) out.push('Server name families are off: names are not judged per country.');
+  if (!s.names) out.push('Server names are off, so SNIs are not judged per country.');
   else if (nameChecksHere === false)
     out.push(
-      'Names are not checked from inside this country (opt in under Settings, Censored countries).',
+      'SNIs are not checked from inside this country. Turn it on under Settings, Censored countries.',
     );
   else if (nameChecksHere && !s.realHost)
     out.push(
-      'Real-site checks are off: a failing name is not compared with its real site (Server names, Checks from inside countries).',
+      'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under Server names, Advanced.',
     );
   return out;
 }
@@ -540,7 +540,7 @@ function quietPart(s: SourceCoverage, health: readonly ProbeSourceHealth[], now:
 }
 
 const NOT_ASKED =
-  'Edges are not checked from here: "Check edges from here" is off for this country (Settings, Censored countries).';
+  'Edges are not checked from here. "Check edges from here" is off for this country under Settings, Censored countries.';
 
 /**
  * One sentence for the countries list when the outside probes from there fall
@@ -622,15 +622,15 @@ export function namePoolLines(p: CountryViewNamePool | null | undefined): string
         : `only ${p.eyeball} home-network probes`;
   if (p.mode === 'topped_up')
     out.push(
-      `Globalping has ${home} here, fewer than the ${needs} a name verdict needs, so the name checks here also use data-centre probes.`,
+      `Globalping has ${home} here, fewer than the ${needs} an SNI verdict needs, so the SNI checks here also use data-centre probes.`,
     );
   else if (p.mode === 'any' && p.preferEyeball)
     out.push(
-      `Globalping has ${home} here, fewer than the ${needs} a name verdict needs, so the name checks here use any probe there.`,
+      `Globalping has ${home} here, fewer than the ${needs} an SNI verdict needs, so the SNI checks here use any probe there.`,
     );
   if (p.total < p.needs)
     out.push(
-      `Globalping has ${p.total === 0 ? 'no probe' : p.total === 1 ? 'only one probe' : `only ${p.total} probes`} here in all and a name verdict needs ${needs}, so server names checked from here stay not judged on Globalping alone. The floor is not lowered for one country: so few probes cannot tell a blocked name from a broken probe or network.`,
+      `Globalping has ${p.total === 0 ? 'no probe' : p.total === 1 ? 'only one probe' : `only ${p.total} probes`} here in all and an SNI verdict needs ${needs}, so SNIs checked from here stay not judged on Globalping alone. So few probes cannot tell a blocked SNI from a broken probe or network.`,
     );
   return out;
 }
@@ -641,7 +641,7 @@ export function totalsLine(t: CountryViewTotals): string {
   const n = t.names;
   const total = a.proven + a.blocked + a.unknown;
   const addr = `${a.proven} of ${plural(total, 'published address', 'published addresses')} ${a.proven === 1 ? 'works' : 'work'}, ${a.blocked} blocked${a.unknown > 0 ? `, ${a.unknown} not known` : ''}`;
-  const names = `${plural(n.proven, 'server name', 'server names')} ${n.proven === 1 ? 'works' : 'work'}, ${n.blocked} blocked, ${n.unknown} not judged`;
+  const names = `${plural(n.proven, 'SNI', 'SNIs')} ${n.proven === 1 ? 'works' : 'work'}, ${n.blocked} blocked, ${n.unknown} not judged`;
   return `${addr}. ${names}.`;
 }
 

@@ -56,7 +56,7 @@
   <header class="px-4 py-3">
     <h2 id="settings-maintenance-title" class="font-medium">Maintenance</h2>
     <p class="text-muted-foreground mt-0.5 text-sm">
-      Pause the admission of new edge work before a risky change, for example a backend upgrade.
+      Pause new edge work before a risky change, like a backend upgrade.
     </p>
   </header>
   <div class="space-y-4 border-t px-4 py-4">
@@ -114,7 +114,7 @@
 <ConfirmDialog
   bind:open={freezeOpen}
   title="Pause new edge work?"
-  body="Running rotations finish. Nothing new starts until you resume: no provisioning, no publishing, no automatic or manual rotation. A blocked edge will not be replaced while paused."
+  body="Running rotations finish. No provisioning, publishing or rotation starts until you resume, by hand or automatically. A blocked edge is not replaced while paused."
   confirmLabel="Pause new work"
   danger
   onConfirm={freeze}

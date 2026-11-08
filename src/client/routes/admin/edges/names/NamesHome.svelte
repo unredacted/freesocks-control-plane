@@ -69,7 +69,7 @@
     try {
       await patchSniConfig({ autoConfirm: v });
       toast.success(
-        v ? 'FCP tests new names on each node by itself.' : 'Only a person tests new names now.',
+        v ? 'FCP tests new SNIs on each node by itself.' : 'Only a person tests new SNIs now.',
       );
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
@@ -118,13 +118,13 @@
 
 <SectionHeader
   title="Server names"
-  description="The names a REALITY port answers to, in name lists: one cover site, the real site the port shows anyone without a member's key, and the names it really serves."
+  description="The SNIs a REALITY port answers to, grouped in SNI lists. Each list has one cover site, the real site shown to anyone without a member's key, and the SNIs it serves."
 >
   {#snippet actions()}
     <Button size="sm" variant="outline" onclick={() => router.navigate(edgesPaths.findNames())}>
       Advanced
     </Button>
-    <Button size="sm" variant="outline" onclick={() => (open = true)}>Add a name list</Button>
+    <Button size="sm" variant="outline" onclick={() => (open = true)}>Add an SNI list</Button>
   {/snippet}
 </SectionHeader>
 
@@ -153,7 +153,7 @@
       onCheckedChange={(v) => void setAutoOn(v)}
     />
     <div>
-      <Label for={`${uid}-auto`} class="font-medium">Test new names with FCP's client check</Label>
+      <Label for={`${uid}-auto`} class="font-medium">Test new SNIs with FCP's client check</Label>
       <p id={`${uid}-auto-help`} class="text-muted-foreground">
         {autoTestSwitchLine(autoOn, config.data?.clientCheck)}
       </p>
@@ -168,15 +168,15 @@
 {:else if (families.data?.families.length ?? 0) === 0}
   <Card>
     <CardContent class="text-muted-foreground space-y-1 py-8 text-center text-sm">
-      <p>No name list yet.</p>
+      <p>No SNI list yet.</p>
       <p>
-        Open a node under Servers and choose "Manage these names with FCP" on its REALITY transport:
-        its names become a list here.
+        Open a node under Servers and choose "Manage these SNIs with FCP" on its REALITY transport.
+        Its SNIs become a list here.
       </p>
     </CardContent>
   </Card>
 {:else}
-  <ul class="space-y-3" aria-label="Name lists">
+  <ul class="space-y-3" aria-label="SNI lists">
     {#each families.data?.families ?? [] as f (f.id)}
       <li>
         <Link
@@ -203,7 +203,7 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-md`}>
     <Dialog.Header>
-      <Dialog.Title>Add a name list</Dialog.Title>
+      <Dialog.Title>Add an SNI list</Dialog.Title>
       <Dialog.Description>
         Usually a list starts from a node's page. Its cover site cannot be changed later.
       </Dialog.Description>
@@ -253,7 +253,7 @@
       <div class="flex items-start gap-2">
         <Checkbox id={`${uid}-h2`} bind:checked={requireH2} />
         <Label for={`${uid}-h2`} class="leading-snug font-normal">
-          Only use names the cover site serves over HTTP/2
+          Only use SNIs the cover site serves over HTTP/2
         </Label>
       </div>
       <div class="space-y-1.5">
@@ -270,8 +270,8 @@
           {/each}
         </select>
         <p id={`${uid}-network-help`} class="text-muted-foreground text-sm">
-          On a network, the cover site and every name must live inside it, and a port using the list
-          gets addresses from it only.
+          On a network, the cover site and every SNI must resolve inside it, and a port using the
+          list gets addresses only from it.
         </p>
       </div>
       <Dialog.Footer class={STICKY_FOOTER}>

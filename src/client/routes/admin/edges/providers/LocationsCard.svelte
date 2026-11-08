@@ -110,11 +110,11 @@
     if (o.edgeCertificate)
       parts.push(
         o.edgeCertificate === 'active'
-          ? 'certificate for its names active'
+          ? 'certificate for its hostnames active'
           : o.edgeCertificate === 'pending'
-            ? 'certificate for its names on its way'
+            ? 'certificate for its hostnames on its way'
             : o.edgeCertificate === 'none'
-              ? 'no certificate for its names'
+              ? 'no certificate for its hostnames'
               : 'certificate not read',
       );
     if (o.minTlsVersion) parts.push(`lowest TLS version ${o.minTlsVersion}`);
@@ -202,13 +202,12 @@
     <CardTitle class="text-base">Locations</CardTitle>
     <CardDescription>
       {#if zones}
-        The DNS zones this account fronts in. Pick one, or any other zone the account reaches, when
-        you front a node or add an address; each address stays in the zone it was created in. Trust
-        is per zone: a new one is trusted by its first proven front.
+        The DNS zones this account fronts in. Pick one, or another zone the account reaches, when
+        you front a node or add an address. An address stays in its zone. A new zone is trusted by
+        its first proven front.
       {:else}
-        Where this account's edges are created. Pick one when you front a node or add an address;
-        each address stays in the location it was created in. Trust is per location: a new one is
-        trusted by its first tested address.
+        Where this account's edges are created. Pick one when you front a node or add an address. An
+        address stays in its location. A new location is trusted by its first tested address.
       {/if}
     </CardDescription>
   </CardHeader>
@@ -217,7 +216,7 @@
       <p class="text-muted-foreground text-sm">
         {zones
           ? 'No zone yet. Add one here, or pick one when you front a node.'
-          : 'No location yet. Add one: nothing can be created in this account until it has one.'}
+          : 'No location yet. Add one before anything can be created here.'}
       </p>
     {/if}
     <ul class="divide-y rounded-md border">
@@ -266,14 +265,14 @@
                 </p>
                 {#if !l.sharedCertificate.orderedByFcp}
                   <p class="text-muted-foreground text-xs">
-                    FCP found this certificate at the provider and reuses it. It removes only
-                    certificates its own fronts ordered.
+                    Found at the provider and reused. FCP removes only certificates its own fronts
+                    ordered.
                   </p>
                 {/if}
               {/if}
               {#if l.checkError}
                 <p class="text-destructive text-xs" role="alert">
-                  The last check refused this zone ({l.checkError}). No new address is created here
+                  The last check refused this zone: {l.checkError}. No new address is made here
                   until a check passes.
                 </p>
               {/if}
@@ -292,8 +291,8 @@
               </p>
               {#if pr.plansError}
                 <p class="text-muted-foreground text-xs">
-                  The last price read failed ({codeLabel(pr.plansError)}); the prices shown are the
-                  ones read before.
+                  The last price read failed: {codeLabel(pr.plansError)}. Prices shown are from
+                  before.
                 </p>
               {/if}
             {:else if zones && l.pricing}
@@ -515,7 +514,7 @@
     title={`Rename ${r.label}`}
     description={zones
       ? 'Only admins see this name. Nothing changes at the provider or in DNS.'
-      : 'Only admins see this name. Members read the one under Name in apps, and nothing changes at the provider.'}
+      : 'Only admins see this name. Members see the one under Name in apps. Nothing changes at the provider.'}
     empty={`Give the ${zones ? 'zone' : 'location'} a name.`}
     saved={zones ? 'Zone renamed' : 'Location renamed'}
     save={(label) =>
@@ -541,7 +540,7 @@
 <ConfirmDialog
   bind:open={removeSharedOpen}
   title="Remove the shared certificate?"
-  body="The zone's wildcard certificate is deleted at the provider, with the validation record FCP wrote for it. No live front uses it now; a later front in this zone on the wildcard orders a new one and waits for it to be issued."
+  body="Deletes the zone's wildcard certificate at the provider, with its validation record. No live front uses it. The next wildcard front in this zone orders a new one and waits for it."
   confirmLabel="Remove certificate"
   onConfirm={async () => {
     if (!removingShared) return;

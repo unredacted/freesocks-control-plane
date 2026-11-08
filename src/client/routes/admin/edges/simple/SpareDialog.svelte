@@ -222,8 +222,8 @@
   title={renew ? 'Replace this spare address?' : 'Add a spare address?'}
   body={`${
     renew
-      ? 'FCP destroys this spare, then creates a new one for the same transport at your provider when nothing blocks it. The new spare is billed and stays unused until you test it.'
-      : 'FCP creates one more address for this node at your provider and keeps it as a spare. It is billed, and it is only put in use after you test it.'
+      ? 'FCP destroys this spare, then creates a new one for the same transport if nothing blocks it. The new spare is billed and stays unused until you test it.'
+      : 'FCP creates one more address for this node as a spare. It is billed, and goes in use only after you test it.'
   }${inUseNote ? ` Once tested, ${inUseNote[0]!.toLowerCase()}${inUseNote.slice(1)}` : ''}`}
   confirmLabel={renew ? 'Replace the spare' : 'Add a spare'}
   disabled={!renew &&

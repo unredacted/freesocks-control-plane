@@ -106,9 +106,9 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-lg`}>
     <Dialog.Header>
-      <Dialog.Title>Test one name on {node.nodeName}</Dialog.Title>
+      <Dialog.Title>Test one SNI on {node.nodeName}</Dialog.Title>
       <Dialog.Description>
-        Connect with a real app. Only a real connection proves the node took the new names.
+        Connect with a real app. Only a real connection proves the node took the new SNIs.
       </Dialog.Description>
     </Dialog.Header>
     <div class="space-y-3 text-sm">
@@ -129,7 +129,7 @@
       {/if}
       {#if choice.kind === 'pick' && choice.names.length > 1}
         <label class="flex flex-wrap items-center gap-2" for={`${uid}-sni`}>
-          <span class="text-muted-foreground">Name</span>
+          <span class="text-muted-foreground">SNI</span>
           <select
             id={`${uid}-sni`}
             bind:value={sni}
@@ -142,7 +142,7 @@
           </select>
         </label>
         <p class="text-muted-foreground">
-          These names were on this port before, so each one needs its own test here.
+          These SNIs were on this port before, so each needs its own test.
         </p>
       {/if}
       {#if error}
@@ -152,17 +152,17 @@
         <Skeleton class="h-40 w-full" />
       {:else}
         <p>
-          Import this link, connect, and open a page. It uses the name
+          Import this link, connect, and open a page. It uses the SNI
           <span class="font-mono break-words">{test.sni}</span>{test.isWitness
-            ? ', and proves every new name on this node at once.'
+            ? ', and proves every new SNI on this node at once.'
             : '.'}
         </p>
         <TestLink link={test.link} label={`Copy the test link for ${test.sni}`} />
         {#if failed}
           <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-            Nothing changes for members. The node may still be restarting: wait a minute and make a
-            new link. If it keeps failing, the node has not taken the new names: check that it is
-            online and up to date under Servers before trying again.
+            Nothing changes for members. The node may still be restarting, so wait a minute and make
+            a new link. If it keeps failing, check under Servers that the node is online and up to
+            date.
           </p>
         {/if}
       {/if}

@@ -96,7 +96,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       from: 'networks',
       required: false,
       advanced: true,
-      help: 'Leave empty for a public address. Choose a network and a subnet for the private address plus floating IP mode.',
+      help: 'Leave empty for a public address. Pick a network and subnet for a private address with a floating IP.',
     },
     {
       key: 'subnetId',
@@ -146,7 +146,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       location: true,
       required: false,
       advanced: true,
-      help: "Leave empty to use the API key's default project: FCP reads it when it tests the account. A key that may not read it needs the Project id here.",
+      help: "Leave empty to use the API key's default project, read when the account is tested. Fill it in if the key cannot read it.",
     },
   ],
   ovh: [
@@ -215,7 +215,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       location: true,
       required: false,
       advanced: true,
-      help: 'Leave empty to let each edge create its own gateway (a template setting).',
+      help: 'Leave empty to let each edge create its own gateway.',
     },
   ],
   cloudflare: [
@@ -259,7 +259,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       location: true,
       from: 'dnsAccounts',
       required: true,
-      help: "A DNS provider account whose zone holds this front's names and their certificate challenges.",
+      help: "A DNS provider account whose zone holds this front's hostnames and certificate challenges.",
     },
     {
       key: 'zoneId',
@@ -294,7 +294,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       ],
       required: true,
       advanced: true,
-      help: 'How a new front’s name is attached to its service. Classic domains exist only on accounts created before September 2025; pick them if the provider refuses the other kind. A front on the shared wildcard certificate always gets a classic domain.',
+      help: 'How a new front’s hostname is attached to its service. Classic domains exist only on accounts created before September 2025. Pick classic if the provider refuses the other kind. A front on the shared wildcard certificate always gets a classic domain.',
     },
     {
       key: 'tlsConfigurationId',
@@ -305,7 +305,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       from: 'tlsConfigurations',
       required: false,
       advanced: true,
-      help: 'Leave empty to use the default configuration of the account.',
+      help: 'Leave empty for the account default.',
     },
   ],
   cloudfront: [
@@ -326,7 +326,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       location: true,
       from: 'dnsAccounts',
       required: true,
-      help: "A DNS provider account whose zone holds this front's names and the certificate's validation record. Prefer a zone your other CDN's fronts do not use.",
+      help: "A DNS provider account whose zone holds this front's hostnames and certificate validation record. Prefer a zone your other CDN's fronts do not use.",
     },
     {
       key: 'zoneId',
@@ -366,11 +366,11 @@ export const CREDENTIAL_LABELS: Record<string, string> = {
 /** What each provider's token must be allowed to do. */
 export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
   cloudflare:
-    'A user API token or an account API token, scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report the zone settings, and Transform Rules Edit and Origin Rules Edit only if this account will also front traffic.',
+    'A user or account API token scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report zone settings. Add Transform Rules Edit and Origin Rules Edit only if this account also fronts traffic.',
   fastly:
-    'An API token with the global scope, issued on a dedicated automation user. The account also needs the WebSockets product entitlement.',
+    'A global-scope API token from a dedicated automation user. The account also needs the WebSockets product entitlement.',
   cloudfront:
-    'An access key of a dedicated IAM user. Its policy allows cloudfront:CreateDistribution, GetDistribution, GetDistributionConfig, UpdateDistribution, DeleteDistribution, ListDistributions, CreateOriginRequestPolicy, ListOriginRequestPolicies and ListDistributionsByOriginRequestPolicyId, and acm:RequestCertificate, DescribeCertificate, ListCertificates and DeleteCertificate in us-east-1. Nothing else: no IAM or Lambda permissions.',
+    'An access key of a dedicated IAM user. Its policy allows cloudfront:CreateDistribution, GetDistribution, GetDistributionConfig, UpdateDistribution, DeleteDistribution, ListDistributions, CreateOriginRequestPolicy, ListOriginRequestPolicies and ListDistributionsByOriginRequestPolicyId, and acm:RequestCertificate, DescribeCertificate, ListCertificates and DeleteCertificate in us-east-1. No IAM or Lambda permissions.',
 };
 
 /** The few settings with a sensible value before the operator picks anything. */

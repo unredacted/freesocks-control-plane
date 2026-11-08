@@ -128,7 +128,7 @@
       if (started === 0) {
         toast.message(
           skipped > 0
-            ? `No probe started for ${row.relay.slug}: ${skipped} ${skipped === 1 ? 'target was' : 'targets were'} skipped (budget, spacing or probes switched off).`
+            ? `No probe started for ${row.relay.slug}: ${skipped} ${skipped === 1 ? 'target was' : 'targets were'} skipped for budget, spacing or probes off.`
             : `No probe started for ${row.relay.slug}: it has nothing to probe yet.`,
         );
       } else {
@@ -275,10 +275,9 @@
       <div class="rounded-lg border border-dashed p-8 text-center">
         <p class="font-medium">No origins yet</p>
         <p class="text-muted-foreground mx-auto mt-1 max-w-prose text-sm">
-          An origin is a place members should never reach directly: a backend node, a backend server
-          or an address you enter by hand. The control plane puts provider-managed edges in front of
-          it and replaces them when they stop working. A backend node is fronted from Edges with
-          Front a node.
+          An origin is a backend node, a backend server or a hand-entered address that members never
+          reach directly. FCP puts edges in front of it and replaces them when they stop working.
+          Front a backend node from Edges with Front a node.
         </p>
         <Button class="mt-4" onclick={() => (newOpen = true)}>
           <Plus aria-hidden="true" />
@@ -333,7 +332,7 @@
 <ConfirmDialog
   bind:open={provisionOpen}
   title="Provision a new edge?"
-  body="This creates a billable resource at the provider and counts against the account budget for today. The run opens on the relay page."
+  body="Creates a billable resource at the provider and counts against today's account budget. The run opens on the relay page."
   confirmLabel="Provision"
   onConfirm={() => (provisionRow ? provision.mutateAsync(provisionRow) : undefined)}
 >

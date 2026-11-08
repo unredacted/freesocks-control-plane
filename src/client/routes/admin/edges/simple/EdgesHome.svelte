@@ -171,7 +171,7 @@
 
 <SectionHeader
   title="Edges"
-  description="The fronted nodes: members reach them through provider addresses that FCP replaces when they stop working."
+  description="Members reach these nodes through provider addresses. FCP replaces an address when it stops working."
 >
   {#snippet actions()}
     {#if rows.length > 0}
@@ -248,9 +248,8 @@
   {#if summary.data && rows.length === 0}
     <div class="rounded-lg border border-dashed p-8 text-center">
       <p class="text-muted-foreground mx-auto max-w-prose text-sm">
-        A fronted node hands members an address at a provider instead of its own, and FCP replaces
-        that address when it stops working. Nothing changes for members until the new address has
-        been tested.
+        A fronted node gives members a provider address instead of its own, and FCP replaces it when
+        it stops working. Members see no change until the new address is tested.
       </p>
       <Button class="mt-4" onclick={openProtect}>
         <Plus aria-hidden="true" />
@@ -280,23 +279,22 @@
       <h2 id="auto-title" class="font-semibold">Turn on automatic replacement</h2>
       {#if clientCheckReady}
         <p class="text-muted-foreground mt-1 max-w-prose text-sm">
-          FCP watches every fronted node. When an address looks blocked, it makes a new one in a
-          location where you have tested an address before, checks it with its own sing-box and Xray
-          clients, and moves members to it. Nothing extra is billed while no address is blocked.
+          When an address looks blocked, FCP makes a new one in a tested location, checks it with
+          its own sing-box and Xray clients, and moves members to it. Nothing extra is billed until
+          an address is blocked.
         </p>
         <p class="text-muted-foreground mt-2 max-w-prose text-sm">
-          With 2 addresses in use on a node, members use the other one while FCP replaces a blocked
-          address. With 1, members in the country that blocks it wait about 10 to 15 minutes for the
-          replacement.
+          With 2 addresses in use, members use the other one during a replacement. With 1, members
+          in the blocking country wait about 10 to 15 minutes.
         </p>
       {:else}
         <p class="text-muted-foreground mt-1 max-w-prose text-sm">
-          FCP watches every fronted node and replaces an address that looks blocked. It keeps one
-          spare address per listener, which your provider bills.
+          FCP replaces an address that looks blocked on any fronted node. It keeps one spare per
+          listener, billed by your provider.
         </p>
         <p class="text-muted-foreground mt-2 max-w-prose text-sm">
-          Automatic replacement switches to a spare address you have already tested. FCP asks you to
-          test each new spare address at the top of this page before it can be used.
+          It switches to a spare you have tested. Test each new spare at the top of this page before
+          it can be used.
         </p>
       {/if}
       <Button class="mt-3" disabled={automationBusy} onclick={() => setAutomation(true)}>

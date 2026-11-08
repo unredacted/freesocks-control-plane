@@ -46,9 +46,8 @@
   <header class="px-4 py-3">
     <h2 id="settings-client-check-title" class="font-medium">FCP's own client check</h2>
     <p class="text-muted-foreground mt-0.5 text-sm">
-      Real sing-box and Xray clients connect through an address with FCP's check account and read
-      the address they come out of, which must be the node's. A test of new server names on a node
-      runs Mihomo too.
+      Real sing-box and Xray clients connect through an address with FCP's check account and check
+      that they come out at the node's address. Testing new SNIs on a node runs Mihomo too.
     </p>
   </header>
   <div class="space-y-4 border-t px-4 py-4">
@@ -61,7 +60,7 @@
       {#if !s.configured}
         <p class="text-muted-foreground text-sm">
           Not set up. Start the edge-client-check service and give it and the deployment the same
-          EDGE_CLIENT_CHECK_SECRET (see the deployment guide).
+          EDGE_CLIENT_CHECK_SECRET. The deployment guide has the steps.
         </p>
       {:else}
         <KeyValue

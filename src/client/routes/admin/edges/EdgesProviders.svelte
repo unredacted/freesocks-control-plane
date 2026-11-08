@@ -71,9 +71,8 @@
 {:else if accounts.length === 0}
   <div class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
     <p class="mx-auto max-w-prose">
-      A provider account is one set of credentials at a cloud or CDN provider, plus the place FCP
-      creates addresses in. An account becomes trusted the first time one of its addresses is tried
-      with a real session.
+      A provider account is one set of credentials at a cloud or CDN provider, plus where FCP
+      creates addresses. It becomes trusted when a real session first tries one of its addresses.
     </p>
     <Button class="mt-4" size="sm" onclick={() => (edit.value = 'new')}>Add account</Button>
   </div>
@@ -98,7 +97,7 @@
     <Sheet.Header class="border-b">
       <Sheet.Title>Add a provider account</Sheet.Title>
       <Sheet.Description>
-        Credentials are stored write-only: FCP never shows them again, here or anywhere else.
+        Credentials are stored write-only. FCP never shows them again.
       </Sheet.Description>
     </Sheet.Header>
     <div class="flex-1 overflow-y-auto p-4">

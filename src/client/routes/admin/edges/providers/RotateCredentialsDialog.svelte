@@ -94,9 +94,8 @@
     <Dialog.Header>
       <Dialog.Title>Rotate the credentials of {account.name}</Dialog.Title>
       <Dialog.Description>
-        FCP tests the new credentials against the provider and stores them only if the test passes.
-        The project, region or zone stay the same, so the account keeps its qualification and its
-        edges are not touched. Revoke the old credentials at the provider afterwards.
+        FCP stores the new credentials only if a test against the provider passes. The account keeps
+        its qualification and its edges. Revoke the old credentials at the provider afterwards.
       </Dialog.Description>
     </Dialog.Header>
     <form

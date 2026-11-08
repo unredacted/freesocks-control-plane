@@ -119,8 +119,7 @@
           <Tooltip.Root>
             <Tooltip.Trigger class="cursor-help underline decoration-dotted">FCP</Tooltip.Trigger>
             <Tooltip.Content>
-              The internal connect check from FCP itself. Failing here too means an outage, not a
-              block.
+              FCP's internal connect check. Failing here too means an outage, not a block.
             </Tooltip.Content>
           </Tooltip.Root>
         </Table.Head>
@@ -139,7 +138,7 @@
               {g.label}
               {#if g.kind !== 'edge'}
                 <span class="font-normal tracking-normal normal-case">
-                  (operator evidence, the block detector does not read these)
+                  (operator evidence, not read by the block detector)
                 </span>
               {/if}
             </Table.Cell>

@@ -66,7 +66,7 @@
           tone: 'muted',
           hint: nodesQ.isPending
             ? 'Loading the node list.'
-            : 'The node is not in the last node list FCP pulled from the backend.',
+            : 'Not in the last node list from the backend.',
         };
       }
       return node.online
@@ -106,7 +106,7 @@
       out.push({
         label: 'Front qualification mode',
         value: relay.qualificationModeSlug ?? 'Backend default',
-        hint: 'The connection mode whose placement the test user is created on. Change it under Edit.',
+        hint: "The test user is created on this mode's placement. Change it under Edit.",
       });
     out.push({
       label: 'Last registered by the node role',
@@ -124,9 +124,7 @@
 <Card.Root>
   <Card.Header>
     <Card.Title>Origin</Card.Title>
-    <Card.Description
-      >The server behind the edges. It is fixed for the life of the origin.</Card.Description
-    >
+    <Card.Description>The server behind the edges. It never changes.</Card.Description>
     {#if backendServerId}
       <Card.Action>
         <Link
@@ -145,12 +143,12 @@
       <div class="space-y-2">
         <h3 class="text-sm font-medium">Connection plan</h3>
         <p class="text-xs text-muted-foreground">
-          FCP serves no subscription for a manual origin. Point your clients at these values; they
-          change with every rotation.
+          FCP serves no subscription for a manual origin. Point your clients at these values. They
+          change on every rotation.
         </p>
         {#if connectionPlan.length === 0}
           <p class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-            Nothing to dial yet. Publish an edge for a listener and its row appears here.
+            Nothing yet. Publish an edge to see it here.
           </p>
         {:else}
           <Table.Root>
@@ -158,7 +156,7 @@
               <Table.Row>
                 <Table.Head>Listener</Table.Head>
                 <Table.Head>Dial</Table.Head>
-                <Table.Head>Server name</Table.Head>
+                <Table.Head>SNI</Table.Head>
                 <Table.Head>Host header</Table.Head>
               </Table.Row>
             </Table.Header>
@@ -186,11 +184,10 @@
           <h3 class="text-sm font-medium">L7 qualification credential</h3>
           <p class="text-xs text-muted-foreground">
             {#if relay.qualificationCredential}
-              Minted. FCP uses this test account to open a short authenticated session through each
-              L7 front before it is published, and again before the proof expires.
+              Minted. FCP signs in through each L7 front with this test account before publishing it
+              and again before the proof expires.
             {:else}
-              Not minted. Without it no L7 front of this relay can be proven end to end, so none can
-              be published.
+              Not minted. L7 fronts of this relay cannot be proven or published without it.
             {/if}
           </p>
         </div>
@@ -217,7 +214,7 @@
 <ActionConfirm
   bind:open={removeOpen}
   title="Remove the qualification credential?"
-  body="FCP deletes the test account from the panel. Published L7 fronts keep working until their proof expires; after that they cannot be re-proven and drop out of selection until a new credential is minted."
+  body="FCP deletes the test account from the panel. Published L7 fronts keep working until their proof expires, then drop out until you mint a new credential."
   confirmLabel="Remove credential"
   danger
   run={() =>

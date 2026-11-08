@@ -17,11 +17,11 @@ export const REGIME_WORDS: Record<CountryListRegime, { label: string; explain: s
   allowlist: {
     label: 'Works there',
     explain:
-      'Names and addresses reported to work in the country, such as the ones a network still lets through when it shuts down.',
+      'Hostnames and addresses reported to work in the country, such as those still let through during a shutdown.',
   },
   blocklist: {
     label: 'Blocked there',
-    explain: 'Names and addresses reported to be blocked in the country.',
+    explain: 'Hostnames and addresses reported to be blocked in the country.',
   },
 };
 
@@ -78,10 +78,10 @@ export function outcomeFailed(code: string): boolean {
 const plural = (n: number, one: string, many: string) =>
   `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
 
-/** "2 names, 1 wildcard, 1 IPv4 range (256 addresses), 1 IPv6 range". */
+/** "2 hostnames, 1 wildcard, 1 IPv4 range (256 addresses), 1 IPv6 range". */
 export function countsLine(c: CountryListVersion['counts']): string {
   const parts: string[] = [];
-  if (c.names) parts.push(plural(c.names, 'name', 'names'));
+  if (c.names) parts.push(plural(c.names, 'hostname', 'hostnames'));
   if (c.wildcards) parts.push(plural(c.wildcards, 'wildcard', 'wildcards'));
   if (c.v4Ranges)
     parts.push(
@@ -104,7 +104,7 @@ export function droppedLine(c: CountryListVersion['counts']): string | null {
   return parts.length ? `Left out: ${parts.join(', ')}.` : null;
 }
 
-/** "Names: 1 name new, none gone. IPv4: 256 addresses new, none gone." */
+/** "Hostnames: 1 hostname new, none gone. IPv4: 256 addresses new, none gone." */
 export function diffLine(d: CountryListVersion['diff']): string | null {
   if (!d) return null;
   const side = (label: string, p: { added: number; removed: number }, one: string, many: string) =>
@@ -114,11 +114,11 @@ export function diffLine(d: CountryListVersion['diff']): string | null {
         }.`
       : null;
   const parts = [
-    side('Names', d.names, 'name', 'names'),
+    side('Hostnames', d.names, 'hostname', 'hostnames'),
     side('IPv4', d.v4, 'address', 'addresses'),
     side('IPv6', d.v6, '/64', '/64s'),
   ].filter(Boolean);
-  return parts.length ? parts.join(' ') : 'The same names and ranges as before.';
+  return parts.length ? parts.join(' ') : 'The same hostnames and ranges as before.';
 }
 
 /** Where a list comes from. */
@@ -183,10 +183,10 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.list.upload_closed': 'The paste took too long. Send it again.',
   'edge.list.upload_empty': 'Nothing was pasted.',
   'edge.list.cap': 'FCP follows at most 50 lists.',
-  'edge.list.feeds_cap': 'A list feeds at most 10 networks and name lists.',
-  'edge.list.no_feeds': 'This list feeds nothing. Choose where its names go first.',
+  'edge.list.feeds_cap': 'A list feeds at most 10 networks and SNI lists.',
+  'edge.list.no_feeds': 'This list feeds nothing. Choose where its hostnames go first.',
   'edge.list.not_feedable':
-    'Only a list that is on, fresh and has a version in use can feed names.',
+    'Only a list that is on, fresh and has a version in use can feed hostnames.',
   'edge.list.watch_allowlist_only': 'Only a list of what works can check edge addresses.',
   'edge.list.mark_not_left': 'That address is on the list again, or never was.',
   'edge.list.mark_moved': 'That address was listed and left again since. Look at it again.',
@@ -201,7 +201,7 @@ export function listErrorWords(code: string | null): string {
 
 /** Lookup lines: how a list holds an entry. */
 export const HOW_WORDS = {
-  exact: 'by name',
+  exact: 'by exact hostname',
   wildcard: 'by a wildcard',
   range: 'in a range',
 } as const;
@@ -216,7 +216,7 @@ const STOPPED_WORDS: Record<string, string> = {
   feed_removed: 'It was taken off the list.',
   list_removed: 'The list is gone.',
   not_feedable: 'The list is off or stale, so it stopped.',
-  scope_gone: 'The network or name list is gone.',
+  scope_gone: 'The network or SNI list is gone.',
   restarted: 'A new run took over.',
 };
 
@@ -225,9 +225,9 @@ export function feedLine(f: CountryListFeed): string {
   const r = f.run;
   if (!r) return 'Not fed yet.';
   const c = r.counts;
-  const parts = [`${plural(c.added, 'name', 'names')} added`];
+  const parts = [`${plural(c.added, 'hostname', 'hostnames')} added`];
   if (c.known) parts.push(`${c.known.toLocaleString('en')} already there`);
-  if (c.inFamily) parts.push(`${c.inFamily.toLocaleString('en')} already in a name list`);
+  if (c.inFamily) parts.push(`${c.inFamily.toLocaleString('en')} already in an SNI list`);
   if (c.ignored) parts.push(`${c.ignored.toLocaleString('en')} ignored`);
   if (c.capped) parts.push(`${c.capped.toLocaleString('en')} past the 2,000 limit`);
   const counts = `${parts.join(', ')}.`;
@@ -242,7 +242,7 @@ export function feedLine(f: CountryListFeed): string {
 /** Under the switch: what is true now. */
 export function watchLine(watch: boolean): string {
   return watch
-    ? 'On. FCP checks the address of every edge in use or ready against the version in use, after each new version and every hour. An address that leaves the list asks for a look.'
+    ? 'On. FCP checks every edge address in use or ready against the version in use, hourly and after each new version. An address that leaves the list asks for a look.'
     : 'Off. Edge addresses are not checked against this list.';
 }
 

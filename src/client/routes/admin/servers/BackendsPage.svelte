@@ -67,7 +67,7 @@
 
 <SectionHeader
   title="Backends"
-  description="The backend servers keys are issued on. Each tier issues on its backend type, and the best-scored active server of that type is picked."
+  description="The backend servers keys are issued on. Each tier uses the best-scored active server of its backend type."
 >
   {#snippet actions()}
     <Button onclick={() => (creating = true)}>
@@ -209,8 +209,8 @@
     <AlertDialog.Header>
       <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>
       <AlertDialog.Description>
-        De-registers the instance from the pool. Existing keys on it keep working server-side but
-        will fail on next regenerate. Migrate users off first for a clean shutdown.
+        Removes it from the pool. Keys on it keep working, but regenerating them fails. Move users
+        off first for a clean shutdown.
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer>

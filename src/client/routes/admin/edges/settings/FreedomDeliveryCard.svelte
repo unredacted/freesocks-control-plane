@@ -53,7 +53,7 @@
         ? [`${plural(cutOffMembers, 'member')} get nothing until an edge covers their node`]
         : []),
     ];
-    return `${nodes} ${parts.join(', and ')}.${p.approximate ? ' (At least: the count stopped early.)' : ''}`;
+    return `${nodes} ${parts.join(', and ')}.${p.approximate ? ' At least, as the count stopped early.' : ''}`;
   }
 
   const modeName = (m: FreedomPreviewMode) => m.label ?? m.mode;
@@ -88,7 +88,7 @@
     return [
       summary(p),
       cut > 0
-        ? 'Members who get nothing keep their app working on its last configuration until it stops reaching the node.'
+        ? 'Members who get nothing keep their last configuration until it stops reaching the node.'
         : '',
       'Saving a freedom mode set up direct is refused from now on.',
     ]
@@ -105,8 +105,8 @@
   <header class="px-4 py-3">
     <h2 id="settings-freedom-title" class="font-medium">Freedom modes only through edges</h2>
     <p class="text-muted-foreground mt-0.5 text-sm">
-      Members on a freedom mode are handed edge addresses or nothing, never a node's own address. A
-      node no live edge covers is held back from them, and a freedom mode cannot be set up direct.
+      Freedom members get edge addresses or nothing, never a node's own address. A node with no live
+      edge is held back from them, and a freedom mode cannot be set up direct.
     </p>
   </header>
   <div class="space-y-4 border-t px-4 py-4">
@@ -131,7 +131,7 @@
       />
       {#if !s.on}
         <p class="text-muted-foreground text-sm">
-          Off: a freedom member whose node no edge covers is handed that node directly.
+          Off: a freedom member whose node has no edge gets that node directly.
         </p>
       {/if}
 
@@ -229,7 +229,7 @@
 <ConfirmDialog
   bind:open={offOpen}
   title="Let freedom members be handed a node directly?"
-  body="A freedom member whose node no edge covers is handed that node's own address again, at their next refresh. Saving a freedom mode set up direct is allowed again."
+  body="A freedom member whose node has no edge gets that node's own address again at their next refresh. A freedom mode can be set up direct again."
   confirmLabel="Turn off"
   danger
   onConfirm={turnOff}

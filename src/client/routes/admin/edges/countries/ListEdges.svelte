@@ -68,8 +68,8 @@
       <p>{edgeCountsLine(counts)}</p>
     {/if}
     <p class="text-muted-foreground">
-      Where a country lets through only listed addresses and names, both must be on it. The
-      country's page says how many of each transport's server names the lists hold.
+      Where a country lets through only listed addresses and SNIs, both must be on it. The country's
+      page shows how many of each transport's SNIs the lists hold.
     </p>
   </CardContent>
 </Card>

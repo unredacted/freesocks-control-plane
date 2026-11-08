@@ -83,7 +83,7 @@
       <p class="text-xs">
         {preview.data.contained}
         {preview.data.contained === 1 ? 'address here is' : 'addresses here are'} only for its countries
-        now: members anywhere are handed them from their next refresh.
+        now. Members anywhere get them from their next refresh.
       </p>
     {/if}
     {#if save.error}<InlineError message={edgeErrorMessage(save.error)} />{/if}

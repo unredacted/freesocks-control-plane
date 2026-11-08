@@ -321,8 +321,7 @@
                   {/if}
                   {#if unknown}
                     <span class="text-muted-foreground basis-full">
-                      Whether FCP manages these names could not be read just now. Reload to try
-                      again.
+                      Could not read whether FCP manages these SNIs. Reload to try again.
                     </span>
                   {/if}
                 </div>
@@ -384,9 +383,9 @@
       <p class="text-muted-foreground border-t pt-4 text-sm">
         {#if !manageOn}
           Changes from here are off. Turn them on from the
-          <Link href={back.href} class="underline underline-offset-4">Servers page</Link>.
+          <Link href={back.href} class="underline underline-offset-4">Nodes page</Link>.
         {:else if instance && !instance.setUp}
-          Changes are refused until this backend is set up (or adopted) from the Servers page.
+          Changes are refused until this backend is set up or adopted from the Nodes page.
         {/if}
       </p>
     {/if}

@@ -37,7 +37,7 @@ describe('a pick address count in words', () => {
     expect(wantPreviewLines(preview({ adds: 2, fits: 0 }))[1]).toMatch(/None of them fits/);
     expect(wantPreviewLines(preview({ adds: 0, fits: 0 }))[0]).toMatch(/^No new address/);
     expect(wantPreviewLines(preview({ tooLarge: true, total: 70 }))).toEqual([
-      'The node would then ask for 70 addresses in use; one node publishes at most 64. Lower the count.',
+      'The node would then want 70 addresses in use, over the limit of 64. Lower the count.',
     ]);
     for (const line of wantPreviewLines(preview({ adds: 2, fits: 1 })))
       expect(line).not.toMatch(/—/);

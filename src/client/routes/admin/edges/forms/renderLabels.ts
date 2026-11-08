@@ -32,7 +32,7 @@ export function endpointWhy(
 ): string | null {
   if (tier === null || tier === undefined) return null;
   const parts = [TIER_WORDS[tier] ?? 'unknown'];
-  if (why?.meantFor) parts.push('at a location meant for it');
+  if (why?.meantFor) parts.push('at a location set for it');
   if (why?.audience?.length) parts.push(`only for ${why.audience.join(', ')}`);
   const l = why?.latency;
   if (l)

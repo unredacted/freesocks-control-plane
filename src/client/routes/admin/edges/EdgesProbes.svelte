@@ -46,7 +46,7 @@
 
 <SectionHeader
   title="Probes"
-  description="Whether FCP's own addresses answer from the countries you watch. Edges, relay nodes that opted in, and custom targets."
+  description="Whether FCP's edges, opted-in relay nodes and custom targets answer from the countries you watch."
 >
   {#snippet actions()}
     <Button variant="outline" size="sm" onclick={() => router.navigate(settingsHref)}>
@@ -58,7 +58,7 @@
 <div class="space-y-6">
   {#if probesOff}
     <div class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
-      Scheduled probe rounds are switched off, so the matrix only changes when you use Probe now.
+      Scheduled probe rounds are off, so the matrix only changes when you use Probe now.
       <Link href={settingsHref} class="underline">Turn them on in Settings</Link>.
     </div>
   {/if}
@@ -67,8 +67,8 @@
     <CardHeader>
       <CardTitle class="text-base">Sources</CardTitle>
       <CardDescription>
-        Whether each source brings back evidence. A source that fails is never read as a block, so
-        the countries only it covers read as not known until it works again.
+        Whether each source brings back evidence. A failing source never reads as a block. Countries
+        only it covers read as not known until it works again.
       </CardDescription>
     </CardHeader>
     <CardContent>
@@ -82,10 +82,9 @@
     <CardHeader>
       <CardTitle class="text-base">Reachability matrix</CardTitle>
       <CardDescription>
-        The last verdict per target and country over IPv4, with the IPv6 and by-name paths noted
-        where probed. A fronted hostname is probed by name with a TLS handshake. UDP listeners are
-        not probed. Only edge rows feed the block detector. Open a row for its runs, grouped by
-        round, with the control countries labelled.
+        The last IPv4 verdict per target and country, with IPv6 and hostname results where probed. A
+        fronted hostname gets a TLS handshake with its SNI. UDP listeners are not probed. Only edge
+        rows feed the block detector. Open a row for its runs by round.
       </CardDescription>
     </CardHeader>
     <CardContent>
@@ -97,9 +96,8 @@
     <CardHeader>
       <CardTitle class="text-base">Custom targets</CardTitle>
       <CardDescription>
-        Any public host and port worth watching from the configured countries, such as a node's own
-        address or a decoy site. Scheduled targets join every round, the others are probed on
-        demand.
+        Any public host and port to watch from the configured countries, like a node's own address
+        or a decoy site. Scheduled targets join every round. Others are probed on demand.
       </CardDescription>
     </CardHeader>
     <CardContent>
@@ -111,8 +109,8 @@
     <CardHeader>
       <CardTitle class="text-base">Probe activity</CardTitle>
       <CardDescription>
-        Probe requests, finished runs and verdict changes, plus target and setting edits. Entries
-        carry target references and codes only, never addresses. The full log is under Audit log.
+        Probe requests, finished runs, verdict changes and target and setting edits. Entries hold
+        target references and codes, never addresses. The full log is under Audit log.
       </CardDescription>
     </CardHeader>
     <CardContent>

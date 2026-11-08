@@ -117,13 +117,13 @@
         unit="per day"
         min={0}
         max={DAILY_ALLOCATION_CEILING}
-        helper={`New edges FCP may create here per day. ${account.allocationsToday} used today. Zero means no daily limit and is only allowed in development.`}
+        helper={`New edges FCP may create here per day. ${account.allocationsToday} used today. Zero means no limit, allowed only in development.`}
       />
       <NumberField
         bind:value={priority}
         bind:invalid={badPriority}
         label="Priority"
-        helper="Among accounts that fit, the lower number is tried first; on a tie, the cheaper edge."
+        helper="Among accounts that fit, the lower number goes first. On a tie, the cheaper edge."
       />
     </div>
 
@@ -151,8 +151,7 @@
       </Select.Root>
       {#if templateMoves}
         <p class="text-xs text-amber-700 dark:text-amber-300">
-          Edges from this account will be created with different parameters, so saving clears the
-          qualification when the parameters differ.
+          New edges here will use different parameters, so saving clears the qualification.
         </p>
       {/if}
     </div>

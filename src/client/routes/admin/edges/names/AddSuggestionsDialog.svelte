@@ -116,8 +116,8 @@
     <Dialog.Header>
       <Dialog.Title>Add suggestions</Dialog.Title>
       <Dialog.Description>
-        More names the cover site serves, found on its certificate, in certificate logs or in lists
-        you added to {label}. Best first.
+        More SNIs the cover site serves, from its certificate, certificate logs or lists you added
+        to {label}. Best first.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -140,7 +140,7 @@
         {#each sites as s (s.site)}
           <li class="p-3">
             {#if s.names.length > 1}
-              <p class="text-muted-foreground mb-1 text-xs">{s.site}, {s.names.length} names</p>
+              <p class="text-muted-foreground mb-1 text-xs">{s.site}, {s.names.length} SNIs</p>
             {/if}
             <ul class="space-y-2">
               {#each s.names as c (c.id)}
@@ -192,7 +192,7 @@
     <Dialog.Footer class={STICKY_FOOTER}>
       <Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
       <Button disabled={busy || picked.length === 0} onclick={add}>
-        {busy ? 'Adding…' : `Add ${picked.length === 1 ? '1 name' : `${picked.length} names`}`}
+        {busy ? 'Adding…' : `Add ${picked.length === 1 ? '1 SNI' : `${picked.length} SNIs`}`}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

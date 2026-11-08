@@ -77,7 +77,7 @@ describe('drain words', () => {
     expect(observed.title).toBe('Stop tracking 198.51.100.44 now?');
     // Never claims a provider delete FCP does not make.
     expect(observed.body).not.toMatch(/FCP deletes|billing stops/);
-    expect(observed.body).toMatch(/keeps billing for it, until you delete it there/);
+    expect(observed.body).toMatch(/keeps billing, until you delete it at your provider/);
     expect(observed.done).toMatch(/Delete it at your provider\.$/);
   });
 
@@ -95,7 +95,7 @@ describe('drain words', () => {
       ),
     ).toEqual({
       word: 'Being deleted',
-      line: 'FCP removes it at the provider; billing stops once it is gone.',
+      line: 'FCP removes it at the provider, then billing stops.',
       left: null,
       canDelete: false,
       canKeep: false,

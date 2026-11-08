@@ -195,8 +195,8 @@
     <Dialog.Header>
       <Dialog.Title>Provision an edge for {relay.slug}</Dialog.Title>
       <Dialog.Description>
-        FCP creates a new provider resource in front of this origin. That spends one allocation of
-        the account's daily budget and starts billing at the provider.
+        FCP creates a new provider resource in front of this origin. It uses one of the account's
+        daily allocations and starts billing.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -249,8 +249,8 @@
         </Select.Root>
         <p class="text-muted-foreground text-xs">
           {#if named}
-            A named account may be one that is not trusted yet. Its edge waits unpublished, so you
-            can try it before members depend on it, then publish it from the edges table.
+            You can pick an untrusted account. Its edge waits unpublished so you can test it, then
+            publish it from the edges table.
           {:else}
             FCP picks a trusted account that can carry the listener.
           {/if}
@@ -288,8 +288,8 @@
             </Select.Content>
           </Select.Root>
           <p class="text-muted-foreground text-xs">
-            The edge stays in this location for its whole life. Its first tested address trusts a
-            new location.
+            The edge never leaves this location. Its first tested address makes a new location
+            trusted.
           </p>
         </div>
       {/if}
@@ -321,7 +321,7 @@
           <div>
             <Label for={`${uid}-publish`}>Publish it when it is ready</Label>
             <p class="text-muted-foreground text-xs">
-              Off: the edge waits as a standby until you publish it or a rotation needs it.
+              If off, the edge waits as a standby until you publish it or a rotation needs it.
             </p>
           </div>
         </div>

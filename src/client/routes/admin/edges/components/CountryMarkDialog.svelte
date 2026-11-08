@@ -73,14 +73,14 @@
     {
       value: 'clear',
       label: MARK_WORDS.clear,
-      hint: 'No mark: the checks from there decide.',
+      hint: 'No mark. Checks from there decide.',
     },
   ];
   const unchanged = $derived((choice === 'clear' ? null : choice) === current);
   const body = $derived(
     scope === 'group'
-      ? 'A mark on a location counts for every address in it, now and later. It wins over every check from that country and never expires.'
-      : 'A mark wins over every check from that country and never expires. The checks keep running and show beside it when they disagree.',
+      ? 'Applies to every address in this location, now and later. It overrides checks from that country and never expires.'
+      : 'Overrides checks from that country and never expires. Checks keep running and show beside it when they disagree.',
   );
 
   async function save() {

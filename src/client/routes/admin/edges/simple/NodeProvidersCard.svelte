@@ -254,7 +254,7 @@
     <div class="divide-y rounded-lg border">
       {#if view.picks.length === 0}
         <p class="text-muted-foreground px-3 py-2.5 text-sm">
-          No location is recorded for this node yet: automatic work may use any trusted location.
+          No location recorded for this node yet. Automatic work may use any trusted location.
         </p>
       {/if}
       {#each view.picks as p (p.locationId)}
@@ -360,10 +360,10 @@
     <Dialog.Header>
       <Dialog.Title>Add a location</Dialog.Title>
       <Dialog.Description>
-        The node gets addresses there too. A location at another provider gives members a backup
-        elsewhere. New addresses are tested before members get them.
+        The node gets addresses there too, tested before members get them. A location at another
+        provider gives members a backup.
         {#if websocketNode}
-          A WebSocket node takes CDN locations only: a load balancer cannot front it.
+          A WebSocket node takes CDN locations only.
         {/if}
       </Dialog.Description>
     </Dialog.Header>
@@ -387,7 +387,7 @@
             <span class="text-muted-foreground block text-xs">
               {a.accountName}, {providerLabel(a.provider)}{a.qualified
                 ? ''
-                : '. Not trusted yet: its first tested address trusts it.'}
+                : '. Not trusted until its first address is tested.'}
             </span>
             <EdgeCostLine accountId={a.accountId} locationId={a.locationId} each />
           </span>
@@ -475,8 +475,8 @@
     <Dialog.Header>
       <Dialog.Title>Options at {optionsFor?.label ?? 'this location'}</Dialog.Title>
       <Dialog.Description>
-        What this node's addresses there are built with. Saving fronts the node again: every address
-        is replaced and members move at go-live. Addresses that exist keep theirs until then.
+        What this node's addresses there are built with. Saving fronts the node again with all new
+        addresses, and members move at go-live. Current addresses keep their options until then.
       </Dialog.Description>
     </Dialog.Header>
     {#if editing}
@@ -516,7 +516,7 @@
 <ConfirmDialog
   bind:open={confirmOptions}
   title="Front the node again?"
-  body="Fresh addresses are made everywhere, tested, and reviewed when a review is needed. Members keep what they have until the new addresses go live; the old ones then drain."
+  body="New addresses are made everywhere and tested. Members keep what they have until the new ones go live, then the old ones drain."
   confirmLabel="Front again"
   onConfirm={async () => {
     if (optionsFor)
@@ -530,7 +530,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Stop using ${removing?.label ?? 'this location'}?`}
-  body="Its addresses drain: members move to the node's other addresses at their next refresh. FCP refuses while what is left would not serve every transport with a tested address."
+  body="Its addresses drain, and members move to the node's other addresses at their next refresh. FCP refuses if that would leave a transport without a tested address."
   confirmLabel="Remove location"
   danger
   onConfirm={async () => {

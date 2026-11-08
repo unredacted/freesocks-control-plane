@@ -22,7 +22,7 @@ export function engineWords(engines: Engines): string | null {
 export function clientCheckLine(check: EdgeClientCheck | null): string | null {
   if (!check) return null;
   const engines = engineWords(check.engines);
-  const stale = check.current === false ? ' The address changed since, check it again.' : '';
+  const stale = check.current === false ? ' The address has changed. Check it again.' : '';
   return `FCP's client check: ${CLIENT_CHECK_COPY[check.verdict].label}${engines ? ` (${engines})` : ''}.${stale}`;
 }
 
@@ -40,7 +40,7 @@ export function clientCheckToast(outcome: EdgeClientCheckOutcome): {
   const engines = engineWords(outcome.engines);
   // In a location you tested an address in, with the switch on, a pass counts as your test.
   const confirmed = outcome.confirmed
-    ? 'It now counts as tested: it was checked in a location where you tested an address before.'
+    ? 'It now counts as tested, since you tested an address in this location before.'
     : '';
   return {
     tone: outcome.ok ? (engines ? 'warning' : 'success') : 'error',

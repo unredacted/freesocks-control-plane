@@ -8,13 +8,13 @@ import type { EdgePickView } from '@shared/contracts/edges';
 
 export const SPREAD_CARD = {
   title: 'Spread members over the addresses',
-  body: 'Members who share an address here move together: when it is replaced, all of them get the new one, including an account a censor uses to find addresses. Spread, each member ranks the addresses their own way, so the members of a replaced address scatter over the others and the new one goes to a random few.',
+  body: "Members who share an address move together. When it is replaced, all of them get the new one, a censor's account included. Spread, each member ranks the addresses their own way. A replaced address's members then scatter over the others, and the new one goes to a random few.",
   action: 'Spread members',
 } as const;
 
 export const SPREAD_CONFIRM = {
   title: 'Spread members over the addresses?',
-  body: 'Members whose ranking differs are handed other addresses already in use at their next refresh, so everyone keeps working. After this, a new or replaced address moves only the members it takes.',
+  body: 'Some members get a different address already in use at their next refresh. Everyone keeps working. After this, a new or replaced address moves only the members it takes.',
   label: 'Spread members',
 } as const;
 

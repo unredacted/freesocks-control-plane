@@ -92,7 +92,7 @@ describe('Add suggestions', () => {
       expect(text()).toContain(n);
       expect(box(n).getAttribute('aria-checked')).toBe('true');
     }
-    expect(text()).toContain('Add 3 names');
+    expect(text()).toContain('Add 3 SNIs');
   });
 
   test('a refetch picks a new name, drops a gone one and keeps an unpick', async () => {

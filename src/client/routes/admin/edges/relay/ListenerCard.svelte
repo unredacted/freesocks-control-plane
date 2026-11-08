@@ -96,7 +96,7 @@
       label: 'Deployed on the node',
       value: l.deployed
         ? `Yes${l.deployedAt ? `, ${relativeTime(l.deployedAt)}` : ''}`
-        : 'Not yet: nothing can be published for it',
+        : 'Not yet, so nothing can be published for it',
       tone: l.deployed ? undefined : 'warning',
     });
     return rows;
@@ -166,15 +166,13 @@
       <div class="space-y-2">
         {#if l.layers.length === 0}
           <p class="rounded-md border border-destructive/40 bg-destructive/10 p-2">
-            No layer can front this listener right now, so no edge can be provisioned for it.
+            No layer can front this listener, so it cannot get an edge.
           </p>
         {/if}
         {#each excluded as ex (ex.layer)}
           <div class="rounded-md border bg-muted/40 p-2">
             <p class="font-medium">
-              Cannot sit behind {ex.layer === 'l7'
-                ? 'an L7 front (a CDN hostname)'
-                : 'an L4 edge (a load balancer)'}:
+              Cannot use {ex.layer === 'l7' ? 'an L7 front' : 'an L4 edge'}:
               {codeLabel(ex.code)}
             </p>
             <p class="text-xs text-muted-foreground">
@@ -190,14 +188,14 @@
 
     <!-- server names -->
     <section class="space-y-2">
-      <h3 class="font-medium">Server names</h3>
+      <h3 class="font-medium">SNIs</h3>
       {#if l.tlsNames.length === 0}
         <p class="text-muted-foreground">
           {l.security === 'none'
-            ? 'This listener presents no name.'
+            ? 'This listener presents no SNI.'
             : l.source === 'role'
-              ? 'None yet. Use Edit to add the names this listener answers to.'
-              : 'None yet. Use Edit to add the names this listener answers to: without one, nothing can be published behind an L4 edge.'}
+              ? 'None yet. Use Edit to add SNIs.'
+              : 'None yet. Use Edit to add SNIs. An L4 edge needs at least one.'}
         </p>
       {:else}
         <ul class="divide-y rounded-md border">
@@ -236,7 +234,7 @@
                     size="sm"
                     disabled={locked || act.isPending || n.retiredBy === 'role'}
                     title={n.retiredBy === 'role'
-                      ? 'The node role retired this name, so it cannot be reactivated here.'
+                      ? 'The node role retired this SNI. It cannot be reactivated here.'
                       : undefined}
                     onclick={() =>
                       act.mutate({
@@ -274,13 +272,13 @@
           {/if}
           {#if l.host.state === 'ambiguous'}
             <p class="rounded-md border border-destructive/40 bg-destructive/10 p-2">
-              Several backend Hosts fit this listener, so FCP will not pick one. Delete the
-              duplicates in the backend; FCP looks again within a few minutes.
+              Several backend Hosts match this listener. Delete the duplicates in the backend and
+              FCP checks again within a few minutes.
             </p>
           {:else if l.host.state === 'unresolved'}
             <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-2">
-              FCP does not know whether its last backend call took effect. It keeps looking and
-              writes nothing for this listener until the answer is clear.
+              FCP cannot tell if its last backend call worked. It writes nothing for this listener
+              until it knows.
             </p>
           {/if}
         {:else}
@@ -292,7 +290,7 @@
         {/if}
         {#if l.legacyHosts.length > 0}
           <p class="text-xs text-muted-foreground">
-            Also matched, from an earlier manual setup (never deleted by FCP):
+            Older manual Hosts, never deleted by FCP:
             <span class="font-mono">{l.legacyHosts.map((h) => h.remark).join(', ')}</span>
           </p>
         {/if}
@@ -307,8 +305,8 @@
               Adopt a Host
             </Button>
             <p class="mt-1 text-xs text-muted-foreground">
-              Tell FCP which backend Host belongs to this listener. It is needed before FCP can take
-              over writing the Hosts of this origin.
+              Tell FCP which backend Host belongs to this listener. FCP needs this before it can
+              write this origin's Hosts.
             </p>
           </div>
         {/if}
@@ -373,8 +371,8 @@
   <ActionConfirm
     open={true}
     title={`Retire ${name} on this listener?`}
-    body={`New subscriptions stop presenting this name at once.${activeNames.length === 1 ? ' It is the last active name of this listener: behind an L4 edge nothing can be published for it until another name is added.' : ''} The node keeps accepting it for the drain time, so members who already hold it stay connected. A retired name is never selected again unless you reactivate it.`}
-    confirmLabel="Retire name"
+    body={`New subscriptions stop using this SNI at once.${activeNames.length === 1 ? ' It is the last active SNI here, so L4 edges cannot publish until you add another.' : ''} The node keeps accepting it during the drain time, so members who already have it stay connected. It is not used again unless you reactivate it.`}
+    confirmLabel="Retire SNI"
     danger
     onClose={() => (retireName = null)}
     run={() =>
@@ -391,7 +389,7 @@
   <ActionConfirm
     open={true}
     title={`Retire ${name} on every listener?`}
-    body="This is fleet-wide: the name is retired on every listener of every relay that presents it, not only here. Use it when the name itself is blocked or burned. Subscriptions everywhere stop presenting it at once, publication epochs go up and mirrors refresh. A listener left without any active name cannot have edges published behind L4 until it gets another name."
+    body="Retires this SNI on every listener of every relay, not only here. Use it when the SNI itself is blocked. All subscriptions stop using it at once and mirrors refresh. A listener left with no active SNI cannot publish L4 edges until it gets another."
     typed={name}
     confirmLabel="Retire everywhere"
     danger
@@ -408,7 +406,7 @@
 <ActionConfirm
   bind:open={disableOpen}
   title={`Disable listener ${l.listenerKey}?`}
-  body="Nothing new is published or selected for this listener, and its edges drop out of rendered subscriptions. Members who were served only through it go dark until it is enabled again. Its edges stay provisioned."
+  body="Its edges drop out of subscriptions and nothing new is published for it. Members who only use this listener lose service until you enable it again. Its edges stay provisioned."
   confirmLabel="Disable listener"
   danger
   run={() =>
@@ -422,7 +420,7 @@
 <ActionConfirm
   bind:open={deleteOpen}
   title={`Retire listener ${l.listenerKey}?`}
-  body={`The listener stops existing for FCP: nothing can be provisioned or published for it, and FCP deletes the address it created for it on the backend. ${edgeCount > 0 ? `It is refused while edges use it: ${edgeCount} still do, so destroy or delete them on the Edges tab first.` : 'No edge uses it, so this goes through.'}${l.source === 'role' ? ' It does not come back: the node role no longer registers listeners.' : ''}`}
+  body={`FCP stops using this listener and deletes the address it created for it on the backend. ${edgeCount > 0 ? `${edgeCount} edge(s) still use it. Destroy or delete them on the Edges tab first.` : 'No edge uses it.'}${l.source === 'role' ? ' The node role will not add it back.' : ''}`}
   typed={l.listenerKey}
   confirmLabel="Retire listener"
   danger
@@ -437,7 +435,7 @@
 <ActionConfirm
   bind:open={adoptOpen}
   title={`Adopt a Host for ${l.listenerKey}`}
-  body="FCP checks that the Host exists in the panel, carries the inbound of this listener and dials one of its published edges. It then tracks that Host as yours: rewritten on rotations once FCP writes the Hosts, never deleted."
+  body="FCP checks that the Host exists, uses this listener's inbound and points at one of its published edges. FCP then tracks it as yours. It rewrites it on rotations once it writes the Hosts, but never deletes it."
   confirmLabel="Adopt Host"
   disabled={!uuidOk}
   run={() =>

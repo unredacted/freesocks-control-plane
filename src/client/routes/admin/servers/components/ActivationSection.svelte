@@ -171,8 +171,7 @@
   </p>
   {#if !intent.modeEnabled && !intent.retirement}
     <p class="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm" role="status">
-      Members cannot pick {intent.mode.name} yet: the mode is turned off, so nobody is given this node{intent.stage ===
-      'live'
+      {intent.mode.name} is turned off, so no member gets this node{intent.stage === 'live'
         ? ''
         : ' once it is live'}.
       <Link href="/admin/connection-modes" class="text-primary underline underline-offset-4"
@@ -217,10 +216,10 @@
   {/if}
   {#if intent.origin.hostname}
     <p class="text-muted-foreground mt-1 text-sm">
-      Origin name {intent.origin.hostname}{intent.origin.dns === 'resolves'
+      Origin hostname {intent.origin.hostname}{intent.origin.dns === 'resolves'
         ? ', resolving'
         : intent.origin.dns === 'conflict'
-          ? ': something else holds that record'
+          ? ', but another record holds it'
           : ''}.
     </p>
   {/if}
@@ -228,9 +227,9 @@
   {#if canTest}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3">
       <p class="text-sm">
-        Scan or copy the test link into a client on the device you test with (it uses FCP's own test
-        account), connect, load a page, then tick Works. A node with several server names has one
-        link per name: test each of them before you tick. Nobody else can see this node yet.
+        Open the test link in a client, connect and load a page, then tick Works. It uses FCP's test
+        account. A node with several SNIs has one link per SNI: test each. Nobody else sees this
+        node yet.
       </p>
       {#if link}
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -312,14 +311,14 @@
     </div>
   {:else if canProtect && origin}
     <p class="bg-card mt-3 rounded-md border p-3 text-sm">
-      It goes live again through its edges below: Front again makes new addresses, you try each one,
-      then you approve go-live.
+      It goes live again through its edges below. Front again makes new addresses. Test each one,
+      then approve go-live.
     </p>
   {:else if canProtect}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3 text-sm">
       <p>
-        Members reach this node through provider addresses. Front it from Edges: FCP creates them,
-        you try each one, then you approve go-live there.
+        Members reach this node through edge addresses. Front it from Edges, test each new address,
+        then approve go-live there.
       </p>
       <Button size="sm" onclick={protect}>Front this node</Button>
     </div>
@@ -360,7 +359,7 @@
 <ConfirmDialog
   bind:open={wipedOpen}
   title={`Is ${intent.name} gone?`}
-  body="This node was taken over as it was, so FCP never ran its machine and nothing reports the wipe. Confirm you have stopped and cleaned up the machine yourself; the retirement then closes and the name is free again."
+  body="FCP never ran this machine, so nothing reports the wipe. Confirm you stopped and cleaned it up yourself. The retirement then closes and the node name is free again."
   confirmLabel="It is gone"
   onConfirm={() =>
     run(async () => {
@@ -371,9 +370,9 @@
 <ConfirmDialog
   bind:open={retireOpen}
   title={`Retire ${intent.name}?`}
-  body={'The node role asked to retire it. Members on this node get the unavailable answer from now on, until they are moved. Its addresses, edges and records are removed. ' +
+  body={'The node role asked to retire it. Members on it get the unavailable answer until they are moved. Its addresses, edges and records are removed. ' +
     (intent.adopted
-      ? 'FCP never ran this machine, so confirm here once you have cleaned it up yourself.'
+      ? 'Clean up the machine yourself, then confirm here.'
       : 'The role then wipes the machine.')}
   typed={intent.name}
   confirmLabel="Retire"

@@ -44,8 +44,8 @@
       open = false;
       toast.success(
         r.rolloutId
-          ? 'Sent. Once the backend has the names, test one on the node.'
-          : 'The backend already had exactly these names.',
+          ? 'Sent. Once the backend has the SNIs, test one on the node.'
+          : 'The backend already had exactly these SNIs.',
       );
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
@@ -76,7 +76,7 @@
         {/each}
         {#if plan.added.length + plan.removed.length > 0}
           <details>
-            <summary class="text-muted-foreground cursor-pointer">The names</summary>
+            <summary class="text-muted-foreground cursor-pointer">The SNIs</summary>
             {#each plan.added as n (n)}
               <p class="break-all text-emerald-700 dark:text-emerald-400">+ {n}</p>
             {/each}

@@ -87,7 +87,7 @@ export function originSentence(s: OriginStatus): string {
         return `${plural(s.offline, 'address is', 'addresses are')} offline.`;
       // Any run (a spare, a new address, a replacement), not only a replacement.
       if (s.code === 'rotation_failed')
-        return 'The last run on this node failed. Open the node to see the step that failed.';
+        return 'The last run on this node failed. Open the node to see which step.';
       // What is wrong, then what to do: never only that something waits.
       const code = s.code ?? 'needs_operator';
       return `${plainWords(codeLabel(code))}. ${nextStep(code)}`;
@@ -139,8 +139,8 @@ export function fleetSentence(f: FleetStatus | null): string {
  */
 export function oneAddressNote(desired: number): string {
   return desired <= 1
-    ? 'One address in use, as set for this node. There is no backup address: if it is blocked, members in that country wait about 10 to 15 minutes for FCP to replace it.'
-    : `1 of the ${desired} addresses wanted is in use. Until another one is, members have no backup address while FCP replaces a blocked one.`;
+    ? 'One address in use, as set for this node. No backup: if it is blocked, members in that country wait 10 to 15 minutes for a replacement.'
+    : `1 of ${desired} wanted addresses is in use. Until another is, members have no backup while a blocked one is replaced.`;
 }
 
 export interface DeliveryWords {
@@ -163,7 +163,7 @@ export function deliveryWords(d: OriginDelivery): DeliveryWords {
         tone: 'muted',
         headline: 'Nothing to deliver',
         detail:
-          'A manual origin has no subscriptions that FCP serves. Wire clients from the connection plan on this page.',
+          'FCP serves no subscriptions for a manual origin. Wire clients from the connection plan on this page.',
         reason: null,
         fix: null,
       };
@@ -172,7 +172,7 @@ export function deliveryWords(d: OriginDelivery): DeliveryWords {
         tone: 'muted',
         headline: 'Members use the direct address',
         detail:
-          'Nothing is live through edges for this node yet, so members receive its own address. Going live switches them over.',
+          "Nothing is live through edges yet, so members get the node's own address. Going live switches them over.",
         reason: null,
         fix: null,
       };
@@ -180,8 +180,7 @@ export function deliveryWords(d: OriginDelivery): DeliveryWords {
       return {
         tone: 'success',
         headline: 'Serving through edges',
-        detail:
-          'Members on this origin receive edge addresses only. The origin address is never handed out.',
+        detail: 'Members get edge addresses only. The origin address is never handed out.',
         reason: null,
         fix: null,
       };
@@ -190,7 +189,7 @@ export function deliveryWords(d: OriginDelivery): DeliveryWords {
         tone: 'warning',
         headline: 'Serving, with a problem',
         detail:
-          'Edges are published, but a sample subscription did not render cleanly. Members whose subscription hits the same problem are answered "temporarily unavailable".',
+          'Edges are published, but a sample subscription did not render cleanly. Members who hit the same problem get "temporarily unavailable".',
         reason: why(d.code),
         fix: d.code ? (codeFix(d.code) ?? null) : null,
       };
@@ -199,7 +198,7 @@ export function deliveryWords(d: OriginDelivery): DeliveryWords {
         tone: 'danger',
         headline: 'Members get nothing',
         detail:
-          'Subscriptions on this origin are answered "temporarily unavailable" instead of the direct address. Clients keep their last configuration until something can be served.',
+          'Subscriptions get "temporarily unavailable" instead of the direct address. Clients keep their last configuration until something can be served.',
         reason: why(d.code),
         fix: d.code ? (codeFix(d.code) ?? null) : null,
       };
@@ -247,30 +246,30 @@ export const ROUND_RESULT_WORDS: Record<CountryRoundResult, WordsWithTone> = {
 
 /** Every reason the server records on a round or a track, as one sentence. */
 export const COUNTRY_REASON_WORDS: Record<CountryReason, string> = {
-  too_few: 'Too few vantages there answered, or they sat on too few networks, to decide anything.',
-  no_evidence: 'No vantage there gave an answer: the probe services failed or had no probe there.',
-  mixed: 'Some vantages there reached it and more than a third failed, so nothing is decided.',
+  too_few: 'Too few vantages or networks there answered to decide.',
+  no_evidence: 'No vantage there answered. The probe services failed or had no probe there.',
+  mixed: 'Some vantages there reached it and over a third failed. Nothing is decided.',
   controls_failed:
-    'Every vantage there failed, and so did the control countries: it looks broken, not blocked.',
+    'Every vantage there failed, and so did the control countries. It looks broken, not blocked.',
   tls_unchecked:
-    'It answers from there, but FCP has not yet checked its TLS handshake with the real name.',
-  tls_failed: 'It answers from there, but FCP’s own TLS check with the real name failed.',
+    'It answers from there, but its TLS handshake with the real SNI is not checked yet.',
+  tls_failed: 'It answers from there, but FCP’s TLS check with the real SNI failed.',
   needs_repeat:
     'One check said blocked. FCP checks again at least 30 minutes later before it counts.',
   group_blocked:
     'Blocked on its first check, because other addresses in its location are blocked there too.',
   country_wide:
-    'Held as not known: most addresses checked from there failed at once, which looks like an outage or a probe problem, not a censor.',
-  expired: 'Its last decided result is older than the checks keep, so it is not known again.',
+    'Held as not known. Most addresses checked from there failed at once, which looks like an outage or a probe problem.',
+  expired: 'Its last decided result has lapsed, so it is not known again.',
   handshake:
-    'Connections reach it from there, but no name gets through the handshake: it is blocked by name.',
+    'Connections reach it from there, but no SNI gets through the handshake. It is blocked by SNI.',
   no_tcp_pairing:
-    'A name check failed from there, but no fresh working connection check pairs with it, so it does not count yet.',
-  recovered: 'Names get through from there again.',
+    'An SNI check failed from there with no fresh working connection check to pair with, so it does not count yet.',
+  recovered: 'SNIs get through from there again.',
   blocked:
     'Every vantage there failed in checks at least 30 minutes apart while the control countries reached it.',
   never_reached:
-    'No check from there has ever reached it, from several networks over hours, while the node’s other addresses are reached from there.',
+    'No check from there has ever reached it, from several networks over hours, though the node’s other addresses are reached.',
 };
 
 /** An edge with nothing decided of its own, in a location blocked there. */
@@ -291,8 +290,7 @@ export const PROBE_FAILURE_WORDS: Record<ProbeFailureClass, { label: string; sen
   },
   globalping_limit: {
     label: 'Out of Globalping credits',
-    sentence:
-      'The measurement would not fit in what Globalping allows this hour, so it was not started.',
+    sentence: 'It would not fit in what Globalping allows this hour, so it was not started.',
   },
   no_key: { label: 'No key set', sentence: 'The source needs a key that is not set.' },
   no_vantages: {
@@ -305,8 +303,7 @@ export const PROBE_FAILURE_WORDS: Record<ProbeFailureClass, { label: string; sen
   network: { label: 'Not reachable', sentence: 'FCP could not reach the service.' },
   no_route: {
     label: 'Not tested',
-    sentence:
-      'FCP’s own server has no route for this address family, so it could not test the address.',
+    sentence: 'FCP’s server has no route for this address family, so it could not test it.',
   },
   error: { label: 'Failed', sentence: 'The run failed for another reason.' },
   no_results: { label: 'Nothing came back', sentence: 'The run finished without a single result.' },
@@ -336,7 +333,7 @@ export const GROUP_GRADE_WORDS: Record<CountryGroupGrade, WordsWithTone> = {
   blocked: {
     label: 'Blocked',
     sentence:
-      'At least two addresses there are blocked, at least half of those decided, none works.',
+      'At least two addresses there are blocked, at least half of those decided. None works.',
     tone: 'danger',
   },
   mixed: {
@@ -531,7 +528,7 @@ export function probePart(c: Pick<GlobalpingCap, 'perHour' | 'reserved'>): numbe
 
 /** ` (500 an hour, less 48 kept for name checks)`, or nothing without a share. */
 function shareNote(c: GlobalpingCap): string {
-  return c.reserved > 0 ? ` (${c.perHour} an hour, less ${c.reserved} kept for name checks)` : '';
+  return c.reserved > 0 ? ` (${c.perHour} an hour, less ${c.reserved} kept for SNI checks)` : '';
 }
 
 /**
@@ -548,8 +545,8 @@ function capSentence(c: GlobalpingCap): string {
   const part = probePart(c);
   if (part < c.perRun)
     return c.reserved > 0
-      ? `What its hourly cap leaves the probes (${part} tests: ${c.perHour} less ${c.reserved} kept for name checks) is smaller than one run (${c.perRun} tests), so it never runs.`
-      : `Its hourly cap (${c.perHour} tests) is smaller than one run (${c.perRun} tests), so it never runs.`;
+      ? `Its hourly cap of ${c.perHour} tests, less ${c.reserved} kept for SNI checks, leaves the probes ${part}. One run needs ${c.perRun}, so it never runs.`
+      : `Its hourly cap of ${c.perHour} tests is less than one run of ${c.perRun}, so it never runs.`;
   const use = `${c.used} of the ${part} tests the probes may use an hour${shareNote(c)} were used in the last hour, and a run asks ${c.perRun}`;
   return c.skipped > 0
     ? `${c.skipped} of the ${c.rounds} rounds in the last hour ran without it: ${use}.`
@@ -597,7 +594,7 @@ export function accountWords(c: GlobalpingCap | null | undefined, now: number): 
     if (a.remaining === 0 && a.credits === 0)
       parts.push('Globalping refuses new tests until its hour resets.');
   } else if (a.type === 'ip') {
-    parts.push('No token is set, so there are no credits: past the free tests Globalping refuses.');
+    parts.push('No token is set, so there are no credits. Past the free tests Globalping refuses.');
   }
   return `Globalping's own count, ${relativeTime(a.at, now)}: ${parts.join(' ')}`;
 }
@@ -636,7 +633,7 @@ function sourceWordsOnly(
           ? 'Hourly cap below one run'
           : 'Held back by its hourly cap',
       tone: 'warning',
-      detail: `${capSentence(h.cap)} The countries only it reaches go quiet until it runs again. Raise "Globalping tests per hour" (past Globalping's free tests each test costs a credit) or lower "Vantage points per country".${h.runs > 0 ? ` ${counted}` : ''}`,
+      detail: `${capSentence(h.cap)} Countries only it reaches go quiet until it runs again. Raise "Globalping tests per hour" or lower "Vantage points per country". Past the free tests, each test costs a credit.${h.runs > 0 ? ` ${counted}` : ''}`,
     };
   if (h.runs === 0)
     return { label: 'No runs yet', tone: 'muted', detail: `Nothing has run yet.${capUse}` };

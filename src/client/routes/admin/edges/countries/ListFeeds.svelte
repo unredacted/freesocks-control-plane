@@ -66,7 +66,7 @@
     if (
       await run(
         () => setCountryListFeeds(list.id, feeds),
-        (n) => (n > 0 ? 'Saved. Its names are going in now.' : 'Saved.'),
+        (n) => (n > 0 ? 'Saved. Its hostnames are going in now.' : 'Saved.'),
       )
     )
       open = false;
@@ -77,10 +77,10 @@
   <CardContent class="space-y-3 py-5 text-sm">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0 flex-1">
-        <h2 class="text-base font-medium">Names into finding names</h2>
+        <h2 class="text-base font-medium">Hostnames as SNI candidates</h2>
         <p class="text-muted-foreground mt-1">
-          Its names can go to networks and name lists as candidates, and are checked like any other.
-          Being on a list says nothing about the address a name is used with.
+          Its hostnames can go to networks and SNI lists as candidates, checked like any other.
+          Being on the list says nothing about the address an SNI is used with.
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -93,7 +93,7 @@
             onclick={() =>
               void run(
                 () => feedCountryListAgain(list.id),
-                (n) => (n > 0 ? 'Its names are going in again.' : 'Nothing to feed now.'),
+                (n) => (n > 0 ? 'Its hostnames are going in again.' : 'Nothing to feed now.'),
               )}
           >
             Feed again
@@ -102,7 +102,7 @@
       </div>
     </div>
     {#if list.feeds.length === 0}
-      <p class="text-muted-foreground">Its names go nowhere.</p>
+      <p class="text-muted-foreground">Its hostnames go nowhere.</p>
     {:else}
       <ul class="divide-y rounded-md border" aria-label="Feeds">
         {#each list.feeds as f, i (i)}
@@ -110,7 +110,7 @@
             <p class="font-medium">
               {f.label ?? 'Removed'}
               <span class="text-muted-foreground font-normal">
-                ({f.kind === 'network' ? 'network' : 'name list'})
+                ({f.kind === 'network' ? 'network' : 'SNI list'})
               </span>
             </p>
             <p class="text-muted-foreground">{feedLine(f)}</p>
@@ -124,7 +124,7 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-md`}>
     <Dialog.Header>
-      <Dialog.Title>Where its names go</Dialog.Title>
+      <Dialog.Title>Where its hostnames go</Dialog.Title>
       <Dialog.Description>
         At most {MAX_LIST_FEEDS}. A new choice takes the version in use now.
       </Dialog.Description>
@@ -146,7 +146,7 @@
         {/each}
       </div>
       <div class="space-y-2">
-        <p class="font-medium">Name lists</p>
+        <p class="font-medium">SNI lists</p>
         {#each families.data?.families ?? [] as f (f.slug)}
           <div class="flex items-center gap-2">
             <Checkbox
@@ -157,7 +157,7 @@
             <Label for={`${uid}-f-${f.slug}`} class="font-normal">{f.label}</Label>
           </div>
         {:else}
-          <p class="text-muted-foreground">No name list yet.</p>
+          <p class="text-muted-foreground">No SNI list yet.</p>
         {/each}
       </div>
     </div>

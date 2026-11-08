@@ -257,11 +257,11 @@
     if (rows.length === 0) return 'Keep at least one mode.';
     for (const r of rows)
       if (isReality(r) && !r.familySlug)
-        return `Pick a server-name family for ${r.name || r.slug || 'each REALITY mode'}.`;
+        return `Pick an SNI list for ${r.name || r.slug || 'each REALITY mode'}.`;
       else if (r.shape.transport === 'hysteria' && !r.hysteria?.serverName.trim())
-        return `Give ${r.name || r.slug || 'each Hysteria mode'} the server name its certificate is made for.`;
+        return `Give ${r.name || r.slug || 'each Hysteria mode'} the SNI its certificate is for.`;
     if (originAccountId && !originZoneId)
-      return 'Pick the zone for origin names, or no managed zone.';
+      return 'Pick the zone for origin hostnames, or no managed zone.';
     return null;
   }
 
@@ -304,9 +304,9 @@
   );
   const familyState: Record<string, string> = {
     none: '',
-    bound: 'family bound',
-    unbound: 'family not bound yet',
-    target_mismatch: 'family target differs',
+    bound: 'SNI list bound',
+    unbound: 'SNI list not bound yet',
+    target_mismatch: 'SNI list checks another site',
   };
 </script>
 
@@ -316,13 +316,11 @@
       <Sheet.Title>{changing ? "Change this backend's setup" : 'Set up this backend'}</Sheet.Title>
       <Sheet.Description>
         {#if changing}
-          The profile and the modes it is set up for stay as they are: nodes and members rely on
-          them. Add a mode, or pick the zone WebSocket nodes get their origin names in. What a
-          change does is shown before it runs.
+          The profile and the set-up modes stay as they are. Add a mode, or pick the zone for
+          WebSocket origin hostnames. You see what a change does before it runs.
         {:else}
-          The modes this backend serves, each with its transport, its group and (REALITY) the family
-          of server names it borrows. Nothing here is a secret: keys are made on the way and kept
-          nowhere.
+          The modes this backend serves, each with a transport and a group. REALITY modes also take
+          an SNI list. Keys are made during setup and never stored.
         {/if}
       </Sheet.Description>
     </Sheet.Header>
@@ -344,7 +342,7 @@
               {@const plain = [
                 shapeWords(m.shape),
                 m.transport ? `port ${m.transport.port}` : null,
-                m.familySlug ? `names from ${m.familySlug}` : null,
+                m.familySlug ? `SNIs from ${m.familySlug}` : null,
                 m.group.renamedFrom ? `renamed from ${m.group.renamedFrom}` : null,
               ]
                 .filter(Boolean)
@@ -362,7 +360,7 @@
             {/each}
             {#if setup.originDns}
               <li>
-                Origin names under {setup.originDns.zoneName}{currentAccountName
+                Origin hostnames under {setup.originDns.zoneName}{currentAccountName
                   ? `, through ${currentAccountName}`
                   : ''}.
               </li>
@@ -382,7 +380,7 @@
         >
           {#if changing}
             <p class="text-sm">
-              Profile <span class="font-medium">{profileName}</span>, kept: its nodes run it.
+              Profile <span class="font-medium">{profileName}</span> stays as it is.
             </p>
           {:else}
             <div class="space-y-1.5">
@@ -395,13 +393,12 @@
             <legend class="text-sm font-medium">{changing ? 'New modes' : 'Modes'}</legend>
             <p class="text-muted-foreground text-xs">
               {#if changing}
-                The modes set up above stay as they are. A new mode needs its transport in the
-                profile first (Add a transport, on a node's page); setting it up here then gives it
-                its group and placement.
+                A new mode needs its transport in the profile first. Add it with Add a transport on
+                a node's page, then set up the mode here to give it a group and placement.
               {:else}
-                One transport per mode. A node serves one mode; members reach a direct node at its
-                own address and a fronted one through an edge. REALITY modes take their site and
-                server names from a family (Edges, Server names).
+                One transport per mode, and one mode per node. Members reach a direct node at its
+                own address and a fronted node through an edge. REALITY modes take their site and
+                SNIs from a family under Advanced, Server names.
               {/if}
             </p>
             <div class="space-y-3">
@@ -449,14 +446,13 @@
                   <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     {#if isReality(r)}
                       <div class="space-y-1 sm:col-span-2">
-                        <Label for={`${uid}-fam-${r.key}`} class="text-xs">Server-name family</Label
-                        >
+                        <Label for={`${uid}-fam-${r.key}`} class="text-xs">SNI list</Label>
                         <select
                           id={`${uid}-fam-${r.key}`}
                           class="bg-background w-full rounded-md border px-2 py-1.5 text-sm"
                           bind:value={r.familySlug}
                         >
-                          <option value={undefined}>Pick a family</option>
+                          <option value={undefined}>Pick an SNI list</option>
                           {#each familyRows as f (f.slug)}
                             <option value={f.slug}
                               >{f.label} ({f.target.address}, {f.counts.ready} usable)</option
@@ -465,7 +461,7 @@
                         </select>
                         {#if familyRows.length === 0}
                           <p class="text-xs text-amber-700 dark:text-amber-300">
-                            No family yet. Add one under Edges, Server names, and let its names
+                            No family yet. Add one under Advanced, Server names, and let its SNIs
                             qualify.
                           </p>
                         {/if}
@@ -480,9 +476,7 @@
                       {/if}
                     {:else if r.hysteria}
                       <div class="space-y-1 sm:col-span-2">
-                        <Label for={`${uid}-sni-${r.key}`} class="text-xs"
-                          >Server name of its certificate</Label
-                        >
+                        <Label for={`${uid}-sni-${r.key}`} class="text-xs">Certificate SNI</Label>
                         <Input
                           id={`${uid}-sni-${r.key}`}
                           bind:value={r.hysteria.serverName}
@@ -534,7 +528,7 @@
           </fieldset>
 
           <div class="space-y-1.5">
-            <Label for={`${uid}-dns`}>Origin names for WebSocket nodes</Label>
+            <Label for={`${uid}-dns`}>Origin hostnames for WebSocket nodes</Label>
             <select
               id={`${uid}-dns`}
               class="bg-background w-full rounded-md border px-3 py-2 text-sm"
@@ -548,7 +542,7 @@
             </select>
             {#if originAccount && !originAccount.enabled}
               <p class="text-xs text-amber-700 dark:text-amber-300">
-                This account is switched off. Switch it on under Edges, Providers, or pick another.
+                This account is off. Turn it on under Edge providers, or pick another.
               </p>
             {/if}
             {#if originAccountId}
@@ -586,13 +580,10 @@
                   <p class="text-xs text-amber-700 dark:text-amber-300">{zonesError}</p>
                 {:else if zones.length === 0 && !zoneCatalog.isPending && !zonesRefreshing}
                   <p class="text-xs text-amber-700 dark:text-amber-300">
-                    No zone is listed for this account. Add the zone to it at the provider, then
-                    refresh its zones.
+                    No zone is listed for this account. Add it at the provider, then refresh zones.
                   </p>
                 {:else if !originZoneId}
-                  <p class="text-muted-foreground text-xs">
-                    Pick the zone the origin names go into.
-                  </p>
+                  <p class="text-muted-foreground text-xs">Pick the zone for origin hostnames.</p>
                 {/if}
                 {#if zoneCatalog.data?.kinds.zones?.truncated}
                   <p class="text-muted-foreground text-xs">More zones exist than are listed.</p>
@@ -600,8 +591,8 @@
               </div>
             {/if}
             <p class="text-muted-foreground text-xs">
-              A WebSocket node behind a CDN front gets the origin name &lt;label&gt;.&lt;zone&gt;,
-              made and kept by FCP in the zone picked here.
+              A WebSocket node behind a CDN front gets the origin hostname
+              &lt;label&gt;.&lt;zone&gt;, which FCP manages in this zone.
             </p>
           </div>
 
@@ -644,7 +635,7 @@
 <ConfirmDialog
   bind:open={adoptOpen}
   title="Adopt this backend?"
-  body="It already has nodes or addresses. FCP becomes its writer: the profile is adopted as it is (keys untouched), groups an earlier setup named are renamed in place, and no group loses a transport its members are served on (the setup stops instead). FCP's subscription templates replace the backend's: members' apps take FCP's settings at their next refresh, and some pick their server again once."
+  body="It already has nodes or addresses. FCP becomes its writer and adopts the profile as it is, keys included. Groups from an earlier setup are renamed in place. If a group would lose a transport its members use, the setup stops. FCP's subscription templates replace the backend's, so apps take FCP's settings at their next refresh and some pick their server again once."
   typed={slug}
   confirmLabel="Adopt"
   danger

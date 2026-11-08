@@ -130,8 +130,8 @@
         </Button>
       </div>
       <p class="text-muted-foreground text-xs">
-        It needs its port open on the node first. Members get it only once it is checked, and the
-        node’s own mode keeps serving throughout.
+        Its port must be open on the node first. Members get it once it is checked. The node’s own
+        mode keeps serving.
       </p>
     {/if}
   </section>

@@ -6,9 +6,9 @@ const nameOf = (c: string) => NAMES[c] ?? c;
 
 describe('meant-for words', () => {
   test('the line under a location', () => {
-    expect(meantForLine([], nameOf)).toBe('Meant for no country in particular.');
+    expect(meantForLine([], nameOf)).toBe('Set for no country in particular.');
     expect(meantForLine(['IR', 'RU'], nameOf)).toBe(
-      'Meant for Iran, Russia: members there get an address here first, unless it is blocked there.',
+      'Set for Iran, Russia: members there get an address here first, unless it is blocked there.',
     );
   });
 
@@ -40,7 +40,7 @@ describe('meant-for words', () => {
         nameOf,
       ),
     ).toEqual([
-      'Iran: about 50% on node-a, about 0% on B of members get a different first address.',
+      'Iran: about 50% of members on node-a, about 0% of members on B get a different first address.',
       'Russia: no node has an address in use here yet.',
     ]);
     expect(
@@ -48,7 +48,7 @@ describe('meant-for words', () => {
         { valid: false, code: 'meant_for_too_many', steering: true, countries: [] },
         nameOf,
       ),
-    ).toEqual(['A location is meant for at most 8 countries.']);
+    ).toEqual(['A location takes at most 8 countries.']);
   });
 
   test('no em-dash in any sentence', () => {

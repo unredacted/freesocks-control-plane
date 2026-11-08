@@ -289,7 +289,7 @@
             entries={r.audit}
             max={15}
             label="Rotation audit trail"
-            emptyText="No audit rows are tagged with this rotation yet."
+            emptyText="No audit entries for this rotation yet."
           />
         </section>
       {/if}
@@ -299,7 +299,7 @@
       <Sheet.Footer>
         <p class="text-muted-foreground me-auto text-xs sm:self-center">
           {cancellable
-            ? 'Cancelling stops the run at the next safe point and rolls back anything already published.'
+            ? 'Stops the run at the next safe point and rolls back anything already published.'
             : 'This phase cannot be cancelled. It finishes or rolls back on its own.'}
         </p>
         <Button
@@ -317,7 +317,7 @@
 <ConfirmDialog
   bind:open={confirmCancel}
   title="Cancel this rotation?"
-  body="The run stops at the next safe point. An edge that was already created is kept as a standby or destroyed, and a Host switch that already happened is rolled back."
+  body="The run stops at the next safe point. A new edge is kept as a standby or destroyed. A Host switch that already happened is rolled back."
   confirmLabel="Cancel rotation"
   cancelLabel="Keep running"
   danger

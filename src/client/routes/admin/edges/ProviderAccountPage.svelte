@@ -201,7 +201,7 @@
     back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
   />
   <AdminListState
-    emptyText="This account does not exist any more. Go back to Providers to pick another one or add it again."
+    emptyText="This account no longer exists. Go back to Providers to pick or add one."
   />
 {:else if account.isError || !a}
   <SectionHeader
@@ -311,8 +311,8 @@
             <KeyValue
               title="Settings"
               description={settingsRows.length > 0
-                ? 'The settings of the account itself. Where its edges are created is a location (below).'
-                : 'This account is its credentials. Where its edges are created is a location (below).'}
+                ? "The account's own settings. Where its edges are created is set under Locations."
+                : 'This account has only credentials. Where its edges are created is set under Locations.'}
               rows={settingsRows}
               columns={1}
             />
@@ -400,8 +400,8 @@
             </p>
             {#if useNow === 'front' || useChoice === 'front'}
               <p class="text-xs text-muted-foreground">
-                The CDN still sends the member's address to the node in X-Forwarded-For, which no
-                rule can remove there: the node removes it before the proxy sees the request.
+                The CDN still sends the member's address in X-Forwarded-For, and no CDN rule removes
+                it. The node strips it before the proxy sees the request.
               </p>
             {/if}
           </CardContent>
@@ -412,9 +412,8 @@
         <OptionDefaultsCard account={a} fields={certificateFields}>
           {#if sharesCertificates}
             <p class="text-xs text-muted-foreground">
-              Each zone has its own shared certificate, shown with the zone under Locations. It is
-              read at the provider when the account is tested, and ordered by the first new front
-              there.
+              Each zone has its own shared certificate, shown under Locations. A credential test
+              reads it, and the first new front in the zone orders it.
             </p>
           {/if}
         </OptionDefaultsCard>
@@ -425,13 +424,13 @@
           <CardHeader>
             <CardTitle class="text-base">Domains</CardTitle>
             <CardDescription>
-              How a new front's name is attached to its service. Fronts that exist keep theirs.
+              How a new front's hostname is attached to its service. Existing fronts keep theirs.
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-4">
             <div class="flex flex-wrap items-end gap-3">
               <div class="max-w-md flex-1 space-y-1.5">
-                <Label for="acct-domains">A new front's name is</Label>
+                <Label for="acct-domains">A new front's hostname is</Label>
                 <Select.Root
                   type="single"
                   value={domainsChoice ?? domainsNow}
@@ -590,15 +589,15 @@
       ? 'Let this account front traffic?'
       : 'Make this account DNS only?'}
     body={useChoice === 'front'
-      ? 'Nodes can then be fronted through its zones. Its zones are checked with a credential test right away, and its locations are trusted again by their first proven front. Fronts it already has are kept.'
-      : 'It gets no new fronts and its spares do not go live. Fronts that carry members now are kept until they are replaced or deleted. The records it holds for other fronts are not touched.'}
+      ? 'Nodes can be fronted through its zones. A credential test checks the zones now, and each location is trusted again by its first proven front. Existing fronts are kept.'
+      : 'It gets no new fronts and its spares do not go live. Fronts in use stay until replaced or deleted. Its records for other fronts are kept.'}
     confirmLabel={useChoice === 'front' ? 'Front traffic too' : 'DNS only'}
     onConfirm={saveUse}
   />
   <ConfirmDialog
     bind:open={domainsOpen}
-    title="Change how fronts get their names?"
-    body="New fronts of this account get their name the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
+    title="Change how fronts get their hostnames?"
+    body="New fronts get their hostname the new way. Existing fronts keep theirs. The account loses its trust until you test it again and its next front is proven."
     confirmLabel="Change domains"
     onConfirm={saveDomains}
   />

@@ -100,15 +100,13 @@
         >{existing ? `Edit listener ${existing.listenerKey}` : 'Add a listener'}</Dialog.Title
       >
       <Dialog.Description>
-        A listener is one transport on the origin and what it speaks. Each listener gets its own
-        edges.
+        One transport on the origin. Each listener gets its own edges.
       </Dialog.Description>
     </Dialog.Header>
     <form class="space-y-4" onsubmit={submit}>
       {#if existing?.source === 'role'}
         <p class="rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm">
-          The node role registered this listener earlier. It no longer changes listeners, so what
-          you set here stays.
+          Registered by the node role. The role no longer changes listeners, so your edits stay.
         </p>
       {/if}
       <ListenerFields
@@ -120,8 +118,7 @@
       />
       {#if hasEdge}
         <p class="text-muted-foreground text-xs">
-          What this listener speaks is fixed while an edge fronts it. Add a new listener for another
-          combination.
+          The protocol is fixed while an edge fronts it. Add a new listener for another combination.
         </p>
       {/if}
       {#if submitted && issues.length > 0}

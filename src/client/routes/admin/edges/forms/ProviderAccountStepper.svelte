@@ -368,7 +368,7 @@
         id: 'credentials',
         title: 'Credentials',
         description:
-          'Which provider, and the secrets FCP uses to call it. Connect checks them; nothing is saved yet.',
+          'The provider and the secrets FCP uses to call it. Connect checks them without saving.',
         status: status('credentials'),
       },
       {
@@ -379,11 +379,11 @@
         description:
           meta.layer === 'l7'
             ? compact
-              ? 'Optionally a first zone to front in. Any zone the token reaches can be picked when a node is fronted.'
-              : 'Optionally a first zone to front in (any zone the token reaches can be picked when a node is fronted), and how many this account may run.'
+              ? 'An optional first zone. Any zone the token reaches can be picked when you front a node.'
+              : 'An optional first zone, and how many edges this account may run. Any zone the token reaches can be picked when you front a node.'
             : compact
-              ? 'Optionally where its first addresses are created. Any region the key reaches can be picked when a node is fronted.'
-              : 'Optionally where its first addresses are created (any region the key reaches can be picked when a node is fronted), and how many this account may run.',
+              ? 'An optional first region. Any region the key reaches can be picked when you front a node.'
+              : 'An optional first region, and how many edges this account may run. Any region the key reaches can be picked when you front a node.',
         status: status('placement'),
         ...(step !== 'placement' ? { note: 'after connecting' } : {}),
       },
@@ -401,8 +401,8 @@
   /** The region hint: an L4 address near the node keeps the extra hop short. */
   const regionHint = $derived(
     nodeCountry
-      ? `The node is in ${nodeCountry}. Pick a region close to it: members reach the address, which forwards to the node.`
-      : 'Pick a region close to the node: members reach the address, which forwards to the node.',
+      ? `The node is in ${nodeCountry}. Pick a region close to it to keep the extra hop short.`
+      : 'Pick a region close to the node to keep the extra hop short.',
   );
   const locked = $derived(create.isPending || createdId !== null);
 </script>
@@ -435,14 +435,14 @@
       </Select.Root>
     {:else if f.from === 'dnsAccounts'}
       <AdminListState
-        emptyText="No DNS account exists yet. Add one (see DNS providers in the provider list) to pick a zone for this account's fronts."
+        emptyText="No DNS account yet. Add one from the DNS providers in the provider list to pick a zone."
       />
     {:else if f.from === 'dnsZones'}
       <p class="text-muted-foreground text-sm">
         {values['dnsAccountId']
           ? dnsCatalog.isPending
             ? 'Reading the zones this DNS account reaches.'
-            : 'This DNS account lists no zone yet. Test it from its page to list its zones.'
+            : 'No zones listed yet. Test the DNS account from its page.'
           : 'Choose the DNS account first.'}
       </p>
     {:else}
@@ -457,9 +457,7 @@
         oninput={(e) => onFieldChange(f, e.currentTarget.value)}
       />
       {#if f.kind === 'select' && f.from !== 'subnets'}
-        <p class="text-muted-foreground text-xs">
-          The provider returned no list for this, so type the id.
-        </p>
+        <p class="text-muted-foreground text-xs">The provider returned no list. Type the id.</p>
       {/if}
     {/if}
     {#if f.help}<p class="text-muted-foreground text-xs">{f.help}</p>{/if}
@@ -509,8 +507,7 @@
                   <span>{DNS_ACCOUNT_BLURB}</span>
                 </p>
                 <p>
-                  DNS providers FCP supports: {dnsProviderNames(EDGE_PROVIDER_IDS).join(', ')}. More
-                  DNS-only providers can be added later.
+                  Supported DNS providers: {dnsProviderNames(EDGE_PROVIDER_IDS).join(', ')}.
                 </p>
               </div>
             {:else}
@@ -561,10 +558,10 @@
             class="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
           >
             <p>
-              {providerLabel(provider)} fronts need a DNS account: their names, and the certificate challenge
-              for each one, are written into a zone of a DNS provider account.
+              {providerLabel(provider)} fronts need a DNS account. Their hostnames and certificate challenges
+              go in its zone.
               {needsDnsFirst
-                ? 'No DNS account exists yet. This account can be added now and its fronts picked once one does.'
+                ? 'No DNS account yet. You can add this account now and use its fronts once one exists.'
                 : `You have ${dnsAccounts.length === 1 ? 'one' : dnsAccounts.length} to choose from.`}
             </p>
             {#if needsDnsFirst && dnsProviders.length > 0}
@@ -598,7 +595,7 @@
                 disabled={discover.isPending}
                 oninput={(e) => (credentials = { ...credentials, [c]: e.currentTarget.value })}
               />
-              <p class="text-muted-foreground text-xs">Write only: it is never shown again.</p>
+              <p class="text-muted-foreground text-xs">Write only. Never shown again.</p>
             </div>
           {/each}
           {#each fieldsFor(provider, 'credentials') as f (f.key)}
@@ -652,7 +649,7 @@
                 class="size-4 text-emerald-600 dark:text-emerald-400"
                 aria-hidden="true"
               />
-              Connected. The provider answered with these credentials.
+              Connected. The provider accepted these credentials.
             </p>
           {/if}
           {#if discoveredLists.length > 0}
@@ -696,8 +693,8 @@
         </div>
         <p class="text-muted-foreground text-sm">
           {meta.layer === 'l7'
-            ? 'A first zone is optional: leave the zone empty to add the account alone.'
-            : 'A first location is optional: leave the region empty to add the account alone. The regions it reaches are offered when you front a node.'}
+            ? 'A first zone is optional. Leave it empty to add only the account.'
+            : 'A first location is optional. Leave the region empty to add only the account. Its regions are offered when you front a node.'}
         </p>
         {#if needsDnsFirst}
           <CodeNote
@@ -705,7 +702,7 @@
             issue={{
               code: 'dns_account_missing',
               detail:
-                'This provider keeps its hostnames in a zone of a DNS account. Its fronts can be picked once one exists.',
+                'This provider needs a DNS account zone for its hostnames. Its fronts can be used once one exists.',
             }}
           >
             {#snippet actions()}
@@ -790,7 +787,7 @@
               code: testOutcome.code ?? 'credentials_failed',
               subject: name,
               detail:
-                'The account was saved, but its credential test failed. Nothing can be provisioned from it until a test passes.',
+                'Saved, but the credential test failed. Nothing can be provisioned until a test passes.',
             }}
           />
           <ProviderAnswer detail={testOutcome.detail} />
@@ -828,8 +825,8 @@
               The account keeps the default limits ({DEFAULT_MAX_LIVE_EDGES} addresses at most, {DEFAULT_DAILY_ALLOCATION_BUDGET}
               new per day). Change them later from Providers.
             {:else}
-              A new account is tested but not trusted: it can only be used for a test edge until one
-              of its addresses is confirmed with a real session, or you trust it by hand.
+              A new account is tested but not trusted. It only runs test edges until one of its
+              addresses passes a real session, or you trust it by hand.
             {/if}
           </p>
         {/if}

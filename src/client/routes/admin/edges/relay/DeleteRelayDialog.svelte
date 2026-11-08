@@ -43,12 +43,12 @@
     {
       id: 'restore-direct',
       title: 'Give members the direct address again',
-      text: 'Edge-required delivery is lifted for this origin. At their next refresh, members on this node receive the origin address itself, as before the origin existed. Choose this when the node stays in service without edges. The origin address becomes visible to members and to anyone watching them.',
+      text: 'Edge-required delivery is lifted. At their next refresh, members on this node get the origin address itself. Choose this when the node stays in service without edges. The origin address becomes visible to members and anyone watching them.',
     },
     {
       id: 'keep-dark',
       title: 'Keep members dark',
-      text: 'Edge-required delivery stays in force with no origin behind it. Members on this node are answered "temporarily unavailable" and keep their last configuration, which stops working once the edges are destroyed. Choose this when the origin address must never be handed out, for example before you register a new origin for it. The leftover binding can be released later from Settings.',
+      text: 'Edge-required delivery stays on with no origin behind it. Members on this node get "temporarily unavailable" and keep their last configuration, which stops working once the edges are destroyed. Choose this when the origin address must never be handed out, such as before you register a new origin for it. Release the leftover binding later in Settings.',
     },
   ];
 
@@ -78,8 +78,7 @@
     </legend>
     {#if manual}
       <p class="text-xs text-muted-foreground">
-        FCP serves no subscriptions for a manual origin, so both choices behave the same here. Pick
-        either.
+        FCP serves no subscriptions for a manual origin, so both choices do the same. Pick either.
       </p>
     {/if}
     {#each OPTIONS as opt (opt.id)}
@@ -101,7 +100,7 @@
       </label>
     {/each}
     {#if disposition === null}
-      <p class="text-xs text-muted-foreground">Confirm does nothing until one is chosen.</p>
+      <p class="text-xs text-muted-foreground">Choose one to continue.</p>
     {/if}
   </fieldset>
   {#if relay.activeRotationId || relay.quarantine}
@@ -111,8 +110,8 @@
         <Label for="relay-delete-force">Delete even though the origin is busy</Label>
         <p class="text-xs text-muted-foreground">
           {relay.quarantine
-            ? 'The relay is quarantined: FCP does not know which Hosts the panel serves. Forcing skips that question, so check the panel Hosts by hand afterwards.'
-            : 'A rotation is running. Forcing abandons it where it stands.'}
+            ? 'The relay is quarantined, so FCP does not know which Hosts the panel serves. Check the panel Hosts by hand afterwards.'
+            : 'A rotation is running. Forcing abandons it.'}
         </p>
       </div>
     </div>

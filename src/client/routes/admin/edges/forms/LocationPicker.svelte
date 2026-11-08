@@ -268,13 +268,13 @@
   const issue = $derived(create.error ? edgeErrorIssue(create.error) : null);
   const cdnHint = $derived(
     meta.needsDnsAccount
-      ? "The front's names and their certificate challenges are written into this zone of the DNS account."
-      : 'Every name FCP writes sits directly under the zone apex.',
+      ? "The front's hostnames and certificate challenges are written into this zone of the DNS account."
+      : 'Every hostname FCP writes sits directly under the zone apex.',
   );
   const regionHint = $derived(
     nodeCountry
-      ? `The node is in ${nodeCountry}. Pick a region close to it: members reach the address, which forwards to the node.`
-      : 'Pick a region close to the node: members reach the address, which forwards to the node.',
+      ? `The node is in ${nodeCountry}. Pick a region close to it to keep the extra hop short.`
+      : 'Pick a region close to the node to keep the extra hop short.',
   );
 </script>
 
@@ -316,8 +316,8 @@
       {:else if f.kind === 'select' && f.from !== 'subnets' && !load.isPending}
         <p class="text-muted-foreground text-xs">
           {cdn
-            ? 'No list is stored for this yet: refresh it, or type the id.'
-            : 'The provider returned no list for this, so type the id.'}
+            ? 'No list stored yet. Refresh it, or type the id.'
+            : 'The provider returned no list. Type the id.'}
         </p>
       {/if}
     {/if}
@@ -430,8 +430,8 @@
         {/if}
         <p class="text-muted-foreground text-xs">
           The plan sets what each address here costs and carries. {rf.templateValue
-            ? "Leave the template's when this region offers it."
-            : 'The template names none, so choose the one to use here.'}
+            ? "Keep the template's plan if this region offers it."
+            : 'The template sets none, so choose one.'}
         </p>
       </div>
     {/each}
@@ -451,7 +451,7 @@
   </div>
   {#if tried && sizeRefused}
     <p class="text-destructive text-sm" role="alert">
-      That plan takes the provider's own servers only: choose a multi-cloud one.
+      That plan only works with the provider's own servers. Choose a multi-cloud one.
     </p>
   {/if}
   {#if tried && (missing.length > 0 || regionalMissing.length > 0)}

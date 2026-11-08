@@ -131,11 +131,9 @@
     <CardHeader>
       <CardTitle class="text-base">Node placement pools</CardTitle>
       <CardDescription>
-        Bind each connection mode to a POOL of Remnawave internal-mode group UUIDs - one mode group
-        per node (create them on the backend, e.g. via the Ansible role). At issuance FCP homes a
-        new key to the least-loaded node of the chosen mode's pool. Mode group UUIDs are write-only;
-        one per line, 2+ = a load-balanced pool. Leave a field blank to keep the current binding.
-        The Ansible backend-bootstrap sets these automatically.
+        Give each connection mode a pool of Remnawave mode group UUIDs, one per line and one group
+        per node. Two or more make a load-balanced pool. The UUIDs are write-only. Leave a field
+        blank to keep its current pool. The node role's backend bootstrap sets these for you.
       </CardDescription>
     </CardHeader>
     <CardContent class="space-y-5 text-sm">
@@ -215,8 +213,8 @@
     <CardHeader>
       <CardTitle class="text-base">Node load</CardTitle>
       <CardDescription>
-        Users online per placement (mode group → node), refreshed by the backend-healthcheck cron
-        (~10 min). Issuance picks the least-loaded fresh + online placement of a mode's pool.
+        Users online per mode group and its node, refreshed about every 10 minutes. New keys go to
+        the least-loaded online node with fresh stats in their mode's pool.
       </CardDescription>
     </CardHeader>
     <CardContent class="text-sm">
@@ -240,7 +238,7 @@
         </div>
       {:else}
         <p class="text-muted-foreground">
-          No node stats yet. They appear after the first health check once a pool is bound.
+          No node stats yet. They appear after the first health check on a bound pool.
         </p>
       {/if}
     </CardContent>

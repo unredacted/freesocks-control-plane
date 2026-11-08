@@ -41,8 +41,8 @@
     <div>
       <h2 class="text-base font-medium">Look something up</h2>
       <p class="text-muted-foreground mt-1">
-        Names or addresses, one per line. A wildcard holds the names below it, never the name
-        itself.
+        Hostnames or addresses, one per line. A wildcard covers the hostnames below it, not the
+        hostname itself.
       </p>
     </div>
     <form
@@ -52,7 +52,7 @@
         void look();
       }}
     >
-      <Label for={`${uid}-q`} class="sr-only">Names or addresses</Label>
+      <Label for={`${uid}-q`} class="sr-only">Hostnames or addresses</Label>
       <textarea
         id={`${uid}-q`}
         bind:value={text}
@@ -74,7 +74,7 @@
           <li class="space-y-1 p-3">
             <p class="font-mono text-xs break-all">{r.entry}</p>
             {#if r.kind === 'invalid'}
-              <p class="text-muted-foreground">Not a name or an address.</p>
+              <p class="text-muted-foreground">Not a hostname or an address.</p>
             {:else if r.lists.length === 0}
               <p class="text-muted-foreground">On no list.</p>
             {:else}

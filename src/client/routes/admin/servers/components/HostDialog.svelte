@@ -123,7 +123,7 @@
         </div>
       </div>
       <div class="space-y-1.5">
-        <Label for={`${uid}-sni`}>Server name (optional)</Label>
+        <Label for={`${uid}-sni`}>Server name (SNI, optional)</Label>
         <Input id={`${uid}-sni`} bind:value={sni} autocomplete="off" spellcheck={false} />
       </div>
       <div class="space-y-1.5">

@@ -52,8 +52,8 @@
   <header class="px-4 py-3">
     <h2 id="settings-delivery-title" class="font-medium">Edge-required places</h2>
     <p class="text-muted-foreground mt-0.5 text-sm">
-      Members on these places receive edge addresses or nothing, never the origin address. A place
-      stays listed after its origin is deleted with "keep dark", until you release it here.
+      Members on these places get edge addresses or nothing, never the origin address. A place whose
+      origin was deleted with "keep dark" stays listed until you release it here.
     </p>
   </header>
   <div class="border-t px-4 py-4">
@@ -134,7 +134,7 @@
   bind:open
   title="Restore direct delivery?"
   body={target
-    ? `Members on ${target.place} will receive the origin's own addresses again, because no edge fronts it any more. Do this only when the origin address may be handed out.`
+    ? `No edge fronts ${target.place} any more, so its members get the origin's own addresses again. Do this only when the origin address may be handed out.`
     : ''}
   confirmLabel="Release"
   danger

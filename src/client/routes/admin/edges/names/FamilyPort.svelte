@@ -39,7 +39,7 @@
     try {
       await unbindFamily(binding.id);
       stopOpen = false;
-      toast.success('FCP no longer manages the names of that port.');
+      toast.success('FCP no longer manages the SNIs of that port.');
     } catch (e) {
       toast.error(sniErrorWords(e instanceof ApiCallError ? e.payload.error.code : null));
     } finally {
@@ -56,19 +56,19 @@
     </span>
   </p>
   {#if view.isError}
-    <p class="text-muted-foreground mt-2">Where these names stand could not be read just now.</p>
+    <p class="text-muted-foreground mt-2">The state of these SNIs could not be read just now.</p>
   {:else if view.data && !transport}
     <div class="mt-2 flex flex-wrap items-center gap-3">
       <p class="min-w-0 flex-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-        This port is not on the backend as Servers last read it. Refresh it under Servers, or stop
-        managing it here: the list can then change its network or be removed.
+        This port is missing from the backend as Servers last read it. Refresh under Servers, or
+        stop managing it here so the list can change network or be removed.
       </p>
       <Button variant="outline" size="sm" onclick={() => (stopOpen = true)}>Stop managing</Button>
     </div>
     <ConfirmDialog
       bind:open={stopOpen}
-      title="Stop managing this port's names?"
-      body="Whatever names the port still has stay as they are. The name list itself is kept."
+      title="Stop managing this port's SNIs?"
+      body="The port's SNIs stay as they are. The SNI list is kept."
       confirmLabel="Stop managing"
       danger
       onConfirm={stop}
@@ -106,7 +106,7 @@
                   testOpen = true;
                 }}
               >
-                Test one name
+                Test one SNI
               </Button>
             {/if}
             {#if n.nodeUuid}

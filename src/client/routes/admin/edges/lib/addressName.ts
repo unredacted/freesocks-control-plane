@@ -45,8 +45,9 @@ export function firstNameOffer(
 }
 
 export const FIRST_NAME_WORDS: Record<Exclude<FirstNameOffer, 'offer'>, string> = {
-  names_off: 'Names for load balancer addresses are off. Turn them on in Settings to give it one.',
-  no_zone: 'No zone is chosen for names. Pick one in Settings to give it one.',
+  names_off:
+    'Hostnames for load balancer addresses are off. Turn them on in Settings to give it one.',
+  no_zone: 'No zone is chosen for hostnames. Pick one in Settings to give it one.',
   refused:
-    'No chosen zone can take a name now. Check that its location and DNS account are switched on.',
+    'No chosen zone can take a hostname now. Check that its location and DNS account are switched on.',
 };

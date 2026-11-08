@@ -132,10 +132,10 @@ describe('one list', () => {
       'b.site.example': 'On the node, waiting for a test. Members get it on 1 of 2 nodes.',
       'a.site.example': 'Members get it.',
       'f.site.example': 'Checked. Waiting to be sent to the node.',
-      'd.site.example': 'The cover site has no valid certificate for this name.',
+      'd.site.example': 'The cover site has no valid certificate for this SNI.',
       'c.site.example': 'Being checked against the cover site.',
-      'bad.site.example': 'Not usable. The cover site does not offer TLS 1.3 for this name.',
-      'e.site.example': 'Retired: no longer given out.',
+      'bad.site.example': 'Not usable. The cover site does not offer TLS 1.3 for this SNI.',
+      'e.site.example': 'Retired. No longer given out.',
     });
     for (const r of rows) {
       expect(r.sentence).not.toMatch(/—|q_|family|target|transport|ready|score/i);
@@ -186,7 +186,7 @@ describe('the Server names page', () => {
   });
   test('the same counts as the list page, and its dot', () => {
     expect(listLine(summary())).toBe(
-      '4 names in use · 2 waiting for a test · 11 suggestions · used by 1 port',
+      '4 SNIs in use · 2 waiting for a test · 11 suggestions · used by 1 port',
     );
     expect(
       listLine(
@@ -204,7 +204,7 @@ describe('the Server names page', () => {
           },
         }),
       ),
-    ).toBe('No names yet · not used by any port');
+    ).toBe('No SNIs yet · not used by any port');
     // Every name retired or burned: not an empty list.
     expect(
       listLine(
@@ -221,7 +221,7 @@ describe('the Server names page', () => {
           },
         }),
       ),
-    ).toBe('No name in use (3 retired or burned) · used by 1 port');
+    ).toBe('No SNI in use (3 retired or burned) · used by 1 port');
     expect(listDot(summary())).toBe('amber');
     expect(
       listDot(
@@ -257,7 +257,7 @@ describe('the Server names page', () => {
 describe('what an action on names did', () => {
   test('a busy node is said, with what to do', () => {
     expect(nameActionWords('recheck', { count: 3, relays: null })).toBe(
-      '3 names checked again soon.',
+      '3 SNIs checked again soon.',
     );
     expect(
       nameActionWords('retire', {
@@ -265,14 +265,14 @@ describe('what an action on names did', () => {
         relays: { listeners: 0, retired: 0, skipped: 1, kept: 0 },
       }),
     ).toBe(
-      '2 names retired. 1 node was busy and still hands them out: retire them again in a few minutes.',
+      '2 SNIs retired. 1 node was busy and still hands them out. Retire them again in a few minutes.',
     );
     expect(
       nameActionWords('retire', {
         count: 1,
         relays: { listeners: 1, retired: 0, skipped: 0, kept: 1 },
       }),
-    ).toBe('1 name retired. 1 node keeps handing out its last name.');
+    ).toBe('1 SNI retired. 1 node keeps handing out its last SNI.');
   });
 });
 
@@ -307,7 +307,7 @@ describe('why the checks want a look', () => {
         }),
       ),
     ).toBe(
-      'The checks from inside a country suggest it is blocked in IR and disagree with your mark in CN: see Details.',
+      'The checks from inside a country suggest it is blocked in IR and disagree with your mark in CN. See Details.',
     );
     expect(
       checksWantWords(name('a.site.example', { vantage: [v('CN', 'agrees', 'blocked')] })),

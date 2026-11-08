@@ -24,10 +24,9 @@ export function nodeWords(
   opts: { restarting?: boolean } = {},
 ): NodeWords {
   if (n.isDisabled) return { dot: 'grey', sentence: 'Turned off on the backend.' };
-  if (!n.profile)
-    return { dot: 'amber', sentence: 'No config profile is assigned, so it serves nothing.' };
+  if (!n.profile) return { dot: 'amber', sentence: 'No config profile, so it serves nothing.' };
   if (n.transports.length === 0)
-    return { dot: 'amber', sentence: 'A profile is assigned but no transport is switched on.' };
+    return { dot: 'amber', sentence: 'Has a profile, but no transport is on.' };
   if (!n.online && opts.restarting)
     return { dot: 'amber', sentence: 'Restarting while a change is applied. Back in a moment.' };
   if (!n.online) return { dot: 'red', sentence: 'The backend cannot reach this node.' };
@@ -177,14 +176,14 @@ export function needsYou(
       if (i.realityPublicKeyMismatch)
         out.push({
           key: `key:${n.nodeUuid}:${i.tag}`,
-          text: `The public key stored for ${i.tag} on ${n.name} is not the one its private key makes. People given the stored key cannot connect.`,
+          text: `The stored public key for ${i.tag} on ${n.name} does not match its private key. Members given it cannot connect.`,
           nodeUuid: n.nodeUuid,
         });
   for (const p of tree.profiles)
     if (p.foreignEditAt)
       out.push({
         key: `edit:${p.profileUuid}`,
-        text: `${p.name} was changed on the backend, not from here. What this page shows of it may be out of date. Look at it, then press Seen it: until then, a node FCP manages is closed for maintenance the next time FCP checks it.`,
+        text: `${p.name} was edited on the backend, so this page may be out of date. Check it, then press Seen it. Until then, any node FCP manages on it closes for maintenance at its next check.`,
       });
   if (tree.unattached.addresses.length > 0)
     out.push({
@@ -275,14 +274,14 @@ export function frontsHint(
   // A key counts once any app on it fetched: a zero is no proof that no app
   // still uses the fronts, so the traffic check stays.
   if (keys && keys.stale === 0)
-    return `Members get this node's edges instead, and every key on it has fetched since it went live. An app sharing a key with one that fetched, or reading the backend's own subscription address, may still use ${it}. Once ${one ? 'its' : 'their'} traffic stops, delete ${it} at ${one ? 'its' : 'their'} provider, and ${one ? 'its address' : 'their addresses'} here.`;
+    return `Members now get this node's edges, and every key on it has fetched since go-live. An app sharing a key, or reading the backend's own subscription address, may still use ${it}. When ${one ? 'its' : 'their'} traffic stops, delete ${it} at the provider and ${one ? 'its address' : 'their addresses'} here.`;
   const holding =
     keys && keys.stale > 0
-      ? ` ${keysHolding(keys)} not fetched since it went live: those apps still use ${it} until the member updates the subscription in the app.`
+      ? ` ${keysHolding(keys)} not fetched since go-live, so their apps still use ${it} until updated.`
       : '';
   return one
-    ? `Members get this node's edges instead.${holding} Once its traffic stops, delete this front at its provider, and its address here.`
-    : `Members get this node's edges instead.${holding} Once their traffic stops, delete these fronts at their provider, and their addresses here.`;
+    ? `Members now get this node's edges.${holding} When its traffic stops, delete this front at the provider and its address here.`
+    : `Members now get this node's edges.${holding} When their traffic stops, delete these fronts at the provider and their addresses here.`;
 }
 
 /** "1 of its 3 keys has" / "40 of its 2,050 keys have". */
@@ -319,8 +318,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.host_edge_owned': 'This address belongs to an origin. Change it from Edges.',
   'servers.relay_remark': 'Names ending in -origin are kept for origins. Pick another name.',
   'servers.unknown_inbound': 'That transport is not on this backend. Refresh and pick again.',
-  'servers.duplicate_object':
-    'The backend has more than one of these, so there is no telling which is meant. Remove the extra one there.',
+  'servers.duplicate_object': 'The backend has more than one of these. Remove the extra one there.',
   'servers.squad_in_placement':
     'New keys are issued into this group. Take it out of the connection mode first.',
   'servers.squad_has_members': 'This group still has members. Move them first.',
@@ -328,18 +326,18 @@ const ERROR_WORDS: Record<string, string> = {
   // Nodes.
   'servers.node_name_taken': 'A node has, or had, that name. Pick another one.',
   'servers.node_relay_origin':
-    'An origin in Edges covers this node. Its address, port and transports are changed there, and it is not turned off or removed here.',
+    'An origin in Edges covers this node. Change its address, port and transports there. It is not turned off or removed here.',
   'servers.node_rename_separate': 'A node is renamed on its own. Use Rename.',
   'servers.node_rename_running': 'This node is being renamed. Wait for that to finish.',
   'servers.node_rename_not_running': 'That rename is not running any more.',
   'servers.rename_host_refused':
     'The backend refused to rename one of its addresses. Fix what it refused, then press Retry.',
   'servers.node_rename_foreign_hosts':
-    'Hosts the operator named carry this node: an origin in front of it uses Hosts the operator writes, or it was adopted with them. Their remarks name the node, and they are not changed from here.',
+    'Hosts you named yourself carry this node, from an origin you write or from adoption. FCP does not change their remarks, so it cannot rename the node.',
   'servers.node_name_origin':
-    'An origin in front of this node keeps its name as a DNS label: lower-case letters, digits and dashes only.',
+    "An origin uses this node's name as a DNS label. Use only lower-case letters, digits and dashes.",
   'servers.node_name_too_long':
-    'With this name a Host remark would be longer than the backend allows. Pick a shorter name.',
+    'That name makes a Host remark too long for the backend. Pick a shorter name.',
   'servers.node_still_on': 'Turn the node off first, and wait for that to finish.',
   'servers.node_off': 'This node is turned off.',
   'servers.already': 'It is already in that state.',
@@ -348,15 +346,15 @@ const ERROR_WORDS: Record<string, string> = {
     'The profile changed on the backend since the preview. Preview again before applying.',
   'servers.nothing_to_change': 'The backend already had exactly this, so nothing was sent.',
   'servers.name_in_use':
-    'Members are still given one of the names being removed. Retire it on the origin first.',
+    'Members still get one of the SNIs being removed. Retire it on the origin first.',
   'servers.inbound_sni_managed':
-    'A server name family manages the names of this transport. Change them under Edges.',
+    "An SNI list manages this transport's SNIs. Change them under Advanced, Server names.",
   'servers.not_reality': 'That transport does not use REALITY.',
   'servers.too_many_names': 'That is more server names than one transport may carry.',
   'servers.not_admitted': 'The change was not sent. Nothing on the backend changed.',
   // Ports and new transports.
   'servers.port_loopback':
-    "This transport listens only inside the node, behind the node's own proxy. Its port is not changed here.",
+    "This transport listens on loopback behind the node's proxy. Its port is not changed here.",
   'servers.port_not_single':
     'This transport listens on more than one port. Only a single port is changed here.',
   'servers.port_edge_bound':
@@ -370,7 +368,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.firewall_unconfirmed':
     'Not every node has confirmed that its firewall lets the new port in.',
   'servers.firewall_role_confirms':
-    'The node role confirms this node itself, once it has opened the port. Run the role on it.',
+    'The node role confirms this node once it opens the port. Run the role on it.',
   'servers.tag_taken':
     'A transport with that tag already exists on this backend. Pick another tag.',
   'servers.template_invalid': 'The transport template does not fit. Check the fields.',
@@ -381,29 +379,27 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.recovery_incomplete': 'Every condition has to hold before this can be released.',
   'servers.panel_refused': 'The backend refused it. Nothing was changed.',
   'servers.outcome_unknown':
-    'The backend did not answer clearly, so it is not known whether this happened.',
+    'The backend did not answer clearly. It is not known whether this happened.',
   // Setting up a backend.
   'servers.setup_running': 'The backend is being set up right now. Wait for it to finish.',
   'servers.setup_failed': 'Setting up stopped on an error. Look at the backend, then try again.',
   'servers.adopt_required':
     'This backend already has nodes or addresses. Adopt it (typed) to make FCP its writer.',
   // Changing the setup of a backend FCP writes.
-  'servers.setup_profile_kept':
-    'A set-up backend keeps its profile: its nodes run it. Keep the profile name as it is.',
-  'servers.setup_mode_kept':
-    'A mode stays as it was set up, since nodes and members rely on it. Add a new mode instead.',
+  'servers.setup_profile_kept': 'Its nodes run this profile. Keep the profile name as it is.',
+  'servers.setup_mode_kept': 'A set-up mode cannot change. Add a new mode instead.',
   'servers.adopt_group_narrows':
-    "A mode's group already grants its members another transport that a Host serves, and setting up would take that away from them. Take the transport out of the group yourself, or move those members to another group, then set up again.",
+    "A mode's group also gives its members another transport, which setting up would remove. Take that transport out of the group or move those members, then set up again.",
   'servers.setup_mode_drifted':
-    "A mode's group changed on the backend since it was set up (it no longer carries exactly its transport). Look at it under Mode groups, then change the setup.",
+    "A mode's group was edited on the backend and no longer carries exactly its transport. Check it under Mode groups, then change the setup.",
   'servers.setup_transport_missing':
-    "The profile has no usable transport for the new mode yet. Add it with Add a transport on a node's page (its tag is the group name in capitals), then add the mode.",
+    "The profile has no transport for the new mode yet. Use Add a transport on a node's page, tagged with the group name in capitals, then add the mode.",
   'servers.origin_zone_in_use':
-    'WebSocket nodes have origin names in this zone. Keep it (another account holding the same zone is fine), or retire those nodes first.',
+    'WebSocket nodes have origin hostnames in this zone. Keep it, on this or another account, or retire those nodes first.',
   'servers.origin_account_unusable':
-    'Origin names need a DNS account that is switched on. Switch it on under Edges, Providers, or pick another account.',
+    'Origin hostnames need a DNS account that is on. Turn it on under Edge providers, or pick another account.',
   'servers.origin_zone_required':
-    'This account reaches several zones. Pick the one for origin names.',
+    'This account reaches several zones. Pick the one for origin hostnames.',
   'servers.origin_zone_unknown':
     'That zone is not one this account reaches. Refresh its zones, then pick it again.',
   'servers.origin_zone_inactive':
@@ -415,16 +411,15 @@ const ERROR_WORDS: Record<string, string> = {
     'Only a direct Hysteria 2 transport can be served beside a node’s own mode.',
   'servers.extra_mode_node_not_direct':
     'Only a node members reach at its own address can serve it.',
-  'servers.extra_mode_fallback_missing':
-    'That mode’s backup is another mode than the one this node serves.',
+  'servers.extra_mode_fallback_missing': 'That mode’s backup is not the mode this node serves.',
   'servers.extra_mode_certificate':
     'FCP cannot read that transport’s certificate on the profile. Refresh, then try again.',
   'servers.extra_mode_name_collision':
-    'The Hysteria server name is one of the node’s REALITY names. Give it its own name.',
+    'The Hysteria SNI is also one of the node’s REALITY SNIs. Give it its own.',
   'servers.extra_mode_transport_off':
-    'The node does not run the transport yet. It is turned on with the node’s next look.',
+    'The node does not run the transport yet. It turns on at the node’s next check.',
   'servers.extra_mode_drifted':
-    'Something it was checked under changed (certificate, server name, port or address). It is checked again before members get it.',
+    'Its certificate, SNI, port or address changed since the check. It is checked again before members get it.',
   'servers.extra_mode_failed': 'Turning it on stopped. It is tried again shortly.',
   'servers.extra_mode_port_moved':
     'Its transport moved to another port. The node’s firewall must let the new one in first.',
@@ -432,15 +427,14 @@ const ERROR_WORDS: Record<string, string> = {
     'The backend did not turn its address off. It is tried again shortly.',
   'servers.mode_unknown':
     'No such connection mode exists yet, or this backend is not set up for it. Add it under Connection modes first.',
-  'servers.family_missing':
-    'A REALITY mode names a server-name family that does not exist or is off.',
+  'servers.family_missing': 'A REALITY mode uses an SNI list that does not exist or is off.',
   'servers.family_empty':
-    'That family has no usable name yet. Add names to it and let them qualify first.',
+    'That SNI list has no usable SNI yet. Add SNIs and let them qualify first.',
   'servers.family_target_mismatch':
-    'The backend already forwards this mode to a different site than its family checks. Pick the family that matches, or change the site from the profile.',
-  'servers.family_unbound': 'The mode is not bound to its family yet. Set up the backend again.',
+    'The backend forwards this mode to a different site than its SNI list checks. Pick the matching SNI list, or change the site in the profile.',
+  'servers.family_unbound': 'The mode is not bound to its SNI list yet. Set up the backend again.',
   'servers.family_bound_elsewhere':
-    "This mode's transport already answers to another server-name family, whose rollouts would keep moving its names. Unbind it under Server names, or pick that family here.",
+    "Another SNI list already manages this mode's transport. Unbind it under Advanced, Server names, or pick that SNI list here.",
   // Adopting a node that already serves members.
   'servers.node_exists': 'This node is already enrolled.',
   'servers.node_not_on_mode':
@@ -472,7 +466,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.adopt_address_unknown':
     'An address you ticked is turned off, not on that transport any more, or another node has it. Refresh and pick again.',
   'servers.adopt_mode_mismatch':
-    "This node's own addresses are on another transport, so its members reach it there, not on this mode's. Adopt it as the mode of that transport. If the setup has none, add it with Change setup first.",
+    "This node's members reach it on another transport. Adopt it as that transport's mode. If there is none, add it with Change setup first.",
   'servers.mode_change_needs_admin':
     'A node keeps its mode. Change it from here, then run the role again.',
   'servers.node_exists_unowned':
@@ -483,25 +477,25 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.revision_unknown': 'That machine revision was never handed out.',
   'servers.reconcile_failed': 'The node could not be reconciled with the backend.',
   'servers.address_remark_collision':
-    'Two server names of this node would get the same address name. Remove one of them from the family, then run the role again.',
+    'Two SNIs of this node would get the same address name. Remove one from the SNI list, then run the role again.',
   'servers.maintenance_required':
-    'This change rewrites the running path. Start it as a maintenance transition: the node is closed until it is approved again.',
+    'This change rewrites the running path. Start it as maintenance. The node stays closed until approved again.',
   'servers.maintenance_open': 'A maintenance transition is open on this node.',
   // Machine readiness.
   'servers.config_moved': 'The profile changed under this node. It is checked again.',
   'servers.foreign_profile_edit': 'The profile was edited outside FCP. See it, then try again.',
   'servers.node_offline': 'The node is not connected to the backend.',
   'servers.origin_hostname_missing':
-    'This front node has no origin name yet. Give the backend a zone for origin names (Change setup), or set a hostname under Settings.',
+    'This front node has no origin hostname yet. Give the backend a zone for them with Change setup, or set a hostname under Settings.',
   'servers.adopt_origin_name_required':
-    'A WebSocket node needs its origin name, the name its CDN fronts dial. Fill it in, then adopt.',
+    'A WebSocket node needs the origin hostname its CDN fronts dial. Fill it in, then adopt.',
   'servers.origin_name_in_use':
-    'Another node of this backend already has this origin name. Each node has its own.',
+    'Another node of this backend already has this origin hostname. Each node needs its own.',
   'servers.origin_name_taken':
-    'Something else holds a DNS record at the origin name. Free it in the zone, then try again.',
-  'servers.origin_not_resolving': 'The origin name does not resolve to the node yet.',
+    'Another DNS record already uses this origin hostname. Free it in the zone, then try again.',
+  'servers.origin_not_resolving': 'The origin hostname does not resolve to the node yet.',
   'servers.origin_certificate':
-    'The node does not present a valid certificate for its origin name yet.',
+    'The node does not present a valid certificate for its origin hostname yet.',
   'servers.ingress_path': 'The WebSocket path is not proxied to the transport.',
   'servers.ingress_host_header': 'The node does not answer a foreign Host header.',
   // Activation.
@@ -515,7 +509,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.review_stale': 'The review changed since you read it. Read it again.',
   'servers.host_missing': 'The node has no address to enable.',
   'servers.rehearsal_failed':
-    'The bodies the backend served did not carry this node as expected. Nothing was released.',
+    'The subscriptions the backend served did not carry this node as expected. Nothing was released.',
   'servers.rehearsal_missing': 'The rehearsal has not run.',
   'servers.activation_failed': 'Activation stopped on an error.',
   'servers.run_superseded': 'A newer approval replaced this one.',
@@ -527,7 +521,7 @@ const ERROR_WORDS: Record<string, string> = {
     'The node is waiting for your approval to go live. Approve it in its fronting progress.',
   'servers.standbys_missing': 'Front this node in Edges first. Its new addresses come from there.',
   'servers.standbys_unverified':
-    'Not every address of this node has a current test. Try each one in its fronting progress, or on the node in Edges.',
+    'Some addresses of this node have no current test. Test each one in its fronting progress or on the node in Edges.',
   'servers.credential_unresolved':
     'A test credential of this node has an unknown outcome on the backend. Look at its users.',
   'servers.delete_not_applied': 'An origin record was not removed. It is tried again.',
@@ -689,12 +683,11 @@ const RETIRE_SWEEP = 'FCP looks again every 5 minutes';
 /** The retire confirm: members lose the node the moment it is confirmed. */
 export function retireConfirmWords(i: { adopted: boolean }): string {
   return (
-    'Members lose this node at once: it closes now and nobody is given it again. ' +
-    'Members whose key is on it get the unavailable answer; moving them to another node is not offered. ' +
-    'Then FCP takes down its edges and removes its addresses, origin name and panel row, looking again every 5 minutes until each is done, ' +
+    'Members lose this node at once. Those whose key is on it get the unavailable answer and are not moved. ' +
+    'FCP then takes down its edges and removes its addresses, origin hostname and panel row, retrying every 5 minutes. ' +
     (i.adopted
-      ? 'and you confirm here once you have cleaned up the machine, since FCP never ran it.'
-      : 'and the node role wipes the machine.') +
+      ? 'You clean up the machine yourself, then confirm here.'
+      : 'Then the node role wipes the machine.') +
     ' This cannot be undone.'
   );
 }
@@ -729,7 +722,7 @@ export function retirementSteps(
     decision: 'Your decision',
     edges: 'Edges taken down, test credentials released',
     addresses: 'Its own addresses deleted from the panel',
-    dns: 'Its origin name withdrawn from DNS',
+    dns: 'Its origin hostname withdrawn from DNS',
     panel: 'Removed from the panel, its name marked retired',
     wipe: i.adopted ? 'You confirm the machine is gone' : 'The node role wipes the machine',
     retired: 'Retired',
@@ -757,7 +750,7 @@ export function retirementSteps(
     if (current === 'decision')
       return closedFirst
         ? 'The node role asked to retire it, and members on it already get the unavailable answer. Decide below.'
-        : 'The node role asked to retire it, and it serves members meanwhile. Retire it (members on it get the unavailable answer from then on), or reject the request.';
+        : 'The node role asked to retire it, and it serves members meanwhile. Retire it, or reject the request.';
     if (current === 'wipe')
       return i.adopted
         ? 'FCP never ran this machine. Stop and clean it up yourself, then choose The machine is gone.'
@@ -800,7 +793,7 @@ export function standbyWords(s: {
   accountName: string | null;
   locationLabel?: string | null;
 }): string {
-  const kind = s.layer === 'l7' ? 'a CDN name' : 'an address';
+  const kind = s.layer === 'l7' ? 'a CDN hostname' : 'an address';
   const place = s.layer === 'l4' && s.locationLabel ? ` (${s.locationLabel})` : '';
   const where = s.accountName ? `, ${kind} in ${s.accountName}${place}` : '';
   return `${s.listenerKey}: members get ${s.endpoint ?? 'a new address'}${where}.`;
@@ -849,14 +842,13 @@ export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);
  * refused write (a toast); the rest share `serverErrorWords`.
  */
 const BLOCKER_WORDS: Record<string, string> = {
-  'servers.stage':
-    'The node is not at a step where it can be approved. Wait for the step it is on to finish.',
+  'servers.stage': 'The node cannot be approved at this step. Wait for the step to finish.',
   'servers.maintenance_required':
-    'Approving closes this node for members until it goes live, about a minute: a live node gets a new address only while members are held off it. Members who refresh meanwhile are given another node, or keep their configuration.',
+    'Approving closes this node to members for about a minute while it gets its new address. Members who refresh meanwhile get another node or keep their configuration.',
   'servers.standbys_unverified:key_changed':
-    'The node’s REALITY key changed since its addresses were tried. Try each one again with the new key (its fronting progress, or the node in Edges), then approve.',
+    'The node’s REALITY key changed since its addresses were tested. Test each again in its fronting progress or on the node in Edges, then approve.',
   'servers.standbys_unverified:retest':
-    'A transport of this node has no address with a current test: the address or its transport changed since it was tried. Try one again on the node in Edges, or front it again, then approve.',
+    'An address or transport of this node changed since its test. Test one again on the node in Edges, or front it again, then approve.',
 };
 export function blockerWords(code: string): string {
   return BLOCKER_WORDS[code] ?? BLOCKER_WORDS[code.split(':')[0] ?? ''] ?? serverErrorWords(code);
@@ -922,7 +914,7 @@ export function opWords(op: OpLike): { dot: Dot; sentence: string } {
       return {
         dot: 'red',
         sentence:
-          'It is not known whether this happened. Nothing else can change this item until it is seen on the backend or settled by hand.',
+          'Unknown whether this happened. This item is locked until the backend shows it or you settle it by hand.',
       };
     case 'recovered':
       return { dot: 'grey', sentence: 'Settled by hand.' };
@@ -961,7 +953,7 @@ export function parseNames(text: string): string[] {
 export function namesDelta(before: readonly string[], after: readonly string[]): string {
   const added = after.filter((n) => !before.includes(n)).length;
   const removed = before.filter((n) => !after.includes(n)).length;
-  if (added === 0 && removed === 0) return 'Same names, new order';
+  if (added === 0 && removed === 0) return 'Same SNIs, new order';
   const parts: string[] = [];
   if (added) parts.push(`${added} added`);
   if (removed) parts.push(`${removed} removed`);
@@ -1037,7 +1029,7 @@ export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string
     case 'recovered':
       return {
         dot: 'red',
-        sentence: `Settled by hand. Whether the nodes listen on port ${portLabel(c.toPort, c.protocol)} is not known: look at the profile and the nodes.`,
+        sentence: `Settled by hand. Whether the nodes listen on port ${portLabel(c.toPort, c.protocol)} is not known. Check the profile and the nodes.`,
       };
   }
 }
@@ -1102,7 +1094,7 @@ export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
   if (r.code === 'servers.rename_host_refused')
     return {
       dot: 'red',
-      sentence: `Renaming to ${r.to} holds: the backend refused to rename ${r.refusedHosts?.map((h) => h.remark).join(', ') || 'an address'}. Members keep connecting. Fix what it refused, then retry.`,
+      sentence: `Renaming to ${r.to} is on hold. The backend refused to rename ${r.refusedHosts?.map((h) => h.remark).join(', ') || 'an address'}. Members keep connecting. Fix it, then retry.`,
     };
   const waiting =
     r.code === 'servers.op_running' || r.code === 'servers.op_uncertain'
@@ -1139,8 +1131,8 @@ export function extraModeWords(m: ExtraModeLike): { dot: Dot; sentence: string }
         dot: 'amber',
         sentence:
           m.firewall.confirmedBy === 'role'
-            ? `Waiting for the node role to open port ${port} and report it. Run the role on this node. Nothing changes on the node until then.`
-            : `No role runs this node. Open port ${port} in its firewall, then confirm it here. Nothing changes on the node until then.`,
+            ? `Waiting for the node role to open port ${port}. Run the role on this node. Nothing changes until then.`
+            : `No role runs this node. Open port ${port} in its firewall, then confirm it here. Nothing changes until then.`,
       };
     case 'activating':
       return m.code && m.code !== 'servers.op_running'
@@ -1148,15 +1140,15 @@ export function extraModeWords(m: ExtraModeLike): { dot: Dot; sentence: string }
         : {
             dot: 'amber',
             sentence:
-              'Turning it on: its address is made with the certificate pin, then checked in every app format before members get it.',
+              'Turning on. Its address gets the certificate pin and is checked in every app format before members get it.',
           };
     case 'serving':
       return {
         dot: 'green',
         sentence:
           m.checked === 'client'
-            ? 'Serving. A real client connected through it, verifying the certificate by its pin.'
-            : 'Serving. Every app format carries the certificate pin. No client check service is set up, so no client connected through it.',
+            ? 'Serving. A real client connected and verified the certificate pin.'
+            : 'Serving. Every app format carries the certificate pin. No client check is set up, so no real client has tried it.',
       };
     case 'removing':
       return { dot: 'amber', sentence: 'Being removed: its address first, then the transport.' };

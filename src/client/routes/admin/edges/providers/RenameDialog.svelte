@@ -68,7 +68,7 @@
       <Dialog.Title>Rename {account.name}</Dialog.Title>
       <Dialog.Description>
         Only admins see this name. Nothing changes at the provider, and the account keeps its
-        qualification and its edges.
+        qualification and edges.
       </Dialog.Description>
     </Dialog.Header>
     <form

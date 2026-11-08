@@ -55,7 +55,7 @@ describe('networks', () => {
   });
   test('a network in one line', () => {
     expect(networkLine(net(), 1_000_000)).toBe(
-      'AS64500 · 4 ranges · read today · 1 name list on it',
+      'AS64500 · 4 ranges · read today · 1 SNI list on it',
     );
     expect(
       networkLine(
@@ -63,11 +63,11 @@ describe('networks', () => {
         1_000_000,
       ),
     ).toBe(
-      'AS64500 · no ranges yet · the last read failed (no answer in time) · no name list on it',
+      'AS64500 · no ranges yet · the last read failed (no answer in time) · no SNI list on it',
     );
     expect(
       networkLine(net({ asns: [], manualPrefixes: ['192.0.2.0/24'], refreshedAt: null })),
-    ).toBe('4 ranges · 1 by hand · 1 name list on it');
+    ).toBe('4 ranges · 1 by hand · 1 SNI list on it');
   });
   test('every refresh failure the server records has words', async () => {
     const src = import.meta.glob('../../../../../../../convex/lib/edges/networks.ts', {
@@ -125,7 +125,7 @@ describe('names', () => {
       ],
     });
     expect(words).toHaveLength(5);
-    expect(words[0]).toMatch(/^2 names added/);
+    expect(words[0]).toMatch(/^2 SNIs added/);
   });
 });
 
@@ -158,11 +158,11 @@ describe('checks from inside a country', () => {
       'From IR: the handshake completed from 4 vantages on 3 networks (last checked 2 days ago).',
     );
     expect(vantageLine(row({ latest: 'failing', failVantages: 3, failNetworks: 2 }), NOW)).toMatch(
-      /^From IR: failed from 3 vantages on 2 networks while other names got through/,
+      /^From IR: failed from 3 vantages on 2 networks while other SNIs got through/,
     );
     // Every name of the address failed: that is the address, said as such.
     expect(vantageLine(row({ latest: 'failing', failVantages: 0 }), NOW)).toMatch(
-      /no name of that address got through/,
+      /no SNI on that address got through/,
     );
     expect(vantageLine(row({ latest: 'none', lastAt: null }), NOW)).toMatch(/first check/);
   });
@@ -207,7 +207,7 @@ describe('checks from inside a country', () => {
       '3 checks started. Results arrive in a few minutes.',
     );
     expect(vantageAppliedWords({ proven: 2, blocked: 1, skipped: 1 })).toBe(
-      '2 names marked as working, 1 name marked as blocked. 1 name left unchanged.',
+      '2 SNIs marked as working, 1 SNI marked as blocked. 1 SNI left unchanged.',
     );
     expect(vantageAppliedWords({ proven: 0, blocked: 0, skipped: 2 })).toMatch(/^Nothing to apply/);
   });

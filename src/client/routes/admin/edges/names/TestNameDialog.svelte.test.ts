@@ -72,9 +72,9 @@ describe('Test one name', () => {
     expect(select('Through').value).toBe('e2');
     expect(vi.mocked(buildNameTestLink).mock.lastCall).toEqual(['r1', 'e2', 'a.site.example']);
 
-    choose('Name', 'b.site.example');
+    choose('SNI', 'b.site.example');
     expect(select('Through').value).toBe('e2');
-    expect(select('Name').value).toBe('b.site.example');
+    expect(select('SNI').value).toBe('b.site.example');
     expect(vi.mocked(buildNameTestLink).mock.lastCall).toEqual(['r1', 'e2', 'b.site.example']);
     expect(buildNameTestLink).toHaveBeenCalledTimes(3);
   });

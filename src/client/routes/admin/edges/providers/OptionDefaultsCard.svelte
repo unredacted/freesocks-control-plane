@@ -83,8 +83,8 @@
   <CardHeader>
     <CardTitle class="text-base">Certificates</CardTitle>
     <CardDescription>
-      What a node fronted from this account gets by default. Each node can choose its own when it is
-      fronted; nodes already fronted keep theirs.
+      What a node fronted from this account gets by default. Each node can choose its own when
+      fronted. Nodes already fronted keep theirs.
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-4">
@@ -106,7 +106,7 @@
 <ConfirmDialog
   bind:open={confirmOpen}
   title="Change this account's certificate defaults?"
-  body="Nodes fronted from now on start from these; nodes and fronts that exist keep theirs. Like a settings change, the account loses its trust: test it again, and its next proven front trusts it."
+  body="Nodes fronted from now on start from these. Existing nodes and fronts keep theirs. The account loses its trust until you test it again and its next front is proven."
   confirmLabel="Save defaults"
   onConfirm={save}
 />

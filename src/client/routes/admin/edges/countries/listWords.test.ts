@@ -60,7 +60,7 @@ describe('list words', () => {
   });
 
   test('counts, what was left out, and what changed', () => {
-    expect(countsLine(counts)).toBe('2 names, 1 wildcard, 1 IPv4 range (256 addresses).');
+    expect(countsLine(counts)).toBe('2 hostnames, 1 wildcard, 1 IPv4 range (256 addresses).');
     expect(droppedLine(counts)).toBe('Left out: 1 line that could not be read.');
     expect(droppedLine({ ...counts, invalid: 0 })).toBeNull();
     expect(
@@ -69,14 +69,14 @@ describe('list words', () => {
         v4: { added: 0, removed: 0, common: 256 },
         v6: { added: 0, removed: 0, common: 0 },
       }),
-    ).toBe('Names: 1 name new, none gone.');
+    ).toBe('Hostnames: 1 hostname new, none gone.');
     expect(
       diffLine({
         names: { added: 0, removed: 0, common: 2 },
         v4: { added: 0, removed: 0, common: 256 },
         v6: { added: 0, removed: 0, common: 0 },
       }),
-    ).toBe('The same names and ranges as before.');
+    ).toBe('The same hostnames and ranges as before.');
     expect(diffLine(null)).toBeNull();
   });
 

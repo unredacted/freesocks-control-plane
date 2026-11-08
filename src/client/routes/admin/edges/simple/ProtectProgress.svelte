@@ -189,7 +189,7 @@
   const fails = (item: TestItem) =>
     answer(item, () =>
       retrySetupRun(runId, { tryAnotherAddress: true, edgeId: item.edgeId }).then(() =>
-        toast.message('Replacing that address. The new one comes back here to test.'),
+        toast.message('Replacing that address. Test the new one here.'),
       ),
     );
 
@@ -282,7 +282,7 @@
           : r.disposition === 'restore'
             ? 'Cancelled. The direct address is being put back.'
             : r.disposition === 'candidates'
-              ? 'Cancelled. The new addresses are dropped; members keep what they have.'
+              ? 'Cancelled. The new addresses are dropped. Members keep what they have.'
               : 'Cancelled.',
       );
     });
@@ -372,8 +372,8 @@
     {#if run.state === 'done'}
       Live after {elapsed}.
     {:else if run.state === 'done_unbound'}
-      Finished after {elapsed}. Members keep the direct address; go live from the node page when you
-      are ready.
+      Finished after {elapsed}. Members keep the direct address. Go live from the node page when
+      ready.
     {:else if run.state === 'failed'}
       Stopped after {elapsed}.
     {:else if run.state === 'cancelled'}
@@ -396,8 +396,8 @@
         <div class="space-y-2 border-t border-emerald-500/30 pt-3">
           <p class="font-medium">Turn on automatic replacement?</p>
           <p class="text-muted-foreground">
-            FCP then watches every fronted node and switches members to a tested spare address when
-            one looks blocked. It keeps one spare per transport, which your provider bills.
+            When an address on a fronted node looks blocked, FCP moves members to a tested spare. It
+            keeps one spare per transport, billed by your provider.
           </p>
           <Button class="h-11 sm:h-8" disabled={act.isPending} onclick={turnOnAutomation}>
             Turn on

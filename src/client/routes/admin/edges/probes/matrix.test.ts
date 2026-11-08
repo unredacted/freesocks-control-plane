@@ -63,7 +63,7 @@ describe('matrixCell', () => {
     const c = matrixCell(t, 'AA');
     expect(c.label).toBe('Unreachable');
     expect(c.tone).toBe('danger');
-    expect(c.extras).toEqual(['IPv6 reachable', 'by name mixed']);
+    expect(c.extras).toEqual(['IPv6 reachable', 'by hostname mixed']);
     expect(c.vantages).toBe('0 ok, 1 failing vantage');
   });
 });
@@ -125,7 +125,7 @@ describe('small labels', () => {
   });
   it('labels the address family', () => {
     expect(familyLabel(4)).toBe('IPv4');
-    expect(familyLabel(null)).toBe('by name');
+    expect(familyLabel(null)).toBe('by hostname');
   });
   it('puts an edge detail in words', () => {
     expect(targetDetail({ kind: 'edge', detail: 'published · adopted' })).toContain('Imported');

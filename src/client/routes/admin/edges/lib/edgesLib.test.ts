@@ -88,15 +88,9 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     expect(sectionTabOf({ page: 'node', slug: 'a' })).toBe('edges');
     expect(sectionTabOf({ page: 'providers' })).toBe('providers');
     expect(sectionTabOf({ page: 'provider', id: 'x' })).toBe('providers');
-    for (const page of [
-      'advanced',
-      'overview',
-      'templates',
-      'probes',
-      'settings',
-      'names',
-    ] as const)
+    for (const page of ['advanced', 'overview', 'templates', 'settings', 'names'] as const)
       expect(sectionTabOf({ page })).toBe('advanced');
+    expect(sectionTabOf({ page: 'probes' })).toBe('probes');
     expect(sectionTabOf({ page: 'family', slug: 'a' })).toBe('advanced');
     expect(sectionTabOf({ page: 'countries' })).toBe('countries');
     expect(sectionTabOf({ page: 'country', code: 'IR' })).toBe('countries');
@@ -319,9 +313,9 @@ describe('attention', () => {
     // A thin family is named, with how many of its names qualify.
     expect(
       attentionFactsLine(item({ facts: { family: 'fam-a', familyLabel: 'Fam A', qualifying: 1 } })),
-    ).toBe('Family Fam A · 1 name qualifies');
+    ).toBe('Family Fam A · 1 SNI qualifies');
     expect(attentionFactsLine(item({ facts: { family: 'fam-b', qualifying: 0 } }))).toBe(
-      'Family fam-b · 0 names qualify',
+      'Family fam-b · 0 SNIs qualify',
     );
     // A REALITY transport that refuses clients: which (the row words the rest).
     expect(attentionFactsLine(item({ facts: { count: 1, refuses: ['singbox', 'mihomo'] } }))).toBe(
@@ -488,7 +482,7 @@ describe('timeline', () => {
   });
   it('a publish the pool held back is toasted with why and the ways on', () => {
     expect(standbyResultWords('pool_reserved')).toMatch(
-      /^The edge stayed a standby: the free pool slot is held .* Replace a published edge with it, or remove that location/,
+      /^The edge stayed a standby\. The free slot is held .* Replace a published edge with it, or remove that location/,
     );
     expect(standbyResultWords('pool_full')).toMatch(/every pool slot is taken/);
     for (const code of ['pool_reserved', 'pool_full'] as const)
@@ -549,7 +543,7 @@ describe('an unused operator front row', () => {
     );
     expect(h).toMatchObject({ label: 'Old front no longer used', final: true });
     expect(h.explain).toMatch(
-      /1,204 of the node's 2,050 keys have not fetched since the node went live, so those apps still connect through it until the member updates the subscription in the app\./,
+      /1,204 of the node's 2,050 keys have not fetched since go-live\. Those apps use it until the member updates the subscription\./,
     );
     expect(h.explain).toMatch(/Once its traffic stops, delete it at its provider/);
     expect(attentionHeading(row({ count: 1, staleKeys: 1, keys: 1 }), true).explain).toMatch(
@@ -559,7 +553,7 @@ describe('an unused operator front row', () => {
   it('says when every key has fetched since, and still asks for the traffic to stop', () => {
     const explain = attentionHeading(row({ count: 1, staleKeys: 0, keys: 12 }), true).explain;
     expect(explain).toMatch(
-      /Every key on the node has fetched its subscription since the node went live, but an app sharing a key/,
+      /Every key on the node has fetched since go-live, but an app sharing a key/,
     );
     expect(explain).toMatch(/Once its traffic stops, delete it at its provider/);
   });

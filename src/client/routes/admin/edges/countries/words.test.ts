@@ -174,7 +174,7 @@ describe('country view words', () => {
       });
     // One datacenter vantage reached it: not enough to call it working.
     expect(W.addressWhy(probes('unknown', 1, 0))).toContain(
-      'Too few vantages there reached it to call it working: that takes one on a residential network, or two others.',
+      'Too few vantages there reached it to call it working. That takes one on a home network, or two others.',
     );
     expect(W.addressWhy(probes('unknown', 0, 1))).toContain(
       'from too few networks to call it blocked',
@@ -361,7 +361,7 @@ describe('country view words', () => {
     expect(W.roundLine(a, NOW)).toBe(
       'Last round: blocked, 0 reached and 3 failed on 2 networks, 2 controls reached it, 1 h ago.',
     );
-    expect(W.handshakeLine(a, NOW)).toContain('no name got through in 2 paired checks');
+    expect(W.handshakeLine(a, NOW)).toContain('no SNI got through in 2 paired checks');
   });
 
   it('words what the checks from inside and member reports say about a name', () => {
@@ -381,9 +381,9 @@ describe('country view words', () => {
       reports: { weight: 2.5, suspect: true },
     });
     expect(W.checksLine(n, NOW)).toBe(
-      'Checks from inside: failed from 3 vantages on 2 networks while other names got through (last 1 h ago). It failed once. It is checked again before anything is suggested.',
+      'Checks from inside: failed from 3 vantages on 2 networks while other SNIs got through (last 1 h ago). Failed once. It is checked again before anything is suggested.',
     );
-    expect(W.reportsLine(n)).toContain('more than with its other names (2.5 reports)');
+    expect(W.reportsLine(n)).toContain('more than with its other SNIs (2.5 reports)');
   });
 
   it('says what a member is handed, steered or not', () => {
@@ -421,7 +421,7 @@ describe('country view words', () => {
       },
     });
     expect(W.realHostLine(n, NOW)).toBe(
-      'Real-site check against 192.0.2.50: Its real site works from the same vantages, and this address connects, but the handshake with the name fails: the censor likely checks the name against its real address or network. 3 vantages on 2 networks, 1 h ago.',
+      'Real-site check against 192.0.2.50: Its real site works and this address connects, but the handshake fails. The censor likely checks the SNI against its real address or network. 3 vantages on 2 networks, 1 h ago.',
     );
     expect(W.realHostLine(name(), NOW)).toBeNull();
     const timed = name({
@@ -449,7 +449,7 @@ describe('country view words', () => {
       },
     });
     expect(W.addressRealHostLine(a, NOW)).toBe(
-      'Real-site checks of 3 names on it: 2 the address is blocked, 1 works, 1 h ago.',
+      'Real-site checks of 3 SNIs on it: 2 the address is blocked, 1 works, 1 h ago.',
     );
   });
 
@@ -480,7 +480,7 @@ describe('country view words', () => {
     };
     // Every address slow: either leg may be long.
     expect(W.targetAddsLine(listener(far), NOW)).toBe(
-      'A handshake on this transport’s addresses takes about 133 ms longer from here than on its names’ real sites (the addresses 140 ms beyond one round trip, the names’ real sites 6 ms; 6 vantages, 2 names, 1 h ago). Flagged: the node sits far from its target, or every address measured sits far from the node.',
+      'A handshake on this transport’s addresses takes about 133 ms longer from here than on its SNIs’ real sites (the addresses 140 ms beyond one round trip, the SNIs’ real sites 6 ms; 6 vantages, 2 SNIs, 1 h ago). Flagged: the node sits far from its target, or every address measured sits far from the node.',
     );
     // One address under the flag: the slow ones are far from the node, and the spread is said.
     expect(
@@ -489,7 +489,7 @@ describe('country view words', () => {
         NOW,
       ),
     ).toBe(
-      'A handshake on this transport’s addresses takes about 133 ms longer from here than on its names’ real sites (the addresses 140 ms beyond one round trip, the names’ real sites 6 ms; 6 vantages, 2 names, 1 h ago). By address it ranges from 20 to 330 ms (see each address’s evidence). Flagged: the slow addresses sit far from the node. An address under the threshold shows the node’s own leg to its target is short.',
+      'A handshake on this transport’s addresses takes about 133 ms longer from here than on its SNIs’ real sites (the addresses 140 ms beyond one round trip, the SNIs’ real sites 6 ms; 6 vantages, 2 SNIs, 1 h ago). By address it ranges from 20 to 330 ms (see each address’s evidence). Flagged: the slow addresses sit far from the node. An address under the threshold shows the node’s own leg to its target is short.',
     );
     expect(
       W.targetAddsLine(listener({ ...far, ms: -2, flagged: false }), NOW)?.startsWith(
@@ -522,7 +522,7 @@ describe('country view words', () => {
     expect(W.addressTimingLine(address(), NOW)).toBeNull();
     expect(W.addressTimingLine(on('edge', null), NOW)).toBeNull();
     expect(W.addressTimingLine(on('edge', t), NOW)).toBe(
-      'A handshake on it takes about 330 ms longer from here than on the names’ real sites (it 340 ms beyond one round trip, the real sites 10 ms; 3 vantages, 1 name, 1 h ago). Flagged: this address sits far from the node (an address that accepts the connection itself puts its leg to the node inside the handshake), or the node far from its target.',
+      'A handshake on it takes about 330 ms longer from here than on the SNIs’ real sites (it 340 ms beyond one round trip, the real sites 10 ms; 3 vantages, 1 SNI, 1 h ago). Flagged: this address sits far from the node, or the node far from its target.',
     );
     expect(W.addressTimingLine(on('origin', t), NOW)).toMatch(
       /Flagged: the node sits far from its target\.$/,
@@ -590,7 +590,7 @@ describe('country view words', () => {
         }),
       ),
     ).toBe(
-      '1 of 2 server names are on a list of what works here. Where only listed addresses and names get through, only those work.',
+      '1 of 2 SNIs are on a list of what works here. Where only listed addresses and SNIs get through, only those work.',
     );
     // A watched list for here says something about the addresses: the count shows, even at 0.
     expect(
@@ -601,7 +601,7 @@ describe('country view words', () => {
           ],
           names: [name()],
         }),
-      )?.startsWith('0 of 1 server name is on a list'),
+      )?.startsWith('0 of 1 SNI is on a list'),
     ).toBe(true);
     for (const w of Object.values(W.LIST_MARK_WORDS)) expect(w).not.toMatch(/—/);
   });
@@ -614,14 +614,14 @@ describe('country view words', () => {
       lastEvidenceAt: null,
     });
     expect(W.totalsLine(totals(1, 1, 1, 1))).toBe(
-      '1 of 3 published addresses works, 1 blocked, 1 not known. 1 server name works, 0 blocked, 2 not judged.',
+      '1 of 3 published addresses works, 1 blocked, 1 not known. 1 SNI works, 0 blocked, 2 not judged.',
     );
     // "0 of 1 works, 0 blocked" alone reads as a contradiction: the rest is not known.
     expect(W.totalsLine(totals(0, 0, 1, 2))).toBe(
-      '0 of 1 published address work, 0 blocked, 1 not known. 2 server names work, 0 blocked, 2 not judged.',
+      '0 of 1 published address work, 0 blocked, 1 not known. 2 SNIs work, 0 blocked, 2 not judged.',
     );
     expect(W.totalsLine(totals(1, 0, 0, 0))).toBe(
-      '1 of 1 published address works, 0 blocked. 0 server names work, 0 blocked, 2 not judged.',
+      '1 of 1 published address works, 0 blocked. 0 SNIs work, 0 blocked, 2 not judged.',
     );
     expect(W.handedWords(handed({ primary: [{ id: 'a', share: 1 }] }))[0]).toContain(
       'spread over 1 address,',
@@ -681,8 +681,8 @@ describe('locations meant for a country', () => {
   });
   it('the handed line names the share that starts on such a location, steered only', () => {
     const steered = W.handedWords(handed({ steered: true, onMeantFirst: 0.75 }));
-    expect(steered).toContain('75% of members here start on a location meant for this country.');
-    expect(W.handedWords(handed({ onMeantFirst: 0.75 })).join(' ')).not.toMatch(/meant for/);
+    expect(steered).toContain('75% of members here start on a location set for this country.');
+    expect(W.handedWords(handed({ onMeantFirst: 0.75 })).join(' ')).not.toMatch(/set for/);
   });
 });
 
@@ -712,7 +712,7 @@ describe('namePoolLines', () => {
 
   it('a country topped up with data-centre probes says so', () => {
     expect(W.namePoolLines({ ...base, mode: 'topped_up', eyeball: 2, total: 9 })).toEqual([
-      'Globalping has only 2 home-network probes here, fewer than the 3 vantages a name verdict needs, so the name checks here also use data-centre probes.',
+      'Globalping has only 2 home-network probes here, fewer than the 3 vantages an SNI verdict needs, so the SNI checks here also use data-centre probes.',
     ]);
   });
 
@@ -721,7 +721,7 @@ describe('namePoolLines', () => {
     expect(lines[0]).toMatch(/^Globalping has no home-network probe here/);
     expect(lines[0]).toMatch(/use any probe there/);
     expect(lines[1]).toMatch(
-      /^Globalping has only one probe here in all and a name verdict needs 3 vantages/,
+      /^Globalping has only one probe here in all and an SNI verdict needs 3 vantages/,
     );
     expect(lines[1]).toMatch(/stay not judged/);
     for (const l of lines) expect(l).not.toMatch(/—|_/);

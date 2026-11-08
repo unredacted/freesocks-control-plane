@@ -28,7 +28,7 @@
 
 <SectionHeader
   title="Country lists"
-  description="Community lists of names and addresses that work in a country, or are blocked there. FCP keeps each change as a version and holds one that looks wrong until you look at it. Lists are evidence only: nothing here changes what members get."
+  description="Community lists of hostnames and addresses that work, or are blocked, in a country. FCP keeps each change as a version and holds any that looks wrong for you. Lists are evidence only and never change what members get."
   back={{ href: edgesPaths.countries(), label: 'Countries' }}
 >
   {#snippet actions()}
@@ -44,8 +44,8 @@
   {#if !lists.data.enabled}
     <Card class="mb-4">
       <CardContent class="text-muted-foreground py-4 text-sm">
-        Country lists are off: nothing is fetched on its own and nothing reads them. You can still
-        add lists and read them by hand.
+        Country lists are off. Nothing is fetched or read automatically, but you can still add lists
+        and read them by hand.
         <Link href={edgesPaths.settings({ section: 'lists' })} class="underline underline-offset-2">
           Turn them on in Settings.
         </Link>

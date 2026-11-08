@@ -94,7 +94,7 @@ describe('find names words', () => {
     expect(
       candidateWords({ ...base, state: 'added', inFamily: { slug: 'f', label: 'Family F' } })
         .sentence,
-    ).toBe('In the family Family F.');
+    ).toBe('In the SNI list Family F.');
     expect(candidateWords({ ...base, check: null }).sentence).toBe('Not checked yet.');
     expect(extraWords(base)).toBe('It takes an X25519-only offer, refuses ML-KEM.');
   });
@@ -176,7 +176,7 @@ describe('find names words', () => {
     expect(huntSwitchLine(true, 30)).toMatch(/^On\. .*every 30 days/);
     expect(huntSwitchLine(false, 30)).toMatch(/^Off\./);
     expect(sweepCostWords({ depth: 300_000, wwwDepth: 100_000, lookupsPerSecond: 20 })).toBe(
-      "It looks up the 300,000 most visited sites in DNS: up to 800,000 lookups over about 12 hours. Most setups do not need it: a cover site's certificate and certificate logs come first.",
+      "It looks up the 300,000 most visited sites in DNS, up to 800,000 lookups over about 12 hours. Most setups do not need it. Try the cover site's certificate and certificate logs first.",
     );
     expect(placeLine({ country: 'US', city: 'Example City' }, 'node')).toBe(
       'Timed from Example City (US), taken from a node on it.',
@@ -215,7 +215,9 @@ describe('find names words', () => {
         startedAt: 'x',
         finishedAt: null,
       }),
-    ).toBe('Looking up the top-sites list: 12,300 of 400,000 names, 45 names found on a network.');
+    ).toBe(
+      'Looking up the top-sites list: 12,300 of 400,000 hostnames, 45 hostnames found on a network.',
+    );
     expect(
       huntImportWords({
         added: 2,
@@ -226,7 +228,7 @@ describe('find names words', () => {
         capped: 0,
         proposals: { networks: [], families: [] },
       }),
-    ).toBe('2 names added, 1 already here, 1 already in a family.');
+    ).toBe('2 SNIs added, 1 already here, 1 already in an SNI list.');
     expect(parsePlace(' us ', ' Springfield ')).toEqual({ country: 'US', city: 'Springfield' });
     expect(parsePlace('USA', '')).toBeNull();
     expect(familySlugFor('www.example.co.uk')).toBe('example-co-uk');

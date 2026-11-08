@@ -133,7 +133,7 @@
 
 <SectionHeader
   title="Server names: advanced"
-  description="Most setups need none of this: a node's page finds names on its cover site's certificate. Here: finding names across your networks, the networks themselves, imports, and checks from inside countries. Names come from public sources only (a top-sites list looked up in DNS, certificates, certificate logs, lists you paste); no address range is ever scanned, and nothing found is used until you add it to a name list."
+  description="Most setups need none of this, since a node's page already finds SNIs on its cover site's certificate. Sources are public only, and no address range is ever scanned. Nothing found is used until you add it to an SNI list."
 />
 
 {#if hunt.isPending}
@@ -153,7 +153,7 @@
       }
     />
     <div>
-      <label for={`${uid}-enabled`} class="font-medium">Finding names</label>
+      <label for={`${uid}-enabled`} class="font-medium">Finding SNIs</label>
       <p id={`${uid}-enabled-help`} class="text-muted-foreground">
         {huntSwitchLine(h.config.enabled, h.config.sweepEveryDays)}
       </p>
@@ -162,7 +162,7 @@
 
   <Card class="mt-6">
     <CardHeader>
-      <CardTitle class="text-base">Finding names on each network</CardTitle>
+      <CardTitle class="text-base">Finding SNIs on each network</CardTitle>
     </CardHeader>
     <CardContent class="space-y-3 text-sm">
       {#if h.networks.length === 0}
@@ -177,7 +177,7 @@
                   <p class="font-medium">{n.label}</p>
                   <p class="text-muted-foreground">
                     {n.candidates.total}
-                    {n.candidates.total === 1 ? 'name' : 'names'} found on it, {n.candidates.ready} usable.
+                    {n.candidates.total === 1 ? 'SNI' : 'SNIs'} found on it, {n.candidates.ready} usable.
                     {n.ranges.v4 + n.ranges.v6 === 0 ? ' It has no address ranges yet.' : ''}
                   </p>
                 </div>
@@ -242,8 +242,8 @@
                   </Button>
                 </div>
                 <p class="text-muted-foreground">
-                  Found names are timed from probes there: a node relays every check of a name to
-                  its cover site, so a cover site near the node is less visible.
+                  Found SNIs are timed from probes there. A cover site near the node is harder to
+                  spot, because the node relays every check to it.
                 </p>
               {/if}
             </li>
@@ -251,7 +251,7 @@
         </ul>
       {/if}
       {#if h.families.length > 0}
-        <p class="font-medium">Found for name lists</p>
+        <p class="font-medium">Found for SNI lists</p>
         <ul class="space-y-1">
           {#each h.families as f (f.slug)}
             <li>
@@ -303,13 +303,13 @@
       {#if !seedMode}
         <label class="flex flex-wrap items-center gap-2">
           <span>Into</span>
-          <select bind:value={importScope} class={SELECT} aria-label="Where the names go">
-            <option value="" disabled>a network or a name list</option>
+          <select bind:value={importScope} class={SELECT} aria-label="Where the SNIs go">
+            <option value="" disabled>a network or an SNI list</option>
             {#each h.networks as n (n.slug)}
               <option value={`network:${n.slug}`}>Network {n.label}</option>
             {/each}
             {#each families.data?.families ?? [] as f (f.slug)}
-              <option value={`family:${f.slug}`}>Name list {f.label}</option>
+              <option value={`family:${f.slug}`}>SNI list {f.label}</option>
             {/each}
           </select>
         </label>
@@ -319,12 +319,13 @@
         rows="6"
         spellcheck="false"
         autocapitalize="off"
-        aria-label={seedMode ? 'Seed file' : 'One host name per line'}
+        aria-label={seedMode ? 'Seed file' : 'One hostname per line'}
         placeholder={seedMode ? '{"networks": [...]}' : 'www.example.com'}
         class="border-input focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm outline-none focus-visible:ring-3"
       ></textarea>
       <p class="text-muted-foreground">
-        Names are only found names: each is checked here, and again by its list when you add it.
+        Imported SNIs are only candidates. Each is checked here, and again by its list when you add
+        it.
       </p>
       <Button
         size="sm"
@@ -353,7 +354,7 @@
           {#each result.proposals.families as f (f.slug)}
             <div class="flex flex-wrap items-center justify-between gap-2">
               <span>
-                Name list {f.label}, cover site <span class="font-mono">{f.targetAddress}</span>, on
+                SNI list {f.label}, cover site <span class="font-mono">{f.targetAddress}</span>, on
                 {f.network}
               </span>
               <Button
@@ -377,7 +378,7 @@
             </div>
           {/each}
           <p class="text-muted-foreground">
-            Then import the seed again: its names go to the name lists that exist by then.
+            Then import the seed again. Its SNIs go to the SNI lists that exist by then.
           </p>
         </div>
       {/if}
@@ -389,7 +390,7 @@
   <ConfirmDialog
     bind:open={sweepOpen}
     title="Search the top sites?"
-    body={`${sweepCostWords(h.config)} Lookups go to ordinary DNS; nothing is sent to the sites themselves.`}
+    body={`${sweepCostWords(h.config)} Lookups go to ordinary DNS. Nothing is sent to the sites.`}
     confirmLabel="Start the search"
     onConfirm={() => {
       sweepOpen = false;

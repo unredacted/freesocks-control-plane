@@ -139,13 +139,13 @@
 
   <Card class="mb-6">
     <CardHeader class="pb-2">
-      <CardTitle class="text-base">Locations meant for {countryLabel(code)}</CardTitle>
+      <CardTitle class="text-base">Locations set for {countryLabel(code)}</CardTitle>
     </CardHeader>
     <CardContent class="space-y-2 text-sm">
       {#if v.meantFor.length === 0}
         <p class="text-muted-foreground">
-          No location is meant for this country. Members here are ordered by what works here alone.
-          Choose countries for a location on its provider account page.
+          No location is set for this country, so members here get addresses by what works here. Set
+          a location's countries on its provider account page.
         </p>
       {:else}
         <ul class="divide-y rounded-md border">
@@ -300,11 +300,11 @@
 
               {#if l.names.length > 0}
                 <div>
-                  <h3 class="mb-2 font-medium">Server names</h3>
+                  <h3 class="mb-2 font-medium">SNIs</h3>
                   {#if namesOnListsLine(l)}
                     <p class="text-muted-foreground mb-2">{namesOnListsLine(l)}</p>
                   {/if}
-                  <ul class="divide-border divide-y rounded-md border" aria-label="Server names">
+                  <ul class="divide-border divide-y rounded-md border" aria-label="SNIs">
                     {#each l.names as n (n.name)}
                       {@const words = STATE_WORDS[n.state]}
                       <li class="space-y-1 px-3 py-2">
@@ -326,7 +326,7 @@
                             <Badge variant="outline">Not offered here</Badge>
                           {/if}
                           {#if n.qualified === false}
-                            <Badge variant="outline">Its target stopped serving it</Badge>
+                            <Badge variant="outline">The cover site stopped serving it</Badge>
                           {/if}
                         </div>
                         <p class="text-muted-foreground">

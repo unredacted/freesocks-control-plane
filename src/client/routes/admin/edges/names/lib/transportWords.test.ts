@@ -133,12 +133,12 @@ describe('the next step', () => {
     });
     expect(namesStatus(transport(), 'n-unprotected')).toEqual({
       dot: 'grey',
-      text: '4 names on the port',
+      text: '4 SNIs on the port',
     });
     // A port nobody protects, on the name list's page.
     const bare = transport({ nodes: [] }, { inUse: 0, idle: 4 });
     expect(namesStep(bare, on, null)).toEqual({ kind: 'unprotected', here: false });
-    expect(namesStatus(bare, null).text).toBe('4 names on the port');
+    expect(namesStatus(bare, null).text).toBe('4 SNIs on the port');
     expect(stepWords({ kind: 'unprotected', here: false }, bare)).toMatch(/^No node behind/);
   });
 
@@ -208,11 +208,11 @@ describe('the status line', () => {
     t.nodes[0]!.inUse = 3;
     expect(namesStatus(t, NODE)).toEqual({
       dot: 'amber',
-      text: '3 names in use · 2 being checked · 1 failing · 11 suggestions',
+      text: '3 SNIs in use · 2 being checked · 1 failing · 11 suggestions',
     });
-    expect(namesStatus(transport(), NODE)).toEqual({ dot: 'green', text: '4 names in use' });
-    expect(namesStatus(transport({ list: null }), NODE).text).toBe('4 names set by hand');
-    expect(namesStatus(transport({ list: null, listed: 1 }), NODE).text).toBe('1 name set by hand');
+    expect(namesStatus(transport(), NODE)).toEqual({ dot: 'green', text: '4 SNIs in use' });
+    expect(namesStatus(transport({ list: null }), NODE).text).toBe('4 SNIs set by hand');
+    expect(namesStatus(transport({ list: null, listed: 1 }), NODE).text).toBe('1 SNI set by hand');
   });
 });
 
@@ -284,16 +284,16 @@ describe('Action needed', () => {
       transports: [t, transport({ transportUuid: 't-2', list: null })],
     };
     expect(namesNeedsYou(view).map((r) => r.text)).toEqual([
-      'VLESS_REALITY: 2 checked names cannot reach the nodes: changes to the backend are off.',
-      'VLESS_REALITY: 5 suggested names to add.',
-      'VLESS_REALITY: 1 name no longer served by the cover site.',
+      'VLESS_REALITY: 2 checked SNIs cannot reach the nodes: changes to the backend are off.',
+      'VLESS_REALITY: 5 suggested SNIs to add.',
+      'VLESS_REALITY: 1 SNI no longer served by the cover site.',
     ]);
     const waiting = transport({}, { waitingTest: 1 });
     waiting.nodes[0]!.waitingTest = 1;
     expect(namesNeedsYou({ switches: on, transports: [waiting] })).toEqual([
       {
         key: 'names-test:t-1:node-one',
-        text: 'VLESS_REALITY on node-one: 1 name waits for a test.',
+        text: 'VLESS_REALITY on node-one: 1 SNI waits for a test.',
         nodeUuid: NODE,
       },
     ]);
@@ -329,7 +329,7 @@ describe('what each action did, in words', () => {
         },
       }),
     ).toBe(
-      "FCP manages these names now: 2 names taken in, each checked against the cover site first. Left out: 1 in another list. The cover site's certificate lists 6 names: new ones show up as suggestions once checked.",
+      "FCP manages these SNIs now. 2 SNIs taken in, each checked against the cover site first. Left out: 1 in another list. The cover site's certificate lists 6 hostnames. New ones show up as suggestions once checked.",
     );
     // Taking an existing list back: its names are already in it, never "left out".
     expect(
@@ -345,13 +345,13 @@ describe('what each action did, in words', () => {
         placeSet: false,
         cert: null,
       }),
-    ).toBe('FCP manages these names now. 9 names were already in the list.');
+    ).toBe('FCP manages these SNIs now. 9 SNIs were already in the list.');
     expect(addedWords({ added: 3, lines: lines(3, 'added') })).toBe(
-      '3 names added. Each is checked against the cover site, then goes to the node with the next send.',
+      '3 SNIs added. Each is checked against the cover site, then goes to the node with the next send.',
     );
     // A list no port uses has no send to promise.
     expect(addedWords({ added: 1, lines: lines(1, 'added') }, false)).toBe(
-      '1 name added. Each is checked against the cover site first.',
+      '1 SNI added. Each is checked against the cover site first.',
     );
     // Each reason a line was left out, with its count: a typo is never "already listed".
     expect(
@@ -363,7 +363,7 @@ describe('what each action did, in words', () => {
         ],
       }),
     ).toBe(
-      '0 names added. Each is checked against the cover site, then goes to the node with the next send. Left out: 1 already listed, 1 not a host name.',
+      '0 SNIs added. Each is checked against the cover site, then goes to the node with the next send. Left out: 1 already listed, 1 not a hostname.',
     );
     const plan = {
       backendServerId: 's',
@@ -384,18 +384,18 @@ describe('what each action did, in words', () => {
       ],
     });
     expect(sendPlanWords(plan, two)).toEqual([
-      '1 name will be added.',
+      '1 SNI will be added.',
       'Every node on the profile Main (2 nodes) restarts Xray once. People connected there reconnect within a few seconds.',
-      'Members get the new names once a test on the node proves it accepts them. One test proves all of them.',
+      'Members get the new SNIs once a test on the node passes. One test proves all of them.',
     ]);
     expect(sendPlanWords({ ...plan, changed: false }, two)).toEqual([
-      'The backend already lists exactly these names. Nothing to send.',
+      'The backend already lists exactly these SNIs. Nothing to send.',
     ]);
     // A name an address members hold presents is kept, and the sheet says why.
     expect(sendPlanWords({ ...plan, held: ['a.example'] }, two)[1]).toBe(
-      '1 name the list no longer gives stays: an address members hold presents it, and they could not connect without it. Point that address at another name first to drop it.',
+      '1 SNI the list no longer gives stays, because an address members hold still presents it. Point that address at another SNI to remove it.',
     );
-    expect(provenWords(6, 'node-one')).toBe('6 names are now given to members on node-one.');
+    expect(provenWords(6, 'node-one')).toBe('6 SNIs are now given to members on node-one.');
     expect(provenWords(0, 'node-one')).toBe('Recorded. node-one had nothing new to hand out.');
     expect(
       lookedWords(
@@ -403,7 +403,7 @@ describe('what each action did, in words', () => {
         { queued: 1 },
       ),
     ).toBe(
-      "The cover site's certificate lists 6 names, 1 new. Certificate logs are being read too. New names show up as suggestions once checked.",
+      "The cover site's certificate lists 6 hostnames, 1 new. Certificate logs are being read too. New ones show up as suggestions once checked.",
     );
   });
 });
@@ -430,13 +430,13 @@ describe('which name a test presents', () => {
 describe('a node on the list page', () => {
   test('what its members get, and a test it waits for', () => {
     const n = transport().nodes[0]!;
-    expect(nodeLineWords(n)).toEqual({ dot: 'green', text: '4 names in use' });
+    expect(nodeLineWords(n)).toEqual({ dot: 'green', text: '4 SNIs in use' });
     expect(nodeLineWords({ ...n, waitingTest: 2 })).toEqual({
       dot: 'amber',
-      text: '4 names in use · 2 waiting for a test',
+      text: '4 SNIs in use · 2 waiting for a test',
     });
     expect(nodeLineWords({ ...n, waitingTest: 1, testable: [] }).text).toBe(
-      '4 names in use · 1 waiting for a test: try one of its addresses first',
+      '4 SNIs in use · 1 waiting for a test: try one of its addresses first',
     );
   });
 });
@@ -476,14 +476,14 @@ describe("FCP's own test of a send", () => {
   test('switch off: no line, and "Test one name" stays the button', () => {
     const t = waiting(null);
     expect(stepOf(t).kind).toBe('test');
-    expect(STEP_BUTTON.test).toBe('Test one name');
+    expect(STEP_BUTTON.test).toBe('Test one SNI');
     expect(autoTestWords(stepOf(t), 'off')).toBeNull();
   });
 
   test('on: what the newest test found, in words, never a code', () => {
     const s = (a: Parameters<typeof test1>[0]) => autoTestWords(stepOf(waiting(test1(a))), 'ready');
     expect(autoTestWords(stepOf(waiting(null)), 'ready')).toBe(
-      'FCP tests one name here by itself within a few minutes. You can test one now.',
+      'FCP tests one SNI here by itself within a few minutes. You can test one now.',
     );
     expect(s({ state: 'testing', verdict: null, engines: [] })).toBe(
       'FCP is testing new-1.example on this node now with its own clients.',
@@ -493,7 +493,7 @@ describe("FCP's own test of a send", () => {
     );
     expect(s({ verdict: 'egress_mismatch' })).toMatch(/came out of another node/);
     expect(s({ state: 'could_not_check', verdict: null, code: 'unavailable', engines: [] })).toBe(
-      'FCP could not test a name here: check client not answering. It tries again in about 10 minutes. You can test one now.',
+      'FCP could not test an SNI here: check client not answering. It tries again in about 10 minutes. You can test one now.',
     );
     expect(s({ state: 'could_not_check', verdict: null, code: 'lapsed', engines: [] })).toMatch(
       /the test did not finish/,
@@ -502,7 +502,7 @@ describe("FCP's own test of a send", () => {
       /set its last test aside: the address changed while it ran/,
     );
     expect(s({ state: 'stopped', failures: 4 })).toBe(
-      "FCP's test did not pass 4 times, so it stopped trying for this send. Test one name yourself.",
+      "FCP's test did not pass 4 times, so it stopped trying for this send. Test one SNI yourself.",
     );
     for (const line of [s({}), s({ state: 'stopped' }), s({ state: 'voided', code: 'x' })])
       expect(line).not.toMatch(/\u2014|address_failed|reality_refused/);
@@ -526,14 +526,14 @@ describe("FCP's own test of a send", () => {
   test('the node line and Action needed say when FCP is testing', () => {
     const t = waiting(test1({ state: 'testing' }));
     expect(nodeLineWords(t.nodes[0]!).text).toBe(
-      '4 names in use · 2 waiting for a test · FCP is testing one now',
+      '4 SNIs in use · 2 waiting for a test · FCP is testing one now',
     );
     expect(nodeLineWords(waiting(test1({ state: 'stopped' })).nodes[0]!).text).toMatch(
       /FCP stopped testing: test one yourself$/,
     );
     const lines = namesNeedsYou({ switches: { ...on, autoTest: 'ready' }, transports: [t] });
     expect(lines.find((l) => l.key.startsWith('names-test'))?.text).toBe(
-      'VLESS_REALITY on node-one: 2 names wait for a test. FCP is testing one now.',
+      'VLESS_REALITY on node-one: 2 SNIs wait for a test. FCP is testing one now.',
     );
   });
 });

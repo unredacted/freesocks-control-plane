@@ -110,11 +110,11 @@
     if (!n) return [];
     return [
       {
-        label: 'Name',
+        label: 'Hostname',
         value: n.fqdn,
         mono: true,
         copy: true,
-        hint: n.movedHere ? 'It came here from the address this one replaced.' : undefined,
+        hint: n.movedHere ? 'Moved here from the address this one replaced.' : undefined,
       },
       {
         label: 'State',
@@ -132,9 +132,9 @@
   // the same call as New name. The settings say whether one can be made.
   const nameConfig = edgeConfigQuery();
   const NAME_DONE_WORDS = {
-    first: 'A name is being made',
-    renew: 'A new name is being made',
-    dismiss: 'Name closed',
+    first: 'Making a hostname',
+    renew: 'Making a new hostname',
+    dismiss: 'Hostname dismissed',
   } as const;
   const nameAction = createMutation(() => ({
     mutationFn: (a: { id: string; kind: keyof typeof NAME_DONE_WORDS }) =>
@@ -147,7 +147,7 @@
       // The settings changed since they were read: read them again.
       if (edgeErrorCode(err) === 'names_off')
         void qc.invalidateQueries({ queryKey: edgeKeys.config });
-      toast.error('The name could not be changed');
+      toast.error('The hostname could not be changed');
     },
   }));
   const firstName = $derived.by(() => {
@@ -249,7 +249,7 @@
       {
         label: 'Managed by FCP',
         value: edge.managed,
-        hint: edge.managed ? undefined : 'Imported: FCP never deletes it at the provider.',
+        hint: edge.managed ? undefined : 'Imported. FCP never deletes it at the provider.',
       },
       { label: 'Pool slot', value: edge.poolIndex === null ? '' : `Slot ${edge.poolIndex + 1}` },
       { label: 'IPv4', value: edge.addresses.v4, mono: true, copy: true },
@@ -259,7 +259,7 @@
       {
         label: 'Built with',
         value: builtWith,
-        hint: 'The options frozen when it was planned: a later change never moves it.',
+        hint: 'Set when it was planned. Later changes do not affect it.',
       },
     ];
   });
@@ -274,7 +274,7 @@
       {
         label: 'Kept up for stale apps until',
         value: edge.drainHold ? when(edge.drainHold.until) : '',
-        hint: 'At the latest: deleted sooner once the apps that may still use it have refreshed.',
+        hint: 'Deleted sooner if those apps refresh first.',
       },
       {
         label: 'Apps that may still use it',
@@ -389,9 +389,9 @@
         <KeyValue title="Identity" rows={identityRows} hideEmpty />
         {#if addressName}
           <section class="space-y-2">
-            <KeyValue title="Address name" rows={nameRows} hideEmpty />
+            <KeyValue title="Hostname" rows={nameRows} hideEmpty />
             <p class="text-muted-foreground text-xs">
-              Members dial this name. Their apps also hold its IPv4 and IPv6, for when the name is
+              Members connect to this hostname. Their apps also get its IPv4 and IPv6 in case it is
               blocked.
             </p>
             <div class="flex flex-wrap gap-2">
@@ -402,7 +402,7 @@
                   disabled={nameAction.isPending}
                   onclick={() => nameAction.mutate({ id: edge.id, kind: 'renew' })}
                 >
-                  New name
+                  New hostname
                 </Button>
               {/if}
               {#if addressName.stuck}
@@ -424,7 +424,7 @@
           </section>
         {:else if firstName}
           <section class="space-y-2">
-            <h3 class="text-sm font-semibold">Address name</h3>
+            <h3 class="text-sm font-semibold">Hostname</h3>
             <p class="text-muted-foreground text-sm">It has none, so members get its IPs.</p>
             {#if firstName === 'offer' || firstName === 'refused'}
               <Button
@@ -433,7 +433,7 @@
                 disabled={nameAction.isPending}
                 onclick={() => nameAction.mutate({ id: edge.id, kind: 'first' })}
               >
-                Give it a name
+                Give it a hostname
               </Button>
             {/if}
             {#if firstName !== 'offer'}
@@ -556,8 +556,7 @@
             </p>
           {:else}
             <p class="text-muted-foreground text-sm">
-              No probe has measured this edge yet. Run a probe from the origin page to get a
-              verdict.
+              Not probed yet. Run a probe from the origin page.
             </p>
           {/if}
         </section>
@@ -596,7 +595,7 @@
             title="Live at the provider"
             description={live
               ? `Snapshot taken ${relativeTime(live.liveAt)}.`
-              : 'No snapshot recorded yet. Refresh to ask the provider now.'}
+              : 'No snapshot yet. Refresh to ask the provider.'}
             rows={liveRows}
             hideEmpty
           >
@@ -653,8 +652,8 @@
               </Button>
               {#if showRaw}
                 <p class="text-muted-foreground mt-1 text-xs">
-                  The provider's own description of the resource, for diagnostics. It can contain
-                  provider-internal identifiers: do not paste it into public places.
+                  The provider's raw view of the resource. It may contain internal identifiers, so
+                  do not post it publicly.
                 </p>
                 <pre
                   id="edge-live-raw"

@@ -64,7 +64,7 @@
     {
       label: 'Publication epoch',
       value: relay.publicationEpoch,
-      hint: 'Goes up whenever what members should receive changes.',
+      hint: 'Goes up whenever what members get changes.',
     },
     {
       label: 'Last rotation',
@@ -89,7 +89,7 @@
   <Card.Header>
     <Card.Title>Pool</Card.Title>
     <Card.Description>
-      The published edges members are spread over, by pool position. Select one to open it.
+      Published edges members are spread over, by pool position. Select one to open it.
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-4">

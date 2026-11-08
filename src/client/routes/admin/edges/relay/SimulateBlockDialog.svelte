@@ -65,7 +65,7 @@
 <ActionConfirm
   bind:open
   title={`Simulate a block of ${name}?`}
-  body={`FCP will act as if this address is blocked in ${country || 'the chosen country'}. With automatic replacement on, it replaces the address for real: members move to a spare and this address is removed after its drain. Use it on a test deployment only.`}
+  body={`FCP acts as if this address is blocked in ${country || 'the chosen country'}. With automatic replacement on, it really replaces the address. Members move to a spare and this address is removed after its drain. Test deployments only.`}
   typed={name}
   confirmLabel="Start test block"
   danger
@@ -91,8 +91,8 @@
           </Select.Content>
         </Select.Root>
         <p class="text-muted-foreground text-xs">
-          Only countries addresses are checked from count. Pick one where the checks have vantages,
-          or an automatic replacement of a CDN front cannot be proven.
+          Only countries with address checks count. Pick one with check vantages, or an automatic
+          replacement of a CDN front cannot be proven.
         </p>
       {/if}
     </div>
@@ -103,7 +103,7 @@
       unit="members"
       min={1}
       max={50}
-      helper="Counted as distinct members reporting this address, on top of real reports."
+      helper="Added to real reports as distinct members."
     />
     <NumberField
       bind:value={minutes}

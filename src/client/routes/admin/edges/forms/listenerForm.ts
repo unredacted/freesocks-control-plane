@@ -145,7 +145,7 @@ export function listenerFormIssues(form: ListenerForm, originKind: OriginKind): 
     out.push('The origin port is a number between 1 and 65535.');
   const l7Only = form.frontable && combo.isHttpTransport && form.scheme === 'http';
   if (combo.usesSni && form.tlsNames.length === 0 && !l7Only)
-    out.push(`${combo.label} needs at least one server name.`);
+    out.push(`${combo.label} needs at least one SNI.`);
   if (combo.needsTarget) {
     if (form.targetAddress.trim() === '') out.push('REALITY needs the target it impersonates.');
     if (portOf(form.targetPort) === null)
@@ -153,7 +153,7 @@ export function listenerFormIssues(form: ListenerForm, originKind: OriginKind): 
   }
   if (form.frontable && combo.isHttpTransport) {
     if (form.scheme === 'https' && form.certPublic && form.certNames.length === 0)
-      out.push('A publicly trusted origin certificate must list the names it covers.');
+      out.push('A publicly trusted origin certificate must list the hostnames it covers.');
   }
   const bind = form.bindPanel && originKind === 'panel-node';
   if (bind) {

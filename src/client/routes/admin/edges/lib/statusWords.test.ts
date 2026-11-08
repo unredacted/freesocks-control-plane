@@ -60,7 +60,7 @@ const status = (over: Partial<OriginStatus> = {}): OriginStatus => ({
 describe('originSentence: a failed run', () => {
   test('any run that failed, not only a replacement', () => {
     expect(originSentence(status({ kind: 'needs-you', code: 'rotation_failed' }))).toBe(
-      'The last run on this node failed. Open the node to see the step that failed.',
+      'The last run on this node failed. Open the node to see which step.',
     );
   });
 });
@@ -160,11 +160,11 @@ describe('originSentence: one address in use', () => {
 
   test('the node page states the tradeoff of one address, and asks only when it wants more', () => {
     expect(oneAddressNote(1)).toBe(
-      'One address in use, as set for this node. There is no backup address: if it is blocked, members in that country wait about 10 to 15 minutes for FCP to replace it.',
+      'One address in use, as set for this node. No backup: if it is blocked, members in that country wait 10 to 15 minutes for a replacement.',
     );
     expect(oneAddressNote(1)).not.toMatch(/keep at least|need/i);
     expect(oneAddressNote(2)).toBe(
-      '1 of the 2 addresses wanted is in use. Until another one is, members have no backup address while FCP replaces a blocked one.',
+      '1 of 2 wanted addresses is in use. Until another is, members have no backup while a blocked one is replaced.',
     );
   });
 });
@@ -607,7 +607,7 @@ describe('sourceWords', () => {
       NOW,
     );
     expect(never.label).toBe('Hourly cap below one run');
-    expect(never.detail).toContain('Its hourly cap (0 tests) is smaller than one run (21 tests)');
+    expect(never.detail).toContain('Its hourly cap of 0 tests is less than one run of 21');
     for (const w of [full, skipped, never]) expect(w.detail).not.toMatch(/—/);
     // Failing outranks the cap: no evidence at all is the bigger problem.
     expect(sourceWords(h({ ...cap(390), failing: true, streak: 3 }), NOW).tone).toBe('danger');
@@ -629,17 +629,17 @@ describe('sourceWords', () => {
     expect(probePart(cap(0).cap)).toBe(452);
     const working = sourceWords(h(cap(120)), NOW);
     expect(working.detail).toContain(
-      'Its hourly cap: 120 of 452 tests used in the last hour (500 an hour, less 48 kept for name checks), 21 a run.',
+      'Its hourly cap: 120 of 452 tests used in the last hour (500 an hour, less 48 kept for SNI checks), 21 a run.',
     );
     expect(capHoldsBack(h(cap(431)))).toBe(false);
     expect(capHoldsBack(h(cap(432)))).toBe(true);
     expect(sourceWords(h(cap(440)), NOW).detail).toContain(
-      'The next round runs without it: 440 of the 452 tests the probes may use an hour (500 an hour, less 48 kept for name checks)',
+      'The next round runs without it: 440 of the 452 tests the probes may use an hour (500 an hour, less 48 kept for SNI checks)',
     );
     const never = sourceWords(h(cap(0, { perHour: 60 })), NOW);
     expect(never.label).toBe('Hourly cap below one run');
     expect(never.detail).toContain(
-      'What its hourly cap leaves the probes (12 tests: 60 less 48 kept for name checks) is smaller than one run (21 tests)',
+      'Its hourly cap of 60 tests, less 48 kept for SNI checks, leaves the probes 12. One run needs 21',
     );
     expect(capClause(cap(0, { perHour: 60 }).cap)).toBe(
       'its hourly cap is smaller than one run, so it never runs',
