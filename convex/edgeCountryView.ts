@@ -51,6 +51,8 @@ import { evidenceLists, storedFactsOf, type StoredFact } from './lib/edges/lists
 import {
   actedState,
   buildCountryView,
+  countrySnis,
+  sniCounts,
   type EdgeInput,
   type NameFacts,
   type OriginInput,
@@ -491,6 +493,7 @@ function nameFactsFor(
     const weight = reports?.weights.get(name);
     out.set(name, {
       family: n ? (pre.families.get(n.familyId)?.slug ?? null) : null,
+      familyLabel: n ? (pre.families.get(n.familyId)?.label ?? null) : null,
       qualified: n ? n.qualification.state === 'ok' : null,
       mark: markRow
         ? { state: markRow.state, source: markRow.source, at: markRow.updatedAt }
@@ -685,7 +688,8 @@ function viewOf(
             totals.names[actedState(n)]++;
           }
   }
-  return { origins, totals };
+  // The SNIs members here get, each once over every node (no further read).
+  return { origins, totals, snis: countrySnis(origins, country, st.sni.curatedCountries) };
 }
 
 /**
@@ -826,7 +830,7 @@ export const summaryRow = internalQuery({
     if (!listed) return null;
     const loaded = await load(ctx.db);
     const pre = await prefetch(ctx.db, loaded, code);
-    const { totals, origins } = viewOf(loaded, pre, st, code, now, null);
+    const { totals, origins, snis } = viewOf(loaded, pre, st, code, now, null);
     const handedBlocked = origins.flatMap((o) =>
       o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
     );
@@ -842,6 +846,7 @@ export const summaryRow = internalQuery({
         locations: locations.length,
         blocked: locations.filter((l) => l.blocked).length,
       },
+      snis: sniCounts(snis),
     };
   },
 });
@@ -857,7 +862,7 @@ export const country = internalQuery({
     await attachListMarks(ctx.db, loaded, code, now);
     const pre = await prefetch(ctx.db, loaded, code);
     const reports = await reportsFor(ctx.db, pre, code, st, now);
-    const { origins, totals } = viewOf(loaded, pre, st, code, now, reports);
+    const { origins, totals, snis } = viewOf(loaded, pre, st, code, now, reports);
     const listed = listedOf(st, code);
     return {
       country: code,
@@ -869,6 +874,7 @@ export const country = internalQuery({
       curated: st.sni.curatedCountries.includes(code),
       totals,
       origins,
+      snis,
       meantFor: meantForIn(await meantForLoad(ctx.db, code), loaded, code, now),
       // Where new keys on Automatic of members who chose this country go
       // (docs/edges.md "Exit location by country"); counts no member.

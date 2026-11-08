@@ -8,7 +8,9 @@ import type { PublishedEdge } from '../assignment';
 import {
   addressState,
   buildCountryView,
+  countrySnis,
   handedOn,
+  sniCounts,
   nameState,
   probesState,
   sampleKey,
@@ -712,5 +714,93 @@ describe('buildCountryView', () => {
     expect(v.origins[0]!.listeners[0]!.names.find((n) => n.name === 'old.example')!.offered).toBe(
       false,
     );
+  });
+});
+
+describe('countrySnis', () => {
+  const S: ViewSettings = { ...SETTINGS, curated: ['IR', 'RU', 'CN'] };
+  const name = (n: string, blockedIn: string[] = [], status: 'active' | 'retired' = 'active') => ({
+    name: n,
+    status,
+    blockedIn,
+    provenIn: [],
+  });
+  const listener = (
+    listenerId: string,
+    names: ReturnType<typeof name>[],
+    usable = true,
+  ): OriginInput['listeners'][number] => ({
+    listenerId,
+    key: listenerId,
+    protocol: 'vless',
+    streamTransport: 'raw',
+    security: 'reality',
+    usable,
+    sniPick: 'hrw1',
+    names,
+  });
+  const origins = (s: ViewSettings = S) =>
+    buildCountryView(
+      [
+        {
+          relayId: 'r1',
+          slug: 'node-one',
+          label: null,
+          kind: 'panel-node',
+          nodeName: 'node-one',
+          enabled: true,
+          direct: null,
+          listeners: [
+            listener('L', [
+              name('shared.example'),
+              name('some.example', ['RU']),
+              name('only.example', ['RU', 'CN']),
+              name('here-blocked.example', ['IR']),
+              name('gone.example', [], 'retired'),
+            ]),
+            listener('M', [name('shared.example'), name('other.example', ['RU'])]),
+            listener('off', [name('unused.example')], false),
+          ],
+          edges: [],
+          published: [],
+        },
+      ],
+      () => ({
+        family: 'fam',
+        familyLabel: 'Fam list',
+        qualified: true,
+        mark: null,
+        checks: null,
+        reports: null,
+      }),
+      s,
+    ).origins;
+
+  test('each SNI once, shared or only here or not used here, from the copies on the transports', () => {
+    const snis = countrySnis(origins(), 'IR', S.curated);
+    expect(snis.map((x) => [x.name, x.scope, x.blockedElsewhere, x.transports])).toEqual([
+      ['only.example', 'only_here', ['CN', 'RU'], 1],
+      ['other.example', 'some', ['RU'], 1],
+      ['shared.example', 'shared', [], 2],
+      ['some.example', 'some', ['RU'], 1],
+      // Members here never get it: last.
+      ['here-blocked.example', 'not_here', [], 0],
+    ]);
+    expect(snis[0]).toMatchObject({ family: 'fam', familyLabel: 'Fam list', state: 'unknown' });
+    expect(snis.at(-1)).toMatchObject({ state: 'blocked', basis: 'mark' });
+    expect(sniCounts(snis)).toEqual({ used: 4, onlyHere: 1 });
+  });
+
+  test('a country off the list gets the shared SNIs only: no rows', () => {
+    expect(countrySnis(origins({ ...S, country: 'DE' }), 'DE', S.curated)).toEqual([]);
+  });
+
+  test('with one listed country, nothing is only for it', () => {
+    const one = { ...S, curated: ['IR'] };
+    const snis = countrySnis(origins(one), 'IR', one.curated);
+    expect(snis.find((x) => x.name === 'only.example')).toMatchObject({
+      scope: 'shared',
+      blockedElsewhere: [],
+    });
   });
 });

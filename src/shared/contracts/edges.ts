@@ -1877,6 +1877,8 @@ export type CountryViewAddress = z.infer<typeof CountryViewAddress>;
 export const CountryViewName = z.object({
   name: z.string(),
   family: z.string().nullable(),
+  /** Its name list's label (null: not a family name). */
+  familyLabel: z.string().nullable().default(null),
   status: z.enum(['active', 'retired']),
   drainUntil: z.number().nullable(),
   /** Its family's target serves it (null: not a family name). */
@@ -1886,6 +1888,8 @@ export const CountryViewName = z.object({
   markAt: z.number().nullable(),
   /** A member there may be offered it (on an `hrw1` transport never one blocked there). */
   offered: z.boolean(),
+  /** The other censored countries it is blocked in (the transport's copies). */
+  blockedElsewhere: z.array(z.string()).default([]),
   checks: z
     .object({
       latest: z.enum(['ok', 'failing', 'mixed', 'none']),
@@ -1915,6 +1919,31 @@ export const CountryViewName = z.object({
   handed: z.number(),
 });
 export type CountryViewName = z.infer<typeof CountryViewName>;
+
+/**
+ * Where a server name is used, seen from one censored country
+ * (lib/edges/country/view.ts `SniScope`): `shared` (blocked in no other
+ * listed country), `some` (blocked in some), `only_here` (blocked in every
+ * other one), `not_here` (members there never get it).
+ */
+export const COUNTRY_VIEW_SNI_SCOPES = ['shared', 'some', 'only_here', 'not_here'] as const;
+export type CountryViewSniScope = (typeof COUNTRY_VIEW_SNI_SCOPES)[number];
+
+/** One server name (SNI) of one country, once over every node and transport. */
+export const CountryViewSni = z.object({
+  name: z.string(),
+  family: z.string().nullable(),
+  familyLabel: z.string().nullable(),
+  state: ViewState,
+  basis: z.enum(COUNTRY_VIEW_NAME_BASES),
+  scope: z.enum(COUNTRY_VIEW_SNI_SCOPES),
+  blockedElsewhere: z.array(z.string()),
+  /** The largest share of sampled members there handed it, over its transports. */
+  handed: z.number(),
+  /** Transports in use offering it to members there. */
+  transports: z.number(),
+});
+export type CountryViewSni = z.infer<typeof CountryViewSni>;
 
 const CountryViewShare = z.object({ id: z.string(), share: z.number() });
 
@@ -2085,6 +2114,8 @@ export const CountryViewSummaryResponse = z.object({
         locations: 0,
         blocked: 0,
       }),
+      /** SNIs members there may get, and how many of them only there. */
+      snis: z.object({ used: z.number(), onlyHere: z.number() }).default({ used: 0, onlyHere: 0 }),
     }),
   ),
   /** Each probe source in use: working, failing, Globalping's cap (`GET probes/sources`). */
@@ -2104,6 +2135,8 @@ export const CountryViewResponse = z.object({
   curated: z.boolean(),
   totals: CountryViewTotals,
   origins: z.array(CountryViewOrigin),
+  /** Every SNI of the transports in use, once, with where it is used (empty off the list). */
+  snis: z.array(CountryViewSni).default([]),
   /** The locations meant for this country. */
   meantFor: z.array(CountryViewMeantFor).default([]),
   /**
