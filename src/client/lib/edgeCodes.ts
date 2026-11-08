@@ -658,6 +658,14 @@ const COPY = {
       'FCP makes and checks a replacement itself only in a location you added to this node, and none of them can take this one (switched off, untrusted by hand, full, or at its spending cap).',
     fix: "Add a location to this node's locations, or free one up, then replace.",
   },
+  // The code an older build stored for the same refusal (`relays.suspicion.lastRotateError`
+  // keeps it until another rotation overwrites it): the same words.
+  no_ticked_location: {
+    label: 'No location for it',
+    explain:
+      'FCP makes and checks a replacement itself only in a location you added to this node, and none of them can take this one (switched off, untrusted by hand, full, or at its spending cap).',
+    fix: "Add a location to this node's locations, or free one up, then replace.",
+  },
   replacement_reblocked: {
     label: 'Replacement blocked again',
     explain:
