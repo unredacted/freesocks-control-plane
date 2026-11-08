@@ -661,8 +661,14 @@ const COPY = {
   replacement_reblocked: {
     label: 'Replacement blocked again',
     explain:
-      'This address replaced a blocked one and looks blocked again soon after going into use: the members who received it likely include the account that gave it away, so FCP stopped replacing it automatically.',
-    fix: 'Look at who receives this transport, then resume automatic replacement on the node page.',
+      'This address replaced a blocked one and looks blocked again soon after going into use, so FCP stopped replacing it automatically. Either an account that received it gave it away, or a network there now refuses every address of this provider.',
+    fix: 'Check whether other sites on the same provider fail from that country. If they do, it is the network and a new address will not help; if not, look at who receives this transport. Then resume automatic replacement on the node page.',
+  },
+  fresh_name_blocked: {
+    label: 'New name blocked before use',
+    explain:
+      "A replacement name on this CDN was blocked in a country before anyone received it, so the block is not about the name: a network there refuses every name on this CDN. FCP pauses automatic replacement for that country and keeps the address in use, so members' apps that never refresh are not cut off. Once the pause ends, FCP tries one new name.",
+    fix: 'Nothing to replace. Members in that country need another way in, such as a load balancer address or another mode, until the network lets the CDN through.',
   },
   // --- FCP's own client check in a replacement (rotation events and outcomes) ---------------
   client_check: {
@@ -1025,8 +1031,8 @@ const COPY = {
   auto_replace_held: {
     label: 'Automatic replacement held',
     explain:
-      'A replacement address was blocked again soon after it went into use, so FCP stopped replacing this transport automatically instead of burning address after address.',
-    fix: 'Find out who receives this transport, then resume automatic replacement on the node page.',
+      'A replacement address was blocked again soon after it went into use, so FCP stopped replacing this transport automatically instead of burning address after address. Either an account that received it gave it away, or a network there now refuses every address of this provider.',
+    fix: 'Check whether other sites on the same provider fail from that country. If they do, a new address will not help, so leave it held; if not, look at who receives this transport. Then resume automatic replacement on the node page.',
   },
   meant_for_blocked: {
     label: 'Location blocked for its country',
@@ -3078,6 +3084,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.sni.names.accepted': 'New server names given to members',
   'edge.sni.names.tested': "FCP's client check tested new server names",
   'edge.auto_replace_held': 'Automatic replacement held',
+  'edge.fresh_name_blocked': 'New name blocked before use',
   'edge.auto_replace_resumed': 'Automatic replacement resumed',
   'edge.block_suspected': 'Address looks blocked',
   'edge.block_cleared': 'Address no longer looks blocked',

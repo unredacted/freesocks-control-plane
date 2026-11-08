@@ -778,11 +778,21 @@ export const OriginAdmin = z.object({
   /** A guided setup owns the relay: upkeep and automatic replacement skip it. */
   setupOwned: z.boolean().default(false),
   /**
-   * Transports whose automatic replacement is held until the operator resumes it
-   * (`replacement_reblocked`: a replacement blocked again soon after going into use).
+   * Transports whose automatic replacement is held: until the operator resumes it
+   * (`replacement_reblocked`: a replacement blocked again soon after going into use),
+   * or, with `countries` and `until`, for those countries until then
+   * (`fresh_name_blocked`: a new name blocked there before anyone received it).
    */
   autoReplaceHolds: z
-    .array(z.object({ listenerId: z.string(), code: z.string(), at: iso }))
+    .array(
+      z.object({
+        listenerId: z.string(),
+        code: z.string(),
+        at: iso,
+        countries: z.array(z.string()).nullable().default(null),
+        until: isoN.default(null),
+      }),
+    )
     .default([]),
   /**
    * How members' addresses are picked from the pool: `hrw1` (rendezvous: a
@@ -2525,7 +2535,9 @@ export const EdgeConfigView = z.object({
       detect: z.record(z.string(), z.unknown()),
       /** FCP's own client check confirms and replaces (absent from an older server: off). */
       clientCheck: z.object({ enabled: z.boolean() }).default({ enabled: false }),
-      replacement: z.object({ reblockHours: z.number() }).default({ reblockHours: 24 }),
+      replacement: z
+        .object({ reblockHours: z.number(), freshBlockHours: z.number().default(24) })
+        .default({ reblockHours: 24, freshBlockHours: 24 }),
       /** Drained L7 fronts kept up for apps that have not refreshed (absent from an older server: the defaults). */
       drainHold: z
         .object({ enabled: z.boolean(), maxDays: z.number(), releaseAtKeys: z.number() })

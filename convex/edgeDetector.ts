@@ -797,13 +797,18 @@ export const run = internalAction({
               // automatic replacement of its transport instead of retrying every
               // pass until the daily cap (the operator resumes it). Asked on any
               // refusal: another blocker (a fleet brake, the daily cap) may be
-              // the one the start named.
-              if (lastRotateError !== 'edge.auto_replace_held')
+              // the one the start named. Never under a fresh-name hold: a network
+              // that refuses every new name explains the re-block as well.
+              if (
+                lastRotateError !== 'edge.auto_replace_held' &&
+                lastRotateError !== 'edge.fresh_name_blocked'
+              )
                 await ctx.runMutation(internal.edgeRotations.holdAutoReplace, {
                   relayId: o._id,
                   edgeId: decision.edgeId as Id<'edges'>,
                   code: 'replacement_reblocked',
                   ifReblocked: true,
+                  affectedCountries,
                 });
             }
           }

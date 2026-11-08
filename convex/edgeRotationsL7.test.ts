@@ -1600,3 +1600,144 @@ describe('edgeRotations: the zone lock of a Cloudflare rule', () => {
     expect(stepLockKey(edge, 'create_dns_record')).toBeNull();
   });
 });
+
+describe('edgeRotations: a new name blocked before anyone received it pauses, never cycles', () => {
+  /** A detector replacement for IR whose new hostname the IR round finds blocked. */
+  async function blockedFreshName() {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    __setEdgePlumbingForTests({ pollMs: 5_000, l7QualifyTimeoutMs: 2 * 60_000 });
+    const { t, relayId, listenerId } = await seed({ autoSelect: true });
+    await t.run(async (ctx) => {
+      for (const [key, value] of [
+        ['edge.autoRotate', 'true'],
+        ['edge.probe.enabled', 'true'],
+      ] as const) {
+        await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
+      }
+    });
+    const oldEdge = await insertPublishedFront(t, relayId, listenerId, {
+      name: 'adopted-old',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+    });
+    await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [oldEdge], autoRotate: true }));
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'detector',
+      targetEdgeId: oldEdge,
+      affectedCountries: ['IR'],
+    });
+    let stamped = false;
+    for (let i = 0; i < 300; i++) {
+      await vi.advanceTimersByTimeAsync(2_000);
+      await t.finishInProgressScheduledFunctions();
+      const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+      const newEdge = r.toEdgeId ?? r.createdEdgeId ?? null;
+      if (newEdge && !stamped) {
+        stamped = true;
+        const at = Date.now();
+        await t.run((ctx) =>
+          ctx.db.patch(newEdge, {
+            reachability: {
+              byCountry: [
+                {
+                  country: 'IR',
+                  verdict: 'unreachable',
+                  okVantages: 0,
+                  failVantages: 3,
+                  lastAt: at,
+                },
+              ],
+              updatedAt: at,
+            },
+          }),
+        );
+      }
+      if (['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(r.phase)) break;
+    }
+    expect(stamped).toBe(true);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    return { t, relayId, listenerId, oldEdge, r };
+  }
+
+  test('the run fails, the address in use stays, and the transport is paused for that country', async () => {
+    const { t, relayId, listenerId, oldEdge, r } = await blockedFreshName();
+    expect([r.phase, r.outcome]).toEqual(['failed', 'replacement_blocked']);
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.publishedEdgeIds[0]).toBe(oldEdge);
+    const old = (await t.query(internal.edges.get, { id: oldEdge }))!;
+    expect(old.burnedAt).toBeUndefined();
+    expect(old.drainUntil).toBeUndefined();
+    expect(origin.autoReplaceHolds).toEqual([
+      {
+        listenerId,
+        code: 'fresh_name_blocked',
+        at: expect.any(Number),
+        edgeId: oldEdge,
+        countries: ['IR'],
+        until: expect.any(Number),
+      },
+    ]);
+    const hold = origin.autoReplaceHolds![0]!;
+    expect(hold.until! - hold.at).toBe(24 * 3_600_000);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'edge.fresh_name_blocked')?.payload).toMatchObject({
+      countries: 'IR',
+      hours: 24,
+    });
+    // A warning, not the critical re-block hold: replacing could not help.
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.find((i) => i.kind === 'auto_replace_held')).toBeUndefined();
+    expect(attention.items.find((i) => i.kind === 'fresh_name_blocked')).toMatchObject({
+      severity: 'warning',
+      code: 'fresh_name_blocked',
+      facts: { countries: ['IR'], nextTryInMs: expect.any(Number) },
+    });
+    vi.useRealTimers();
+  }, 20_000);
+
+  test('a start for that country is refused until the pause ends; another country goes on', async () => {
+    const { t, relayId, oldEdge } = await blockedFreshName();
+    const start = (affectedCountries: string[]) =>
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'detector',
+        targetEdgeId: oldEdge,
+        affectedCountries,
+      });
+    await expect(start(['IR'])).rejects.toThrow(/fresh_name_blocked/);
+    // The re-block guard does not stack a critical hold on top of it.
+    expect(
+      await t.mutation(internal.edgeRotations.holdAutoReplace, {
+        relayId,
+        edgeId: oldEdge,
+        code: 'replacement_reblocked',
+        ifReblocked: true,
+        affectedCountries: ['IR'],
+      }),
+    ).toEqual({ held: false });
+    // A block seen in another country too is a reason of its own.
+    const other = await start(['IR', 'CN']);
+    expect(other.rotationId).toBeTruthy();
+    await t.run((ctx) =>
+      ctx.db.patch(other.rotationId, { phase: 'cancelled', finishedAt: Date.now() }),
+    );
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        activeRotationId: undefined,
+        cooldownUntil: undefined,
+        rotationsToday: 0,
+        l7ReplacementsToday: 0,
+      }),
+    );
+    // Once the pause has ended, one new name is tried again.
+    vi.setSystemTime(Date.now() + 25 * 3_600_000);
+    const again = await start(['IR']);
+    expect(again.rotationId).toBeTruthy();
+    vi.useRealTimers();
+  }, 20_000);
+});

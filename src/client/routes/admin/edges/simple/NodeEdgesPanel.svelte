@@ -80,6 +80,7 @@
   import {
     PLAIN_ATTENTION_ACTION_LABELS,
     codeExplain,
+    codeLabel,
     plainAuditActionLabel,
     plainWords,
     restorePhaseWords,
@@ -188,19 +189,33 @@
     const l = listeners.find((x) => x.id === e.listenerId);
     return l ? transportName(l) : null;
   };
-  // Automatic replacement held for some transports (a replacement blocked again soon).
+  // Automatic replacement held for some transports (a replacement blocked again
+  // soon), and paused for some countries (a new name blocked there before use).
+  const wholeHolds = $derived((relay?.autoReplaceHolds ?? []).filter((h) => h.countries === null));
+  const freshHolds = $derived((relay?.autoReplaceHolds ?? []).filter((h) => h.countries !== null));
   const heldNames = $derived(
-    (relay?.autoReplaceHolds ?? [])
+    wholeHolds
       .map((h) => listeners.find((l) => l.id === h.listenerId))
       .filter((l) => !!l)
       .map((l) => transportName(l)),
   );
+  const pausedLines = $derived(
+    freshHolds.map((h) => {
+      const l = listeners.find((x) => x.id === h.listenerId);
+      const name = l ? transportName(l) : 'A transport';
+      const until = h.until ? ` until ${new Date(h.until).toLocaleString()}` : '';
+      return `${name}: paused in ${(h.countries ?? []).join(', ')}${until}.`;
+    }),
+  );
   let resumeBusy = $state(false);
-  async function resume() {
+  // Every hold of the node, or only those of the given transports.
+  async function resume(listenerIds?: string[]) {
     if (!relay) return;
     resumeBusy = true;
     try {
-      await resumeAutoReplace(relay.id);
+      if (listenerIds)
+        for (const id of [...new Set(listenerIds)]) await resumeAutoReplace(relay.id, id);
+      else await resumeAutoReplace(relay.id);
       toast.success('Automatic replacement resumed.');
       invalidateRelay(qc, slug);
     } catch (e) {
@@ -545,7 +560,28 @@
       />
     {/if}
 
-    {#if relay && relay.autoReplaceHolds.length > 0}
+    {#if relay && freshHolds.length > 0}
+      <section class="rounded-lg border p-3" aria-labelledby={`${uid}-paused`}>
+        <h3 id={`${uid}-paused`} class="text-sm font-semibold">
+          {codeLabel('fresh_name_blocked')}
+        </h3>
+        <p class="text-muted-foreground mt-1 text-sm">{codeExplain('fresh_name_blocked')}</p>
+        <ul class="mt-1 text-sm">
+          {#each pausedLines as line (line)}<li>{line}</li>{/each}
+        </ul>
+        <Button
+          class="mt-2"
+          size="sm"
+          variant="outline"
+          disabled={resumeBusy}
+          onclick={() => void resume(freshHolds.map((h) => h.listenerId))}
+        >
+          Resume automatic replacement now
+        </Button>
+      </section>
+    {/if}
+
+    {#if relay && wholeHolds.length > 0}
       <section
         class="border-destructive/40 rounded-lg border p-3"
         role="alert"

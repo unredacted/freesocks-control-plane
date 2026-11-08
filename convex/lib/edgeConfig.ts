@@ -181,6 +181,14 @@ export interface EdgeConfig {
      * 0 = never held.
      */
     reblockHours: number;
+    /**
+     * A detector replacement whose new CDN name is blocked, in a country that
+     * triggered it, before any member received it holds automatic replacement
+     * of that transport for those countries this many hours: the block is not
+     * about the name, so another name would fare no better. One new name per
+     * period then checks whether the network has let go. 0 = never held.
+     */
+    freshBlockHours: number;
   };
   /**
    * Who is trusted with which addresses (docs/edges.md "Address enumeration"):
@@ -383,6 +391,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   },
   replacement: {
     reblockHours: 24,
+    freshBlockHours: 24,
   },
   trust: {
     promoteAfterDays: 14,
@@ -568,6 +577,7 @@ export const EDGE_KEYS = {
   'drainHold.maxDays': 'edge.drainHold.maxDays',
   'drainHold.releaseAtKeys': 'edge.drainHold.releaseAtKeys',
   'replacement.reblockHours': 'edge.replacement.reblockHours',
+  'replacement.freshBlockHours': 'edge.replacement.freshBlockHours',
   'trust.promoteAfterDays': 'edge.trust.promoteAfterDays',
   'trust.windowDays': 'edge.trust.windowDays',
   'trust.firstWaveHours': 'edge.trust.firstWaveHours',
@@ -756,6 +766,12 @@ export function sanitizeRelayConfig(
         0,
         168,
         D.replacement.reblockHours,
+      ),
+      freshBlockHours: sanitizeInt(
+        raw['replacement.freshBlockHours'],
+        0,
+        168,
+        D.replacement.freshBlockHours,
       ),
     },
     trust: {
@@ -1327,6 +1343,7 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'drainHold.maxDays': { min: 0, max: 90 },
   'drainHold.releaseAtKeys': { min: 0, max: 100_000 },
   'replacement.reblockHours': { min: 0, max: 168 },
+  'replacement.freshBlockHours': { min: 0, max: 168 },
   'trust.promoteAfterDays': { min: 0, max: 365 },
   'trust.windowDays': { min: 1, max: 14 },
   'trust.firstWaveHours': { min: 0, max: 72 },

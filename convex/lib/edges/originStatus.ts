@@ -63,6 +63,7 @@ export const ATTENTION_RANK = [
   'qualification_lapsed',
   'retest_needed',
   'block_simulated',
+  'fresh_name_blocked',
   'block_suspected',
   'edge_unreachable',
   'new_edge_blocked_in',

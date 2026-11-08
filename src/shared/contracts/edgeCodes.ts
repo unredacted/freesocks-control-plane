@@ -149,9 +149,11 @@ export const PREFLIGHT_BLOCKER_CODES = [
   // no location where an address was tested
   'no_verified_spare',
   'no_ticked_location',
-  // automatic replace: held for the transport, or a replacement blocked again soon
+  // automatic replace: held for the transport, or a replacement blocked again soon,
+  // or paused for some countries (a new name was blocked there before use)
   'auto_replace_held',
   'replacement_reblocked',
+  'fresh_name_blocked',
   // selection
   'no_compatible_listener',
   'no_compatible_layer',
@@ -363,6 +365,10 @@ export const ATTENTION_KINDS = [
   // (critical); and contained addresses idle while ordering by country is off.
   'audience_only_left',
   'audience_idle',
+  // A detector replacement's new CDN name was blocked in a country before anyone
+  // received it: a network there refuses every name on that CDN, so automatic
+  // replacement for that country pauses (`relays.autoReplaceHolds` with countries).
+  'fresh_name_blocked',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
