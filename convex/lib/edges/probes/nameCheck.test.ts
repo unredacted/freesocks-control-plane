@@ -20,12 +20,13 @@ import {
   pickAtlasProbes,
   planNameProbes,
 } from './nameCheck';
+import type { ProbeNetworks } from './networks';
 
 const T = { address: '198.51.100.9', port: 443, name: 'site.example' };
 
 describe('what is sent', () => {
   test('Globalping: HEAD / over HTTPS to the address, the name as SNI and Host, nothing else', () => {
-    const first = globalpingNameRequest(T, { country: 'IR', limit: 3, preferEyeball: true });
+    const first = globalpingNameRequest(T, { country: 'IR', limit: 3, home: true });
     expect(first).toEqual({
       type: 'http',
       target: '198.51.100.9',
@@ -321,8 +322,13 @@ function client(
   };
 }
 
-describe('which probes a batch runs on', () => {
-  const C = { country: 'AE', limit: 3, preferEyeball: true, minVantages: 3 };
+describe('which probes a batch runs on: home networks first', () => {
+  const C = {
+    country: 'AE',
+    limit: 3,
+    networks: 'home_first' as ProbeNetworks,
+    minVantages: 3,
+  };
   const locationsOf = (req: unknown) => (req as { locations: unknown }).locations;
   const tagged = (req: unknown) =>
     (locationsOf(req) as Array<{ tags?: string[] }>).some((l) => l.tags?.length);
@@ -349,12 +355,12 @@ describe('which probes a batch runs on', () => {
     expect(countProbesIn({ nope: true }, 'AE')).toBeNull();
   });
 
-  test('the plan: enough home-network probes, too few, too few of both, the preference off', () => {
+  test('the plan: enough home-network probes, too few, too few of both, any network', () => {
     const plan = (e: number, d: number, n = e + d, c = C) =>
       planNameProbes({ eyeball: e, datacenter: d, total: n }, c);
     expect(plan(5, 4)).toMatchObject({
-      where: { country: 'AE', limit: 3, preferEyeball: true },
-      pool: { mode: 'eyeball', eyeball: 5, total: 9, limit: 3, needs: 3, preferEyeball: true },
+      where: { country: 'AE', limit: 3, home: true },
+      pool: { mode: 'eyeball', eyeball: 5, total: 9, limit: 3, needs: 3, networks: 'home_first' },
     });
     expect(plan(2, 4)).toMatchObject({
       where: { country: 'AE', limit: 3, eyeball: 2 },
@@ -368,9 +374,9 @@ describe('which probes a batch runs on', () => {
     });
     // The floor is the lower of minVantages and the limit.
     expect(plan(2, 4, 6, { ...C, limit: 2 }).pool.mode).toBe('eyeball');
-    expect(plan(2, 4, 6, { ...C, preferEyeball: false })).toMatchObject({
+    expect(plan(2, 4, 6, { ...C, networks: 'any' })).toMatchObject({
       where: { country: 'AE', limit: 3 },
-      pool: { mode: 'any', preferEyeball: false },
+      pool: { mode: 'any', networks: 'any' },
     });
   });
 
@@ -428,5 +434,61 @@ describe('which probes a batch runs on', () => {
       [{ country: 'AE', limit: 3 }],
     ]);
     expect(r.pool).toBeNull();
+  });
+});
+
+describe('which probes a batch runs on: home networks only, any network', () => {
+  const HOME = { country: 'AE', limit: 3, networks: 'home' as ProbeNetworks, minVantages: 3 };
+  const ANY = { ...HOME, networks: 'any' as ProbeNetworks };
+  const locationsOf = (req: unknown) => (req as { locations: unknown }).locations;
+  const tagged = (req: unknown) =>
+    (locationsOf(req) as Array<{ tags?: string[] }>).some((l) => l.tags?.length);
+
+  test('home only: the home-network tag, however few the country has; never topped up', () => {
+    for (const [e, d] of [
+      [5, 4],
+      [2, 4],
+      [0, 1],
+    ] as const) {
+      const p = planNameProbes({ eyeball: e, datacenter: d, total: e + d }, HOME);
+      expect(p.where).toEqual({ country: 'AE', limit: 3, home: true });
+      expect(p.pool).toMatchObject({ mode: 'eyeball', eyeball: e, networks: 'home' });
+      expect(globalpingNameRequest(T, p.where).locations).toEqual([
+        { country: 'AE', limit: 3, tags: ['eyeball-network'] },
+      ]);
+    }
+  });
+
+  test('home only: a short country is asked once, home networks only', async () => {
+    const gp = client(listing('AE', 2, 4));
+    const r = await createFirstNameMeasurement(gp, T, HOME);
+    expect(gp.asked.map(locationsOf)).toEqual([
+      [{ country: 'AE', limit: 3, tags: ['eyeball-network'] }],
+    ]);
+    expect(r.pool).toMatchObject({ mode: 'eyeball', eyeball: 2, total: 6, networks: 'home' });
+  });
+
+  test('home only: no home-network probe matched: the refusal stands, nothing else is asked', async () => {
+    for (const list of [listing('AE', 0, 4), null]) {
+      const gp = client(list, { refuse: tagged });
+      let waited = 0;
+      const r = await createFirstNameMeasurement(gp, T, HOME, async () => {
+        waited++;
+      });
+      expect(waited).toBe(0);
+      expect(gp.asked.map(locationsOf)).toEqual([
+        [{ country: 'AE', limit: 3, tags: ['eyeball-network'] }],
+      ]);
+      expect(r.res.ok).toBe(false);
+    }
+  });
+
+  test('any network: no tag, with or without a listing', async () => {
+    for (const list of [listing('AE', 5, 4), null]) {
+      const gp = client(list);
+      const r = await createFirstNameMeasurement(gp, T, ANY);
+      expect(gp.asked.map(locationsOf)).toEqual([[{ country: 'AE', limit: 3 }]]);
+      expect(r.pool?.mode ?? 'any').toBe('any');
+    }
   });
 });

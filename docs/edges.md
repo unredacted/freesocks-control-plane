@@ -3593,8 +3593,9 @@ volunteers' home connections. These rules are built in, not settings:
 **Which probes** (Globalping; `lib/edges/probes/nameCheck.ts` `createFirstNameMeasurement`).
 A batch's first measurement picks the probes; every later one reuses them. Before it, FCP reads
 Globalping's probe listing (`GET /v1/probes`, free and not rate limited) and counts the
-country's probes by network tag (`planNameProbes`). With `edge.probe.preferEyeball` on (the
-default):
+country's probes by network tag (`planNameProbes`). What it asks follows `edge.probe.networks`
+(§ "Probe sources and verdicts"): at `home` (the default) home-network probes only, however few
+the country has, and a refusal stands; at `any`, any probe. At `home_first`:
 
 | The country's probes                                                                        | The first measurement asks for                                                                                                |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -3606,19 +3607,21 @@ Every case is **one** ask of at most `perCountryLimit` probes, what each measure
 budgeted at, so a short country costs no more tests than any other. If Globalping refuses that ask
 because the probes went away since the listing, the batch waits the source spacing and asks for
 any probe once. Without a usable listing (it failed, or it carries no network tag anywhere),
-the batch asks for home-network probes and then any probe, as before, and notes nothing.
+the batch asks for home-network probes and then any probe, and notes nothing.
 
 Where a country has **fewer probes in all** than `minVantages`, the batch runs on what there is
 and its names stay not judged: the floor is not lowered for one country, because so few probes
 on so few networks cannot tell a blocked name from a broken probe or network (another source,
 such as RIPE Atlas, can still add vantages: a batch's sources are counted together). What the
 listing said is noted per country (`appState` `sniVantage:namePool:<CC>`, `lib/edges/sni/namePool.ts`).
-The country page says when the checks there also use data-centre (or any) probes, and when names
-cannot be judged there on Globalping alone. It shows the note only while it still describes the
-checks: Globalping is still a name-check source, the note is newer than two check intervals (at
-least a day), and the limit, the floor and the preference are unchanged. Measured on 2026-11-05:
-AE has two home-network probes (topped up, so it can now be judged); MM has one probe in all
-(stays not judged, and says so). The same applies to the real-site checks of candidate names
+The country page says when the checks there also use data-centre (or any) probes, when home
+networks only leaves the country short of a verdict, and when names cannot be judged there on
+Globalping alone. It shows the note only while it still describes the checks: Globalping is
+still a name-check source, the note is newer than two check intervals (at least a day), and the
+limit, the floor and `edge.probe.networks` are unchanged (a note from before the setting reads
+as `home_first` when the old switch was on, `any` when off). Measured on 2026-11-05 under the
+top-up: AE had two home-network probes (topped up, so it could be judged); MM has one probe in
+all (stays not judged, and says so). The same applies to the real-site checks of candidate names
 (§ Finding names).
 
 **Residual risk** (accepted by turning a country on; the page says so next to the switch):
@@ -4415,6 +4418,62 @@ off) or when it is all the address has (`literalFamilies`).
 | check-host.net | **Never asked.** Its API answers `{"error":"invalid_url"}` to every spelling of an IPv6 literal (`[v6]:port`, a bare literal, `tcp://`, `https://`), and its docs do not mention IPv6 (`checkhostTakes`). | Keyless; a refusal comes back as 200 with a code (`invalid_url` = `request_refused`, `limit_exceeded` = `rate_limited`).                                                     |
 | Globalping     | A TCP ping to the literal, its own family; only probes that can reach IPv6 answer.                                                                                                                        | `measurementOptions.ipVersion` is sent for a NAME only: Globalping refuses it next to an IP literal (400, `request_refused`). Works without a token, at the anonymous limit. |
 | RIPE Atlas     | `af: 6` measurements, from probes with IPv6.                                                                                                                                                              | Needs a key and credits; off by default.                                                                                                                                     |
+
+**Which networks Globalping probes come from** (`edge.probe.networks`, Settings, Probes,
+"Globalping probe networks"; `lib/edges/probes/networks.ts`). Globalping tags every probe as a
+home network (`eyeball-network`: a consumer ISP, the kind of network members connect from) or a
+data centre (`datacenter-network`), never both. One setting covers every Globalping ask from a
+checked country: address rounds (`probeOps`) and the checks of server names from inside a
+country (`sniVantageOps`, and `sniHuntOps.countryBatch` for candidate names):
+
+| Value            | Address rounds                                                                                                                                                                                                                                                                                                                                                | Name checks                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `home` (default) | home-network probes only, in every checked country                                                                                                                                                                                                                                                                                                            | home-network probes only; a refusal (no probe matched) stands  |
+| `home_first`     | from Globalping's probe listing (counted at most once an hour, `appState` `globalping:probeCounts`): a country with fewer home-network probes than `perCountryLimit` is topped up with data-centre ones in the same ask, and asks any probe when the two together are too few; without a listing, home networks, then any probe once on a "no probes" refusal | the table in § "Checks from inside a country" ("Which probes") |
+| `any`            | any probe                                                                                                                                                                                                                                                                                                                                                     | any probe                                                      |
+
+Every value asks the same number of tests (`perCountryLimit` per checked country), so the
+Globalping budget does not move. Never by network type, whatever the setting: control countries
+(one vantage each in an uncensored country: any probe that answers tells a blocked address from a
+broken one, and a home-network tag there could leave a control country with no probe) and the
+timing of a candidate's site from a node's place (§ "Finding names": the node sits in a data
+centre). check-host.net and RIPE Atlas do not tag their vantages. The Probes page shows, per
+country of each run, how many results came from home networks and how many from data centres.
+`edge.probe.networks` replaced the switch `edge.probe.preferEyeball` (§ "Deploy notes").
+
+**What home networks only costs.** A country with few home-network probes gets fewer results,
+and one with none gets none from Globalping. Globalping's public listing (`GET /v1/probes`, free)
+on 2026-11-08 had 5,478 probes, 1,608 of them on home networks. Some censored countries:
+
+| Country                        | Home networks | Data centres | All    |
+| ------------------------------ | ------------- | ------------ | ------ |
+| CN                             | 31            | 29           | 60     |
+| RU                             | 34            | 139          | 173    |
+| VN                             | 21            | 21           | 42     |
+| TR                             | 14            | 25           | 39     |
+| BY                             | 9             | 4            | 13     |
+| KZ                             | 8             | 10           | 18     |
+| BD                             | 8             | 20           | 28     |
+| PK                             | 7             | 5            | 12     |
+| TJ                             | 6             | 0            | 6      |
+| IR                             | 4             | 4            | 8      |
+| AE                             | 3             | 9            | 12     |
+| AZ                             | 3             | 7            | 10     |
+| EG                             | 1             | 3            | 4      |
+| VE                             | 1             | 1            | 2      |
+| SA                             | 0             | 5            | 5      |
+| MM                             | 0             | 1            | 1      |
+| QA, OM, KW                     | 0             | 1 each       | 1 each |
+| UZ, TM, ET, CU, IQ, SY, SD, KP | 0             | 0            | 0      |
+
+Probes come and go, so these move. At the defaults (`perCountryLimit` 3, name-check
+`minVantages` 3): EG, VE, SA, MM, QA, OM and KW get at most one result from home networks, or
+none, so a name checked there is not judged on Globalping alone; AE and AZ have exactly three,
+so one probe offline is enough to leave a batch short. An address round still reads with fewer
+vantages ("reachable" needs one home-network success), but "unreachable" needs
+`probe.agreementVantages` failing networks, so a country with one home-network probe can never
+call an address unreachable from Globalping alone. Where that matters more than where the probes
+sit, "Home networks first" tops those countries up with data centres at the same cost.
 
 **Three kinds of answer** (`lib/edges/probes/types.ts` `RunOutcome`). A vantage either
 **reached** the address, was **refused** by it (connection refused, reset, no answer, a failed
@@ -7025,6 +7084,19 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Globalping probe networks** (2026-11-08, § "Probe sources and verdicts") replace the switch
+`edge.probe.preferEyeball` ("Prefer residential networks") with `edge.probe.networks`: no
+schema change, no env change. `seedCutover` runs `seed:migrateProbeNetworks` (idempotent): a
+stored "off" becomes `any`, anything else `home` (the new default); a stored
+`edge.probe.networks` wins; then the old row is deleted. What changes on a deployment that had
+the switch on (or never set): name checks no longer top a short country up with data-centre
+probes, and a country with too few home-network probes stays not judged (the country page says
+so); address rounds are unchanged (they asked home networks only before too). Choose
+`home_first` to keep the top-up. The country pages' probe notes from before read as
+`home_first` and are hidden until the next batch. To roll back, run
+`seed:restoreProbeNetworksForRollback` (no arguments) before deploying the older build: it
+writes the old switch back (off for `any`, on otherwise).
 
 **Names in apps** (§ "Names in apps") add one optional field (`edgeLocations.memberPlace`), one
 admin call (`POST providers/{id}/locations/{locationId}/member-place`), one audit action

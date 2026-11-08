@@ -392,10 +392,50 @@ describe('too few home-network probes in a country', () => {
     expect(await notedPool(t)).toMatchObject({ mode: 'eyeball', eyeball: 4, total: 8, needs: 3 });
   });
 
-  test('two home-network probes: topped up with a data-centre one in the same ask, and the names are judged', async () => {
+  const homeFirst = (t: T) =>
+    t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.networks', '"home_first"'));
+
+  test('home networks only (the default), two home-network probes: one ask, never topped up', async () => {
     const gp = poolGlobalping(2, 3);
     __setVantageGlobalpingFactory(() => gp.client);
     const { t } = await seed();
+    await tickAndDrain(t);
+    expect(gp.requests.map(firstAsk)).toEqual([
+      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
+      'm-1',
+      'm-1',
+    ]);
+    const all = await rows(t);
+    expect(all.every((x) => x.status === 'finished' && x.results.length === 2)).toBe(true);
+    // Two home networks are fewer than the floor of three: not judged.
+    expect((await detailRow(t, 'y.example')).vantage[0]).toMatchObject({
+      suggestion: null,
+      reason: 'not_enough_vantages',
+    });
+    expect(await notedPool(t)).toMatchObject({
+      mode: 'eyeball',
+      eyeball: 2,
+      total: 5,
+      networks: 'home',
+    });
+  });
+
+  test('home networks only, no home-network probe: nothing else is asked', async () => {
+    const gp = poolGlobalping(0, 3);
+    __setVantageGlobalpingFactory(() => gp.client);
+    const { t } = await seed();
+    await tickAndDrain(t);
+    // Each name asks home networks (a refusal costs no test); never another network.
+    const home = [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }];
+    expect(gp.requests.map(firstAsk)).toEqual([home, home, home]);
+    expect((await rows(t)).every((x) => x.status === 'failed')).toBe(true);
+  });
+
+  test('home first, two home-network probes: topped up with a data-centre one in the same ask, and the names are judged', async () => {
+    const gp = poolGlobalping(2, 3);
+    __setVantageGlobalpingFactory(() => gp.client);
+    const { t } = await seed();
+    await homeFirst(t);
     await tickAndDrain(t);
     // One topped-up ask (no extra tests), then every other name on its probes.
     expect(gp.requests.map(firstAsk)).toEqual([
@@ -423,10 +463,11 @@ describe('too few home-network probes in a country', () => {
     });
   });
 
-  test('one probe in all: it is used, the names stay not judged, and the country page knows why', async () => {
+  test('home first, one probe in all: it is used, the names stay not judged, and the country page knows why', async () => {
     const gp = poolGlobalping(0, 1);
     __setVantageGlobalpingFactory(() => gp.client);
     const { t } = await seed();
+    await homeFirst(t);
     await tickAndDrain(t);
     expect(gp.requests.map(firstAsk)).toEqual([[{ country: 'IR', limit: 3 }], 'm-1', 'm-1']);
     // The floor is not lowered for one country.
@@ -435,8 +476,8 @@ describe('too few home-network probes in a country', () => {
       reason: 'not_enough_vantages',
     });
     expect(await notedPool(t)).toMatchObject({ mode: 'any', eyeball: 0, total: 1, needs: 3 });
-    // Turned off, Globalping no longer describes the checks: the page says nothing of it.
-    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.preferEyeball', 'false'));
+    // The setting changed: the note no longer describes the checks, and the page says nothing of it.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.networks', '"any"'));
     expect(await notedPool(t)).toBeNull();
   });
 });
@@ -1106,8 +1147,10 @@ describe('candidate names share the budget (docs/edges.md "Finding names")', () 
     __setHuntDepsForTests(null);
   });
 
-  test('a country short of home-network probes is topped up for candidate names too', async () => {
-    const { t } = await seed({ settings: { 'edge.sni.vantage.hourlyBudget': 30 } });
+  test('home first: a country short of home-network probes is topped up for candidate names too', async () => {
+    const { t } = await seed({
+      settings: { 'edge.sni.vantage.hourlyBudget': 30, 'edge.probe.networks': 'home_first' },
+    });
     await candidates(t, ['works.example', 'also.example']);
     const now = Date.now();
     await t.mutation(internal.sniVantage.tick, { now });
@@ -1127,6 +1170,23 @@ describe('candidate names share the budget (docs/edges.md "Finding names")', () 
       (await ctx.db.query('sniCandidates').collect()).find((c) => c.name === 'works.example'),
     );
     expect(cand!.countries?.find((x) => x.cc === 'IR')?.reading).toBe('ok');
+    __setHuntDepsForTests(null);
+  });
+
+  test('home networks only: candidate names are asked from home networks alone', async () => {
+    const { t } = await seed({ settings: { 'edge.sni.vantage.hourlyBudget': 30 } });
+    await candidates(t, ['works.example', 'also.example']);
+    const now = Date.now();
+    await t.mutation(internal.sniVantage.tick, { now });
+    await t.mutation(internal.sniVantage.tick, { now: now + 10 * 60_000 });
+    const gp = poolGlobalping(2, 3);
+    __setHuntDepsForTests({ globalping: () => gp.client, sleep: async () => undefined });
+    const batch = (await t.run((ctx) => ctx.db.query('sniHuntProbes').first()))!.batch;
+    await t.action(internal.sniHuntOps.countryBatch, { batch });
+    expect(gp.requests.map((q) => q.locations)).toEqual([
+      [{ country: 'IR', limit: 3, tags: ['eyeball-network'] }],
+      'm-1',
+    ]);
     __setHuntDepsForTests(null);
   });
 });

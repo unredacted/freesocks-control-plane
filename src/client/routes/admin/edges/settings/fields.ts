@@ -303,6 +303,12 @@ const IPV6_GLOBAL = [
   { value: 'off', label: 'No IPv6 entries' },
 ] as const;
 
+const PROBE_NETWORK_OPTIONS = [
+  { value: 'home', label: 'Home networks only' },
+  { value: 'home_first', label: 'Home networks first, topped up with data centres' },
+  { value: 'any', label: 'Any network' },
+] as const;
+
 export const RENDER_GLOBAL_FIELDS: Field[] = [
   {
     kind: 'number',
@@ -621,11 +627,12 @@ export const PROBE_FIELDS: Field[] = [
     helper: 'External probe runs allowed per hour. 0 stops external probing.',
   },
   {
-    kind: 'switch',
-    path: 'probe.preferEyeball',
-    label: 'Prefer residential networks',
+    kind: 'select',
+    path: 'probe.networks',
+    label: 'Globalping probe networks',
     helper:
-      'On: vantage points on consumer networks are asked for first, where the source can tell.',
+      'Which networks Globalping checks come from. Home networks see what members see, but a country with few of them gets fewer results. Control countries use any probe.',
+    options: PROBE_NETWORK_OPTIONS,
   },
   {
     kind: 'switch',

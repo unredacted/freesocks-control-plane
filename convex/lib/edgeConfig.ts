@@ -17,6 +17,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import { resolveCensoredCountries } from './censoredCountries';
+import { PROBE_NETWORKS, type ProbeNetworks } from './edges/probes/networks';
 import { drainWarningCodes } from '../../src/shared/contracts/edgeCodes';
 import {
   MAX_DESIRED_PUBLISHED,
@@ -293,7 +294,11 @@ export interface EdgeConfig {
     perCountryLimit: number;
     hourlyBudget: number;
     agreementVantages: number;
-    preferEyeball: boolean;
+    /**
+     * Which kinds of network Globalping probes come from, for every ask from a
+     * checked country (lib/edges/probes/networks.ts). Controls never.
+     */
+    networks: ProbeNetworks;
     /** Probe the IPv6 path of origin / custom targets (edge targets follow `render.ipv6Mode`). */
     ipv6: boolean;
     /**
@@ -440,7 +445,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     perCountryLimit: 3,
     hourlyBudget: 200,
     agreementVantages: 2,
-    preferEyeball: true,
+    networks: 'home',
     ipv6: true,
     globalpingTestsPerHour: 400,
   },
@@ -613,7 +618,7 @@ export const EDGE_KEYS = {
   'probe.perCountryLimit': 'edge.probe.perCountryLimit',
   'probe.hourlyBudget': 'edge.probe.hourlyBudget',
   'probe.agreementVantages': 'edge.probe.agreementVantages',
-  'probe.preferEyeball': 'edge.probe.preferEyeball',
+  'probe.networks': 'edge.probe.networks',
   'probe.ipv6': 'edge.probe.ipv6',
   'probe.globalpingTestsPerHour': 'edge.probe.globalpingTestsPerHour',
   'country.enabled': 'edge.country.enabled',
@@ -881,7 +886,7 @@ export function sanitizeRelayConfig(
         10,
         D.probe.agreementVantages,
       ),
-      preferEyeball: sanitizeBool(raw['probe.preferEyeball'], D.probe.preferEyeball),
+      networks: sanitizeEnum(raw['probe.networks'], PROBE_NETWORKS, D.probe.networks),
       ipv6: sanitizeBool(raw['probe.ipv6'], D.probe.ipv6),
       globalpingTestsPerHour: sanitizeInt(
         raw['probe.globalpingTestsPerHour'],
@@ -972,6 +977,14 @@ export const LEGACY_DNS_PROVIDERS_FRONT_KEY = 'edge.l7.dnsProvidersFront';
  * and the per-family overrides inside each `edge.render.clients.<family>` row.
  * Nothing reads them; `edgeRender:retireEntryLabels` removes what is stored.
  */
+/**
+ * The retired switch `edge.probe.networks` replaced ("Prefer residential
+ * networks"): its stored value is read once, by
+ * `seed.migrateProbeNetworks` (on = home networks only, off = any network),
+ * and the row deleted; `seed.restoreProbeNetworksForRollback` writes it back.
+ */
+export const LEGACY_PREFER_EYEBALL_KEY = 'edge.probe.preferEyeball';
+
 export const RETIRED_RENDER_LABEL_KEYS = [
   'edge.render.autoGroupName',
   'edge.render.primaryLabel',

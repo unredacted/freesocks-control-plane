@@ -25,6 +25,7 @@ import { FAKE_ZONES, FAKE_ZONE_ID, fakeEdgeProviderEnabled } from './lib/edges/p
 import { upsertLocation } from './edgeLocations';
 import { mockBackendEnabled } from './lib/backends/mock';
 import { restoreLegacyKeys, retireLegacyKeys } from './censoredCountries';
+import { EDGE_KEYS, LEGACY_PREFER_EYEBALL_KEY, resolveEdgeConfig } from './lib/edgeConfig';
 import {
   CENSORED_COUNTRIES_KEY,
   MAX_CENSORED_COUNTRIES,
@@ -577,6 +578,59 @@ export const renameAppSettingKeys = internalMutation({
 });
 
 /**
+ * Deploy step (seedCutover), idempotent: the retired "Prefer residential
+ * networks" switch (`edge.probe.preferEyeball`) becomes `edge.probe.networks`.
+ * A stored "off" becomes "any network"; "on" (or a value the old build read
+ * as on) becomes "home networks only", the new default. A stored
+ * `edge.probe.networks` wins (a newer edit). Then the old row is deleted, so a
+ * later run finds nothing to do. `restoreProbeNetworksForRollback` writes the
+ * switch back before an older build is deployed.
+ */
+export const migrateProbeNetworks = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ migrated: 'home' | 'any' | null; kept: boolean }> => {
+    const old = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', LEGACY_PREFER_EYEBALL_KEY))
+      .unique();
+    if (!old) return { migrated: null, kept: false };
+    const current = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', EDGE_KEYS['probe.networks']))
+      .unique();
+    // As the old build read it (`sanitizeBool`): only a stored `false` was off.
+    let off = false;
+    try {
+      off = JSON.parse(old.value) === false;
+    } catch {
+      off = false;
+    }
+    const networks = off ? 'any' : 'home';
+    if (!current)
+      await upsertSettingRow(ctx, EDGE_KEYS['probe.networks'], JSON.stringify(networks));
+    await ctx.db.delete(old._id);
+    return { migrated: current ? null : networks, kept: !!current };
+  },
+});
+
+/**
+ * Rollback helper: run BEFORE deploying a build from before
+ * `edge.probe.networks`. That build reads only the old switch, on when absent:
+ * "any network" writes it back off; either home setting leaves it on (the old
+ * build then asks home networks first and tops them up). The new key is left
+ * in place (the old build ignores it).
+ */
+export const restoreProbeNetworksForRollback = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ preferEyeball: boolean }> => {
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const on = cfg.probe.networks !== 'any';
+    await upsertSettingRow(ctx, LEGACY_PREFER_EYEBALL_KEY, JSON.stringify(on));
+    return { preferEyeball: on };
+  },
+});
+
+/**
  * Copy the censored-country list into its own key once (lib/censoredCountries.ts).
  * Until then it is computed live from the five keys it replaced, so this only
  * freezes what is already in effect. Never overwrites a stored list, and leaves
@@ -649,6 +703,9 @@ export const seedCutover = internalAction({
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
     await ctx.runMutation(internal.seed.renameAppSettingKeys, {});
+    // The retired "Prefer residential networks" switch becomes the probe network
+    // setting (once; a no-op afterwards).
+    await ctx.runMutation(internal.seed.migrateProbeNetworks, {});
     await ctx.runMutation(internal.seed.seedCensoredCountries, {});
     // Once the list is stored the four keys it replaced go (their values are kept for a rollback).
     await ctx.runMutation(internal.seed.retireLegacyCountryKeys, {});

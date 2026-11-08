@@ -879,7 +879,7 @@ export const country = internalQuery({
         globalping: st.nameChecksGlobalping,
         limit: st.vantage.perCountryLimit,
         needs: st.vantage.minVantages,
-        preferEyeball: st.cfg.probe.preferEyeball,
+        networks: st.cfg.probe.networks,
         intervalHours: st.vantage.intervalHours,
       }),
     };
