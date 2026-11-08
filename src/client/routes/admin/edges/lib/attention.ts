@@ -290,6 +290,9 @@ export function attentionFactsLine(item: AttentionItem): string {
   if (minutesLeft !== null) out.push(`${minutesLeft} min left`);
   const ageMs = num('ageMs');
   if (ageMs !== null) out.push(`for ${durationLabel(ageMs)}`);
+  // A paused automatic replacement: when FCP tries one new name again.
+  const nextTryInMs = num('nextTryInMs');
+  if (nextTryInMs !== null) out.push(`next try in ${durationLabel(nextTryInMs)}`);
   // Operations safety facts.
   const node = str('node');
   if (node !== null) out.push(`Node ${node}`);

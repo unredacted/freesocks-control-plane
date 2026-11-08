@@ -496,11 +496,16 @@ export function mapRelayAdmin(
     standbyPerListener: policy.standbyPerListener,
     bindingDeferred: r.bindingDeferred ?? false,
     setupOwned: r.setupOwned ?? false,
-    autoReplaceHolds: (r.autoReplaceHolds ?? []).map((h) => ({
-      listenerId: h.listenerId as string,
-      code: h.code,
-      at: new Date(h.at).toISOString(),
-    })),
+    // An ended fresh-name hold is not shown (the next write drops it).
+    autoReplaceHolds: (r.autoReplaceHolds ?? [])
+      .filter((h) => h.until === undefined || h.until > Date.now())
+      .map((h) => ({
+        listenerId: h.listenerId as string,
+        code: h.code,
+        at: new Date(h.at).toISOString(),
+        countries: h.countries ?? null,
+        until: h.until !== undefined ? new Date(h.until).toISOString() : null,
+      })),
     edgePick: r.edgePick ?? null,
     lanes: r.lanes ?? null,
     lanesSince: r.lanesSince ? new Date(r.lanesSince).toISOString() : null,

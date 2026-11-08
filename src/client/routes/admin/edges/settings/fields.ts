@@ -220,6 +220,14 @@ export const ROTATION_FIELDS: Field[] = [
   },
   {
     kind: 'number',
+    path: 'replacement.freshBlockHours',
+    label: 'Pause when a new name is blocked before use for',
+    unit: 'hours',
+    helper:
+      'When a replacement name on a CDN is blocked in a country before anyone received it, a network there is refusing every name on that CDN, so another name would not help. Automatic replacement for that country pauses this long, the address in use stays, then one new name is tried. 0 never pauses.',
+  },
+  {
+    kind: 'number',
     path: 'trust.promoteAfterDays',
     label: 'Trusted addresses after',
     unit: 'days',

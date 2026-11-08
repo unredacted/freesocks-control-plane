@@ -140,6 +140,7 @@ import { spendOf } from './edgePlans';
 import { atCap } from './lib/edges/pricing';
 import { countGapsOf } from './edgePickWants';
 import { resolveMemberCountryConfig } from './memberCountry';
+import { holdLive, isWholeTransportHold } from './lib/edges/autoReplaceHolds';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -1455,7 +1456,29 @@ export const attention = internalQuery({
       }
       // Automatic replacement held for a transport (a replacement blocked again
       // soon after it went into use): critical, the node is not protected.
+      // A fresh-name pause (a new name blocked before anyone received it, so
+      // the network refuses every name there) is a warning: replacing could not
+      // help, and the address in use still serves everywhere else.
       for (const h of relay.autoReplaceHolds ?? []) {
+        if (!holdLive(h, now)) continue;
+        if (!isWholeTransportHold(h)) {
+          items.push({
+            ...base(relay),
+            id: `fresh_name_blocked:${relay._id}:${h.listenerId}`,
+            kind: 'fresh_name_blocked',
+            severity: 'warning',
+            edgeId: (h.edgeId as string | undefined) ?? null,
+            listenerKey: listeners.find((l) => l._id === h.listenerId)?.listenerKey ?? null,
+            code: h.code,
+            facts: {
+              countries: h.countries ?? [],
+              ...(h.until !== undefined ? { nextTryInMs: Math.max(0, h.until - now) } : {}),
+            },
+            action: 'open_relay',
+            since: iso(h.at),
+          });
+          continue;
+        }
         items.push({
           ...base(relay),
           id: `auto_replace_held:${relay._id}:${h.listenerId}`,

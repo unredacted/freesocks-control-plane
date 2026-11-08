@@ -190,6 +190,13 @@ import { replacementPlacement, replacementPolicyOf } from './lib/edges/replaceme
 import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } from './edgeLanes';
 import { edgeLaneOf } from './lib/edges/lanes';
 import { noteBlockedIn } from './edgeTrust';
+import {
+  countriesOfDetail,
+  holdFor,
+  holdLive,
+  isWholeTransportHold,
+  withFreshNameHold,
+} from './lib/edges/autoReplaceHolds';
 import { audienceForPublish } from './edgeAudiences';
 import { locationTakes, onlyCodesOf } from './lib/edges/audience';
 
@@ -428,7 +435,7 @@ export const upkeepFillRefusal = internalQuery({
  */
 export function reblockedSoon(
   edge: Pick<Edge, 'replacementOf' | 'publishedAt'>,
-  cfg: Pick<EdgeConfig, 'replacement'>,
+  cfg: { replacement: Pick<EdgeConfig['replacement'], 'reblockHours'> },
   now: number,
 ): boolean {
   if (!edge.replacementOf || cfg.replacement.reblockHours <= 0) return false;
@@ -476,14 +483,23 @@ export const holdAutoReplace = internalMutation({
     edgeId: v.id('edges'),
     code: v.string(),
     ifReblocked: v.optional(v.boolean()),
+    // The countries the refused start answered to: a fresh-name hold that
+    // covers them already explains a re-block there (no second hold).
+    affectedCountries: v.optional(v.array(v.string())),
   },
-  handler: async (ctx, { relayId, edgeId, code, ifReblocked }) => {
+  handler: async (ctx, { relayId, edgeId, code, ifReblocked, affectedCountries }) => {
     const origin = await ctx.db.get(relayId);
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId) return { held: false };
-    const holds = origin.autoReplaceHolds ?? [];
-    if (holds.some((h) => h.listenerId === edge.listenerId)) return { held: true };
     const now = Date.now();
+    // Expired fresh-name holds are dropped as the array is written again.
+    const holds = (origin.autoReplaceHolds ?? []).filter((h) => holdLive(h, now));
+    // Only a whole-transport hold already covers this; a fresh-name one holds
+    // some countries for a while and is kept beside it.
+    if (holds.some((h) => h.listenerId === edge.listenerId && isWholeTransportHold(h)))
+      return { held: true };
+    if (ifReblocked && holdFor(holds, edge.listenerId, affectedCountries ?? [], now))
+      return { held: false };
     // An open address blocked again is expected: its budget bounds it, no hold.
     if (ifReblocked && isOpenLaneReplace(origin, edge)) return { held: false };
     if (
@@ -509,6 +525,86 @@ export const holdAutoReplace = internalMutation({
 });
 
 /**
+ * The provider an automatic replace of `targetEdge` would build or publish
+ * with now (a standby's, else the selected account's), or null when the
+ * selection finds nothing (the run would fail anyway).
+ */
+async function selectedProviderOf(
+  ctx: { db: QueryCtx['db'] },
+  a: StartRotationArgs,
+  origin: Origin,
+  targetEdge: Edge,
+  cfg: EdgeConfig,
+): Promise<string | null> {
+  const sel = await selectionContext(
+    ctx,
+    { ...a, listenerId: targetEdge.listenerId, requestedOptions: undefined },
+    origin,
+    targetEdge,
+    cfg,
+  );
+  if (sel.standbyId) return (await ctx.db.get(sel.standbyId))?.provider ?? null;
+  return sel.account?.provider ?? null;
+}
+
+/**
+ * A detector replacement's new CDN name was blocked, in a country that
+ * triggered it, before any member received it (`replacement_blocked`): the
+ * block is not about our names, so automatic replacement of the transport
+ * answering to those countries is held for `edge.replacement.freshBlockHours`
+ * (lib/edges/autoReplaceHolds.ts). The address in use is left as it is: it is
+ * neither burned nor drained, so apps that never refresh keep it. L7 only: a
+ * fresh load-balancer address blocked before use is usually one the provider
+ * recycled from a blocked customer, and the next one may well work. Whatever
+ * lane the target was in: a name nobody held says nothing about who leaks.
+ */
+async function recordFreshNameBlock(
+  ctx: MutationCtx,
+  r: Rotation,
+  detail: string | undefined,
+  now: number,
+): Promise<void> {
+  if (r.trigger !== 'detector' || r.kind !== 'replace' || !r.targetEdgeId) return;
+  const newEdgeId = r.toEdgeId ?? createdEdgeId(r);
+  const newEdge = newEdgeId ? await ctx.db.get(newEdgeId) : null;
+  if (!newEdge || (newEdge.layer ?? 'l4') !== 'l7' || !newEdge.provider) return;
+  const countries = countriesOfDetail(detail);
+  if (countries.length === 0) return;
+  const cfg = await resolveEdgeConfig(ctx.db);
+  if (cfg.replacement.freshBlockHours <= 0) return;
+  const origin = await ctx.db.get(r.relayId);
+  const target = await ctx.db.get(r.targetEdgeId);
+  if (!origin || !target || target.relayId !== origin._id) return;
+  const until = now + cfg.replacement.freshBlockHours * 3_600_000;
+  await ctx.db.patch(origin._id, {
+    autoReplaceHolds: withFreshNameHold(origin.autoReplaceHolds, {
+      listenerId: target.listenerId,
+      countries,
+      edgeId: target._id,
+      provider: newEdge.provider,
+      at: now,
+      until,
+    }) as Origin['autoReplaceHolds'],
+    updatedAt: now,
+  });
+  const listener = await ctx.db.get(target.listenerId);
+  await writeAuditLog(ctx, {
+    actorType: 'system',
+    action: 'edge.fresh_name_blocked',
+    targetType: 'relay',
+    targetId: origin._id,
+    payload: {
+      relaySlug: origin.slug,
+      listenerKey: listener?.listenerKey ?? '',
+      countries: countries.join(','),
+      provider: newEdge.provider,
+      hours: cfg.replacement.freshBlockHours,
+      rotationId: r._id,
+    },
+  });
+}
+
+/**
  * Drop every node's refused-location holds (`relays.refusedLocations`, origins
  * are operator-scale): the step before rolling back to a build without the
  * field (docs/edges.md § "Deploy notes"). Automatic work may use those
@@ -527,18 +623,27 @@ export const clearRefusedLocations = internalMutation({
   },
 });
 
-/** `POST relays/{id}/auto-replace/resume {listenerId?}`: the operator lifts a hold (one transport, or all). */
+/**
+ * `POST relays/{id}/auto-replace/resume {listenerId?, scope?}`: the operator lifts
+ * a hold (one transport, or all). `scope: 'fresh'` lifts only fresh-name pauses
+ * and keeps a whole-transport re-block hold.
+ */
 export const resumeAutoReplace = internalMutation({
   args: {
     relayId: v.id('relays'),
     listenerId: v.optional(v.id('relayListeners')),
+    scope: v.optional(v.literal('fresh')),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { relayId, listenerId, actorAdminId }) => {
+  handler: async (ctx, { relayId, listenerId, scope, actorAdminId }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const holds = origin.autoReplaceHolds ?? [];
-    const kept = listenerId ? holds.filter((h) => h.listenerId !== listenerId) : [];
+    const kept = holds.filter(
+      (h) =>
+        (listenerId !== undefined && h.listenerId !== listenerId) ||
+        (scope === 'fresh' && isWholeTransportHold(h)),
+    );
     const lifted = holds.length - kept.length;
     if (lifted > 0) {
       await ctx.db.patch(relayId, {
@@ -918,8 +1023,33 @@ export async function collectStartBlockers(
     // too (lib/edges/replacementHolders.ts), so FCP stops instead of cycling.
     // The detector records the hold on the second refusal (`holdAutoReplace`).
     // An operator's own replace is never held.
+    // A fresh-name hold (a new name was blocked before anyone received it)
+    // covers only the countries it names, so a detector start answering to
+    // other countries goes on, and a reconcile run (no country) is never held
+    // by one (lib/edges/autoReplaceHolds.ts).
     if (targetEdge && (a.trigger === 'detector' || a.trigger === 'reconcile')) {
-      if ((origin.autoReplaceHolds ?? []).some((h) => h.listenerId === targetEdge!.listenerId))
+      let hold = holdFor(
+        origin.autoReplaceHolds,
+        targetEdge.listenerId,
+        a.affectedCountries ?? [],
+        now,
+      );
+      // A fresh-name hold is about one CDN provider: a replacement that would
+      // go elsewhere (another CDN, a load balancer) is not held by it.
+      if (hold && !isWholeTransportHold(hold))
+        hold = holdFor(
+          origin.autoReplaceHolds,
+          targetEdge.listenerId,
+          a.affectedCountries ?? [],
+          now,
+          await selectedProviderOf(ctx, a, origin, targetEdge, cfg),
+        );
+      if (hold && !isWholeTransportHold(hold))
+        push(
+          'edge.fresh_name_blocked',
+          `A new name was blocked in ${(hold.countries ?? []).join(', ')} before anyone received it; automatic replacement for there waits`,
+        );
+      else if (hold)
         push(
           'edge.auto_replace_held',
           'Automatic replacement of this transport is held; resume it on the node page',
@@ -1980,6 +2110,10 @@ export const advance = internalMutation({
         return { ok: true as const };
       }
       case 'fail': {
+        // A new CDN name blocked before members got it: hold, do not try again.
+        // Not after the flip (a roll-back): members may already have had it.
+        if (event.code === 'replacement_blocked' && !event.rollback)
+          await recordFreshNameBlock(ctx, r, event.detail, now);
         if (event.rollback) {
           await ctx.db.patch(rotationId, {
             phase: 'rolling_back',

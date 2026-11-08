@@ -452,6 +452,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Automatic replacement of a transport held (a replacement blocked again soon
   // after going into use) and lifted by the operator.
   'edge.auto_replace_held': ['relaySlug', 'listenerKey', 'code', 'edgeId'],
+  'edge.fresh_name_blocked': [
+    'relaySlug',
+    'listenerKey',
+    'countries',
+    'provider',
+    'hours',
+    'rotationId',
+  ],
   'edge.auto_replace_resumed': ['relaySlug', 'lifted'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
   'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],

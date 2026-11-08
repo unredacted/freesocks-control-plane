@@ -1833,9 +1833,12 @@ export default defineSchema({
         }),
       ),
     ),
-    // Transports whose automatic replacement is held until the operator resumes
-    // it: a replacement judged blocked again soon after it went into use
-    // (`replacement_reblocked`), so the node does not cycle through addresses.
+    // Transports whose automatic replacement is held (lib/edges/autoReplaceHolds.ts):
+    // until the operator resumes it, for a replacement judged blocked again soon
+    // after it went into use (`replacement_reblocked`), so the node does not cycle
+    // through addresses; or, with `countries` + `until`, for starts answering to
+    // those countries until then, when a new CDN name was blocked there before
+    // anyone received it (`fresh_name_blocked`: the network, not the name).
     autoReplaceHolds: v.optional(
       v.array(
         v.object({
@@ -1843,6 +1846,10 @@ export default defineSchema({
           code: v.string(),
           at: v.number(),
           edgeId: v.optional(v.id('edges')),
+          countries: v.optional(v.array(v.string())),
+          until: v.optional(v.number()),
+          // A fresh-name hold: the provider whose new name was blocked.
+          provider: v.optional(v.string()),
         }),
       ),
     ),

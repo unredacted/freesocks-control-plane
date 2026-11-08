@@ -2118,6 +2118,8 @@ describe('edgeRotations: per-country checks before a replacement goes out', () =
       expect(r.events.find((e) => e.code === 'replacement_blocked')?.detail).toBe('IR');
       const origin = (await t.query(internal.relays.get, { id: relayId }))!;
       expect(origin.publishedEdgeIds[0]).toBe(oldEdgeId);
+      // A load balancer address is not a CDN name: the next one may work, so nothing pauses.
+      expect(origin.autoReplaceHolds).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();
     }
