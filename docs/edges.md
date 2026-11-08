@@ -1034,17 +1034,21 @@ cap or a freeze named first does not hide a rapid re-block.
 
 **A new name blocked before use.** A detector replacement of a CDN (L7) front checks its new
 name from every country that triggered it before members get it. When that check finds the new
-name blocked (`replacement_blocked`, in `verifying` or in the `confirming` re-check), nobody
+name blocked (`replacement_blocked` in `verifying`, before the flip; the `confirming` re-check
+after the flip rolls back but holds nothing, since members may already have had the name), nobody
 could have given the name away: a network there refuses every name on that CDN, so another name
 would fare no better, and replacing the one in use would only cut off the apps that never
 refresh their subscription. The failed run then pauses automatic replacement of that transport
-for those countries (`relays.autoReplaceHolds` with `countries` and `until`, code
-`fresh_name_blocked`, audited `edge.fresh_name_blocked`) for `edge.replacement.freshBlockHours`
-(default 24, 0 = never). The address in use is left as it is (not burned, not drained). While
-paused, a detector start that answers only to those countries is refused
-`edge.fresh_name_blocked`; one that also answers to another country goes on, and a reconcile run
-(no country) is never paused. Attention `fresh_name_blocked` (warning, facts `countries` and
-`nextTryInMs`) says so; the node page offers "Resume automatic replacement now". When the pause
+for those countries and that CDN provider (`relays.autoReplaceHolds` with `countries`, `until`
+and `provider`, code `fresh_name_blocked`, audited `edge.fresh_name_blocked`) for
+`edge.replacement.freshBlockHours` (default 24, 0 = never). The address in use is left as it is
+(not burned, not drained). While paused, a detector start that answers only to those countries
+and whose selection would use that provider again (a standby's provider, else the selected
+account's) is refused `edge.fresh_name_blocked`; one that would go to another provider or a load
+balancer, or that also answers to another country, goes on, and a reconcile run (no country) is
+never paused. Attention `fresh_name_blocked` (warning, facts `countries` and `nextTryInMs`) says
+so; the node page offers "Resume automatic replacement now", which lifts only the pauses
+(`resume {scope: 'fresh'}`) and keeps a re-block hold. When the pause
 ends, the next detector start mints one new name: blocked again, the pause starts over; working,
 the replacement goes ahead as usual. A failed try costs a name nobody received. A pause also
 keeps the re-block guard from holding the transport for a re-block in the same countries, since

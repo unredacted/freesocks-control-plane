@@ -734,10 +734,17 @@ export const resolveRelayQuarantine = (relayId: string, body: ResolveQuarantineB
   apiClient.post(`${BASE}/relays/${enc(relayId)}/resolve-quarantine`, body, EdgeOkResponse);
 /** Coverage at the cap: send ONE duplicate edge back to standby so an uncovered listener can be published. */
 /** Lift the hold on automatic replacement (one transport, or every one of the node). */
-export const resumeAutoReplace = (relayId: string, listenerId?: string) =>
+/** `scope: 'fresh'` lifts only fresh-name pauses (a re-block hold stays). */
+export const resumeAutoReplace = (
+  relayId: string,
+  opts: { listenerId?: string; scope?: 'fresh' } = {},
+) =>
   apiClient.post(
     `${BASE}/relays/${enc(relayId)}/auto-replace/resume`,
-    listenerId ? { listenerId } : {},
+    {
+      ...(opts.listenerId ? { listenerId: opts.listenerId } : {}),
+      ...(opts.scope ? { scope: opts.scope } : {}),
+    },
     EdgeOkResponse,
   );
 export const rebalanceRelay = (relayId: string) =>

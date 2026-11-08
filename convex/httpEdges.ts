@@ -1477,6 +1477,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...(typeof body.listenerId === 'string' && body.listenerId
             ? { listenerId: id<'relayListeners'>(body.listenerId) }
             : {}),
+          // Only fresh-name pauses: a re-block hold of the same transport stays.
+          ...(body.scope === 'fresh' ? { scope: 'fresh' as const } : {}),
           ...act,
         }),
       );

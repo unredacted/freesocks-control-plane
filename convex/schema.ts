@@ -1848,6 +1848,8 @@ export default defineSchema({
           edgeId: v.optional(v.id('edges')),
           countries: v.optional(v.array(v.string())),
           until: v.optional(v.number()),
+          // A fresh-name hold: the provider whose new name was blocked.
+          provider: v.optional(v.string()),
         }),
       ),
     ),

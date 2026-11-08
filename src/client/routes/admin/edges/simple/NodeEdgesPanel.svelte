@@ -208,14 +208,12 @@
     }),
   );
   let resumeBusy = $state(false);
-  // Every hold of the node, or only those of the given transports.
-  async function resume(listenerIds?: string[]) {
+  // Every hold of the node, or only its fresh-name pauses (a re-block hold stays).
+  async function resume(scope?: 'fresh') {
     if (!relay) return;
     resumeBusy = true;
     try {
-      if (listenerIds)
-        for (const id of [...new Set(listenerIds)]) await resumeAutoReplace(relay.id, id);
-      else await resumeAutoReplace(relay.id);
+      await resumeAutoReplace(relay.id, scope ? { scope } : {});
       toast.success('Automatic replacement resumed.');
       invalidateRelay(qc, slug);
     } catch (e) {
@@ -574,7 +572,7 @@
           size="sm"
           variant="outline"
           disabled={resumeBusy}
-          onclick={() => void resume(freshHolds.map((h) => h.listenerId))}
+          onclick={() => void resume('fresh')}
         >
           Resume automatic replacement now
         </Button>

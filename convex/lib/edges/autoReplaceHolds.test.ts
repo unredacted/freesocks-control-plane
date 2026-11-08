@@ -35,6 +35,24 @@ describe('automatic replacement holds (pure)', () => {
     expect(holdFor([fresh], 'l1', ['IR'], 1_000)).toBeNull();
   });
 
+  test('a fresh-name hold covers only a replacement that would reuse its provider', () => {
+    const cdn = { ...fresh, provider: 'cdn-a' };
+    expect(holdFor([cdn], 'l1', ['IR'], 10, 'cdn-a')).toBe(cdn);
+    expect(holdFor([cdn], 'l1', ['IR'], 10, 'cdn-b')).toBeNull();
+    // Not known which provider: held.
+    expect(holdFor([cdn], 'l1', ['IR'], 10, null)).toBe(cdn);
+    expect(holdFor([cdn], 'l1', ['IR'], 10)).toBe(cdn);
+    // A pause per provider: blocks on two CDNs make two rows.
+    const two = withFreshNameHold([cdn], {
+      listenerId: 'l1',
+      countries: ['IR'],
+      provider: 'cdn-b',
+      at: 5,
+      until: 900,
+    });
+    expect(two.map((h) => h.provider)).toEqual(['cdn-a', 'cdn-b']);
+  });
+
   test('a whole-transport hold wins, whatever the countries', () => {
     expect(holdFor([fresh, whole], 'l1', ['IR'], 10)).toBe(whole);
     expect(holdFor([whole], 'l1', [], 10)).toBe(whole);

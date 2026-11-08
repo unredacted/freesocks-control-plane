@@ -1679,6 +1679,7 @@ describe('edgeRotations: a new name blocked before anyone received it pauses, ne
         edgeId: oldEdge,
         countries: ['IR'],
         until: expect.any(Number),
+        provider: 'cloudflare',
       },
     ]);
     const hold = origin.autoReplaceHolds![0]!;
@@ -1738,6 +1739,46 @@ describe('edgeRotations: a new name blocked before anyone received it pauses, ne
     vi.setSystemTime(Date.now() + 25 * 3_600_000);
     const again = await start(['IR']);
     expect(again.rotationId).toBeTruthy();
+    vi.useRealTimers();
+  }, 20_000);
+
+  test('a pause is about the provider whose name failed: a replacement going elsewhere goes on', async () => {
+    const { t, relayId, oldEdge } = await blockedFreshName();
+    // The pause names another provider than the one selection would use now.
+    await t.run(async (ctx) => {
+      const relay = (await ctx.db.get(relayId))!;
+      await ctx.db.patch(relayId, {
+        autoReplaceHolds: relay.autoReplaceHolds!.map((h) => ({ ...h, provider: 'elsewhere' })),
+      });
+    });
+    const r = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'detector',
+      targetEdgeId: oldEdge,
+      affectedCountries: ['IR'],
+    });
+    expect(r.rotationId).toBeTruthy();
+    vi.useRealTimers();
+  }, 20_000);
+
+  test('resuming the pauses keeps a re-block hold of the same transport', async () => {
+    const { t, relayId, listenerId } = await blockedFreshName();
+    await t.run(async (ctx) => {
+      const relay = (await ctx.db.get(relayId))!;
+      await ctx.db.patch(relayId, {
+        autoReplaceHolds: [
+          ...relay.autoReplaceHolds!,
+          { listenerId, code: 'replacement_reblocked', at: Date.now() },
+        ],
+      });
+    });
+    expect(
+      await t.mutation(internal.edgeRotations.resumeAutoReplace, { relayId, scope: 'fresh' }),
+    ).toEqual({ ok: true, lifted: 1 });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.autoReplaceHolds).toEqual([
+      expect.objectContaining({ code: 'replacement_reblocked' }),
+    ]);
     vi.useRealTimers();
   }, 20_000);
 });
