@@ -191,12 +191,15 @@ import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } 
 import { edgeLaneOf } from './lib/edges/lanes';
 import { noteBlockedIn } from './edgeTrust';
 import {
+  CDN_REFUSED,
   countriesOfDetail,
   holdFor,
   holdLive,
   isWholeTransportHold,
+  withCdnRefusedNote,
   withFreshNameHold,
 } from './lib/edges/autoReplaceHolds';
+import { cdnRefusedCountries } from './lib/edges/referenceSites';
 import { audienceForPublish } from './edgeAudiences';
 import { locationTakes, onlyCodesOf } from './lib/edges/audience';
 
@@ -546,6 +549,125 @@ async function selectedProviderOf(
   if (sel.standbyId) return (await ctx.db.get(sel.standbyId))?.provider ?? null;
   return sel.account?.provider ?? null;
 }
+
+/** The enabled reference sites (lib/edges/referenceSites.ts); operator-scale. */
+async function referenceSitesOf(db: QueryCtx['db']) {
+  return (
+    await db
+      .query('probeTargets')
+      .withIndex('by_enabled', (q) => q.eq('enabled', true))
+      .collect()
+  )
+    .filter((t) => !!t.referenceFor)
+    .map((t) => ({
+      referenceFor: t.referenceFor,
+      enabled: t.enabled,
+      byCountry: t.reachability?.byCountry ?? [],
+    }));
+}
+
+/**
+ * The countries among `countries` that refuse `provider` outright, by its
+ * reference sites (lib/edges/referenceSites.ts). Nothing for a load balancer,
+ * with probes off, or with no reference site of that provider.
+ */
+async function cdnRefusedFor(
+  db: QueryCtx['db'],
+  providerOf: () => Promise<string | null>,
+  countries: readonly string[],
+  cfg: EdgeConfig,
+  now: number,
+): Promise<{ provider: string | null; refused: string[] }> {
+  const none = { provider: null, refused: [] };
+  if (countries.length === 0 || !cfg.probe.enabled) return none;
+  // Read first: with no reference site at all the selection is never asked.
+  const sites = await referenceSitesOf(db);
+  if (sites.length === 0) return none;
+  const provider = await providerOf();
+  if (!provider || edgeLayerOf(provider) !== 'l7') return none;
+  if (!sites.some((s) => s.referenceFor === provider)) return none;
+  return {
+    provider,
+    refused: cdnRefusedCountries(sites, provider, countries, now, probeStaleAfterMs(cfg.probe)),
+  };
+}
+
+/**
+ * The detector's start was refused with `edge.cdn_refused`: keep the note the
+ * node page and the attention list show (lib/edges/autoReplaceHolds.ts
+ * `withCdnRefusedNote`), with the countries refused now. It holds nothing (the
+ * start re-reads the reference sites each pass) and ends two probe intervals
+ * after the last refused pass. Audited when it first appears.
+ */
+export const noteCdnRefused = internalMutation({
+  args: {
+    relayId: v.id('relays'),
+    edgeId: v.id('edges'),
+    affectedCountries: v.array(v.string()),
+  },
+  handler: async (ctx, { relayId, edgeId, affectedCountries }) => {
+    const origin = await ctx.db.get(relayId);
+    const edge = await ctx.db.get(edgeId);
+    if (!origin || !edge || edge.relayId !== relayId) return { noted: false };
+    const now = Date.now();
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const { provider, refused } = await cdnRefusedFor(
+      ctx.db,
+      () =>
+        selectedProviderOf(
+          ctx,
+          {
+            relayId,
+            kind: 'replace',
+            trigger: 'detector',
+            targetEdgeId: edgeId,
+            affectedCountries,
+          },
+          origin,
+          edge,
+          cfg,
+        ),
+      affectedCountries,
+      cfg,
+      now,
+    );
+    if (!provider || refused.length === 0) return { noted: false };
+    const fresh = !(origin.autoReplaceHolds ?? []).some(
+      (h) =>
+        h.listenerId === edge.listenerId &&
+        h.code === CDN_REFUSED &&
+        h.provider === provider &&
+        holdLive(h, now),
+    );
+    await ctx.db.patch(relayId, {
+      autoReplaceHolds: withCdnRefusedNote(origin.autoReplaceHolds, {
+        listenerId: edge.listenerId,
+        countries: refused,
+        provider,
+        edgeId,
+        at: now,
+        until: now + 2 * probeStaleAfterMs(cfg.probe),
+      }) as Origin['autoReplaceHolds'],
+      updatedAt: now,
+    });
+    if (fresh) {
+      const listener = await ctx.db.get(edge.listenerId);
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'edge.cdn_refused',
+        targetType: 'relay',
+        targetId: relayId,
+        payload: {
+          relaySlug: origin.slug,
+          listenerKey: listener?.listenerKey ?? '',
+          countries: refused.join(','),
+          provider,
+        },
+      });
+    }
+    return { noted: true };
+  },
+});
 
 /**
  * A detector replacement's new CDN name was blocked, in a country that
@@ -1028,22 +1150,27 @@ export async function collectStartBlockers(
     // other countries goes on, and a reconcile run (no country) is never held
     // by one (lib/edges/autoReplaceHolds.ts).
     if (targetEdge && (a.trigger === 'detector' || a.trigger === 'reconcile')) {
-      let hold = holdFor(
-        origin.autoReplaceHolds,
-        targetEdge.listenerId,
-        a.affectedCountries ?? [],
-        now,
-      );
+      const edge = targetEdge;
+      const affected = a.affectedCountries ?? [];
+      // The provider the replacement would use, read once and only when needed.
+      let selected: string | null | undefined;
+      const provider = async () =>
+        selected === undefined
+          ? (selected = await selectedProviderOf(ctx, a, origin, edge, cfg))
+          : selected;
+      let hold = holdFor(origin.autoReplaceHolds, edge.listenerId, affected, now);
       // A fresh-name hold is about one CDN provider: a replacement that would
       // go elsewhere (another CDN, a load balancer) is not held by it.
       if (hold && !isWholeTransportHold(hold))
-        hold = holdFor(
-          origin.autoReplaceHolds,
-          targetEdge.listenerId,
-          a.affectedCountries ?? [],
-          now,
-          await selectedProviderOf(ctx, a, origin, targetEdge, cfg),
-        );
+        hold = holdFor(origin.autoReplaceHolds, edge.listenerId, affected, now, await provider());
+      // Every country this detector start answers to refuses the provider the
+      // replacement would use outright (its reference site fails there too,
+      // while other countries reach it): a new name would fail the same way,
+      // so none is spent (lib/edges/referenceSites.ts). Re-read each pass.
+      const { refused } =
+        !hold && a.trigger === 'detector'
+          ? await cdnRefusedFor(ctx.db, provider, affected, cfg, now)
+          : { refused: [] as string[] };
       if (hold && !isWholeTransportHold(hold))
         push(
           'edge.fresh_name_blocked',
@@ -1053,6 +1180,11 @@ export async function collectStartBlockers(
         push(
           'edge.auto_replace_held',
           'Automatic replacement of this transport is held; resume it on the node page',
+        );
+      else if (refused.length > 0 && refused.length === new Set(affected).size)
+        push(
+          'edge.cdn_refused',
+          `${refused.join(', ')} refuses this CDN outright (its reference site fails there too); a new name would not get through`,
         );
       else if (!openLane && reblockedSoon(targetEdge, cfg, now))
         push(

@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import {
+  CDN_REFUSED,
   FRESH_NAME_BLOCKED,
   countriesOfDetail,
   holdFor,
   holdLive,
+  withCdnRefusedNote,
   withFreshNameHold,
   type AutoReplaceHold,
 } from './autoReplaceHolds';
@@ -102,6 +104,42 @@ describe('automatic replacement holds (pure)', () => {
     expect(later).toEqual([
       whole,
       expect.objectContaining({ at: 700, countries: ['CN'], until: 900 }),
+    ]);
+  });
+});
+
+describe('the CDN-refused note (pure)', () => {
+  test('replaced each pass, first time kept, never a pause', () => {
+    const one = withCdnRefusedNote([fresh], {
+      listenerId: 'l1',
+      countries: ['IR', 'CN'],
+      provider: 'cdn-a',
+      at: 10,
+      until: 500,
+    });
+    expect(one[1]).toMatchObject({ code: CDN_REFUSED, at: 10, countries: ['CN', 'IR'] });
+    const two = withCdnRefusedNote(one, {
+      listenerId: 'l1',
+      countries: ['IR'],
+      provider: 'cdn-a',
+      at: 20,
+      until: 600,
+    });
+    expect(two).toHaveLength(2);
+    expect(two[1]).toMatchObject({ at: 10, countries: ['IR'], until: 600 });
+    // It never pauses a start, and a fresh-name block beside it is its own row.
+    expect(holdFor(two.slice(1), 'l1', ['IR'], 30, 'cdn-a')).toBeNull();
+    const widened = withFreshNameHold(two, {
+      listenerId: 'l1',
+      countries: ['RU'],
+      provider: 'cdn-a',
+      at: 30,
+      until: 700,
+    });
+    expect(widened.map((h) => h.code)).toEqual([
+      FRESH_NAME_BLOCKED,
+      CDN_REFUSED,
+      FRESH_NAME_BLOCKED,
     ]);
   });
 });

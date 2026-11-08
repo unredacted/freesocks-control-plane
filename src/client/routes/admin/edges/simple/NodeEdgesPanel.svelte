@@ -190,9 +190,22 @@
     return l ? transportName(l) : null;
   };
   // Automatic replacement held for some transports (a replacement blocked again
-  // soon), and paused for some countries (a new name blocked there before use).
+  // soon), paused for some countries (a new name blocked there before use), and
+  // skipped where a country refuses the CDN outright (its reference site fails
+  // there too; re-read every pass, so nothing to resume).
   const wholeHolds = $derived((relay?.autoReplaceHolds ?? []).filter((h) => h.countries === null));
-  const freshHolds = $derived((relay?.autoReplaceHolds ?? []).filter((h) => h.countries !== null));
+  const freshHolds = $derived(
+    (relay?.autoReplaceHolds ?? []).filter((h) => h.countries !== null && h.code !== 'cdn_refused'),
+  );
+  const refusedLines = $derived(
+    (relay?.autoReplaceHolds ?? [])
+      .filter((h) => h.code === 'cdn_refused')
+      .map((h) => {
+        const l = listeners.find((x) => x.id === h.listenerId);
+        const name = l ? transportName(l) : 'A transport';
+        return `${name}: refused in ${(h.countries ?? []).join(', ')}.`;
+      }),
+  );
   const heldNames = $derived(
     wholeHolds
       .map((h) => listeners.find((l) => l.id === h.listenerId))
@@ -576,6 +589,16 @@
         >
           Resume automatic replacement now
         </Button>
+      </section>
+    {/if}
+
+    {#if relay && refusedLines.length > 0}
+      <section class="rounded-lg border p-3" aria-labelledby={`${uid}-refused`}>
+        <h3 id={`${uid}-refused`} class="text-sm font-semibold">{codeLabel('cdn_refused')}</h3>
+        <p class="text-muted-foreground mt-1 text-sm">{codeExplain('cdn_refused')}</p>
+        <ul class="mt-1 text-sm">
+          {#each refusedLines as line (line)}<li>{line}</li>{/each}
+        </ul>
       </section>
     {/if}
 

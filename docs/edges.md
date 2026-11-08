@@ -1056,6 +1056,29 @@ the network explains it. L4 addresses are not paused this way: a new load balanc
 blocked before use is usually one the provider recycled from a blocked customer, and the next
 one may well work.
 
+**Reference sites.** The pause above learns that a country refuses a CDN by spending one new
+name. A reference site tells it without spending one: a custom probe target (Edges → Probes →
+Custom targets) marked "Reference site for" a CDN provider (`probeTargets.referenceFor`, an L7
+provider only; a host name, never an address literal, since a CDN front is reached by name; the
+TLS or HTTPS check, never a bare connect, since a network that refuses a CDN usually lets the
+connection open and stops the handshake). Pick a well-known site that provider serves and that
+nobody would block for its own content. Reference sites are probed with the custom targets, at
+the suspected pace and ahead of ordinary targets while any origin is suspected. Before a detector
+replacement starts, the start reads the reference sites of the provider its selection would use
+(a standby's provider, else the selected account's; `lib/edges/referenceSites.ts`): a country
+refuses the provider when some reference site's fresh verdict there (within two probe intervals)
+is `unreachable` while that site is `reachable` from another country (a site nobody reaches is
+broken, not refused). When every country the start answers to refuses it, the start is refused
+`edge.cdn_refused`: no name is spent and the address in use stays (not burned, not drained), and
+the re-block guard holds nothing for it. The detector then keeps a note on the origin
+(`relays.autoReplaceHolds` code `cdn_refused` with `countries`, `provider` and `until` two probe
+intervals out, renewed each refused pass, audited `edge.cdn_refused` when it first appears),
+which the node page shows and attention `cdn_refused` (warning, fact `countries`) lists. The note
+holds nothing by itself: each pass reads the reference sites again, so the first pass after the
+reference site gets through replaces as usual. No reference site for the provider, probes off,
+no fresh evidence, a load balancer replacement, or a start that also answers to a country that
+reaches the site: the start goes on as before.
+
 **A backup entry.** Members fall back to the node's other published address while a
 replacement is made (about 10 to 15 minutes). One address in use is a valid choice (it saves a
 second load balancer): a node whose own `desiredPublished` is 1 has what it asked for, raises

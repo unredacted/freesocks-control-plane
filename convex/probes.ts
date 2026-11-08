@@ -1833,8 +1833,9 @@ export const due = internalQuery({
       suspected: boolean;
       /**
        * Who goes first when the budget is short: 0 a repeat round a country
-       * verdict waits for, 1 a suspected origin's edge, 2 a published edge or
-       * an operator target, 3 a spare.
+       * verdict waits for, 1 a suspected origin's edge (or a reference site
+       * while one is suspected), 2 a published edge or an operator target, 3 a
+       * spare.
        */
       rank: number;
       /** Runs one source will cost for this target (ports × address families). */
@@ -1910,11 +1911,22 @@ export const due = internalQuery({
       if (relay.probeNode)
         await consider({ kind: 'relay', ref: relay._id }, baseInterval, false, 2);
     }
+    // A reference site (lib/edges/referenceSites.ts) is read before an
+    // automatic replacement: while any origin is suspected it keeps the
+    // suspected pace and goes ahead of ordinary targets, so its evidence is
+    // as fresh as the edges' it is compared with.
+    const anySuspected = relays.some((r) => r.suspicion?.state === 'suspected');
     for (const t of await ctx.db
       .query('probeTargets')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect()) {
-      await consider({ kind: 'custom', ref: t._id }, baseInterval, false, 2);
+      const urgent = !!t.referenceFor && anySuspected;
+      await consider(
+        { kind: 'custom', ref: t._id },
+        urgent ? cfg.probe.suspectedIntervalMinutes * MIN : baseInterval,
+        false,
+        urgent ? 1 : 2,
+      );
     }
     // Spares are checked from every country too (less often): a standby that
     // turns active gets its first round at the next tick, so what is known per

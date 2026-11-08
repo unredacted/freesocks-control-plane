@@ -1,7 +1,9 @@
 /**
  * Custom probe targets: operator-entered host:port pairs probed alongside the
  * derived targets (edge addresses, origin nodes) from Telemetry → Probes. They
- * are operator evidence only and never reach the block detector. Audits carry
+ * are operator evidence only and never score in the block detector. One marked
+ * as a provider's REFERENCE SITE (`referenceFor`) is read before an automatic
+ * replacement on that CDN provider (lib/edges/referenceSites.ts). Audits carry
  * the label, never the address.
  */
 import { ConvexError, v } from 'convex/values';
@@ -9,6 +11,8 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { addressFamily, bracketIfV6, isPublicIpLiteral } from './lib/edges/ip';
+import { edgeProviderIdValidator } from './lib/edgeProviderIds';
+import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { mapSummaryAdmin } from './probes';
 
 const LABEL_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._:/()-]{0,63}$/u;
@@ -36,6 +40,7 @@ export function mapTargetAdmin(t: Doc<'probeTargets'>) {
     display: `${bracketIfV6(t.address)}:${t.port}`,
     enabled: t.enabled,
     notes: t.notes ?? null,
+    referenceFor: t.referenceFor ?? null,
     reachability: mapSummaryAdmin(t.reachability),
     updatedAt: new Date(t.updatedAt).toISOString(),
   };
@@ -78,6 +83,32 @@ function checkFields(a: {
     throw new ConvexError({ code: 'validation', message: 'port out of range' });
 }
 
+/**
+ * A reference site (the row as it would be stored): a CDN (L7) provider, a
+ * NAME (a CDN front is reached by name; an address literal would test one
+ * point of presence, not the provider), and a TLS or HTTPS check (a network
+ * that refuses a CDN usually lets the connection open and stops the
+ * handshake: a bare connect would read it as reachable).
+ */
+function checkReference(row: { referenceFor?: string; address: string; probeProtocol?: string }) {
+  if (!row.referenceFor) return;
+  if (edgeLayerOf(row.referenceFor) !== 'l7')
+    throw new ConvexError({
+      code: 'validation',
+      message: 'a reference site is for a CDN provider',
+    });
+  if (addressFamily(row.address))
+    throw new ConvexError({
+      code: 'validation',
+      message: 'a reference site needs a hostname, not an address',
+    });
+  if ((row.probeProtocol ?? 'tcp') === 'tcp')
+    throw new ConvexError({
+      code: 'validation',
+      message: 'a reference site needs the TLS or HTTPS check',
+    });
+}
+
 export const list = internalQuery({
   args: {},
   handler: async (ctx) =>
@@ -94,11 +125,17 @@ export const create = internalMutation({
     probeProtocol: v.optional(probeProtocol),
     enabled: v.optional(v.boolean()),
     notes: v.optional(v.string()),
+    referenceFor: v.optional(v.union(edgeProviderIdValidator, v.null())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const port = a.port ?? 443;
     checkFields({ label: a.label, address: a.address, port, probeProtocol: a.probeProtocol });
+    checkReference({
+      referenceFor: a.referenceFor ?? undefined,
+      address: a.address.trim(),
+      probeProtocol: a.probeProtocol,
+    });
     const now = Date.now();
     const id = await ctx.db.insert('probeTargets', {
       label: a.label.trim(),
@@ -107,6 +144,7 @@ export const create = internalMutation({
       probeProtocol: a.probeProtocol ?? 'tcp',
       enabled: a.enabled ?? true,
       notes: a.notes?.slice(0, 500),
+      ...(a.referenceFor ? { referenceFor: a.referenceFor } : {}),
       updatedAt: now,
     });
     await writeAuditLog(ctx, {
@@ -115,7 +153,7 @@ export const create = internalMutation({
       action: 'probe.target.create',
       targetType: 'probe_target',
       targetId: `custom:${id}`,
-      payload: { label: a.label.trim() },
+      payload: { label: a.label.trim(), referenceFor: a.referenceFor ?? null },
     });
     return { id, key: `custom:${id}` };
   },
@@ -130,12 +168,20 @@ export const update = internalMutation({
     probeProtocol: v.optional(probeProtocol),
     enabled: v.optional(v.boolean()),
     notes: v.optional(v.string()),
+    // null clears it (an ordinary target again).
+    referenceFor: v.optional(v.union(edgeProviderIdValidator, v.null())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Probe target not found' });
     checkFields(a);
+    // Judged on the row as it will be stored.
+    checkReference({
+      referenceFor: a.referenceFor === undefined ? row.referenceFor : (a.referenceFor ?? undefined),
+      address: a.address?.trim() ?? row.address,
+      probeProtocol: a.probeProtocol ?? row.probeProtocol,
+    });
     const patch: Partial<Doc<'probeTargets'>> = { updatedAt: Date.now() };
     if (a.label !== undefined) patch.label = a.label.trim();
     if (a.address !== undefined) patch.address = a.address.trim();
@@ -143,6 +189,7 @@ export const update = internalMutation({
     if (a.probeProtocol !== undefined) patch.probeProtocol = a.probeProtocol;
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.notes !== undefined) patch.notes = a.notes.slice(0, 500);
+    if (a.referenceFor !== undefined) patch.referenceFor = a.referenceFor ?? undefined;
     // A different address, port or protocol is a different measurement: its
     // history no longer applies: the summary, the per-(country, source,
     // family) rollup rows the next finish would otherwise fold back in, and any
@@ -178,7 +225,10 @@ export const update = internalMutation({
       action: 'probe.target.update',
       targetType: 'probe_target',
       targetId: `custom:${a.id}`,
-      payload: { label: patch.label ?? row.label },
+      payload: {
+        label: patch.label ?? row.label,
+        referenceFor: (a.referenceFor === undefined ? row.referenceFor : a.referenceFor) ?? null,
+      },
     });
     return { ok: true as const };
   },

@@ -2965,6 +2965,12 @@ export default defineSchema({
     probeProtocol: v.optional(probeProtocolV),
     enabled: v.boolean(),
     notes: v.optional(v.string()),
+    // A REFERENCE SITE for this CDN provider: a well-known site that provider
+    // serves (lib/edges/referenceSites.ts). Refused from a country while it is
+    // reached from others = that network refuses the whole provider, so an
+    // automatic replacement there would only spend a new name. Absent = an
+    // ordinary target (operator evidence only).
+    referenceFor: v.optional(edgeProviderIdValidator),
     reachability: v.optional(probeReachabilitySummary),
     updatedAt: v.number(),
   }).index('by_enabled', ['enabled']),

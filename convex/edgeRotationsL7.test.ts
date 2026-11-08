@@ -1782,3 +1782,152 @@ describe('edgeRotations: a new name blocked before anyone received it pauses, ne
     vi.useRealTimers();
   }, 20_000);
 });
+
+describe('edgeRotations: a country that refuses the CDN outright spends no new name', () => {
+  type Row = { country: string; verdict: 'reachable' | 'unreachable'; ageMs?: number };
+  /** A published front, autoRotate on, and a reference site for its provider. */
+  async function withReference(rows: Row[], referenceFor: 'cloudflare' | 'fastly' = 'cloudflare') {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    const { t, relayId, listenerId } = await seed({ autoSelect: true });
+    await t.run(async (ctx) => {
+      for (const [key, value] of [
+        ['edge.autoRotate', 'true'],
+        ['edge.probe.enabled', 'true'],
+      ] as const)
+        await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
+    });
+    const oldEdge = await insertPublishedFront(t, relayId, listenerId, {
+      name: 'adopted-old',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+    });
+    await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [oldEdge], autoRotate: true }));
+    const now = Date.now();
+    const siteId = await t.run((ctx) =>
+      ctx.db.insert('probeTargets', {
+        label: 'Reference',
+        address: 'reference.example',
+        port: 443,
+        probeProtocol: 'tls',
+        enabled: true,
+        referenceFor,
+        reachability: {
+          byCountry: rows.map((r) => ({
+            country: r.country,
+            verdict: r.verdict,
+            okVantages: r.verdict === 'reachable' ? 3 : 0,
+            failVantages: r.verdict === 'reachable' ? 0 : 3,
+            lastAt: now - (r.ageMs ?? 0),
+          })),
+          updatedAt: now,
+        },
+        updatedAt: now,
+      }),
+    );
+    const start = (affectedCountries: string[]) =>
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'detector',
+        targetEdgeId: oldEdge,
+        affectedCountries,
+      });
+    return { t, relayId, listenerId, oldEdge, siteId, start };
+  }
+  const REFUSED: Row[] = [
+    { country: 'IR', verdict: 'unreachable' },
+    { country: 'DE', verdict: 'reachable' },
+  ];
+
+  test('refused when every country it answers to refuses the reference site; the address stays', async () => {
+    const { t, relayId, listenerId, oldEdge, start } = await withReference(REFUSED);
+    await expect(start(['IR'])).rejects.toThrow(/cdn_refused/);
+    const old = (await t.query(internal.edges.get, { id: oldEdge }))!;
+    expect(old.burnedAt).toBeUndefined();
+    expect(old.drainUntil).toBeUndefined();
+    // The detector's note: shown, audited once, renewed without a second audit.
+    for (let i = 0; i < 2; i++)
+      expect(
+        await t.mutation(internal.edgeRotations.noteCdnRefused, {
+          relayId,
+          edgeId: oldEdge,
+          affectedCountries: ['IR'],
+        }),
+      ).toEqual({ noted: true });
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.autoReplaceHolds).toEqual([
+      expect.objectContaining({
+        listenerId,
+        code: 'cdn_refused',
+        countries: ['IR'],
+        provider: 'cloudflare',
+      }),
+    ]);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.filter((a) => a.action === 'edge.cdn_refused')).toHaveLength(1);
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.find((i) => i.kind === 'cdn_refused')).toMatchObject({
+      severity: 'warning',
+      facts: { countries: ['IR'] },
+    });
+    // The note holds nothing: once the site gets through, the start goes on.
+    await t.run(async (ctx) => {
+      for (const s of await ctx.db.query('probeTargets').collect())
+        await ctx.db.patch(s._id, { enabled: false });
+    });
+    expect((await start(['IR'])).rotationId).toBeTruthy();
+    vi.useRealTimers();
+  }, 20_000);
+
+  test('a start that also answers to a country reaching the site goes on', async () => {
+    const { start } = await withReference(REFUSED);
+    expect((await start(['IR', 'DE'])).rotationId).toBeTruthy();
+    vi.useRealTimers();
+  }, 20_000);
+
+  test('a site nobody reaches is broken, not a refusal', async () => {
+    const { start } = await withReference([
+      { country: 'IR', verdict: 'unreachable' },
+      { country: 'DE', verdict: 'unreachable' },
+    ]);
+    expect((await start(['IR'])).rotationId).toBeTruthy();
+    vi.useRealTimers();
+  }, 20_000);
+
+  test('stale evidence, or a reference site of another provider, refuses nothing', async () => {
+    const stale = await withReference([
+      { country: 'IR', verdict: 'unreachable', ageMs: 3 * 3_600_000 },
+      { country: 'DE', verdict: 'reachable' },
+    ]);
+    expect((await stale.start(['IR'])).rotationId).toBeTruthy();
+    vi.useRealTimers();
+    const other = await withReference(REFUSED, 'fastly');
+    expect((await other.start(['IR'])).rotationId).toBeTruthy();
+    vi.useRealTimers();
+  }, 20_000);
+
+  test('a reference site is a CDN name checked over TLS or HTTPS', async () => {
+    const { t } = await withReference([]);
+    const create = (over: Record<string, unknown>) =>
+      t.mutation(internal.probeTargets.create, {
+        label: 'Ref',
+        address: 'site.example',
+        probeProtocol: 'tls',
+        referenceFor: 'cloudflare',
+        ...over,
+      } as never);
+    await expect(create({ probeProtocol: 'tcp' })).rejects.toThrow(/TLS or HTTPS/);
+    await expect(create({ address: '198.51.100.9' })).rejects.toThrow(/hostname/);
+    await expect(create({ referenceFor: 'gcore' })).rejects.toThrow(/CDN provider/);
+    const { id } = await create({});
+    // Switching the check to a bare connect is refused on the stored row too.
+    await expect(
+      t.mutation(internal.probeTargets.update, { id, probeProtocol: 'tcp' }),
+    ).rejects.toThrow(/TLS or HTTPS/);
+    // Clearing it makes an ordinary target again.
+    await t.mutation(internal.probeTargets.update, { id, referenceFor: null });
+    expect((await t.run((ctx) => ctx.db.get(id)))!.referenceFor).toBeUndefined();
+    vi.useRealTimers();
+  }, 20_000);
+});

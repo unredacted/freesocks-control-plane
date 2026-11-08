@@ -670,6 +670,12 @@ const COPY = {
       "A replacement name on this CDN was blocked in a country before anyone received it, so the block is not about the name: a network there refuses every name on this CDN. FCP pauses automatic replacement for that country and keeps the address in use, so members' apps that never refresh are not cut off. Once the pause ends, FCP tries one new name.",
     fix: 'Nothing to replace. Members in that country need another way in, such as a load balancer address or another mode, until the network lets the CDN through.',
   },
+  cdn_refused: {
+    label: 'CDN refused in a country',
+    explain:
+      "The reference site for this CDN fails from that country too, while other countries reach it, so a network there refuses everything on the CDN. A new name would fail the same way, so FCP does not replace the address in use and members' apps that never refresh are not cut off. FCP checks again on every pass and replaces as usual once the reference site gets through.",
+    fix: 'Nothing to replace. Members in that country need another way in, such as a load balancer address or another mode, until the network lets the CDN through.',
+  },
   // --- FCP's own client check in a replacement (rotation events and outcomes) ---------------
   client_check: {
     label: "FCP's client check",
@@ -3085,6 +3091,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.sni.names.tested': "FCP's client check tested new server names",
   'edge.auto_replace_held': 'Automatic replacement held',
   'edge.fresh_name_blocked': 'New name blocked before use',
+  'edge.cdn_refused': 'CDN refused in a country',
   'edge.auto_replace_resumed': 'Automatic replacement resumed',
   'edge.block_suspected': 'Address looks blocked',
   'edge.block_cleared': 'Address no longer looks blocked',
