@@ -159,6 +159,9 @@ export const run = internalAction({
           alpn: verdict.alpn,
           // Recorded only under "use anyway": the page keeps such a name marked.
           ...(network?.offNetwork && n.useAnyway ? { offNetwork: true } : {}),
+          // What this verdict was judged under: an operator who turned "use
+          // anyway" on or off meanwhile gets the recheck they asked for instead.
+          ...(n.network ? { useAnyway: n.useAnyway === true } : {}),
         });
         await new Promise((r) => setTimeout(r, GAP_MS));
       }

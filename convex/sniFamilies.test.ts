@@ -365,6 +365,68 @@ describe('use anyway: a server name off the list network, on an operator say', (
     expect((await refused.json()).error.code).toBe('edge.sni.no_network');
   });
 
+  test('a verdict judged before the operator changed it is dropped; the recheck stands', async () => {
+    const { t, call } = await onNetwork();
+    // A pass picks the name up without the override...
+    const id = (await t.query(internal.sniFamilies.dueForQualification, {})).names.find(
+      (n) => n.name === 'off.example',
+    )!.id;
+    // ...the operator says "use anyway" while it runs...
+    await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'], on: true });
+    // ...and its old refusal arrives: dropped, the name stays due.
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id,
+      ok: false,
+      code: 'q_off_network',
+      useAnyway: false,
+    });
+    expect(await row(call)).toMatchObject({ qualification: 'pending' });
+    let due = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
+    expect(due.find((n) => n.name === 'off.example')).toMatchObject({ useAnyway: true });
+    // The other way round: a pass under the override, taken back meanwhile.
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id,
+      ok: true,
+      offNetwork: true,
+      useAnyway: true,
+    });
+    expect(await row(call)).toMatchObject({ qualification: 'ok' });
+    await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'], on: false });
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id,
+      ok: true,
+      offNetwork: true,
+      useAnyway: true,
+    });
+    expect(await row(call)).toMatchObject({ offNetwork: false, useAnyway: null });
+    due = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
+    expect(due.find((n) => n.name === 'off.example')).toBeDefined();
+  });
+
+  test('a burn clears it, and taking it back still works on a burned name', async () => {
+    const { t, call } = await onNetwork();
+    await call('POST', 'families/fam-a/names/use-anyway', {
+      snis: ['off.example', 'other.example'],
+      on: true,
+    });
+    await call('POST', 'families/fam-a/names/burn', { snis: ['off.example'] });
+    expect(await row(call)).toMatchObject({ status: 'burned', useAnyway: null });
+    // A row burned some other way with the say still on (older rows): it can be taken back.
+    await t.run(async (ctx) => {
+      const n = (await ctx.db.query('sniNames').collect()).find((x) => x.name === 'other.example')!;
+      await ctx.db.patch(n._id, { status: 'burned' });
+    });
+    expect(
+      await (
+        await call('POST', 'families/fam-a/names/use-anyway', {
+          snis: ['other.example'],
+          on: false,
+        })
+      ).json(),
+    ).toEqual({ count: 1 });
+    expect(await row(call, 'other.example')).toMatchObject({ useAnyway: null });
+  });
+
   test('a network change drops it: it was said about the old network', async () => {
     const { t, call } = await onNetwork();
     await call('POST', 'families/fam-a/names/use-anyway', { snis: ['off.example'], on: true });
@@ -405,8 +467,9 @@ describe('use anyway: a server name off the list network, on an operator say', (
       .sort();
     expect(writers).toEqual(['./schema.ts', './sniFamilies.ts']);
     const text = sources['./sniFamilies.ts']!;
-    // In sniFamilies.ts: `setUseAnyway` sets or clears it, `update` clears it.
-    expect(text.match(/networkOverride:/g)).toHaveLength(2);
+    // In sniFamilies.ts: `setUseAnyway` sets or clears it, `update` and a burn clear it.
+    expect(text.match(/networkOverride:/g)).toHaveLength(3);
+    expect(text.match(/networkOverride: undefined/g)).toHaveLength(2);
   });
 });
 

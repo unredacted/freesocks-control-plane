@@ -3869,8 +3869,8 @@ off the network now, and the locations learn their network again.
 `edge.sni.network_bound`; a change puts every name back to waiting for its first check, so none is
 used, by a rebind either, until it was checked against the new network): qualification adds two
 checks before the handshake. Every address the target resolves to must be on the network
-(`q_target_off_network`), and the name must resolve, every answer on it (`q_off_network`: a name
-that does not resolve is not a site there). A name of such a family is not checked at all while
+(`q_target_off_network`), and the name must resolve (`q_name_unresolved`: a name that does not
+resolve is not a site there), every answer on it (`q_off_network`). A name of such a family is not checked at all while
 its network has no ranges yet (it waits; it is never failed for that).
 
 **What qualification walks past steps aside.** A pass takes the oldest-checked names first. A
@@ -3912,7 +3912,13 @@ reason) with "Stop using anyway" next to it.
   once it resolves again.
 - **A family's network change** drops every override of its names: each was said about the old
   network.
-- A family with no network refuses it (`edge.sni.no_network`); a burned name is left alone.
+- **A check that ran while it changed** does not count: the pass hands back whether it judged the
+  name under the override, and a verdict judged under the other state is dropped, so the recheck
+  the operator asked for still happens.
+- A family with no network refuses it (`edge.sni.no_network`). A burned name never gets one, and
+  a burn clears it; taking it back works on any name.
+- "Use anyway" is offered only for `q_off_network`, which means the name was seen resolving
+  elsewhere: a name that does not resolve at all is `q_name_unresolved`, with or without it.
 
 **A transport scoped to a network.** Binding a family on a network to a transport scopes it:
 `relayListeners.networkId` is written on every listener of that transport (by the bind, on every
@@ -7147,7 +7153,8 @@ none of those fields, and a location's learned network is cleared with its netwo
 
 **Use anyway** (§ "Using a server name off the network anyway") adds two optional fields
 (`sniNames.networkOverride`, `sniNames.qualification.offNetwork`), one route, one audit action
-(`edge.sni.names.use_anyway`) and one qualification word (`q_name_unresolved`): one deploy, no
+(`edge.sni.names.use_anyway`) and one qualification word (`q_name_unresolved`, which a family on
+a network now uses for a name that does not resolve, formerly `q_off_network`): one deploy, no
 migration, no env change. Nothing changes until an operator says "use anyway". To roll back,
 take back every override first (`on: false`, which clears both fields): the older schema has
 neither.

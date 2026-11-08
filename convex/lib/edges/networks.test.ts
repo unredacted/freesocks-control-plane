@@ -96,7 +96,11 @@ describe('membership', () => {
       code: 'q_off_network',
       offNetwork: true,
     });
-    expect(off(['192.0.2.1'], [], NET, { useAnyway: false }).code).toBe('q_off_network');
+    // Not resolving at all has its own word, so "use anyway" is never offered for it.
+    expect(off(['192.0.2.1'], [], NET, { useAnyway: false })).toEqual({
+      code: 'q_name_unresolved',
+      offNetwork: false,
+    });
     // With it: a name resolving outside the network passes this check, marked.
     expect(off(['192.0.2.1'], ['203.0.113.9'], NET, { useAnyway: true })).toEqual({
       code: null,

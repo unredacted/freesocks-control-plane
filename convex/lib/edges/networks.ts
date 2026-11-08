@@ -160,13 +160,16 @@ export function qualificationNetworkCode(
 /**
  * The network check of one name in the qualification pass, with an operator's
  * "use anyway" on that name (`sniNames.networkOverride`, docs/edges.md "Using a
- * server name off the network anyway"). Without it, exactly
- * `qualificationNetworkCode`. With it, a name that resolves, but outside the
- * network, passes this check (`offNetwork` says so, for the page), and nothing
- * else changes: the target must still be on the network, and a name that does
- * not resolve at all is refused (`q_name_unresolved`): the operator vouched for
- * a site that lives elsewhere, not for one that is gone. Only an operator sets
- * `useAnyway`; nothing automatic ever does.
+ * server name off the network anyway"). It refuses what
+ * `qualificationNetworkCode` refuses, a name that does not resolve at all
+ * under its own word (`q_name_unresolved`), so `q_off_network` always means
+ * "seen resolving elsewhere" (the only refusal "use anyway" is offered for).
+ * With the override, a name that resolves, but outside the network, passes
+ * this check (`offNetwork` says so, for the page), and nothing else changes:
+ * the target must still be on the network, and a name that does not resolve
+ * is refused all the same (the operator vouched for a site that lives
+ * elsewhere, not for one that is gone). Only an operator sets `useAnyway`;
+ * nothing automatic ever does.
  */
 export function qualificationNetworkVerdict(
   targetAddresses: readonly string[],
@@ -179,9 +182,8 @@ export function qualificationNetworkVerdict(
 } {
   const code = qualificationNetworkCode(targetAddresses, nameAddresses, p);
   if (code !== 'q_off_network') return { code, offNetwork: false };
-  if (!opts.useAnyway) return { code, offNetwork: true };
   if (nameAddresses.length === 0) return { code: 'q_name_unresolved', offNetwork: false };
-  return { code: null, offNetwork: true };
+  return opts.useAnyway ? { code: null, offNetwork: true } : { code, offNetwork: true };
 }
 
 /**

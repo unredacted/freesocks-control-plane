@@ -745,8 +745,17 @@ export const setNames = internalMutation({
     for (const n of await namesOf(ctx, f._id)) {
       if (!wanted.has(n.name) || n.status === 'burned') continue;
       const now = Date.now();
-      if (a.action === 'burn') await ctx.db.patch(n._id, { status: 'burned', updatedAt: now });
-      else if (a.action === 'retire' && n.status !== 'retired')
+      if (a.action === 'burn') {
+        // Never used again: a "use anyway" on it goes too.
+        const { offNetwork: _off, ...qualification } = n.qualification;
+        await ctx.db.patch(n._id, {
+          status: 'burned',
+          ...(n.networkOverride || n.qualification.offNetwork
+            ? { networkOverride: undefined, qualification }
+            : {}),
+          updatedAt: now,
+        });
+      } else if (a.action === 'retire' && n.status !== 'retired')
         await ctx.db.patch(n._id, { status: 'retired', updatedAt: now });
       else if (a.action === 'reactivate' && n.status !== 'active')
         await ctx.db.patch(n._id, {
@@ -783,7 +792,8 @@ const USE_ANYWAY_REASON_MAX = 300;
  * although it resolves outside the network; off puts the normal check back.
  * Either way the names are checked again on the next qualification pass. Only
  * this mutation writes `networkOverride`, and only an admin route calls it:
- * no hunt, check or auto-confirm ever does. A burned name is left alone.
+ * no hunt, check or auto-confirm ever does. A burned name never gets one (a
+ * burn clears it).
  */
 export const setUseAnyway = internalMutation({
   args: {
@@ -802,7 +812,9 @@ export const setUseAnyway = internalMutation({
     const now = Date.now();
     let count = 0;
     for (const n of await namesOf(ctx, f._id)) {
-      if (!wanted.has(n.name) || n.status === 'burned') continue;
+      if (!wanted.has(n.name)) continue;
+      // A burned name never comes back; taking a say back is always allowed.
+      if (a.on && n.status === 'burned') continue;
       if (!a.on && !n.networkOverride) continue;
       // Taken back: the mark it left goes too (the next check judges it afresh).
       const { offNetwork: _off, ...qualification } = n.qualification;
@@ -1058,10 +1070,17 @@ export const recordQualification = internalMutation({
     alpn: v.optional(v.string()),
     /** Under `networkOverride`: the name resolved outside its family's network. */
     offNetwork: v.optional(v.boolean()),
+    /**
+     * Whether the verdict was judged under "use anyway" (the pass, for a family
+     * on a network). When the row says otherwise now, an operator changed it
+     * while the check ran: the verdict is dropped and the name stays due.
+     */
+    useAnyway: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const n = await ctx.db.get(a.id);
     if (!n || (n.status !== 'active' && n.status !== 'suspended')) return null;
+    if (a.useAnyway !== undefined && a.useAnyway !== !!n.networkOverride) return null;
     const cfg = await resolveSniConfig(ctx.db);
     const fails = a.ok ? 0 : n.qualification.consecutiveFails + 1;
     const q: Qualification & { state: 'ok' | 'failed'; consecutiveFails: number } = {

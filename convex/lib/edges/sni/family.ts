@@ -83,7 +83,7 @@ export type QualificationCode =
   // A family on a network (lib/edges/networks.ts): the name, or the target, resolves off it.
   | 'q_off_network'
   | 'q_target_off_network'
-  // A name an operator uses off the network anyway that no longer resolves at all.
+  // A name of a family on a network that does not resolve at all (with or without "use anyway").
   | 'q_name_unresolved';
 
 export interface Qualification {

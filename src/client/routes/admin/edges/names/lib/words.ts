@@ -87,10 +87,10 @@ export const CHECK_WORDS: Record<string, string> = {
   q_tls12: 'The cover site does not offer TLS 1.3 for this name.',
   q_no_h2: 'The cover site does not offer HTTP/2 for this name.',
   q_off_network:
-    'This server name (SNI) resolves outside the list’s network, or not at all: someone looking it up would see another network than the address it is shown to.',
+    'This server name (SNI) resolves outside the list’s network: someone looking it up would see another network than the address it is shown to.',
   q_target_off_network: 'The cover site resolves outside the list’s network.',
   q_name_unresolved:
-    'This server name (SNI) no longer resolves at all. It is used anyway outside the list’s network, but not while it does not resolve.',
+    'This server name (SNI) does not resolve at all, so it is not a site on the list’s network. It is not used until it resolves.',
 };
 
 /** The few fields of a row "Use anyway" reads (`SniNameRow`). */
