@@ -511,7 +511,8 @@ const COPY = {
   // --- preflight: start guards ----------------------------------------------------------
   maintenance: {
     label: 'Maintenance freeze',
-    explain: 'The maintenance switch is on, so edge work is paused.',
+    explain:
+      'The maintenance switch is on, so no new edge job starts. Jobs already running finish.',
     fix: 'Thaw under Settings when the maintenance is over.',
   },
   not_found: {
@@ -1119,7 +1120,8 @@ const COPY = {
   },
   maintenance_frozen: {
     label: 'Maintenance freeze on',
-    explain: 'Edge work is paused while the maintenance switch is on.',
+    explain:
+      'No new edge job starts while the maintenance switch is on. Jobs already running finish.',
     fix: 'Thaw when the maintenance is over.',
   },
   // --- layer exclusions -----------------------------------------------------------------
