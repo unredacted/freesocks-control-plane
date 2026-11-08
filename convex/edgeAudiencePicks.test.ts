@@ -448,3 +448,67 @@ describe('rollback', () => {
     expect(e.audience).toEqual(['IR']);
   });
 });
+
+describe('review fixes', () => {
+  test('a count saved while its location is off is judged as if it were on', async () => {
+    const w = await world();
+    await w.t.run((c) => c.db.patch(w.accountA, { enabled: false }));
+    const { setStateOf } = await import('./lib/edges/setState');
+    const deficits = await w.t.run(async (c) => {
+      const relay = (await c.db.get(w.relayId))!;
+      const providerSet = relay.providerSet!.map((p) =>
+        p.locationId === w.a._id
+          ? { ...p, audiences: [{ codes: ['IR'], want: 3, addedAt: 1 }] }
+          : p,
+      );
+      const off = await setStateOf(c.db, { ...relay, providerSet });
+      const on = await setStateOf(c.db, { ...relay, providerSet }, Date.now(), {
+        assumeUsable: w.a._id,
+      });
+      return [off.deficit, on.deficit];
+    });
+    expect(deficits).toEqual([0, 3]);
+  });
+
+  test('a pick serving its countries only takes no count for everyone', async () => {
+    const w = await world();
+    await setAudience(w, ['IR'], 1);
+    await w.t.mutation(internal.edgeAudiences.setPickAudienceOnly, {
+      relayId: w.relayId,
+      locationId: w.a._id,
+      only: true,
+    });
+    await expect(
+      w.t.mutation(internal.edgePickWants.setPickWant, {
+        relayId: w.relayId,
+        locationId: w.a._id,
+        want: 2,
+      }),
+    ).rejects.toThrow(/its countries only/);
+  });
+
+  test('an address made for one country is never published at a location only for another', async () => {
+    const w = await world();
+    const spare = await freshSpare(w, '198.51.100.37', w.accountA, ['IR']);
+    await w.t.run((c) => c.db.patch(w.a._id, { forCountries: { codes: ['RU'], updatedAt: 1 } }));
+    await w.t.mutation(internal.edgeAudiences.setOnly, { id: w.a._id, only: true });
+    await expect(
+      w.t.mutation(internal.relays.publishEdge, { relayId: w.relayId, edgeId: spare }),
+    ).rejects.toThrow(/cannot be/);
+  });
+
+  test('the rollback is refused while a run for some countries is in flight', async () => {
+    const w = await world();
+    await setAudience(w, ['IR'], 1);
+    await w.t.mutation(internal.edgeRotations.start, {
+      relayId: w.relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      listenerId: w.listenerId,
+      audience: ['IR'],
+    });
+    await expect(
+      w.t.mutation(internal.edgeAudiences.clearAudiencePicksForRollback, {}),
+    ).rejects.toThrow(/in flight/);
+  });
+});

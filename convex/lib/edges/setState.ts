@@ -212,6 +212,10 @@ export async function setStateOf(
   db: DatabaseReader,
   relay: Relay,
   now: number = Date.now(),
+  opts: {
+    /** Judge this pick as if it were usable (a count saved while it is off asks once it is on). */
+    assumeUsable?: string;
+  } = {},
 ): Promise<SetState> {
   const rows = await db
     .query('relayListeners')
@@ -224,7 +228,9 @@ export async function setStateOf(
     listenerKey: l.listenerKey,
     carriers: (picks ?? [])
       .filter(
-        (p) => p.usable && carries(p, l, { websocketNode, originAddress: relay.originAddress }),
+        (p) =>
+          (p.usable || p.pick.locationId === opts.assumeUsable) &&
+          carries(p, l, { websocketNode, originAddress: relay.originAddress }),
       )
       .map((p) => p.pick.locationId),
   }));

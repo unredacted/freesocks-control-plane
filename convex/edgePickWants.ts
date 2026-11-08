@@ -400,6 +400,17 @@ export const setPickWant = internalMutation({
     await assertNoRunningSetup(ctx.db, relay);
     await assertNoRotationOrQuarantine(ctx.db, relay);
     const want = cleanWant(a.want);
+    // A pick serving its countries only makes nothing for everyone: a count
+    // there would wait unseen and come back over the pool's size later.
+    if (
+      want !== null &&
+      relay.providerSet?.find((p) => p.locationId === a.locationId)?.audienceOnly
+    )
+      throw new ConvexError({
+        code: 'validation',
+        message:
+          'This location keeps addresses for its countries only: switch that off before setting a count for everyone',
+      });
     const effect = await wantEffect(ctx.db, relay, a.locationId, want);
     if (effect.tooLarge)
       throw new ConvexError({

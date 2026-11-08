@@ -74,8 +74,14 @@ export function audienceAtPublish(input: {
   /** A replace: the address it swaps out (its audience; absent = everyone's). */
   replacing?: { audience?: readonly string[] } | null;
 }): AudienceAtPublish {
-  const made = input.made?.length ? [...new Set(input.made)].sort() : null;
-  const codes = made ?? onlyCodesOf(input.location);
+  const onlyHere = onlyCodesOf(input.location);
+  // At a location only for some countries, its countries rule: an address made
+  // for others (a pick's entry since removed) is never published there, and
+  // one made for exactly them still keeps the location's switch-date rule.
+  if (input.made?.length && onlyHere && !sameCodes(input.made, onlyHere))
+    return { kind: 'refused', reason: 'audience_tainted' };
+  const made = input.made?.length && !onlyHere ? [...new Set(input.made)].sort() : null;
+  const codes = made ?? onlyHere;
   if (!codes) return { kind: 'everyone' };
   const e = input.edge;
   const clean =

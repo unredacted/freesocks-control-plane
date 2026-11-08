@@ -19,6 +19,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { assertAdmission } from './lib/edges/maintenance';
 import { audienceAtPublish, onlyCodesOf, sameCodes } from './lib/edges/audience';
+import { isTerminalPhase, ROTATION_PHASES } from './lib/edges/rotation';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { MAX_PICK_WANT } from './lib/edges/providerSet';
 import { seenBefore } from './edgeLanes';
@@ -318,6 +319,30 @@ async function leavesNone(
 }
 
 /**
+ * Refused (`edge.set_too_large`) when the set would ask the pool for more
+ * addresses than one node publishes, judged as it will stand: nothing
+ * cooling, and the edited pick as if usable (a count saved while its location
+ * or account is off asks once it is on).
+ */
+async function assertPoolHolds(
+  db: DatabaseReader,
+  relay: Doc<'relays'>,
+  providerSet: NonNullable<Doc<'relays'>['providerSet']>,
+  locationId: Id<'edgeLocations'>,
+  now: number,
+): Promise<void> {
+  const after = await setStateOf(db, { ...relay, providerSet, cooling: [] }, now, {
+    assumeUsable: locationId as string,
+  });
+  const total = after.published.length + after.deficit;
+  if (total > MAX_DESIRED_PUBLISHED)
+    throw new ConvexError({
+      code: 'edge.set_too_large',
+      message: `The set would ask for ${total} addresses in use; one node publishes at most ${MAX_DESIRED_PUBLISHED}`,
+    });
+}
+
+/**
  * `POST relays/{id}/providers/{locationId}/audiences {codes, want}`: this node
  * keeps addresses only for these countries at this pick (docs/edges.md
  * "Countries with their own addresses"): `want` of each transport the pick
@@ -407,13 +432,7 @@ export const setPickAudience = internalMutation({
         ? { ...rest, audiences: next, ...(p.audienceOnly ? { audienceOnly: true as const } : {}) }
         : rest;
     });
-    // The pool must hold what the set now asks for (as a pick's own count).
-    const after = await setStateOf(ctx.db, { ...relay, providerSet, cooling: [] }, now);
-    if (after.published.length + after.deficit > MAX_DESIRED_PUBLISHED)
-      throw new ConvexError({
-        code: 'edge.set_too_large',
-        message: `The set would ask for ${after.published.length + after.deficit} addresses in use; one node publishes at most ${MAX_DESIRED_PUBLISHED}`,
-      });
+    await assertPoolHolds(ctx.db, relay, providerSet, a.locationId, now);
     await ctx.db.patch(relay._id, { providerSet, updatedAt: now });
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -483,6 +502,8 @@ export const setPickAudienceOnly = internalMutation({
       void _o;
       return a.only ? { ...rest, audienceOnly: true as const } : rest;
     });
+    // Back to everyone: the pick's coverage need returns with it.
+    if (!a.only) await assertPoolHolds(ctx.db, relay, providerSet, a.locationId, now);
     await ctx.db.patch(relay._id, { providerSet, updatedAt: now });
     const location = await ctx.db.get(a.locationId);
     await writeAuditLog(ctx, {
@@ -510,24 +531,38 @@ export const setPickAudienceOnly = internalMutation({
  */
 export const clearAudiencePicksForRollback = internalMutation({
   args: {
-    stage: v.optional(v.union(v.literal('rotations'), v.literal('edges'))),
+    stage: v.optional(v.union(v.literal('relays'), v.literal('rotations'), v.literal('edges'))),
     cursor: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, a) => {
     const now = Date.now();
     if (!a.stage) {
-      const relays = await ctx.db.query('relays').collect();
-      for (const r of relays) {
-        if (!r.activeRotationId) continue;
-        const run = await ctx.db.get(r.activeRotationId);
-        if (run?.audience?.length)
-          throw new ConvexError({
-            code: 'edge.audience_rollback_busy',
-            message: `${r.label ?? r.slug} has a run for some countries in flight: wait for it or cancel it, then run this again`,
-          });
+      // Runs in flight only (the phase index: a handful of rows, never the fleet).
+      for (const phase of ROTATION_PHASES) {
+        if (isTerminalPhase(phase)) continue;
+        for (const run of await ctx.db
+          .query('edgeRotations')
+          .withIndex('by_phase', (q) => q.eq('phase', phase))
+          .collect())
+          if (run.audience?.length) {
+            const r = await ctx.db.get(run.relayId);
+            throw new ConvexError({
+              code: 'edge.audience_rollback_busy',
+              message: `${r?.label ?? r?.slug ?? 'A node'} has a run for some countries in flight: wait for it or cancel it, then run this again`,
+            });
+          }
       }
-      let picks = 0;
-      for (const r of relays) {
+      await ctx.scheduler.runAfter(0, internal.edgeAudiences.clearAudiencePicksForRollback, {
+        stage: 'relays',
+      });
+      return { stage: 'started', cleared: 0, done: false };
+    }
+    if (a.stage === 'relays') {
+      const page = await ctx.db
+        .query('relays')
+        .paginate({ cursor: a.cursor ?? null, numItems: 100 });
+      let cleared = 0;
+      for (const r of page.page) {
         if (!r.providerSet?.some((p) => p.audiences !== undefined || p.audienceOnly)) continue;
         await ctx.db.patch(r._id, {
           providerSet: r.providerSet.map(({ audiences: _a, audienceOnly: _o, ...p }) => {
@@ -537,12 +572,13 @@ export const clearAudiencePicksForRollback = internalMutation({
           }),
           updatedAt: now,
         });
-        picks++;
+        cleared++;
       }
       await ctx.scheduler.runAfter(0, internal.edgeAudiences.clearAudiencePicksForRollback, {
-        stage: 'rotations',
+        stage: page.isDone ? 'rotations' : 'relays',
+        cursor: page.isDone ? null : page.continueCursor,
       });
-      return { stage: 'picks', cleared: picks, done: false };
+      return { stage: 'relays', cleared, done: false };
     }
     if (a.stage === 'rotations') {
       const page = await ctx.db

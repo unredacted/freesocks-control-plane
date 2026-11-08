@@ -265,3 +265,26 @@ describe('countries on a node’s pick', () => {
     expect(sameCodes(['IR', 'RU'], ['RU', 'IR'])).toBe(true);
   });
 });
+
+describe('an intent at a location only for some countries', () => {
+  const edge = { _creationTime: 5, resources: [{ ownership: 'created' }] };
+  test('its countries rule: another country is refused; the same keeps the switch date', () => {
+    const onlyRu = { codes: ['RU'], only: { since: 10 } };
+    expect(audienceAtPublish({ edge, location: onlyRu, seenBefore: false, made: ['IR'] })).toEqual({
+      kind: 'refused',
+      reason: 'audience_tainted',
+    });
+    expect(audienceAtPublish({ edge, location: onlyRu, seenBefore: false, made: ['RU'] })).toEqual({
+      kind: 'refused',
+      reason: 'audience_tainted',
+    });
+    expect(
+      audienceAtPublish({
+        edge: { ...edge, _creationTime: 20 },
+        location: onlyRu,
+        seenBefore: false,
+        made: ['RU'],
+      }),
+    ).toEqual({ kind: 'contained', audience: ['RU'] });
+  });
+});
