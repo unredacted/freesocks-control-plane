@@ -355,8 +355,9 @@ export async function applyLocationQualification(
   const effective = await effectiveTemplateOfLocation(ctx, account, location);
   const now = Date.now();
   // Trusting a location that is already trusted by an endpoint the owner ticked
-  // keeps that endpoint as the evidence while the template is the same: it is
-  // what lets FCP's own client check stand in for a tick there (lib/edges/tickedLocation.ts).
+  // keeps that endpoint as the evidence while the template is the same (shown
+  // on the account page; FCP's own client check no longer needs it,
+  // lib/edges/assignedLocation.ts).
   const kept =
     !opts.evidence &&
     location.qualified &&
@@ -416,7 +417,8 @@ export async function applyLocationQualification(
 /**
  * A location trusted by the override (no endpoint behind it) gets the
  * endpoint the owner just ticked there as its evidence, without a second
- * "trusted" record: what makes it a ticked location (lib/edges/tickedLocation.ts).
+ * "trusted" record (shown on the account page; FCP's own client check no longer
+ * needs it, lib/edges/assignedLocation.ts).
  * A location with evidence already, or untrusted, is left alone.
  */
 export async function noteTickedEvidence(

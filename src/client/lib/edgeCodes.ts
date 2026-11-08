@@ -652,11 +652,11 @@ const COPY = {
       "Replacing this address needs a spare you have already tested; a new address cannot go live untested. With FCP's own client check on and answering, FCP can make and check one itself instead.",
     fix: "Create a spare address and test it, or turn on FCP's own client check (Edges settings).",
   },
-  no_ticked_location: {
-    label: 'No tested location',
+  no_assigned_location: {
+    label: 'No location for it',
     explain:
-      'FCP makes a replacement itself only in a location where you have tested an address before, and no such location can take this one.',
-    fix: 'Add a spare address in a location you trust, test it with a real session, then replace.',
+      'FCP makes and checks a replacement itself only in a location you added to this node, and none of them can take this one (switched off, untrusted by hand, full, or at its spending cap).',
+    fix: "Add a location to this node's locations, or free one up, then replace.",
   },
   replacement_reblocked: {
     label: 'Replacement blocked again',
@@ -690,7 +690,7 @@ const COPY = {
   client_check_unconfirmed: {
     label: 'Checked but not confirmed',
     explain:
-      "FCP's own clients got through, but the check could not stand in for your test: the location is no longer one you tested an address in, or the client check was turned off.",
+      "FCP's own clients got through, but the check could not stand in for a test: the location is no longer one of this node's locations (or you untrusted it), or the client check was turned off.",
     fix: 'Test the address yourself, then put it in use.',
   },
   // --- preflight: selection -------------------------------------------------------------
@@ -1031,8 +1031,8 @@ const COPY = {
   needs_test: {
     label: 'Blocked and the spare is untested',
     explain:
-      'The address on this node looks blocked and automatic replacement has no spare you have tested, and no location you tested an address in where FCP could make one.',
-    fix: 'Test the spare address with a real session, then replace.',
+      "The address on this node looks blocked and automatic replacement has no tested spare, and FCP's own client check cannot make and check one (it is off or not answering, or none of this node's locations can take one).",
+    fix: "Turn on FCP's own client check and add a location to this node, or test the spare address with a real session, then replace.",
   },
   auto_replace_held: {
     label: 'Automatic replacement held',

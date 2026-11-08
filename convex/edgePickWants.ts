@@ -20,7 +20,10 @@ import { internal } from './_generated/api';
 import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
+import { MAX_DESIRED_PUBLISHED, resolveEdgeConfig } from './lib/edgeConfig';
+import { pickUsable } from './lib/edges/assignedLocation';
+import { edgeLayerOf } from './lib/edges/providers/capabilities';
+import { clientCheckReadiness } from './edgeClientCheck';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { MAX_PICK_WANT, pickWant } from './lib/edges/providerSet';
@@ -70,6 +73,9 @@ export async function countGapsOf(
   if (!relay.providerSet?.some((p) => pickWant(p.want) !== undefined)) return [];
   const s = state ?? (await setStateOf(db, relay, now));
   const cooling = coolingOf(relay, now);
+  // A location not trusted yet is usable when FCP's own client check can
+  // prove what is made there (lib/edges/assignedLocation.ts `pickUsable`).
+  const ccReady = (await clientCheckReadiness(db, await resolveEdgeConfig(db), now)) === 'ready';
   // The node's spares as upkeep finds them: active, not in use, with an address.
   const standbys = (
     await db
@@ -103,7 +109,10 @@ export async function countGapsOf(
         ? 'pick_cooling'
         : held
           ? 'locations_refused'
-          : !row.location.qualified
+          : !pickUsable(row.location, {
+                l4: edgeLayerOf(row.account.provider) === 'l4',
+                clientCheckReady: ccReady,
+              })
             ? 'location_untrusted'
             : (await capHit(db, row.account, row.location, p.options))
               ? 'account_spend_cap_reached'

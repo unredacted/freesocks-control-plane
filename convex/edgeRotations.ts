@@ -185,7 +185,7 @@ import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
 import { networkPrefixes } from './edgeNetworks';
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './edgeClientCheck';
-import { locationTicked } from './lib/edges/tickedLocation';
+import { assignedPicksOf, locationAssigned } from './lib/edges/assignedLocation';
 import { replacementPlacement, replacementPolicyOf } from './lib/edges/replacementHolders';
 import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } from './edgeLanes';
 import { edgeLaneOf } from './lib/edges/lanes';
@@ -1245,7 +1245,7 @@ export async function collectStartBlockers(
       const automatic = a.trigger === 'detector' || a.trigger === 'reconcile';
       if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg, automatic))) {
         // FCP may make the replacement itself and prove it with its own client
-        // check, in a location the owner ticked an address in (docs/edges.md
+        // check, in a location an operator assigned to the node (docs/edges.md
         // § "Replacing a blocked address without a spare"). The start asks the
         // same selection the run will, so it is not waived for nothing.
         const ready = (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
@@ -1259,10 +1259,10 @@ export async function collectStartBlockers(
             )
           : null;
         if (!sel || (!sel.standbyId && !sel.account)) {
-          if (sel?.accountFailure === 'no_ticked_location')
+          if (sel?.accountFailure === 'no_assigned_location')
             push(
-              'edge.no_ticked_location',
-              'No location where an address was tested can take the replacement; test an address there first',
+              'edge.no_assigned_location',
+              'No location assigned to this node can take the replacement; add one to its locations',
             );
           else if (sel?.accountFailure === 'locations_refused')
             push(
@@ -3752,35 +3752,44 @@ export async function selectionContext(
   // create one of this node's addresses: the same request would be refused the
   // same way, so the next location is taken (lib/edges/refusedLocations.ts).
   const refused = automatic ? refusedLocationsOf(origin, now) : new Set<string>();
-  // A replace of an L4 address with FCP's own client check on and answering:
-  // the replacement may be an untested L4 spare or a NEW load balancer, both in
-  // a location the owner ticked an address in, proven by the check in
-  // `verifying` before anything is published (docs/edges.md § "Replacing a
-  // blocked address without a spare").
+  // FCP's own client check on and answering: a replace of an L4 address, and a
+  // provision outside a guided setup run (upkeep, a count fill, an operator's
+  // own), make L4 addresses only in a location an operator assigned to the
+  // node (lib/edges/assignedLocation.ts), take an untested L4 spare there or
+  // buy a NEW load balancer there, and prove it with the check in `verifying`
+  // before anything is published (docs/edges.md § "Replacing a blocked address
+  // without a spare"). No person tests it first. A setup run checks its own
+  // addresses at its "Try it" stage.
+  const clientCheckReady = (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
   const clientCheckMode =
-    rotation.kind === 'replace' &&
-    !!targetEdge &&
-    (targetEdge.layer ?? edgeLayerOf(targetEdge.provider)) !== 'l7' &&
-    (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
-  const tickedCache = new Map<string, boolean>();
-  const tickedAt = async (locationId: Id<'edgeLocations'> | string | null | undefined) => {
+    clientCheckReady &&
+    ((rotation.kind === 'replace' &&
+      !!targetEdge &&
+      (targetEdge.layer ?? edgeLayerOf(targetEdge.provider)) !== 'l7') ||
+      (rotation.kind === 'provision' && !rotation.setupRun));
+  const assignedPicks = await assignedPicksOf(ctx.db, origin);
+  const assignedCache = new Map<string, boolean>();
+  const assignedAt = async (locationId: Id<'edgeLocations'> | string | null | undefined) => {
     if (!locationId) return false;
     const key = locationId as string;
-    if (!tickedCache.has(key))
-      tickedCache.set(key, locationTicked(await ctx.db.get(locationId as Id<'edgeLocations'>)));
-    return tickedCache.get(key)!;
+    if (!assignedCache.has(key))
+      assignedCache.set(
+        key,
+        locationAssigned(await ctx.db.get(locationId as Id<'edgeLocations'>), assignedPicks),
+      );
+    return assignedCache.get(key)!;
   };
   const isL4 = (e: Edge) => (e.layer ?? edgeLayerOf(e.provider)) !== 'l7';
   // A confirmation FCP wrote counts only on the terms it was written on (the
-  // switch on, the location still ticked); the publication gate says the same.
+  // switch on, the location still assigned); the publication gate says the same.
   const eligibleSpare = async (e: Edge, l: VerifiableListener | undefined) =>
     standbyEligible(e, l) &&
     (e.verification?.method !== 'client_check' ||
-      (cfg.clientCheck.enabled && (await tickedAt(e.locationId))));
+      (cfg.clientCheck.enabled && (await assignedAt(e.locationId))));
   // An untested spare the run checks itself; never one whose latest check
   // found the address itself at fault (a later passing check lifts that).
   const checkableSpare = async (e: Edge, l: VerifiableListener | undefined) =>
-    clientCheckMode && isL4(e) && !clientCheckFailedNow(e, l) && (await tickedAt(e.locationId));
+    clientCheckMode && isL4(e) && !clientCheckFailedNow(e, l) && (await assignedAt(e.locationId));
   const inSet = origin.providerSet
     ? new Set(origin.providerSet.map((p) => p.locationId as string))
     : null;
@@ -3902,7 +3911,7 @@ export async function selectionContext(
       account: null,
       accountFailure: null,
       template: null,
-      // An untested spare in a ticked location: the run checks it itself.
+      // An untested spare in an assigned location: the run checks it itself.
       clientCheck:
         !!spare &&
         clientCheckMode &&
@@ -3990,11 +3999,16 @@ export async function selectionContext(
     // read; a Scaleway location with no project to create in).
     const placeProblem = await placeProblemOf(ctx.db, a, where);
     if (placeProblem) return failure(placeProblem);
-    if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
-    // With FCP's own client check, an L4 replacement is made only where the
-    // owner ticked an address (the check stands in for a tick only there).
-    const namedCheck = clientCheckMode && edgeLayerOf(a.provider) === 'l4';
-    if (namedCheck && !locationTicked(where)) return failure('no_ticked_location');
+    // With FCP's own client check, an L4 address may be made in a location an
+    // operator assigned to the node though no address there was tested yet: the
+    // check proves it before it is published. An L4 replacement is made only
+    // there; a provision elsewhere goes on as before, without the check.
+    const namedL4 = clientCheckMode && edgeLayerOf(a.provider) === 'l4';
+    const namedCheck = namedL4 && locationAssigned(where, assignedPicks);
+    if (!where.qualified && !rotation.allowUnqualified && !namedCheck)
+      return failure('no_qualified_account');
+    if (namedL4 && !namedCheck && rotation.kind === 'replace')
+      return failure('no_assigned_location');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
       return failure('account_mismatch');
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
@@ -4149,11 +4163,13 @@ export async function selectionContext(
         id: a._id as string,
         locationId: loc._id as string,
         provider: a.provider,
-        // With FCP's own client check, an L4 location counts only where the
-        // owner ticked an address (lib/edges/tickedLocation.ts).
+        // With FCP's own client check, an L4 location counts exactly where an
+        // operator assigned it to the node (lib/edges/assignedLocation.ts):
+        // tested before or not, the check proves what is made there.
         qualified:
-          loc.qualified &&
-          (!clientCheckMode || edgeLayerOf(a.provider) !== 'l4' || locationTicked(loc)),
+          clientCheckMode && edgeLayerOf(a.provider) === 'l4'
+            ? locationAssigned(loc, assignedPicks)
+            : loc.qualified,
         priority: a.priority,
         dailyAllocationBudget: a.dailyAllocationBudget,
         allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
@@ -4215,8 +4231,8 @@ export async function selectionContext(
     }
     // Upkeep filling a free slot buys only what can take one: with every free
     // slot held for what the set lacks, an address anywhere else would only be
-    // a spare (bought for nothing). Its first address in a location that is not
-    // trusted yet is made and tested by hand.
+    // a spare (bought for nothing). A location not trusted yet takes its first
+    // address only when FCP's own client check is there to prove it.
     const slots = slotsOf(state, origin);
     const onlyLowering =
       automatic &&
@@ -4245,7 +4261,7 @@ export async function selectionContext(
       listener,
       standbyId: null,
       account: null,
-      accountFailure: 'no_ticked_location',
+      accountFailure: 'no_assigned_location',
       template: null,
     };
   if (!picked.ok)
@@ -5412,7 +5428,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
     return;
   }
   // FCP's own client check: a replacement made (or an untested spare taken) in
-  // a ticked location is proven by real clients before it is published.
+  // an assigned location is proven by real clients before it is published.
   if ((edge.layer ?? 'l4') !== 'l7' && r.clientCheckGate) {
     const gate = await clientGate(ctx, c, edge);
     if (gate.kind === 'fail') {
@@ -5471,7 +5487,7 @@ export const CLIENT_CHECK_FAIL_COOLDOWN_MS = 60 * 60_000;
 /**
  * The client gate (docs/edges.md § "Replacing a blocked address without a
  * spare"). The check runs against the address members use now as the control
- * (the replace's target), and a pass in a ticked location confirms the new
+ * (the replace's target), and a pass in an assigned location confirms the new
  * address (`edges.verification`, method `client_check`), which is what the
  * publication gate then reads. A verdict that the address does not work is
  * tried three times, 30 s apart, then fails the run (`client_check_failed`):
@@ -5479,7 +5495,7 @@ export const CLIENT_CHECK_FAIL_COOLDOWN_MS = 60 * 60_000;
  * service down or busy, no test link) waits up to 15 minutes; then a NEW
  * address goes on as today (it ends an untested spare, never published) and a
  * spare taken for the replace fails the run (`client_check_unavailable`). A
- * check that passed but could not confirm (the location is no longer ticked,
+ * check that passed but could not confirm (the location is no longer assigned,
  * the switch went off) is the same fallback.
  */
 async function clientGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {
