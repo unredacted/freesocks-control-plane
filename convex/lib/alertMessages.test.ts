@@ -7,6 +7,7 @@ import {
   MAX_FRESH_MESSAGES,
   REMIND_MS,
   RESOLVE_AFTER_MS,
+  addressLike,
   adminOrigin,
   alertPath,
   alertTitle,
@@ -247,9 +248,9 @@ describe('one alert', () => {
       // Plain words: no em-dash, never "names" for hostnames, no raw ids.
       expect(all, s.kind).not.toMatch(/—|\bnames?\b|undefined|null|NaN|\[object/);
     }
-    // The most urgent go out one each, with their click link; the rest fold into a summary.
-    expect(plan.messages).toHaveLength(MAX_FRESH_MESSAGES + 1);
-    for (const m of plan.messages.slice(0, MAX_FRESH_MESSAGES)) {
+    // The most urgent go out one each, with their click link; the rest wait.
+    expect(plan.messages).toHaveLength(MAX_FRESH_MESSAGES);
+    for (const m of plan.messages) {
       expect(m.body.message.split('\n')).toHaveLength(3);
       expect(m.body.click).toMatch(/^https:\/\/admin\.example\.org\/admin\//);
       expect(m.body.topic).toBe('t');
@@ -326,6 +327,32 @@ describe('one alert', () => {
     expect(alertTitle(t)).toBe('Address needs you: fra-1');
     // The edge id only travels inside the link, as the admin page needs it.
     expect(t.what).not.toContain('jd7edge');
+  });
+
+  test('every form of an IP address is refused as a label', () => {
+    for (const a of [
+      '203.0.113.9',
+      'node 203.0.113.9',
+      '::1',
+      'fe80::',
+      'fe80::1%eth0',
+      '2001:db8::1',
+      '2001:0db8:0000:0000:0000:0000:0000:0001',
+      '::ffff:192.0.2.1',
+      'edge (::1)',
+    ])
+      expect(addressLike(a), a).toBe(true);
+    for (const ok of [
+      'Frankfurt 1',
+      'CDN main',
+      'node-one',
+      '🇩🇪 Frankfurt',
+      'v1.2',
+      'Europe West 10:20',
+    ])
+      expect(addressLike(ok), ok).toBe(false);
+    const t = describeAlert(src({ kind: 'members_dark', labels: { node: 'fe80::1' } }), NOW);
+    expect(alertTitle(t)).toBe('Members get nothing: fra-1');
   });
 
   test('an unknown critical kind still says something useful', () => {
@@ -484,6 +511,48 @@ describe('the plan', () => {
     expect(retry.messages).toHaveLength(1);
   });
 
+  test('a held-down alert with no start of its own says how long since FCP first saw it', () => {
+    const offline = src({ kind: 'node_offline', path: '/admin/servers' });
+    const first = planAlerts({
+      now: NOW,
+      state: EMPTY_STATE,
+      current: [offline],
+      origin: null,
+      topic: '',
+    });
+    const later = NOW + HOLD_DOWN_MS.node_offline!;
+    const due = planAlerts({
+      now: later,
+      state: first.base,
+      current: [offline],
+      origin: null,
+      topic: '',
+    });
+    expect(due.messages[0]!.body.message).toContain('Since 12:00 UTC (15 min).');
+    // A retry after a failed post still counts from the first sighting.
+    const retry = planAlerts({
+      now: later + 5 * MIN,
+      state: due.base,
+      current: [offline],
+      origin: null,
+      topic: '',
+    });
+    expect(retry.messages[0]!.body.message).toContain('Since 12:00 UTC (20 min).');
+  });
+
+  test("an item's own hold-down wins over its kind's", () => {
+    const never = src({
+      kind: 'cron_stale',
+      severity: 'warning',
+      holdDownMs: 60 * MIN,
+      facts: { job: 'x', never: true },
+    });
+    expect(run(EMPTY_STATE, [never], NOW).plan.messages).toHaveLength(0);
+    const r = run(run(EMPTY_STATE, [never], NOW).next, [never], NOW + 60 * MIN);
+    expect(r.plan.messages).toHaveLength(1);
+    expect(r.plan.messages[0]!.body.message).toMatch(/^It has never run\./);
+  });
+
   test('a warning that turns critical is not sent twice', () => {
     const w = src({ kind: 'host_unresolved', severity: 'critical' });
     const { next } = run(EMPTY_STATE, [w], NOW);
@@ -491,7 +560,7 @@ describe('the plan', () => {
     expect(run(next, [w], NOW + 2 * MIN).plan.messages).toHaveLength(0);
   });
 
-  test('several of one kind share a message; past the cap the rest fold into one summary', () => {
+  test('several of one kind share a message; past the cap the rest wait and arrive in full', () => {
     const offline = ['A', 'B', 'C', 'D', 'E'].map((n) =>
       src({
         kind: 'members_dark',
@@ -508,17 +577,24 @@ describe('the plan', () => {
 
     const kinds = EVERY_ALERT.filter((s) => !HOLD_DOWN_MS[s.kind]);
     const many = run(EMPTY_STATE, kinds, NOW);
-    expect(many.plan.messages).toHaveLength(MAX_FRESH_MESSAGES + 1);
-    const summary = many.plan.messages.at(-1)!;
-    expect(summary.body.title).toBe(`${kinds.length - MAX_FRESH_MESSAGES} more alerts`);
-    expect(summary.body.message.split('\n')).toHaveLength(2);
+    expect(many.plan.messages).toHaveLength(MAX_FRESH_MESSAGES);
     // The most urgent go first, one each.
-    expect(
-      many.plan.messages.slice(0, MAX_FRESH_MESSAGES).every((m) => m.body.priority === 5),
-    ).toBe(true);
-    // Every item is now sent: nothing comes again next tick.
-    expect(Object.keys(many.next.sent)).toHaveLength(kinds.length);
-    expect(run(many.next, kinds, NOW + 5 * MIN).plan.messages).toHaveLength(0);
+    expect(many.plan.messages.every((m) => m.body.priority === 5)).toBe(true);
+    // The rest arrive in full over the next ticks, each once, with its own link.
+    let state = many.next;
+    let tick = NOW;
+    let delivered = MAX_FRESH_MESSAGES;
+    while (Object.keys(state.sent).length < kinds.length) {
+      tick += 5 * MIN;
+      const r = run(state, kinds, tick);
+      expect(r.plan.messages.length).toBeGreaterThan(0);
+      expect(r.plan.messages.length).toBeLessThanOrEqual(MAX_FRESH_MESSAGES);
+      for (const m of r.plan.messages) expect(m.body.message.split('\n')).toHaveLength(3);
+      delivered += r.plan.messages.length;
+      state = r.next;
+    }
+    expect(delivered).toBe(kinds.length);
+    expect(run(state, kinds, tick + 5 * MIN).plan.messages).toHaveLength(0);
   });
 
   test('a critical alert still open is sent again every 12 h; a warning is not', () => {

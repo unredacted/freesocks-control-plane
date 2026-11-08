@@ -173,6 +173,8 @@ export const recordDispatch = internalMutation({
     stateJson: v.string(),
     error: v.union(v.string(), v.null()),
     attempted: v.boolean(),
+    /** At least one post went through (a later one may still have failed). */
+    delivered: v.boolean(),
   },
   handler: async (ctx, a) => {
     if (!(await resolveAlertsConfig(ctx.db)).enabled) return null;
@@ -182,7 +184,7 @@ export const recordDispatch = internalMutation({
     const next: AlertState = {
       sent: planned.sent,
       pending: planned.pending,
-      lastSentAt: a.attempted && !a.error ? now : cur.lastSentAt,
+      lastSentAt: a.delivered ? now : cur.lastSentAt,
       lastAttemptAt: a.attempted ? now : cur.lastAttemptAt,
       lastError: a.attempted ? a.error : cur.lastError,
     };
@@ -291,14 +293,9 @@ export const systemSignals = internalQuery({
         .withIndex('by_server', (q) => q.eq('backendServerId', s._id))
         .collect();
       for (const n of nodes) {
-        if (n.online || now - n.lastStatsAt > BACKEND_FRESH_MS) continue;
-        const panel = await ctx.db
-          .query('panelNodes')
-          .withIndex('by_server_uuid', (q) =>
-            q.eq('backendServerId', s._id).eq('nodeUuid', n.nodeUuid),
-          )
-          .first();
-        if (panel?.isDisabled) continue;
+        // Only a node the fresh inventory says is enabled: a disabled one is
+        // offline on purpose, and a row from before the flag was kept says nothing.
+        if (n.online || n.disabled !== false || now - n.lastStatsAt > BACKEND_FRESH_MS) continue;
         const intent = await ctx.db
           .query('panelNodeIntents')
           .withIndex('by_server_name', (q) => q.eq('backendServerId', s._id).eq('name', n.name))
@@ -321,9 +318,23 @@ export const systemSignals = internalQuery({
       // This job cannot report its own death: an outside monitor has to.
       if (c.name === 'alerts-dispatch') continue;
       const hb = beats.get(c.name);
-      if (!hb) continue;
       const staleAfter = cronStaleAfterMs(c.everyMs);
       const facts = { job: c.name, description: c.description, everyMs: c.everyMs };
+      // Never fired (the dashboard's "pending"): after the same grace a stale
+      // job gets, counted from when alerts first saw it missing (its hold-down).
+      if (!hb) {
+        out.push({
+          ...blank,
+          id: `cron_stale:${c.name}`,
+          kind: 'cron_stale',
+          severity: 'warning',
+          facts: { ...facts, never: true },
+          since: null,
+          holdDownMs: staleAfter,
+          path: adminPaths.dashboard(),
+        });
+        continue;
+      }
       if (now - hb.lastRunAt > staleAfter)
         out.push({
           ...blank,
@@ -469,6 +480,7 @@ async function dispatchOnce(ctx: ActionCtx): Promise<DispatchReport> {
     stateJson: JSON.stringify(state),
     error,
     attempted: plan.messages.length > 0,
+    delivered: messages > 0,
   });
   return {
     enabled: true,

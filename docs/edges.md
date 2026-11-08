@@ -3085,8 +3085,10 @@ What alerts:
 - a **suspected block FCP is holding back** (below);
 - system signals outside the attention list (`alerts.systemSignals`): an active backend whose
   health check has not passed for 30 min (`backend_unhealthy`), a node its backend reports
-  offline, not disabled there and not being retired (`node_offline`, after 15 min), a scheduled
-  job stopped or failing every run by the dashboard's own rule (`cron_stale`, `cron_failing`;
+  offline while its fresh node list says it is enabled, and not being retired (`node_offline`,
+  after 15 min; the inventory keeps the backend's `disabled` flag for this), a scheduled job
+  stopped or failing every run by the dashboard's own rule, or never run at all once the same
+  grace has passed since alerts first saw it missing (`cron_stale`, `cron_failing`;
   `alerts-dispatch` cannot report itself, so watch it from outside), and an edge provider account
   at 90% of its monthly cap (`spend_near_cap`).
 
@@ -3108,9 +3110,11 @@ severity. A critical one still open after 12 h is sent again ("Still open"), onc
 message for all of them. An alerted item that stays off the list for 10 minutes is reported
 "Resolved" (one message for all that resolved in a tick) and forgotten, so a recurrence alerts
 again; one back within the 10 minutes stays open and nothing is sent. Several new items of one kind
-in a tick share one message naming the first three; past four new messages in a tick, the rest fold
-into one summary. A failed post records a short code (`network`, `timeout`, the status), sends
-nothing more that tick, and is retried next tick.
+in a tick share one message naming the first three; at most four new messages go out per tick, most
+urgent first, and the rest wait for the next ticks so each still arrives in full. A failed post
+records a short code (`network`, `timeout`, the status), sends
+nothing more that tick, and is retried next tick; "Last sent" moves whenever any post went
+through. A held-down alert's "Since" counts from when FCP first saw it.
 
 **What leaves**: operator-facing labels (a node's label, a provider account's or location's label,
 a backend's slug, a transport tag, a country code, a job's name) and counts. Never a member, a

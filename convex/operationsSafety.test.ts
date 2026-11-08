@@ -546,6 +546,74 @@ describe('operator alerts', () => {
     vi.unstubAllEnvs();
   });
 
+  test('a node offline alerts only when the fresh inventory says it is enabled; a job that never ran waits out its grace', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fx.serverId, { lastHealthOkAt: Date.now() });
+      const row = {
+        backendServerId: fx.serverId,
+        usersOnline: 0,
+        online: false,
+        lastStatsAt: Date.now(),
+      };
+      await ctx.db.insert('backendNodeInventory', {
+        ...row,
+        nodeUuid: 'u-off',
+        name: 'Down 1',
+        disabled: false,
+      });
+      await ctx.db.insert('backendNodeInventory', {
+        ...row,
+        nodeUuid: 'u-dis',
+        name: 'Parked',
+        disabled: true,
+      });
+      // From before the flag was kept: not known, so not judged.
+      await ctx.db.insert('backendNodeInventory', { ...row, nodeUuid: 'u-old', name: 'Old row' });
+      await ctx.db.insert('backendNodeInventory', {
+        ...row,
+        nodeUuid: 'u-on',
+        name: 'Up',
+        online: true,
+        disabled: false,
+      });
+    });
+    const signals = await t.query(internal.alerts.systemSignals, {});
+    const offline = signals.filter((s) => s.kind === 'node_offline');
+    expect(offline.map((s) => s.labels.node)).toEqual(['Down 1']);
+    expect(offline[0]!.path).toContain('/admin/servers/nodes/u-off');
+    // No heartbeat at all: each job is raised with a hold-down of its own staleness grace.
+    const never = signals.filter((s) => s.kind === 'cron_stale');
+    expect(never.length).toBeGreaterThan(0);
+    expect(never.every((s) => s.facts.never === true && (s.holdDownMs ?? 0) > 0)).toBe(true);
+    expect(never.some((s) => s.facts.job === 'alerts-dispatch')).toBe(false);
+  });
+
+  test('a post that went through counts as sent though a later one failed', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t);
+    await t.mutation(internal.alerts.setConfig, {
+      enabled: true,
+      url: 'https://alerts.example.org',
+    });
+    await quarantine(t, fx.relayId);
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: ++calls === 1 ? 200 : 503 })),
+    );
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({
+      sent: 1,
+      messages: 1,
+      error: '503',
+    });
+    const view = await t.query(internal.alerts.view, {});
+    expect(view.lastSentAt).not.toBeNull();
+    expect(view.lastError).toBe('503');
+    expect(view.openAlerts).toBe(1);
+  });
+
   test('turning alerts back on sends what is open once more: nothing was reconciled while off', async () => {
     const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t);

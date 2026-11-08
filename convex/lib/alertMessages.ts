@@ -20,8 +20,9 @@
  *  - an alerted item that stays off the list for `RESOLVE_AFTER_MS` is
  *    reported resolved (one message for all of them) and forgotten; back
  *    before then, it stays open and nothing is sent;
- *  - at most `MAX_FRESH_MESSAGES` new alerts per tick; several new items of
- *    one kind share a message, and the rest fold into one summary.
+ *  - several new items of one kind share a message; at most
+ *    `MAX_FRESH_MESSAGES` new messages go out per tick, most urgent first, and
+ *    the rest wait (pending) for the next ticks, so each still arrives in full.
  */
 import { ROTATION_PHASE_LABELS, codeFix, codeLabel } from '../../src/client/lib/edgeCodes';
 
@@ -32,7 +33,7 @@ const HOUR = 60 * MIN;
 export const REMIND_MS = 12 * HOUR;
 /** An alerted item must stay off the list this long before "Resolved" goes out. */
 export const RESOLVE_AFTER_MS = 10 * MIN;
-/** New alerts sent one by one per tick; the rest fold into one summary. */
+/** New messages per tick; the rest wait for the next tick. */
 export const MAX_FRESH_MESSAGES = 4;
 /** Lines of a grouped message that name their subjects. */
 const GROUP_NAMED = 3;
@@ -127,6 +128,8 @@ export interface AlertSource {
   labels: AlertLabels;
   /** A system signal's admin page (an attention item's comes from its action). */
   path?: string;
+  /** This item's own hold-down, over its kind's (`HOLD_DOWN_MS`). */
+  holdDownMs?: number;
 }
 
 // --- links ----------------------------------------------------------------------------------------
@@ -263,14 +266,26 @@ const SAFE_CODE = /^[A-Za-z0-9_.:-]{1,48}$/;
 /** A label FCP shows the operator: printable, one line, bounded. */
 const SAFE_LABEL = /^[^\u0000-\u001f\u007f]{1,64}$/u;
 /** Looks like an IPv4 or IPv6 address: never sent, whatever field it sits in. */
-const ADDRESS_LIKE = /\b\d{1,3}(?:\.\d{1,3}){3}\b|\b[0-9a-f]{1,4}(?::[0-9a-f]{0,4}){2,7}\b/i;
+const IPV4 = /(?:^|[^\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/;
+/**
+ * Looks like an IP address, in any form: never sent, whatever field it sits
+ * in. IPv4 dotted quads, and any run of hex digits, dots and colons with two
+ * or more colons (`::1`, `fe80::`, `2001:db8::1`, `::ffff:192.0.2.1`). A
+ * label that merely has `::` in it is dropped too, which costs only its words.
+ */
+export function addressLike(s: string): boolean {
+  if (IPV4.test(s)) return true;
+  for (const run of s.match(/[0-9a-f:.%]+/gi) ?? [])
+    if ((run.match(/:/g)?.length ?? 0) >= 2) return true;
+  return false;
+}
 /** A country code as probes and lists keep them. */
 const COUNTRY = /^[A-Z]{2}$/;
 
 function label(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const s = v.trim();
-  if (!s || !SAFE_LABEL.test(s) || ADDRESS_LIKE.test(s)) return null;
+  if (!s || !SAFE_LABEL.test(s) || addressLike(s)) return null;
   return s;
 }
 
@@ -639,7 +654,7 @@ function wordsFor(s: AlertSource, now: number): Words | null {
       return {
         headline: 'Scheduled job stopped',
         subject: label(fact(s, 'job')) ?? 'a job',
-        what: `It has stopped running${every ? `; it should run every ${durationWords(every)}` : ''}.${does ? ` It does: ${does}.` : ''}`,
+        what: `${s.facts.never === true ? 'It has never run' : 'It has stopped running'}${every ? `; it should run every ${durationWords(every)}` : ''}.${does ? ` It does: ${does}.` : ''}`,
         next: 'Check the backend logs; restart the backend if jobs stopped.',
       };
     }
@@ -843,7 +858,7 @@ export function planAlerts(input: {
     // Kept until it is sent: a failed post does not restart its hold-down.
     const first = state.pending[s.id] ?? now;
     base.pending[s.id] = first;
-    if (now - first >= (HOLD_DOWN_MS[s.kind] ?? 0)) due.push(s);
+    if (now - first >= (s.holdDownMs ?? HOLD_DOWN_MS[s.kind] ?? 0)) due.push(s);
   }
 
   // Group the new ones by kind, most urgent first.
@@ -854,10 +869,10 @@ export function planAlerts(input: {
     const pb = Math.max(...b.map(priorityOf));
     return pb - pa || (SEVERITY_ORDER[a[0]!.severity] ?? 3) - (SEVERITY_ORDER[b[0]!.severity] ?? 3);
   });
-  const individual = ordered.slice(0, MAX_FRESH_MESSAGES);
-  const overflow = ordered.slice(MAX_FRESH_MESSAGES).flat();
-  for (const group of individual) messages.push(freshMessage(env, group, now));
-  if (overflow.length > 0) messages.push(overflowMessage(env, overflow, now));
+  // The rest stay pending and go out in full on the next ticks, most urgent first.
+  const firstSeen = (id: string) => base.pending[id] ?? now;
+  for (const group of ordered.slice(0, MAX_FRESH_MESSAGES))
+    messages.push(freshMessage(env, group, now, firstSeen));
 
   if (reminders.length > 0) messages.push(reminderMessage(env, reminders, base, now));
   if (resolved.length > 0) messages.push(resolvedMessage(env, resolved));
@@ -869,7 +884,12 @@ function sinceOf(s: AlertSource, firstSeen: number): number {
   return Number.isFinite(t) ? t : firstSeen;
 }
 
-function freshMessage(env: Envelope, group: AlertSource[], now: number): PlannedMessage {
+function freshMessage(
+  env: Envelope,
+  group: AlertSource[],
+  now: number,
+  firstSeen: (id: string) => number,
+): PlannedMessage {
   const texts = group.map((s) => describeAlert(s, now));
   const effects: AlertEffect[] = group.map((s, i) => ({
     type: 'sent',
@@ -884,7 +904,7 @@ function freshMessage(env: Envelope, group: AlertSource[], now: number): Planned
     return {
       body: ntfy(env, {
         title: alertTitle(first),
-        lines: [first.what, sinceLine(sinceOf(s, now), now), first.next],
+        lines: [first.what, sinceLine(sinceOf(s, firstSeen(s.id)), now), first.next],
         priority,
         tags,
         path: first.path,
@@ -899,7 +919,7 @@ function freshMessage(env: Envelope, group: AlertSource[], now: number): Planned
       ? `${subjects.slice(0, GROUP_NAMED).join(', ')} and ${subjects.length - GROUP_NAMED} more`
       : subjects.join(', ');
   const paths = new Set(texts.map((t) => t.path));
-  const oldest = Math.min(...group.map((s) => sinceOf(s, now)));
+  const oldest = Math.min(...group.map((s) => sinceOf(s, firstSeen(s.id))));
   return {
     body: ntfy(env, {
       title: `${first.headline}: ${group.length} at once`,
@@ -913,31 +933,6 @@ function freshMessage(env: Envelope, group: AlertSource[], now: number): Planned
       path: paths.size === 1 ? first.path : adminPaths.edges(),
     }),
     effects,
-  };
-}
-
-/** Kind counts, most first: "Address unreachable 4, Node offline 2". */
-function kindCounts(texts: AlertText[]): string {
-  const counts = new Map<string, number>();
-  for (const t of texts) counts.set(t.headline, (counts.get(t.headline) ?? 0) + 1);
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([h, n]) => `${h} ${n}`)
-    .join(', ');
-}
-
-function overflowMessage(env: Envelope, items: AlertSource[], now: number): PlannedMessage {
-  const texts = items.map((s) => describeAlert(s, now));
-  const priority = Math.max(...texts.map((t) => t.priority));
-  return {
-    body: ntfy(env, {
-      title: `${plural(items.length, 'more alert', 'more alerts')}`,
-      lines: [`${kindCounts(texts)}.`, 'Next: open Edges and work down the list.'],
-      priority,
-      tags: [EMOJI[priority >= 5 ? 'critical' : 'warning']],
-      path: adminPaths.edges(),
-    }),
-    effects: items.map((s, i) => ({ type: 'sent', id: s.id, title: alertTitle(texts[i]!) })),
   };
 }
 
