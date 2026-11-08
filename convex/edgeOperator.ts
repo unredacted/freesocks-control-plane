@@ -1840,7 +1840,15 @@ export const attention = internalQuery({
             severity: 'warning',
             edgeId: e._id as string,
             code: 'unreachable',
-            facts: { countries: unreachable.map((c) => c.country) },
+            facts: {
+              countries: unreachable.map((c) => c.country),
+              // Probes that got through and failed, per country: what an alert counts.
+              probes: unreachable.map((c) => ({
+                country: c.country,
+                ok: c.okVantages,
+                failed: c.failVantages,
+              })),
+            },
             action: 'open_edge',
             since: isoN(e.reachability?.updatedAt),
           });

@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * Operator alerts (Settings): an opt-in webhook that receives new
-   * alert-worthy edge attention items once, as ntfy-compatible JSON. The
+   * Operator alerts (Settings): an opt-in webhook that receives each alert
+   * (new, still open after 12 h, resolved) as ntfy JSON. The
    * server never sends the stored topic or token back (only whether each is
    * set) and shows only the webhook's origin, so the fields start empty: a
    * blank field keeps what is stored, "Clear" removes it.
@@ -93,11 +93,13 @@
   <CardHeader>
     <CardTitle class="text-base">Operator alerts</CardTitle>
     <CardDescription>
-      FCP posts each new edge problem you have to act on (a node paused for safety, members getting
-      nothing, a provider that stopped answering, a node waiting to be fronted or approved, an
-      address that looks blocked while automatic replacement is held back) once, to a webhook that
-      takes ntfy JSON. Alerts carry kinds and counts only: never a member, an address, a node name,
-      a provider or a region. Off by default.
+      FCP posts each problem you have to act on (a node paused or offline, members getting nothing,
+      a provider that stopped answering, a spend cap, an address that stays blocked, a node waiting
+      for you) to a webhook that takes ntfy JSON. Each alert names the node, provider account or
+      country by its label in FCP, says since when and what to do next, and opens the admin page
+      that fixes it. Critical ones repeat after 12 hours while open, and a short "Resolved" follows
+      when a problem clears. Alerts never carry a member, an address, a token or a credential; use
+      an ntfy server you run. Off by default.
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-3 text-sm">

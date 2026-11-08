@@ -3045,25 +3045,52 @@ from the action (one `paginate` per query, as Convex requires).
 
 Opt-in (`alerts.*` in `appSettings`, Admin -> Settings -> Operator alerts; `GET /api/v1/admin/alerts`
 with the settings read scope, `PATCH` sealed with the write scope, `POST /api/v1/admin/alerts/test`
-sends one test). Every five minutes the `alerts-dispatch` cron reads the attention list and
-posts the NEW alert-worthy items once, in one notification, to the webhook as ntfy-compatible
-JSON:
+sends one test). Every five minutes the `alerts-dispatch` cron reads the attention list and a few
+system signals and posts what is due to the webhook as ntfy JSON, one notification per alert
+(`convex/alerts.ts`; the words and the send plan are `convex/lib/alertMessages.ts`, pure and
+tested):
 
 ```json
 {
   "topic": "<if set>",
-  "title": "Edges: 2 new alerts",
-  "message": "quarantine (flip_unconfirmed): 1\nnode_ready_to_protect: 1\n\nOpen Admin, Edges for the details.",
-  "priority": 5,
-  "tags": ["rotating_light"]
+  "title": "Address unreachable: Frankfurt 1",
+  "message": "An address in use at CDN main, Europe is reachable from 0 of 6 probes in IR.\nSince 10:20 UTC (1 h 40 min).\nNext: Check the country view; replace the address if FCP has not.",
+  "priority": 4,
+  "tags": ["warning", "edge_unreachable"],
+  "click": "https://<admin origin>/admin/edges/relays/<slug>?tab=edges&edge=<id>"
 }
 ```
 
-Alert-worthy: every critical item (quarantine, fleet brake, a provider whose API keeps failing,
-a stuck rotation, dark members, a reappeared direct Host, a blocked node with no tested spare, an
-ambiguous Host); the prompts FCP never acts on by itself: `node_ready_to_protect`,
-`node_awaiting_approval`, `freedom_node_withheld` and `location_refused`; and a **suspected block
-FCP is holding back**: `block_suspected` (a warning) whose `facts.heldBack` is set. The detector
+The title names what happened and where (the node's label, a provider account's or location's
+label, a backend's slug, a job's name). The body is three lines: what, with the numbers that
+matter; since when (the item's own start, else when FCP first saw it); the next step. Priority
+follows severity: 5 for a critical item, 4 for a warning, 3 for a prompt that only waits on the
+operator (`node_ready_to_protect`, `node_awaiting_approval`), 2 for "Resolved". The click link
+opens the page the attention row's button opens (`alertPath`, kept in step with the admin's
+`attentionTarget` by a test), on the first origin in `WEBAUTHN_ORIGIN` (https; without one,
+alerts go out without a link).
+
+What alerts:
+
+- every critical attention item (quarantine, fleet brake, automatic replacement stopped, an
+  address parked for the operator, a provider whose API keeps failing, a stuck rotation, an
+  ambiguous Host, dark members, refusals over the threshold, a reappeared direct Host, a blocked
+  node with no tested spare, a failing shared certificate, a DNS record stuck while removing,
+  only country-limited addresses left, the client check down while replacements count on it);
+- the prompts FCP never acts on by itself: `node_ready_to_protect`, `node_awaiting_approval`,
+  `freedom_node_withheld` and `location_refused`;
+- the warnings where FCP stops on its own until the operator acts, or members lose an address:
+  `account_spend_cap`, `fleet_rotation_cap`, `edge_unreachable` (after 30 min on the list: FCP
+  usually replaces a blocked address sooner) and `probe_source_failing` (after 1 h);
+- a **suspected block FCP is holding back** (below);
+- system signals outside the attention list (`alerts.systemSignals`): an active backend whose
+  health check has not passed for 30 min (`backend_unhealthy`), a node its backend reports
+  offline, not disabled there and not being retired (`node_offline`, after 15 min), a scheduled
+  job stopped or failing every run by the dashboard's own rule (`cron_stale`, `cron_failing`;
+  `alerts-dispatch` cannot report itself, so watch it from outside), and an edge provider account
+  at 90% of its monthly cap (`spend_near_cap`).
+
+The suspected block: `block_suspected` (a warning) whose `facts.heldBack` is set. The detector
 judges it each pass on the whole decision (`replacementHeldBack`, `lib/edges/scoring.ts`, stored as
 `relays.suspicion.heldBack`): the decision is a veto, and the same decision with the holds lifted
 (automation and the node's Auto rotate on, `detect.allowProbeOnlyAutoRotate` on, no cooldown, no
@@ -3074,15 +3101,25 @@ checked before the outage and evidence gates, so an offline node, an address dow
 protocol-level block, no address named or probe sources gone quiet behind `edge_disabled` never
 alert from this item, nor do a running rotation, a guided setup's origin, the steering holds
 (`country_scoped`, `country_wide`: members are already routed around) and the holds that alert as
-their own items (`quarantined`, `fleet_brake`). The push reads `block_suspected
-(<veto>): 1`. An item is sent once
-while it stays on the list at any severity (`appState` `alerts:state` holds the sent ids); one
-that clears and comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
-and is retried next tick. **Alerts carry kinds, short codes and counts only**: never a member,
-a token, an address, a node or origin name, a provider or a region. The webhook URL must be
-https and pass the infra SSRF check (`ALLOW_INTERNAL_BACKENDS=true` admits http in
-development); redirects are not followed. The topic and the access token (sent as `Bearer`) are
-write-only: the admin view shows whether each is set and the webhook's origin, nothing more.
+their own items (`quarantined`, `fleet_brake`). The push names the hold ("daily cap reached").
+
+Repeats (`appState` `alerts:state`): an item is sent once while it stays on the list at any
+severity. A critical one still open after 12 h is sent again ("Still open"), once per 12 h, in one
+message for all of them. An alerted item that stays off the list for 10 minutes is reported
+"Resolved" (one message for all that resolved in a tick) and forgotten, so a recurrence alerts
+again; one back within the 10 minutes stays open and nothing is sent. Several new items of one kind
+in a tick share one message naming the first three; past four new messages in a tick, the rest fold
+into one summary. A failed post records a short code (`network`, `timeout`, the status), sends
+nothing more that tick, and is retried next tick.
+
+**What leaves**: operator-facing labels (a node's label, a provider account's or location's label,
+a backend's slug, a transport tag, a country code, a job's name) and counts. Never a member, a
+token, an address, a hostname, a credential or a provider's free-text error; a label that looks like
+an IP address is dropped. Point alerts at an ntfy server you run, or at least a topic only you know.
+The webhook URL must be https and pass the infra SSRF check (`ALLOW_INTERNAL_BACKENDS=true` admits
+http in development); redirects are not followed. The topic and the access token (sent as
+`Bearer`) are write-only: the admin view shows whether each is set and the webhook's origin,
+nothing more.
 
 To poll instead (or as well), read `GET /api/v1/admin/edges/attention` with a read-only API
 token (`admin:servers:read`); every item carries `kind`, `severity`, `code` and `action`.
