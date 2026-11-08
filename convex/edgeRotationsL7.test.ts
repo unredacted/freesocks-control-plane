@@ -1864,6 +1864,16 @@ describe('edgeRotations: a country that refuses the CDN outright spends no new n
         provider: 'cloudflare',
       }),
     ]);
+    // It lasts the evidence's freshness window (two 15-minute probe intervals).
+    const note = origin.autoReplaceHolds![0]!;
+    expect(note.until! - Date.now()).toBeGreaterThan(29 * 60_000);
+    expect(note.until! - Date.now()).toBeLessThanOrEqual(30 * 60_000 + 1_000);
+    // A resume (all, or the pauses only) never lifts it: it holds nothing.
+    for (const scope of ['fresh', undefined] as const)
+      expect(
+        await t.mutation(internal.edgeRotations.resumeAutoReplace, { relayId, scope }),
+      ).toEqual({ ok: true, lifted: 0 });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.autoReplaceHolds).toHaveLength(1);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.filter((a) => a.action === 'edge.cdn_refused')).toHaveLength(1);
     const attention = await t.query(internal.edgeOperator.attention, {});

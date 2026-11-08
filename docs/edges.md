@@ -1073,8 +1073,8 @@ broken, not refused). When every country the start answers to refuses it, the st
 the re-block guard holds nothing for it. The detector then keeps a note on the origin
 (`relays.autoReplaceHolds` code `cdn_refused` with `countries`, `provider` and `until` two probe
 intervals out, renewed each refused pass, audited `edge.cdn_refused` when it first appears),
-which the node page shows and attention `cdn_refused` (warning, fact `countries`) lists. The note
-holds nothing by itself: each pass reads the reference sites again, so the first pass after the
+which the node page shows and attention `cdn_refused` (warning, fact `countries`) lists. Resuming
+automatic replacement never lifts it. The note holds nothing by itself: each pass reads the reference sites again, so the first pass after the
 reference site gets through replaces as usual. No reference site for the provider, probes off,
 no fresh evidence, a load balancer replacement, or a start that also answers to a country that
 reaches the site: the start goes on as before.

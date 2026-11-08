@@ -646,7 +646,8 @@ export const noteCdnRefused = internalMutation({
         provider,
         edgeId,
         at: now,
-        until: now + 2 * probeStaleAfterMs(cfg.probe),
+        // Two probe intervals: the freshness window of the evidence it rests on.
+        until: now + probeStaleAfterMs(cfg.probe),
       }) as Origin['autoReplaceHolds'],
       updatedAt: now,
     });
@@ -761,8 +762,12 @@ export const resumeAutoReplace = internalMutation({
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const holds = origin.autoReplaceHolds ?? [];
+    // A CDN-refused note holds nothing (each detector pass re-reads the
+    // reference sites), so a resume never lifts it: lifting it would only hide
+    // the warning until the next pass writes and audits it again.
     const kept = holds.filter(
       (h) =>
+        h.code === CDN_REFUSED ||
         (listenerId !== undefined && h.listenerId !== listenerId) ||
         (scope === 'fresh' && isWholeTransportHold(h)),
     );
