@@ -719,7 +719,8 @@ describe('buildCountryView', () => {
 
 describe('countrySnis', () => {
   const S: ViewSettings = { ...SETTINGS, curated: ['IR', 'RU', 'CN'] };
-  const name = (n: string, blockedIn: string[] = [], status: 'active' | 'retired' = 'active') => ({
+  type N = { name: string; status: 'active' | 'retired'; blockedIn: string[]; provenIn: string[] };
+  const name = (n: string, blockedIn: string[] = [], status: N['status'] = 'active'): N => ({
     name: n,
     status,
     blockedIn,
@@ -727,7 +728,7 @@ describe('countrySnis', () => {
   });
   const listener = (
     listenerId: string,
-    names: ReturnType<typeof name>[],
+    names: N[],
     usable = true,
   ): OriginInput['listeners'][number] => ({
     listenerId,
@@ -739,6 +740,31 @@ describe('countrySnis', () => {
     sniPick: 'hrw1',
     names,
   });
+  const L = [
+    name('shared.example'),
+    name('some.example', ['RU']),
+    name('only.example', ['RU', 'CN']),
+    name('here-blocked.example', ['IR']),
+    name('gone.example', [], 'retired'),
+  ];
+  const M = [name('shared.example'), name('other.example', ['RU'])];
+  const CDN = [name('origin-facing.example')];
+  /** One published L4 address per transport (an L7 front for `cdn`), carrying its names. */
+  const published = (listenerId: string, names: N[], i: number, l7 = false) =>
+    pub({
+      edgeId: `e-${listenerId}`,
+      listenerId,
+      listenerKey: listenerId,
+      poolIndex: i,
+      sniPick: 'hrw1',
+      ...(l7 ? { layer: 'l7' as const, addresses: { hostname: 'front.example' } } : {}),
+      serverNames: names.map((n) => ({
+        sni: n.name,
+        status: n.status,
+        blockedIn: n.blockedIn,
+        provenIn: n.provenIn,
+      })),
+    });
   const origins = (s: ViewSettings = S) =>
     buildCountryView(
       [
@@ -751,18 +777,23 @@ describe('countrySnis', () => {
           enabled: true,
           direct: null,
           listeners: [
-            listener('L', [
-              name('shared.example'),
-              name('some.example', ['RU']),
-              name('only.example', ['RU', 'CN']),
-              name('here-blocked.example', ['IR']),
-              name('gone.example', [], 'retired'),
-            ]),
-            listener('M', [name('shared.example'), name('other.example', ['RU'])]),
+            listener('L', L),
+            listener('M', M),
+            listener('cdn', CDN),
             listener('off', [name('unused.example')], false),
           ],
-          edges: [],
-          published: [],
+          edges: [
+            edge({ edgeId: 'e-L', listenerId: 'L' }),
+            edge({ edgeId: 'e-M', listenerId: 'M', poolIndex: 1 }),
+            edge({
+              edgeId: 'e-cdn',
+              listenerId: 'cdn',
+              poolIndex: 2,
+              layer: 'l7',
+              addresses: { hostname: 'front.example' },
+            }),
+          ],
+          published: [published('L', L, 0), published('M', M, 1), published('cdn', CDN, 2, true)],
         },
       ],
       () => ({
@@ -779,16 +810,43 @@ describe('countrySnis', () => {
   test('each SNI once, shared or only here or not used here, from the copies on the transports', () => {
     const snis = countrySnis(origins(), 'IR', S.curated);
     expect(snis.map((x) => [x.name, x.scope, x.blockedElsewhere, x.transports])).toEqual([
-      ['only.example', 'only_here', ['CN', 'RU'], 1],
-      ['other.example', 'some', ['RU'], 1],
-      ['shared.example', 'shared', [], 2],
-      ['some.example', 'some', ['RU'], 1],
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
       // Members here never get it: last.
       ['here-blocked.example', 'not_here', [], 0],
     ]);
-    expect(snis[0]).toMatchObject({ family: 'fam', familyLabel: 'Fam list', state: 'unknown' });
-    expect(snis.at(-1)).toMatchObject({ state: 'blocked', basis: 'mark' });
+    const by = Object.fromEntries(snis.map((x) => [x.name, x]));
+    expect(by['shared.example']).toMatchObject({ scope: 'shared', transports: 2 });
+    expect(by['some.example']).toMatchObject({ scope: 'some', blockedElsewhere: ['RU'] });
+    expect(by['other.example']).toMatchObject({ scope: 'some', transports: 1 });
+    expect(by['only.example']).toMatchObject({
+      scope: 'only_here',
+      blockedElsewhere: ['CN', 'RU'],
+      family: 'fam',
+      familyLabel: 'Fam list',
+      state: 'unknown',
+    });
+    // Handed to members here, most handed first.
+    for (const x of snis.slice(0, 4)) expect(x.handed).toBeGreaterThan(0);
+    expect(snis.slice(0, 4).map((x) => x.handed)).toEqual(
+      [...snis.slice(0, 4).map((x) => x.handed)].sort((a, b) => b - a),
+    );
+    expect(by['here-blocked.example']).toMatchObject({
+      state: 'blocked',
+      basis: 'mark',
+      handed: 0,
+    });
+    // The retired name, the unused transport's and the CDN front's origin-facing one are not shown.
+    expect(by['gone.example']).toBeUndefined();
+    expect(by['unused.example']).toBeUndefined();
+    expect(by['origin-facing.example']).toBeUndefined();
     expect(sniCounts(snis)).toEqual({ used: 4, onlyHere: 1 });
+  });
+
+  test('nothing rendered hands out no SNI', () => {
+    expect(countrySnis(origins({ ...S, render: false }), 'IR', S.curated)).toEqual([]);
   });
 
   test('a country off the list gets the shared SNIs only: no rows', () => {

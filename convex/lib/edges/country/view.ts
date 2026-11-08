@@ -1085,12 +1085,25 @@ export interface CountrySni {
   blockedElsewhere: string[];
   /** The largest share of sampled members here handed it, over the transports carrying it. */
   handed: number;
-  /** Transports in use that offer it to members here. */
+  /** Transports handed to members here that offer it. */
   transports: number;
 }
 
 /**
- * Every active server name of the transports in use, once, with where it is
+ * Members there present this transport's names: an address that carries them
+ * (an L4 one: an L7 front presents its own hostname instead, `sniFor`) is
+ * handed to some of them. Nothing rendered (render off, no published address,
+ * origin off) hands out no name at all.
+ */
+function presentsNames(l: ListenerView): boolean {
+  return (
+    l.members.computed &&
+    l.addresses.some((a) => a.layer === 'l4' && a.handed.primary + a.handed.backup > 0)
+  );
+}
+
+/**
+ * Every active server name of the transports members there are handed, once, with where it is
  * used (`SniScope`), its state here and its list: built from the views
  * already made, so it reads nothing. Used names first (most handed first),
  * then names members here never get. Empty for a country off the list, which
@@ -1106,7 +1119,7 @@ export function countrySnis(
   const byName = new Map<string, CountrySni>();
   for (const o of origins)
     for (const l of o.listeners) {
-      if (!l.usable) continue;
+      if (!l.usable || !presentsNames(l)) continue;
       for (const n of l.names) {
         if (n.status !== 'active') continue;
         let row = byName.get(n.name);

@@ -485,6 +485,13 @@ describe('the country view', () => {
     // Off the list, the shared names only: no rows.
     const de = await t.query(internal.edgeCountryView.country, { country: 'DE' });
     expect(de.snis).toEqual([]);
+    // Nothing rendered hands out no SNI, so none counts as in use.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'false'));
+    expect((await t.query(internal.edgeCountryView.country, { country: 'IR' })).snis).toEqual([]);
+    expect((await t.query(internal.edgeCountryView.summaryRow, { country: 'IR' }))!.snis).toEqual({
+      used: 0,
+      onlyHere: 0,
+    });
   });
 
   test('every line of a full country list fits a transaction', async () => {

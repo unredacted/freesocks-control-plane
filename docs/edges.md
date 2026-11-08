@@ -5111,8 +5111,10 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   member there may be handed it (an `hrw1` listener never hands a name blocked there). Each
   address also lists what the real-host controls of the names measured on it said.
 - **The SNIs of a country** (`snis`, detail route; pure `countrySnis` in
-  `lib/edges/country/view.ts`): every active server name of the transports in use, once over
-  every node, with its name list (slug and label), its state there and basis (as above), the
+  `lib/edges/country/view.ts`): every active server name of the transports members there are
+  handed (an L4 address of it is handed to some of the sampled members: an L7 front presents its
+  own hostname, which shows with its addresses, and nothing rendered hands out no name), once
+  over every node, with its name list (slug and label), its state there and basis (as above), the
   largest share of members there handed it, how many transports offer it, and where it is used,
   from the marks copied on the transport (what selection reads, § Names for the member's
   country): `shared` (blocked in no other censored country), `some` (blocked in some:
