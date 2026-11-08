@@ -1,7 +1,10 @@
 <script lang="ts">
   /**
    * Custom probe targets: operator-entered host and port pairs (CRUD + probe now).
-   * Operator evidence only: the block detector never reads these.
+   * Operator evidence only, except a REFERENCE SITE: a well-known site a CDN
+   * serves, read before an automatic replacement on that CDN. A country that
+   * cannot reach it (while others can) refuses the whole CDN, so FCP spends no
+   * new name there (docs/edges.md "Reference sites").
    */
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -29,6 +32,9 @@
   } from '../../../../lib/edgesApi';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { PROBE_CHECK_LABELS, probeRequestSummary } from './matrix';
+  import { EDGE_PROVIDER_IDS } from '../../../../../shared/contracts/edgeProviderIds';
+  import type { EdgeProviderId } from '../../../../../shared/contracts/edgeProviderIds';
+  import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
 
   const qc = useQueryClient();
   const targets = probeTargetsQuery();
@@ -43,6 +49,13 @@
     { id: 'https', help: 'HTTP GET over TLS. Any status code counts as reachable.' },
   ];
 
+  // A reference site is for a CDN (an L7 provider).
+  const CDN_PROVIDERS = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_META[id].layer === 'l7');
+  const NONE = 'none';
+  const referenceLabel = (id: EdgeProviderId | null) =>
+    id ? EDGE_PROVIDER_META[id].label : 'Not a reference site';
+  const isAddressLiteral = (s: string) => /^[0-9.]+$/.test(s.trim()) || s.includes(':');
+
   type Draft = ProbeTargetBody & { id: string | null };
   let editor = $state<Draft | null>(null);
   const newDraft = (): Draft => ({
@@ -53,6 +66,7 @@
     probeProtocol: 'tcp',
     enabled: true,
     notes: '',
+    referenceFor: null,
   });
   const editDraft = (t: ProbeTargetAdmin): Draft => ({
     id: t.id,
@@ -62,6 +76,7 @@
     probeProtocol: t.probeProtocol,
     enabled: t.enabled,
     notes: t.notes ?? '',
+    referenceFor: t.referenceFor,
   });
   const portValid = $derived(
     editor !== null &&
@@ -69,8 +84,21 @@
       Number(editor.port) >= 1 &&
       Number(editor.port) <= 65535,
   );
+  // A reference site needs a name and a TLS or HTTPS check (the server says the same).
+  const referenceProblem = $derived.by(() => {
+    if (!editor?.referenceFor) return null;
+    if (editor.address.trim() !== '' && isAddressLiteral(editor.address))
+      return 'A reference site needs a host name, not an IP address.';
+    if (editor.probeProtocol === 'tcp')
+      return 'A reference site needs the TLS or HTTPS check: a network that refuses a CDN usually lets the connection open.';
+    return null;
+  });
   const draftValid = $derived(
-    editor !== null && editor.label.trim() !== '' && editor.address.trim() !== '' && portValid,
+    editor !== null &&
+      editor.label.trim() !== '' &&
+      editor.address.trim() !== '' &&
+      portValid &&
+      referenceProblem === null,
   );
 
   const save = createMutation(() => ({
@@ -83,6 +111,7 @@
         probeProtocol: d.probeProtocol,
         enabled: d.enabled,
         notes: d.notes.trim(),
+        referenceFor: d.referenceFor,
       };
       if (d.id) return updateProbeTarget(d.id, body);
       return createProbeTarget(body);
@@ -144,7 +173,14 @@
       {#each targets.data?.targets ?? [] as t (t.id)}
         <Table.Row>
           <Table.Cell>
-            <div class="font-medium">{t.label}</div>
+            <div class="font-medium">
+              {t.label}
+              {#if t.referenceFor}
+                <Badge variant="muted" class="ml-1">
+                  Reference for {EDGE_PROVIDER_META[t.referenceFor].label}
+                </Badge>
+              {/if}
+            </div>
             {#if t.notes}<div class="text-xs text-muted-foreground">{t.notes}</div>{/if}
           </Table.Cell>
           <Table.Cell class="font-mono text-xs">{t.display}</Table.Cell>
@@ -187,7 +223,9 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title="Remove this target?"
-  body={`"${removing?.label ?? ''}" and its reachability history are removed. Nothing else depends on a custom target.`}
+  body={removing?.referenceFor
+    ? `"${removing.label}" and its reachability history are removed. It is a reference site: without one, FCP can no longer tell a country that refuses this CDN outright, and replaces names there as before.`
+    : `"${removing?.label ?? ''}" and its reachability history are removed. Nothing else depends on a custom target.`}
   typed={removing?.label}
   confirmLabel="Remove target"
   danger
@@ -250,6 +288,33 @@
           <p class="text-xs text-muted-foreground">
             {CHECKS.find((c) => c.id === editor?.probeProtocol)?.help}
           </p>
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="pt-reference">Reference site for</Label>
+          <Select.Root
+            type="single"
+            value={editor.referenceFor ?? NONE}
+            onValueChange={(v) =>
+              (editor!.referenceFor = v === NONE ? null : (v as EdgeProviderId))}
+          >
+            <Select.Trigger id="pt-reference" class="w-full"
+              >{referenceLabel(editor.referenceFor)}</Select.Trigger
+            >
+            <Select.Content>
+              <Select.Item value={NONE}>{referenceLabel(null)}</Select.Item>
+              {#each CDN_PROVIDERS as id (id)}
+                <Select.Item value={id}>{EDGE_PROVIDER_META[id].label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <p class="text-xs text-muted-foreground">
+            A well-known site this CDN serves. When it fails from a country that other countries
+            still reach, the network there refuses the whole CDN, so FCP does not spend a new name
+            replacing an address there.
+          </p>
+          {#if referenceProblem}
+            <p class="text-xs text-destructive" role="alert">{referenceProblem}</p>
+          {/if}
         </div>
         <div class="grid gap-1.5">
           <Label for="pt-notes">Notes</Label>

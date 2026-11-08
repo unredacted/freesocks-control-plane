@@ -140,7 +140,7 @@ import { spendOf } from './edgePlans';
 import { atCap } from './lib/edges/pricing';
 import { countGapsOf } from './edgePickWants';
 import { resolveMemberCountryConfig } from './memberCountry';
-import { holdLive, isWholeTransportHold } from './lib/edges/autoReplaceHolds';
+import { CDN_REFUSED, holdLive, isWholeTransportHold } from './lib/edges/autoReplaceHolds';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -1461,6 +1461,23 @@ export const attention = internalQuery({
       // help, and the address in use still serves everywhere else.
       for (const h of relay.autoReplaceHolds ?? []) {
         if (!holdLive(h, now)) continue;
+        // The CDN refused outright in some countries (its reference site fails
+        // there too): a warning like the pause, re-read every detector pass.
+        if (h.code === CDN_REFUSED) {
+          items.push({
+            ...base(relay),
+            id: `cdn_refused:${relay._id}:${h.listenerId}:${h.provider ?? ''}`,
+            kind: 'cdn_refused',
+            severity: 'warning',
+            edgeId: (h.edgeId as string | undefined) ?? null,
+            listenerKey: listeners.find((l) => l._id === h.listenerId)?.listenerKey ?? null,
+            code: h.code,
+            facts: { countries: h.countries ?? [] },
+            action: 'open_relay',
+            since: iso(h.at),
+          });
+          continue;
+        }
         if (!isWholeTransportHold(h)) {
           items.push({
             ...base(relay),

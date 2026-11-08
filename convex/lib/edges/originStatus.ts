@@ -64,6 +64,7 @@ export const ATTENTION_RANK = [
   'retest_needed',
   'block_simulated',
   'fresh_name_blocked',
+  'cdn_refused',
   'block_suspected',
   'edge_unreachable',
   'new_edge_blocked_in',

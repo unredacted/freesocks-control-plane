@@ -150,10 +150,12 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'no_verified_spare',
   'no_ticked_location',
   // automatic replace: held for the transport, or a replacement blocked again soon,
-  // or paused for some countries (a new name was blocked there before use)
+  // or paused for some countries (a new name was blocked there before use), or
+  // the CDN refused outright there (its reference site fails too)
   'auto_replace_held',
   'replacement_reblocked',
   'fresh_name_blocked',
+  'cdn_refused',
   // selection
   'no_compatible_listener',
   'no_compatible_layer',
@@ -369,6 +371,10 @@ export const ATTENTION_KINDS = [
   // received it: a network there refuses every name on that CDN, so automatic
   // replacement for that country pauses (`relays.autoReplaceHolds` with countries).
   'fresh_name_blocked',
+  // A country refuses a CDN outright (the provider's reference site fails there
+  // too, while other countries reach it), so automatic replacement there spends
+  // no name (`relays.autoReplaceHolds` code `cdn_refused`).
+  'cdn_refused',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

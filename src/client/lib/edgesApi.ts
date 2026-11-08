@@ -297,6 +297,8 @@ export interface ProbeTargetBody {
   probeProtocol: 'tcp' | 'tls' | 'https';
   enabled: boolean;
   notes: string;
+  /** The CDN provider this is a reference site for, or null (an ordinary target). */
+  referenceFor: EdgeProviderId | null;
 }
 export interface RenderPreviewBody {
   relayId: string;

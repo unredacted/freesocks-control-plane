@@ -797,9 +797,18 @@ export const run = internalAction({
               // automatic replacement of its transport instead of retrying every
               // pass until the daily cap (the operator resumes it). Asked on any
               // refusal: another blocker (a fleet brake, the daily cap) may be
-              // the one the start named. Never under a fresh-name hold: a network
-              // that refuses every new name explains the re-block as well.
-              if (
+              // the one the start named. Never under a fresh-name hold or a
+              // refused provider: a network that refuses every name explains
+              // the re-block as well.
+              // A provider refused outright (its reference site fails there
+              // too): the node page says so; the start re-reads it next pass.
+              if (lastRotateError === 'edge.cdn_refused')
+                await ctx.runMutation(internal.edgeRotations.noteCdnRefused, {
+                  relayId: o._id,
+                  edgeId: decision.edgeId as Id<'edges'>,
+                  affectedCountries,
+                });
+              else if (
                 lastRotateError !== 'edge.auto_replace_held' &&
                 lastRotateError !== 'edge.fresh_name_blocked'
               )

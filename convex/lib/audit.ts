@@ -460,6 +460,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'hours',
     'rotationId',
   ],
+  'edge.cdn_refused': ['relaySlug', 'listenerKey', 'countries', 'provider'],
   'edge.auto_replace_resumed': ['relaySlug', 'lifted'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
   'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],
@@ -626,8 +627,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.country.mark': ['scope', 'country', 'state', 'count'],
   'edge.country.check': ['relaySlug'],
   'probe.requested': ['targets', 'runs', 'sources'],
-  'probe.target.create': ['label'],
-  'probe.target.update': ['label'],
+  'probe.target.create': ['label', 'referenceFor'],
+  'probe.target.update': ['label', 'referenceFor'],
   'probe.target.delete': ['label'],
   'edge.live.pulled': ['edgeId', 'accountId'],
   'admin.edge.config.change': ['changedKeys'],

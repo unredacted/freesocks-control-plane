@@ -17,6 +17,12 @@
  *    failed: a replacement that would go to another provider (or to a load
  *    balancer) is not held by it. Only a block found BEFORE the flip makes
  *    one: after the flip members may already have the name.
+ *  - a CDN-REFUSED note (`countries`, `until`, `provider`; code `cdn_refused`):
+ *    the detector's start was refused because that provider's reference site
+ *    is refused from those countries too (lib/edges/referenceSites.ts). It
+ *    holds nothing by itself (the start re-checks the reference sites each
+ *    pass); it is what the node page and the attention list show, renewed
+ *    each refused pass and gone soon after the refusals stop.
  *
  * Pure: the mutations in convex/edgeRotations.ts read and write the array.
  */
@@ -33,6 +39,7 @@ export type AutoReplaceHold = {
 };
 
 export const FRESH_NAME_BLOCKED = 'fresh_name_blocked';
+export const CDN_REFUSED = 'cdn_refused';
 
 /** A hold still in force: a fresh-name hold ends at `until`; a whole-transport one never does. */
 export function holdLive(h: Pick<AutoReplaceHold, 'until'>, now: number): boolean {
@@ -67,6 +74,7 @@ export function holdFor<H extends AutoReplaceHold>(
   return (
     mine.find(
       (h) =>
+        h.code === FRESH_NAME_BLOCKED &&
         affectedCountries.every((c) => (h.countries ?? []).includes(c)) &&
         (provider == null || h.provider === undefined || h.provider === provider),
     ) ?? null
@@ -100,7 +108,9 @@ export function withFreshNameHold<H extends AutoReplaceHold>(
   const kept: AutoReplaceHold[] = (holds ?? []).filter((h) => holdLive(h, add.at));
   const i = kept.findIndex(
     (h) =>
-      h.listenerId === add.listenerId && !isWholeTransportHold(h) && h.provider === add.provider,
+      h.listenerId === add.listenerId &&
+      h.code === FRESH_NAME_BLOCKED &&
+      h.provider === add.provider,
   );
   if (i >= 0) {
     const prev = kept[i]!;
@@ -122,6 +132,40 @@ export function withFreshNameHold<H extends AutoReplaceHold>(
       countries: [...new Set(add.countries)].sort(),
       until: add.until,
       ...(add.provider ? { provider: add.provider } : {}),
+    },
+  ];
+}
+
+/**
+ * The holds with the CDN-refused note for `listenerId` and `provider` set to
+ * the countries refused NOW (replaced, not widened: the reference sites are
+ * read afresh each pass), its first time kept, expired rows dropped.
+ */
+export function withCdnRefusedNote<H extends AutoReplaceHold>(
+  holds: readonly H[] | undefined,
+  add: {
+    listenerId: string;
+    countries: readonly string[];
+    provider: string;
+    edgeId?: string;
+    at: number;
+    until: number;
+  },
+): AutoReplaceHold[] {
+  const kept: AutoReplaceHold[] = (holds ?? []).filter((h) => holdLive(h, add.at));
+  const same = (h: AutoReplaceHold) =>
+    h.listenerId === add.listenerId && h.code === CDN_REFUSED && h.provider === add.provider;
+  const prev = kept.find(same);
+  return [
+    ...kept.filter((h) => !same(h)),
+    {
+      listenerId: add.listenerId,
+      code: CDN_REFUSED,
+      at: prev?.at ?? add.at,
+      ...(add.edgeId ? { edgeId: add.edgeId } : {}),
+      countries: [...new Set(add.countries)].sort(),
+      until: add.until,
+      provider: add.provider,
     },
   ];
 }

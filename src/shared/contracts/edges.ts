@@ -2156,6 +2156,8 @@ export const ProbeTargetAdmin = z.object({
   display: z.string(),
   enabled: z.boolean(),
   notes: z.string().nullable(),
+  /** The CDN provider this is a reference site for (lib/edges/referenceSites.ts), or null. */
+  referenceFor: EdgeProviderId.nullable().default(null),
   reachability: ProbeReachabilitySummary,
   updatedAt: iso,
 });
