@@ -6,7 +6,16 @@
  * detector's proof agree on it.
  */
 import { describe, expect, test } from 'vitest';
-import { audienceAtPublish, covers, inAudience, locationTakes, onlyCodesOf } from './audience';
+import {
+  audienceAtPublish,
+  covers,
+  inAudience,
+  locationTakes,
+  onlyCodesOf,
+  pickIntentFor,
+  pickTakes,
+  sameCodes,
+} from './audience';
 import {
   assignEndpoints,
   fnv1a32,
@@ -204,5 +213,55 @@ describe("the detector's veto for a contained address", () => {
     expect(steeringVeto({ edgeId: 'only-ir-ru', countries: ['IR', 'CN'] }, s)).toBe(
       'country_scoped',
     );
+  });
+});
+
+describe('countries on a node’s pick', () => {
+  test('an address made for them takes them at its first publication, wherever it is', () => {
+    const edge = {
+      _creationTime: 5,
+      resources: [{ ownership: 'created' }],
+    };
+    expect(
+      audienceAtPublish({ edge, location: null, seenBefore: false, made: ['RU', 'IR'] }),
+    ).toEqual({ kind: 'contained', audience: ['IR', 'RU'] });
+    // The taint rule stays: adopted, seen before, published before.
+    expect(
+      audienceAtPublish({
+        edge: { ...edge, resources: [{ ownership: 'adopted' }] },
+        location: null,
+        seenBefore: false,
+        made: ['IR'],
+      }),
+    ).toEqual({ kind: 'refused', reason: 'audience_tainted' });
+    expect(audienceAtPublish({ edge, location: null, seenBefore: true, made: ['IR'] }).kind).toBe(
+      'refused',
+    );
+    // A replacement of everyone's address never becomes theirs.
+    expect(
+      audienceAtPublish({ edge, location: null, seenBefore: false, made: ['IR'], replacing: {} }),
+    ).toEqual({ kind: 'refused', reason: 'audience_replaces_everyone' });
+  });
+
+  test('which pick takes what, and what an address made there is for', () => {
+    const iran = { audiences: [{ codes: ['IR'], want: 1 }] };
+    const kept = { ...iran, audienceOnly: true };
+    expect(pickIntentFor(iran, ['IR'], 'exact')).toEqual(['IR']);
+    expect(pickIntentFor(iran, ['IR', 'RU'], 'exact')).toBeNull();
+    expect(pickIntentFor({ audiences: [{ codes: ['RU', 'IR'] }] }, ['IR'], 'covers')).toEqual([
+      'IR',
+      'RU',
+    ]);
+    expect(pickIntentFor(null, ['IR'], 'exact')).toBeNull();
+    // A fill for some countries: only at a pick holding exactly them.
+    expect(pickTakes(iran, { fillFor: ['IR'] })).toBe(true);
+    expect(pickTakes(null, { fillFor: ['IR'] })).toBe(false);
+    // Everyone's address: anywhere but a pick kept for its countries.
+    expect(pickTakes(iran, {})).toBe(true);
+    expect(pickTakes(kept, {})).toBe(false);
+    // A contained replacement: a kept pick only when one of its entries covers it.
+    expect(pickTakes(kept, { audience: ['IR'] })).toBe(true);
+    expect(pickTakes(kept, { audience: ['RU'] })).toBe(false);
+    expect(sameCodes(['IR', 'RU'], ['RU', 'IR'])).toBe(true);
   });
 });

@@ -1945,6 +1945,12 @@ export const attention = internalQuery({
               wanted: first.want,
               inUse: Math.min(...mine.map((g) => g.inUse)),
               count: mine.length,
+              // The count some countries' own addresses ask for (a pick's audiences).
+              ...(mine.some((g) => g.audience)
+                ? {
+                    countries: [...new Set(mine.flatMap((g) => g.audience ?? []))].sort(),
+                  }
+                : {}),
             },
             action: 'open_relay',
             since: null,

@@ -201,7 +201,14 @@ import {
 } from './lib/edges/autoReplaceHolds';
 import { cdnRefusedCountries } from './lib/edges/referenceSites';
 import { audienceForPublish } from './edgeAudiences';
-import { locationTakes, onlyCodesOf } from './lib/edges/audience';
+import {
+  covers,
+  locationTakes,
+  onlyCodesOf,
+  pickIntentFor,
+  pickTakes,
+  sameCodes,
+} from './lib/edges/audience';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -406,10 +413,11 @@ export const upkeepFillRefusal = internalQuery({
     relayId: v.id('relays'),
     listenerId: v.optional(v.id('relayListeners')),
     onlyLocationId: v.optional(v.id('edgeLocations')),
+    audience: v.optional(v.array(v.string())),
   },
   handler: async (
     ctx,
-    { relayId, listenerId, onlyLocationId },
+    { relayId, listenerId, onlyLocationId, audience },
   ): Promise<'pool_reserved' | null> => {
     const origin = await ctx.db.get(relayId);
     if (!origin?.providerSet) return null;
@@ -421,6 +429,7 @@ export const upkeepFillRefusal = internalQuery({
         publishOnDone: true,
         ...(listenerId ? { listenerId } : {}),
         ...(onlyLocationId ? { onlyLocationId } : {}),
+        ...(audience?.length ? { audience } : {}),
       },
       origin,
       null,
@@ -963,6 +972,12 @@ const startArgs = {
    * location. Unlike `requestedLocationId` it is no explicit request.
    */
   onlyLocationId: v.optional(v.id('edgeLocations')),
+  /**
+   * A provision for some countries' own addresses (a count's fill, step 5W, or
+   * the operator's): made at a pick holding exactly these, and theirs
+   * (`edges.audienceIntent`). Refused unless some pick holds them.
+   */
+  audience: v.optional(v.array(v.string())),
   /** A replace's explicit spare (L4): that tested spare of the same listener, or nothing. */
   requestedSpareEdgeId: v.optional(v.id('edges')),
   /**
@@ -999,6 +1014,7 @@ export interface StartRotationArgs {
   allowUnqualified?: boolean;
   requestedLocationId?: Id<'edgeLocations'>;
   onlyLocationId?: Id<'edgeLocations'>;
+  audience?: string[];
   requestedSpareEdgeId?: Id<'edges'>;
   requestedOptions?: unknown;
   reason?: string;
@@ -1568,6 +1584,27 @@ async function needsHostFlipFor(
 }
 
 /**
+ * The countries an address this run makes at `locationId` is for (its
+ * `audienceIntent`), from the node's pick there: a count's fill takes the entry
+ * holding exactly its countries; a replacement of a contained address takes an
+ * entry covering every country it served. Null = everyone's (as before).
+ */
+async function audienceIntentOf(
+  db: QueryCtx['db'],
+  r: Doc<'edgeRotations'>,
+  origin: Origin,
+  locationId: Id<'edgeLocations'> | null,
+): Promise<string[] | null> {
+  if (!locationId) return null;
+  const pick = origin.providerSet?.find((p) => p.locationId === locationId);
+  if (!pick?.audiences?.length) return null;
+  if (r.audience?.length) return pickIntentFor(pick, r.audience, 'exact');
+  if (r.kind !== 'replace' || !r.targetEdgeId) return null;
+  const target = await db.get(r.targetEdgeId);
+  return pickIntentFor(pick, target?.audience, 'covers');
+}
+
+/**
  * The ONLY way a rotation row comes into being (the `start` mutation and the
  * reconcile cron's standby publish both call this): every guard — quarantine,
  * deleting, one rotation per origin, the global concurrency cap, publishability,
@@ -1638,6 +1675,25 @@ export async function startRotation(
       });
     requestedOptions = JSON.stringify(checked.options);
   }
+  // Some countries' own addresses: a provision, for countries a pick holds.
+  const audience = a.audience?.length ? [...new Set(a.audience)].sort() : undefined;
+  if (audience) {
+    if (a.kind !== 'provision')
+      throw new ConvexError({
+        code: 'validation',
+        message: 'Only a new address can be made for some countries',
+      });
+    const held = (origin.providerSet ?? []).some(
+      (p) =>
+        (!a.requestedLocationId || p.locationId === a.requestedLocationId) &&
+        pickIntentFor(p, audience, 'exact') !== null,
+    );
+    if (!held)
+      throw new ConvexError({
+        code: 'edge.audience_not_picked',
+        message: 'No location of this node keeps addresses for those countries',
+      });
+  }
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
     kind: a.kind,
@@ -1656,6 +1712,7 @@ export async function startRotation(
     requestedLocationId:
       a.kind === 'provision' || a.kind === 'replace' ? a.requestedLocationId : undefined,
     onlyLocationId: a.kind === 'provision' ? a.onlyLocationId : undefined,
+    ...(audience ? { audience } : {}),
     requestedSpareEdgeId: a.kind === 'replace' ? a.requestedSpareEdgeId : undefined,
     requestedOptions,
     affectedCountries: a.affectedCountries?.slice(0, 20),
@@ -2529,6 +2586,7 @@ export const commitSelection = internalMutation({
         layer,
         provisionIntent,
         planSize: sizeOf(account.provider, a.templateParams as Record<string, unknown> | undefined),
+        audienceIntent: await audienceIntentOf(ctx.db, r, origin, a.locationId ?? null),
       });
     } catch (err) {
       const code =
@@ -3513,6 +3571,8 @@ export interface SelectionRequest {
   requestedLocationId?: Id<'edgeLocations'>;
   /** Upkeep filling one pick's count: the set's selection, at this location only. */
   onlyLocationId?: Id<'edgeLocations'>;
+  /** A provision for some countries' own addresses: only at picks holding exactly them. */
+  audience?: string[];
   /** A replace's explicit spare: that one or nothing. */
   requestedSpareEdgeId?: Id<'edges'>;
   /** Started by a guided setup run (the operator chose its account). */
@@ -3807,7 +3867,11 @@ export async function selectionContext(
   };
   // An only location takes only a contained replacement it covers, or its own
   // count's fill (lib/edges/audience.ts `locationTakes`); a spare there is no
-  // one else's, unless the operator named it.
+  // one else's, unless the operator named it. A node's pick that holds
+  // countries of its own takes their fill, and one serving its countries only
+  // takes nothing everyone may be handed (`pickTakes`).
+  const pickAt = (locationId: string) =>
+    origin.providerSet?.find((p) => (p.locationId as string) === locationId) ?? null;
   const takesAt = new Map<string, boolean>();
   const locationTakesHere = async (locationId: string): Promise<boolean> => {
     if (!takesAt.has(locationId)) {
@@ -3817,10 +3881,29 @@ export async function selectionContext(
         locationTakes(l?.forCountries ?? null, {
           audience: targetEdge?.audience ?? null,
           countFillHere: rotation.onlyLocationId === locationId,
-        }),
+        }) &&
+          pickTakes(pickAt(locationId), {
+            fillFor: rotation.audience ?? null,
+            audience: targetEdge?.audience ?? null,
+          }),
       );
     }
     return takesAt.get(locationId)!;
+  };
+  // What an address made at a pick for this run is for (as `audienceIntentOf`).
+  const intentAt = (locationId: string): string[] | null =>
+    rotation.audience?.length
+      ? pickIntentFor(pickAt(locationId), rotation.audience, 'exact')
+      : rotation.kind === 'replace'
+        ? pickIntentFor(pickAt(locationId), targetEdge?.audience, 'covers')
+        : null;
+  // A spare made for some countries is theirs: it fills their count, or
+  // replaces an address of theirs; never anything everyone is handed.
+  const spareFitsAudience = (e: Edge): boolean => {
+    const made = e.audienceIntent;
+    if (rotation.audience?.length) return !!made?.length && sameCodes(made, rotation.audience);
+    if (!made?.length) return true;
+    return !!targetEdge?.audience?.length && covers(made, targetEdge.audience);
   };
   for (const e of edges) {
     const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
@@ -3844,6 +3927,7 @@ export async function selectionContext(
       // account set to DNS only.
       hasAddress:
         hasPublishableAddress(e) &&
+        spareFitsAudience(e) &&
         ((await eligibleSpare(e, slotOfEdge)) || (await checkableSpare(e, slotOfEdge))) &&
         (await onItsNetwork(e, slotOfEdge)) &&
         // A load balancer the node already had is left as it is, never reused.
@@ -4089,7 +4173,11 @@ export async function selectionContext(
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
       // An only location takes no address everyone may be handed.
       if (!(await locationTakesHere(loc._id as string))) continue;
-      if (onlyCodesOf(loc.forCountries)) fitsAudience.add(loc._id as string);
+      if (
+        onlyCodesOf(loc.forCountries) ||
+        pickIntentFor(pickAt(loc._id as string), targetEdge?.audience, 'covers')
+      )
+        fitsAudience.add(loc._id as string);
       // A zone where this front could not get its certificate is never picked.
       const certificate = certificateRefusalFor(
         a,
@@ -4222,6 +4310,8 @@ export async function selectionContext(
           locationId: c.locationId,
           provider: c.provider,
           locationKey,
+          // Made here for some countries: judged as theirs (it lowers their count).
+          ...(intentAt(c.locationId!) ? { audience: intentAt(c.locationId!)! } : {}),
         }).lowersDeficit,
         providerNew: !mine.some((p) => p.provider === c.provider),
         locationKeyNew: !mine.some((p) => p.locationKey === locationKey),

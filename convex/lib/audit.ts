@@ -527,6 +527,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // A node's provider set edited by hand: counts only (never location names).
   'edge.relay.providers_changed': ['relaySlug', 'added', 'removed', 'drained', 'picks', 'run'],
   'edge.relay.pick_want': ['relaySlug', 'placeKey', 'want', 'adds'],
+  // A node's pick keeping addresses for some countries (edgeAudiences.ts):
+  // the countries and the count (-1 = the entry removed, 0 = a place with none).
+  'edge.relay.pick_audience': ['relaySlug', 'placeKey', 'countries', 'want'],
+  'edge.relay.pick_audience_only': ['relaySlug', 'placeKey', 'only'],
   // The automation switch: the one boolean it was set to.
   'edge.automation.set': ['on'],
   // Freedom modes only through edges (freedomDelivery.setEdgesOnly): what it was set to,

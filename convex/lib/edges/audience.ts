@@ -19,6 +19,11 @@
  *    location is only for every country the replaced one served.
  *  - An "only" location holds only contained addresses from then on: an
  *    address there that cannot take the audience is never published.
+ *  - A node's pick may hold countries of its own (`relays.providerSet[]
+ *    .audiences`, docs/edges.md "Countries with their own addresses"): an
+ *    address made for them carries them from the start (`edges.audienceIntent`)
+ *    and takes them at its first publication wherever it is, under the same
+ *    taint rule.
  */
 
 /** A location's containment as stored (`edgeLocations.forCountries`). */
@@ -61,14 +66,20 @@ export function audienceAtPublish(input: {
   location: LocationAudience | null;
   /** FCP handed this address out before under another row (`edgeLanes.seenBefore`). */
   seenBefore: boolean;
+  /**
+   * The countries it was made for (`edges.audienceIntent`): they win over the
+   * location's, and it was made for them, so no switch date applies.
+   */
+  made?: readonly string[] | null;
   /** A replace: the address it swaps out (its audience; absent = everyone's). */
   replacing?: { audience?: readonly string[] } | null;
 }): AudienceAtPublish {
-  const codes = onlyCodesOf(input.location);
+  const made = input.made?.length ? [...new Set(input.made)].sort() : null;
+  const codes = made ?? onlyCodesOf(input.location);
   if (!codes) return { kind: 'everyone' };
   const e = input.edge;
   const clean =
-    e._creationTime > input.location!.only!.since &&
+    (made !== null || e._creationTime > input.location!.only!.since) &&
     e.publishedAt === undefined &&
     // FCP made it: at least one resource of its own, none adopted (an address
     // adopted with nothing to manage carries no resource at all).
@@ -109,4 +120,58 @@ export function locationTakes(
   if (target.countFillHere) return true;
   const a = target.audience;
   return !!a && a.length > 0 && covers(codes, a);
+}
+
+/** Whether two audiences name the same countries. */
+export function sameCodes(a: readonly string[], b: readonly string[]): boolean {
+  const x = [...new Set(a)].sort();
+  const y = [...new Set(b)].sort();
+  return x.length === y.length && x.every((c, i) => c === y[i]);
+}
+
+/** One entry of a pick's own countries as stored (`relays.providerSet[].audiences`). */
+export interface PickAudience {
+  codes: readonly string[];
+  want?: number;
+}
+
+/** A node's pick as the audience rules read it. */
+export interface PickAudiences {
+  audiences?: readonly PickAudience[];
+  audienceOnly?: boolean;
+}
+
+/**
+ * The countries an address made at this pick is for (its `audienceIntent`), or
+ * null for one everyone may be handed. `audience`: the countries the run is
+ * for (a count's fill: exactly them; a contained replacement: an entry that
+ * covers every country the replaced address served).
+ */
+export function pickIntentFor(
+  pick: PickAudiences | null | undefined,
+  audience: readonly string[] | null | undefined,
+  how: 'exact' | 'covers',
+): string[] | null {
+  if (!pick || !audience?.length) return null;
+  const hit = (pick.audiences ?? []).find((x) =>
+    how === 'exact' ? sameCodes(x.codes, audience) : covers(x.codes, audience),
+  );
+  return hit ? [...new Set(hit.codes)].sort() : null;
+}
+
+/**
+ * Whether automatic selection may use a node's pick for a target, by its own
+ * countries: a fill for some countries only at a pick holding exactly them; a
+ * pick that serves its countries only, only for a contained replacement one of
+ * its entries covers (anything else made there would be everyone's). A
+ * contained replacement may otherwise go anywhere a location allows (the picks
+ * covering it rank first).
+ */
+export function pickTakes(
+  pick: PickAudiences | null | undefined,
+  target: { fillFor?: readonly string[] | null; audience?: readonly string[] | null },
+): boolean {
+  if (target.fillFor?.length) return pickIntentFor(pick, target.fillFor, 'exact') !== null;
+  if (pick?.audienceOnly) return pickIntentFor(pick, target.audience, 'covers') !== null;
+  return true;
 }

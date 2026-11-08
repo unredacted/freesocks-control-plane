@@ -1068,3 +1068,85 @@ describe('the pieces', () => {
     expect((await loc()).qualification?.evidence?.edgeId).toBe(r.toEdgeId);
   });
 });
+
+describe('an address made for some countries (a pick keeping addresses for them)', () => {
+  /** Steering on, the rendezvous walk, and the node's one pick keeping one address for Iran. */
+  async function forIran(s: Awaited<ReturnType<typeof seed>>) {
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'delivery.country.steer', 'true');
+      await upsertSettingRow(
+        ctx,
+        'censorship.countries',
+        JSON.stringify([{ code: 'IR', checkEdges: true, checkNamesInside: false }]),
+      );
+      await ctx.db.patch(s.relayId, {
+        edgePick: 'hrw1',
+        desiredPublished: 2,
+        providerSet: [{ locationId: s.locationId, addedAt: 1 }],
+      });
+    });
+    await s.t.mutation(internal.edgeAudiences.setPickAudience, {
+      relayId: s.relayId,
+      locationId: s.locationId,
+      codes: ['IR'],
+      want: 1,
+    });
+  }
+
+  test('a provision for them makes it theirs: checked by FCP, published contained, never the template', async () => {
+    vi.useFakeTimers();
+    world(() => ({ code: 'ok' }));
+    const s = await seed();
+    await forIran(s);
+    const r = await drain(
+      s.t,
+      (
+        await s.t.mutation(internal.edgeRotations.start, {
+          relayId: s.relayId,
+          kind: 'provision',
+          trigger: 'reconcile',
+          publishOnDone: true,
+          listenerId: s.listenerId,
+          onlyLocationId: s.locationId,
+          audience: ['IR'],
+        })
+      ).rotationId,
+    );
+    expect(r).toMatchObject({ phase: 'done', audience: ['IR'] });
+    const made = (await s.t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(made).toMatchObject({
+      audienceIntent: ['IR'],
+      audience: ['IR'],
+      publication: 'published',
+    });
+    const listener = await s.t.run(async (c) => (await c.db.get(s.listenerId))!);
+    expect(listener.templateEdgeId).toBe(s.oldEdgeId);
+  });
+
+  test('a replacement of an address of theirs is theirs too', async () => {
+    vi.useFakeTimers();
+    world(() => ({ code: 'ok' }));
+    const s = await seed();
+    await forIran(s);
+    const first = await drain(
+      s.t,
+      (
+        await s.t.mutation(internal.edgeRotations.start, {
+          relayId: s.relayId,
+          kind: 'provision',
+          trigger: 'reconcile',
+          publishOnDone: true,
+          listenerId: s.listenerId,
+          audience: ['IR'],
+        })
+      ).rotationId,
+    );
+    const theirs = first.toEdgeId!;
+    const r = await drain(s.t, (await replace(s.t, s.relayId, theirs)).rotationId);
+    expect(r).toMatchObject({ phase: 'done', outcome: 'published' });
+    expect((await s.t.query(internal.edges.get, { id: r.toEdgeId! }))!).toMatchObject({
+      audienceIntent: ['IR'],
+      audience: ['IR'],
+    });
+  });
+});

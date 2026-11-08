@@ -1807,6 +1807,29 @@ export default defineSchema({
           // carries. Absent = at least one address of any transport. Rollback:
           // `edgePickWants:clearPickWantsForRollback`.
           want: v.optional(v.number()),
+          // Addresses here only for some countries (docs/edges.md "Countries
+          // with their own addresses"): per entry, the countries an address
+          // made for it is handed to (`edges.audienceIntent`, then
+          // `edges.audience` at its first publication) and how many of each
+          // transport the pick carries the node keeps for them, counted over
+          // every pick holding the same countries (absent = a place for their
+          // addresses that asks for none of its own: where a replacement goes
+          // when the first place cannot take it). Rollback:
+          // `edgeAudiences:clearAudiencePicksForRollback`.
+          audiences: v.optional(
+            v.array(
+              v.object({
+                codes: v.array(v.string()),
+                want: v.optional(v.number()),
+                addedAt: v.number(),
+              }),
+            ),
+          ),
+          // The pick serves its countries only: no address everyone is handed
+          // is made here (no coverage, no count, no fill), as at a location
+          // only for some countries but for this node alone (a zone kept for
+          // one country).
+          audienceOnly: v.optional(v.literal(true)),
         }),
       ),
     ),
@@ -2463,6 +2486,12 @@ export default defineSchema({
     // then on. Absent = everyone. Cleared for good when its location stops being
     // only. Rollback: `edgeAudiences:retireAudiencesForRollback`.
     audience: v.optional(v.array(v.string())),
+    // Made for these countries (a node's pick for them, `relays.providerSet[]
+    // .audiences`): the audience its first publication gives it, wherever it
+    // is (lib/edges/audience.ts `audienceAtPublish`); never handed to anyone
+    // else before. Written when it is planned, never changed. Rollback:
+    // `edgeAudiences:clearAudiencePicksForRollback`.
+    audienceIntent: v.optional(v.array(v.string())),
     // Set with `audience` (and cleared with it): what the `by_contained` index
     // finds, so the rollback reaches every contained address however many
     // edges the fleet holds.
@@ -2603,6 +2632,10 @@ export default defineSchema({
     // Upkeep filling one pick's address count (edgePickWants.ts): the set's
     // usual selection, at this location only.
     onlyLocationId: v.optional(v.id('edgeLocations')),
+    // Upkeep filling the count a node keeps for some countries (the pick's
+    // `audiences`): the address is made at a pick holding exactly these and
+    // is theirs (`edges.audienceIntent`).
+    audience: v.optional(v.array(v.string())),
     // A replace's explicit spare (the operator named it).
     requestedSpareEdgeId: v.optional(v.id('edges')),
     // Options for the one edge this run builds (JSON), instead of its pick's:

@@ -1728,7 +1728,10 @@ export const adoptEdge = internalMutation({
 export async function poolAdmitOf(
   db: Db,
   relay: Doc<'relays'>,
-  edge: Pick<Doc<'edges'>, 'listenerId' | 'locationId' | 'provider' | 'placeKey'>,
+  edge: Pick<
+    Doc<'edges'>,
+    'listenerId' | 'locationId' | 'provider' | 'placeKey' | 'audience' | 'audienceIntent'
+  >,
 ): Promise<PoolAdmit> {
   const state = await setStateOf(db, relay);
   const listener = await db.get(edge.listenerId);

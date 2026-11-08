@@ -1470,6 +1470,43 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       if (!parts[5])
         return json(await ctx.runMutation(internal.edgePickWants.setPickWant, { ...args, ...act }));
     }
+    // Countries with their own addresses (edgeAudiences.ts): one pick's entry
+    // for some countries (`want` null = a place for theirs with no count of
+    // its own; `remove: true` drops it), and whether the pick serves its
+    // countries only.
+    if (c === 'providers' && d && parts[4] === 'audiences' && !parts[5]) {
+      if (!Array.isArray(body.codes) || body.codes.some((x: unknown) => typeof x !== 'string'))
+        return errorJson('validation', 'codes must be a list of country codes', 400);
+      const want =
+        body.want === null || body.want === undefined
+          ? null
+          : typeof body.want === 'number'
+            ? body.want
+            : undefined;
+      if (want === undefined) return errorJson('validation', 'want must be a number or null', 400);
+      return json(
+        await ctx.runMutation(internal.edgeAudiences.setPickAudience, {
+          relayId,
+          locationId: id<'edgeLocations'>(d),
+          codes: body.codes as string[],
+          want,
+          ...(body.remove === true ? { remove: true } : {}),
+          ...act,
+        }),
+      );
+    }
+    if (c === 'providers' && d && parts[4] === 'audience-only' && !parts[5]) {
+      if (typeof body.only !== 'boolean')
+        return errorJson('validation', 'only must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeAudiences.setPickAudienceOnly, {
+          relayId,
+          locationId: id<'edgeLocations'>(d),
+          only: body.only,
+          ...act,
+        }),
+      );
+    }
     if (c === 'auto-replace' && d === 'resume' && !parts[4])
       return json(
         await ctx.runMutation(internal.edgeRotations.resumeAutoReplace, {
