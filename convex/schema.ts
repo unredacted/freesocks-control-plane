@@ -3240,6 +3240,9 @@ export default defineSchema({
     name: v.string(),
     usersOnline: v.number(),
     online: v.boolean(),
+    // Disabled in the backend on purpose (`online` is false then too): an
+    // offline alert skips it. Absent on rows from before it was kept.
+    disabled: v.optional(v.boolean()),
     lastStatsAt: v.number(),
     // As the backend reports them (the origin picker pre-fills from these).
     address: v.optional(v.string()),
