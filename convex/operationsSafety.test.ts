@@ -498,7 +498,7 @@ describe('operator alerts', () => {
     expect(String(r.posts[0].body.message)).toContain('no address is in use');
     expect(String(r.posts[0].body.message).split('\n')).toHaveLength(3);
     expect(String(r.posts[0].body.click)).toMatch(
-      /^https:\/\/admin\.example\.org\/admin\/edges\/relays\//,
+      /^https:\/\/admin\.example\.org\/admin\/servers\/origins\/[^/]+\/details/,
     );
     // Still on the list: not sent again.
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0, messages: 0 });
@@ -513,7 +513,7 @@ describe('operator alerts', () => {
       body: { topic: 'ops-topic', priority: 5, title: `Node paused for safety: ${FIXTURE_NODE}` },
     });
     expect(String(r.posts[1].body.message)).toContain('flip unconfirmed');
-    expect(String(r.posts[1].body.click)).toContain('tab=rotations');
+    expect(String(r.posts[1].body.click)).toContain('tab=overview');
     // Never an address or an internal id.
     const sent = JSON.stringify(r.posts.map((p) => p.body));
     expect(sent).not.toContain(FIXTURE_ORIGIN);
