@@ -13,7 +13,6 @@
   import SettingsNav from '../servers/components/SettingsNav.svelte';
   import EdgesHome from './simple/EdgesHome.svelte';
   import NodePage from './simple/NodePage.svelte';
-  import EdgesOverview from './EdgesOverview.svelte';
   import RelayPage from './RelayPage.svelte';
   import EdgesProviders from './EdgesProviders.svelte';
   import ProviderAccountPage from './ProviderAccountPage.svelte';
@@ -39,8 +38,6 @@
   <EdgesHome />
 {:else if route.page === 'node'}
   <NodePage slug={route.slug} />
-{:else if route.page === 'overview'}
-  <EdgesOverview />
 {:else if route.page === 'relay'}
   <RelayPage slug={route.slug} />
 {:else if route.page === 'providers'}

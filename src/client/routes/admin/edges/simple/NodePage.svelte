@@ -12,9 +12,8 @@
   import { serverSummaryQuery, serverTreeQuery } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import { instanceSlugOf, nodeHomeOf } from '../../servers/lib/routes';
+  import { instanceSlugOf, nodeHomeOf, serversPaths } from '../../servers/lib/routes';
   import SectionHeader from '../components/SectionHeader.svelte';
-  import { edgesPaths } from '../lib/routes';
   import NodeEdgesPanel from './NodeEdgesPanel.svelte';
 
   interface Props {
@@ -50,7 +49,7 @@
   $effect(() => {
     if (target) router.navigate(target, { replace: true });
   });
-  const back = { href: edgesPaths.home(), label: 'Overview' };
+  const back = { href: serversPaths.nodes(), label: 'Nodes' };
 </script>
 
 {#if notFound}

@@ -3,6 +3,10 @@ import { pickInstance, resolveServersRoute, serversPaths } from './routes';
 import {
   adoptRefusalWords,
   blockerWords,
+  groupLine,
+  opGroupTitle,
+  opGroups,
+  RECENT_CHANGES_SHOWN,
   firewallNodeWords,
   portChangeTitle,
   portChangeWords,
@@ -185,7 +189,7 @@ describe('what the page says', () => {
         transports: [inbound({ tag: 'VLESS_XHTTP_CDN', addresses: [], modeGroups: [] })],
       });
     expect(quietNotes(tree([unused('a'), unused('b'), unused('c')]))).toEqual([
-      'VLESS_XHTTP_CDN is unused on every node: no address and no mode group.',
+      'VLESS XHTTP CDN is unused on every node: no address and no mode group.',
     ]);
     expect(
       quietNotes(
@@ -194,7 +198,7 @@ describe('what the page says', () => {
         }),
       ),
     ).toEqual([
-      'VLESS_XHTTP_CDN is unused on a: no address and no mode group.',
+      'VLESS XHTTP CDN is unused on a: no address and no mode group.',
       'No node runs Default-Profile.',
     ]);
     expect(quietNotes(tree([node({ transports: [inbound({ modeGroups: [] })] })]))).toEqual([
@@ -242,6 +246,17 @@ describe('what the page says', () => {
     ]);
     expect(quietNotes(tree([node({ transports: [inbound({ addresses: fronts })] })]))).toEqual([
       'reality-in is unused on node-one: no address for members.',
+    ]);
+  });
+
+  test('an unused transport is named by its mode, never its tag', () => {
+    const t = inbound({
+      tag: 'FREEDOM_REALITY',
+      addresses: [],
+      modeGroups: [{ groupUuid: 'g', name: 'Freedom-Reality' }],
+    });
+    expect(quietNotes(tree([node({ transports: [t] })]))).toEqual([
+      'Freedom-Reality is unused on node-one: no address for members.',
     ]);
   });
 
@@ -357,7 +372,34 @@ describe('write wording', () => {
     // An open change keeps its own line (it has buttons); settled twins share a key.
     expect(opRepeatKey({ ...op, open: true })).toBeNull();
     expect(opRepeatKey(op)).toBe(opRepeatKey({ ...op }));
-    expect(opRepeatKey(op)).not.toBe(opRepeatKey({ ...op, label: 'node-two' }));
+    // A refusal changed nothing: refusals of one kind fold whichever item they were for.
+    expect(opRepeatKey(op)).toBe(opRepeatKey({ ...op, label: 'node-two' }));
+    const done = { ...op, state: 'done', errorCode: null } as const;
+    expect(opRepeatKey(done)).not.toBe(opRepeatKey({ ...done, label: 'node-two' }));
+  });
+
+  test('Recent changes folds forty refused adds into one line', () => {
+    const add = (label: string) =>
+      ({
+        kind: 'host',
+        verb: 'create',
+        label,
+        state: 'refused',
+        errorCode: 'servers.never_sent',
+        open: false,
+      }) as const;
+    const ops = [
+      ...Array.from({ length: 40 }, (_, i) => add(`addr-${i}`)),
+      { ...add('x'), state: 'done', errorCode: null } as const,
+    ];
+    const groups = opGroups(ops);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({ count: 40, targets: 40 });
+    expect(opGroupTitle(groups[0]!)).toBe('Add address addr-0 and 39 more');
+    expect(opRepeatWords(groups[0]!.op, 40, 40).sentence).toBe(
+      '40 changes like this, never sent. Nothing was changed.',
+    );
+    expect(RECENT_CHANGES_SHOWN).toBe(10);
   });
 
   test('a node restarting for a change softens the headline instead of turning it red', () => {
@@ -884,5 +926,16 @@ describe('a refused adoption', () => {
     expect(adoptRefusalWords('servers.node_exists', modes)).toBe(
       serverErrorWords('servers.node_exists'),
     );
+  });
+});
+
+describe('groupLine', () => {
+  test('a group carrying its own transport says only its members', () => {
+    expect(groupLine('Freedom-Reality', ['FREEDOM_REALITY'], 11)).toBe('11 members');
+    expect(groupLine('Freedom-Reality', ['FREEDOM_REALITY', 'FREEDOM_XHTTP'], 1)).toBe(
+      'Also Freedom XHTTP · 1 member',
+    );
+    expect(groupLine('Legacy', ['VLESS_TCP'], null)).toBe('VLESS TCP');
+    expect(groupLine('Empty', [null], 0)).toBe('No transports · 0 members');
   });
 });

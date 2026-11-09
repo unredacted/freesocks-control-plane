@@ -56,7 +56,7 @@
     type ProbeRange,
   } from '@client/lib/edgesApi';
   import { serverKeys, serverSummaryQuery } from '@client/lib/serversApi';
-  import { nodeHomeOf } from '../../servers/lib/routes';
+  import { nodeHomeOf, serversPaths } from '../../servers/lib/routes';
   import ActionNeeded from '../../servers/overview/ActionNeeded.svelte';
   import AutomaticWork from '../../servers/overview/AutomaticWork.svelte';
   import BackendFeed, { type BackendReport } from '../../servers/overview/BackendFeed.svelte';
@@ -465,7 +465,10 @@
   <RecentActivity entries={activity} />
 
   <footer class="text-muted-foreground border-t pt-4 text-sm">
-    <Link href={edgesPaths.overview()} class="hover:text-foreground underline underline-offset-4">
+    <Link
+      href={serversPaths.nodes({ show: 'fronted' })}
+      class="hover:text-foreground underline underline-offset-4"
+    >
       All fronted nodes
     </Link>
   </footer>

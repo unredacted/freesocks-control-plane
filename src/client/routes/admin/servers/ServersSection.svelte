@@ -18,12 +18,12 @@
   import ServersHome from './ServersHome.svelte';
   import ServersNav from './components/ServersNav.svelte';
   import SettingsNav from './components/SettingsNav.svelte';
-  import { pickInstance, resolveSectionRoute, tabOf } from './lib/routes';
+  import { backendOf, resolveSectionRoute, tabOf } from './lib/routes';
 
   const section = $derived(resolveSectionRoute(router.pathname));
   const summary = serverSummaryQuery();
-  // The Nodes tab keeps the backend server the URL selects.
-  const backend = $derived(pickInstance(router.search, summary.data?.instances ?? []) ?? undefined);
+  // The Nodes tab keeps the backend server the URL names (none: every backend).
+  const backend = $derived(backendOf(router.search, summary.data?.instances ?? []) ?? undefined);
 </script>
 
 <AdminLayout>
