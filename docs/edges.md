@@ -2369,18 +2369,55 @@ published / standby / draining -> in use / spare / retiring, rotate -> replace a
 qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
 `src/client/lib/edgeCodes.ts`):
 
-- **Overview** (`/admin/servers`, `EdgesHome`, the Overview tab): one status sentence with a dot ("All 6
-  nodes fronted" / "1 node needs attention" / "Setting up 1 node"), the **Action needed** rows from
-  `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
-  and renders the same card for whatever comes back pending), one row per fronted node
-  (name, country, one sentence, dot; a live run shows "Setting up, step N of 4" and opens its
-  progress; a backend node's row opens its Servers node page). A row that waits on the operator
-  says what is wrong and what to do (the item's label, then the first sentence of its fix, or
-  the run's next step from `lib/runNeedWords.ts`), never only that action is needed. Then the
-  primary **Front a node**, and the automatic replacement switch (`POST
-automation`; while it is off, a card with the cost and limitation sentences shows once a node is
-  live, and the same offer sits on a run's Live card).
-  `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.
+- **Overview** (`/admin/servers`, `EdgesHome`, the Overview tab): "Is anything wrong, and what do I
+  do?" It asks nothing of the server for itself: it reads what the other tabs read, and
+  `servers/overview/overviewModel.ts` (pure, unit-tested) merges it. Each backend's own queries
+  and each fronted node's timeline run in a component that draws nothing (`BackendFeed`,
+  `TimelineFeed`) and hand their data up, sharing the other pages' cache. Top to bottom:
+  - **One status sentence** with a dot and "Updated N s ago": nodes online across every
+    backend, how many are fronted (the attention response's `fleet`), and how many things need
+    you ("6 nodes online, 4 fronted. 2 things need you."; a loaded empty fleet reads "0
+    fronted"). A backend whose last panel read failed is not counted (its cached `online` flags
+    are not current). Red for a critical row or no node reachable, amber for any row, a node
+    offline, or a source that could not be read. "Updated N s ago" is the oldest read of
+    everything shown (edge summary and attention, countries, providers, each backend's queries).
+  - **Action needed**, ONE list, most urgent first (critical, warning, info; within one
+    severity the server's order of edge attention is kept, then the backends, countries and
+    providers): every `attention` item (drawn by `AttentionList`, so its words, confirms and
+    calls are unchanged; the endpoint test opens the test card at the top of the list, go-live
+    calls `require-edges` and renders the same card for whatever comes back pending; when
+    `attention` cannot be read, its error and Retry show inline and the other rows still list);
+    each backend's failed panel read ("The panel could not be read"), holds (Release), setup, stored keys that do not match, edits made on the backend
+    (Seen it), addresses that point at nothing, changes of unknown outcome, port changes waiting
+    on you, and switched-on nodes that serve members without being enrolled; SNI lists that need you
+    (`namesNeedsYou`); countries where a node has no working address or a location set for it is
+    blocked; provider accounts at or close to their cost cap. A chip names the backend (only
+    with more than one), the country, the provider or "SNIs". Five rows, then "Show all".
+  - **Readiness** (the fleet `setup-status` checklist), only while setup is incomplete.
+  - **Automatic work**: the fleet switches in one place, each with one line saying what it does
+    and calling what its Settings card calls: Automatic replacement (`POST automation`; the line
+    under it says when spares or probes are left to you), New work running or paused (`POST
+maintenance/freeze` / `thaw`, behind a confirm; a reason is given from Settings), Freedom
+    modes only through edges (`POST freedom`; turning it on reads `freedom/preview` first and the
+    confirm says what it holds back), and, with a backend, Read panels every 10 minutes and
+    Changes from here (`PATCH servers config`, `manage.observe` / `manage.enabled`).
+  - **Four tiles**, each opening its tab: Nodes (online · fronted · at risk, a fronted node
+    whose status dot is red), Countries (with a block now), Spend a month (each account's
+    monthly estimate over its live addresses, switched-off accounts included as their live
+    addresses still bill, against the switched-on accounts' caps, per currency, never added
+    across currencies; there is no month-to-date figure), Probe budget (runs in the last hour against
+    `probe.hourlyBudget`).
+  - **Fronted nodes**: one row per fronted node (name, country, one sentence, dot; a live run
+    shows "Setting up, step N of 4" and opens its progress; a backend node's row opens its
+    Servers node page). A row that waits on the operator says what is wrong and what to do (the
+    item's label, then the first sentence of its fix, or the run's next step from
+    `lib/runNeedWords.ts`), never only that action is needed. With none, the primary **Front a
+    node** offer. While automatic replacement is off, a card with the cost and limitation
+    sentences shows once a node is live (the same offer sits on a run's Live card).
+  - **Recent activity**: one timeline, newest first, of every fronted node's runs and
+    replacements (its `timeline`, without probe and country results) and every backend's recent
+    changes (repeats folded), ten lines.
+    `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.
 - **Front a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
   progress. Which node (a backend's nodes; already fronted ones greyed; the plan from `POST
 setup-runs/plan` lists the transports in words, a closed "Not supported yet" disclosure and a

@@ -1,20 +1,30 @@
 <script lang="ts">
   /**
-   * Overview (`/admin/servers`, the first tab of the Servers tab bar): one
-   * status sentence, Action needed, one row per fronted node, "Front a node". URL state: `?protect=1` opens the
-   * protect sheet (`&server=<slug>&node=<uuid>` preselect a node, as the Servers
-   * page links to it), `?run=<id>` opens a run's progress.
+   * Overview (`/admin/servers`, the first tab of the Servers tab bar): "Is
+   * anything wrong, and what do I do?" One status sentence, ONE Action needed
+   * list, readiness while setup is incomplete, the Automatic work switches,
+   * four tiles, the fronted nodes, and recent activity. URL state: `?protect=1`
+   * opens the protect sheet (`&server=<slug>&node=<uuid>` preselect a node, as
+   * the Nodes page links to it), `?run=<id>` opens a run's progress.
    *
-   * The technical dashboard this replaced lives on under Advanced (All origins).
-   * Every status (the headline, each row) is the server's ONE judgement: the
-   * attention response's `fleet` and `origins[]`, worded by lib/statusWords.ts.
-   * A backend node's row opens its Servers node page (its one page).
+   * Nothing here is asked of the server for this page alone: it reads what the
+   * other tabs read (edge attention and summary, each backend's tree, intents,
+   * setup, SNI transports, port changes and changes, the countries summary,
+   * the provider accounts, the last hour of probes) and
+   * ../../servers/overview/overviewModel.ts merges it (pure, unit-tested). Each
+   * backend's queries and each fronted node's timeline run in a component that
+   * draws nothing (BackendFeed, TimelineFeed) and hands its data up.
    *
-   * The "Turn on automatic protection" offer appears once a node is live (and on
-   * the Live card of a run), never on the empty home. The switch reads ON when a
-   * blocked address can be replaced on its own (the master switch and automatic
-   * rotation); a line under it says when spares or probes are left to you (a test
-   * deployment keeps spares by hand), so turning it "on" never undoes that.
+   * Edge statuses (each fronted node's row) are the server's ONE judgement: the
+   * attention response's `origins[]`, worded by lib/statusWords.ts. A backend
+   * node's row opens its Servers node page (its one page).
+   *
+   * The "Turn on automatic replacement" offer appears once a node is live (and
+   * on the Live card of a run), never on the empty home. The switch reads ON
+   * when a blocked address can be replaced on its own (the master switch and
+   * automatic rotation); a line under it says when spares or probes are left to
+   * you (a test deployment keeps spares by hand), so turning it "on" never
+   * undoes that.
    *
    * The headline and the rows keep themselves current (lib/livePoll.ts);
    * "Updated N s ago" beside the headline reads them again now.
@@ -24,36 +34,55 @@
   import Plus from '@lucide/svelte/icons/plus';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import { Switch } from '@client/components/ui/switch';
-  import { Label } from '@client/components/ui/label';
   import Link from '@client/components/Link.svelte';
   import { router } from '@client/stores/router.svelte';
   import { searchParam, setSearchParams } from '@client/lib/urlState.svelte';
   import {
     attentionQuery,
     clientCheckStatusQuery,
+    countryViewSummaryQuery,
     edgeConfigQuery,
     edgeKeys,
     edgeSummaryQuery,
     invalidateConfig,
     invalidateOverview,
     invalidateRelay,
+    probeSummaryQuery,
+    providersQuery,
     requireRelayEdges,
     retrySetupRun,
     setEdgeAutomation,
+    setupStatusQuery,
+    type ProbeRange,
   } from '@client/lib/edgesApi';
-  import { serverSummaryQuery } from '@client/lib/serversApi';
+  import { serverKeys, serverSummaryQuery } from '@client/lib/serversApi';
   import { nodeHomeOf } from '../../servers/lib/routes';
+  import ActionNeeded from '../../servers/overview/ActionNeeded.svelte';
+  import AutomaticWork from '../../servers/overview/AutomaticWork.svelte';
+  import BackendFeed, { type BackendReport } from '../../servers/overview/BackendFeed.svelte';
+  import OverviewTiles from '../../servers/overview/OverviewTiles.svelte';
+  import RecentActivity from '../../servers/overview/RecentActivity.svelte';
+  import TimelineFeed from '../../servers/overview/TimelineFeed.svelte';
+  import {
+    mergeActivity,
+    mergeAttention,
+    overviewTiles,
+    atRiskCount,
+    frontedCount,
+    oldestRead,
+    statusSentence,
+    type TimelineEntryInput,
+  } from '../../servers/overview/overviewModel';
   import AdminListState from '../../AdminListState.svelte';
   import UpdatedAgo from '../../UpdatedAgo.svelte';
-  import AttentionList from '../components/AttentionList.svelte';
+  import ReadinessChecklist from '../components/ReadinessChecklist.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import type { AttentionItem } from '../lib/attention';
   import { runAttentionCall } from '../lib/attentionCalls';
   import { attentionCallDeps } from '../lib/attentionCallDeps';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
-  import { fleetSentence, statusOf } from '../lib/statusWords';
+  import { statusOf } from '../lib/statusWords';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import NodeRow from './NodeRow.svelte';
   import ProtectSheet from './ProtectSheet.svelte';
@@ -65,6 +94,11 @@
   const attention = attentionQuery();
   const config = edgeConfigQuery();
   const servers = serverSummaryQuery();
+  const setup = setupStatusQuery(() => null);
+  const countries = countryViewSummaryQuery();
+  const providers = providersQuery();
+  const HOUR: ProbeRange = { kind: 'window', windowMs: 3_600_000 };
+  const probeHour = probeSummaryQuery(() => HOUR);
 
   const protectParam = searchParam('protect');
   const runParam = searchParam('run');
@@ -72,12 +106,76 @@
   const nodeParam = searchParam('node');
   const sheetOpen = $derived(protectParam.value === '1' || runParam.value !== '');
 
-  const items = $derived(attention.data?.items ?? []);
   const rows = $derived(
     [...(summary.data?.relays ?? [])].sort((a, b) => a.relay.slug.localeCompare(b.relay.slug)),
   );
   const statuses = $derived(rows.map((r) => statusOf(attention.data?.origins, r.relay.slug)));
-  const fleet = $derived(attention.data?.fleet ?? null);
+  // The server's fleet counts only plain `protected` origins; a fronted node with a
+  // warning is still fronted (its warning is "at risk" and Action needed).
+  const fleet = $derived(
+    attention.data?.fleet
+      ? { ...attention.data.fleet, protected: frontedCount(attention.data.origins ?? []) }
+      : null,
+  );
+
+  // Each observable backend's own queries (BackendFeed) and each fronted node's
+  // timeline (TimelineFeed) hand their data up here, keyed by slug.
+  const feedBackends = $derived((servers.data?.instances ?? []).filter((i) => i.observable));
+  const reports = $state<Record<string, BackendReport>>({});
+  function onBackendReport(slug: string, report: BackendReport | null) {
+    if (report) reports[slug] = report;
+    else delete reports[slug];
+  }
+  const timelines = $state<Record<string, readonly TimelineEntryInput[]>>({});
+  function onTimeline(slug: string, entries: readonly TimelineEntryInput[] | null) {
+    if (entries) timelines[slug] = entries;
+    else delete timelines[slug];
+  }
+  const backendReports = $derived(
+    feedBackends.map((i) => reports[i.slug]).filter((r): r is BackendReport => !!r),
+  );
+
+  const actionRows = $derived(
+    mergeAttention({
+      // A failed read shows inline in Action needed; its stale items are not listed.
+      edge: attention.isError ? [] : (attention.data?.items ?? []),
+      backends: backendReports.map((r) => r.input),
+      countries: countries.data?.countries ?? [],
+      providers: providers.data?.accounts ?? [],
+      now: Date.now(),
+    }),
+  );
+  const nodeCounts = $derived.by(() => {
+    const read = backendReports.flatMap((r) => (r.nodes ? [r.nodes] : []));
+    if (read.length === 0) return null;
+    return {
+      online: read.reduce((a, n) => a + n.online, 0),
+      total: read.reduce((a, n) => a + n.total, 0),
+    };
+  });
+  const headline = $derived(
+    statusSentence({
+      nodes: nodeCounts,
+      fleet,
+      rows: actionRows,
+      incomplete: attention.isError,
+      nodesUnread: backendReports.some((r) => r.input.readFailed),
+    }),
+  );
+  const tiles = $derived(
+    overviewTiles({
+      nodes: nodeCounts,
+      fleet,
+      atRisk: attention.data ? atRiskCount(attention.data.origins) : null,
+      countries: countries.data?.countries ?? null,
+      providers: providers.data?.accounts ?? null,
+      probe: {
+        usedLastHour: probeHour.data?.totals.runs ?? null,
+        hourlyBudget: config.data?.config.probe.hourlyBudget ?? null,
+        enabled: config.data?.config.probe.enabled ?? null,
+      },
+    }),
+  );
   const autoState = $derived(config.data ? automationState(config.data.config) : null);
   const automation = $derived(autoState ? autoState.replaces : null);
   const autoNote = $derived(autoState ? automationNote(autoState) : null);
@@ -87,16 +185,44 @@
   const clientCheckReady = $derived(
     clientCheckStatus.data?.configured === true && clientCheckStatus.data.health?.ok === true,
   );
-  const updatedAt = $derived(Math.min(summary.dataUpdatedAt, attention.dataUpdatedAt));
+  // The oldest read of everything shown, so the line never claims fresher data.
+  const updatedAt = $derived(
+    oldestRead([
+      summary.dataUpdatedAt,
+      attention.dataUpdatedAt,
+      countries.dataUpdatedAt,
+      providers.dataUpdatedAt,
+      ...backendReports.map((r) => r.updatedAt),
+    ]),
+  );
   const refreshNow = () =>
     Promise.all([
       qc.refetchQueries({ queryKey: edgeKeys.summary, type: 'active' }),
       qc.refetchQueries({ queryKey: edgeKeys.attention, type: 'active' }),
+      qc.refetchQueries({ queryKey: serverKeys.all, type: 'active' }),
+      qc.refetchQueries({ queryKey: edgeKeys.countryViewSummary, type: 'active' }),
+      qc.refetchQueries({ queryKey: edgeKeys.providersList, type: 'active' }),
     ]);
   const anyLive = $derived(statuses.some((s) => s?.kind === 'protected'));
   /** A backend node's one page (Servers), else the edges page of the origin. */
   const rowHref = (row: (typeof rows)[number]) =>
     nodeHomeOf(row.relay.origin, servers.data?.instances) ?? edgesPaths.node(row.relay.slug);
+  const rowName = (row: (typeof rows)[number]) =>
+    row.relay.label ??
+    (row.relay.origin.kind === 'panel-node' ? row.relay.origin.nodeName : row.relay.slug);
+  const activity = $derived(
+    mergeActivity({
+      timelines: rows.flatMap((r) => {
+        const entries = timelines[r.relay.slug];
+        return entries ? [{ slug: r.relay.slug, name: rowName(r), href: rowHref(r), entries }] : [];
+      }),
+      backends: feedBackends.flatMap((i) => {
+        const r = reports[i.slug];
+        return r ? [{ slug: i.slug, name: i.name, ops: r.ops }] : [];
+      }),
+      max: 10,
+    }),
+  );
 
   // The test card opened from a "Needs you" row (a spare, a retest, a go-live check).
   let testEdgeIds = $state<string[]>([]);
@@ -169,10 +295,21 @@
   }
 </script>
 
-<SectionHeader
-  title="Overview"
-  description="Members reach these nodes through provider addresses. FCP replaces an address when it stops working."
->
+{#each feedBackends as b (b.slug)}
+  <BackendFeed
+    slug={b.slug}
+    name={b.name}
+    writable={b.writable}
+    setUp={b.setUp}
+    manageOn={servers.data?.config['manage.enabled'] ?? false}
+    onReport={onBackendReport}
+  />
+{/each}
+{#each rows as r (r.relay.id)}
+  <TimelineFeed id={r.relay.id} slug={r.relay.slug} onReport={onTimeline} />
+{/each}
+
+<SectionHeader title="Overview" description="What needs you, and the switches that run the fleet.">
   {#snippet actions()}
     {#if rows.length > 0}
       <Button onclick={openProtect}>
@@ -188,22 +325,25 @@
     <Skeleton class="h-6 w-64" />
   {:else if summary.isError}
     <AdminListState error={summary.error} onRetry={() => void summary.refetch()} />
-  {:else if fleet}
+  {:else}
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
       <p class="flex items-center gap-2 text-lg font-medium" role="status">
-        <StatusDot dot={fleet.dot} class="size-3" />
-        {fleetSentence(fleet)}
+        <StatusDot dot={headline.dot} class="size-3" />
+        {headline.text}
       </p>
       <UpdatedAgo at={updatedAt} onRefresh={refreshNow} />
     </div>
   {/if}
 
-  {#if attention.isError}
-    <AdminListState error={attention.error} onRetry={() => void attention.refetch()} />
-  {:else if items.length > 0 || testEdgeIds.length > 0}
-    <section aria-labelledby="needs-you">
-      <h2 id="needs-you" class="mb-3 text-base font-semibold">Action needed</h2>
-      <div class="space-y-3">
+  {#if !attention.isPending}
+    <!-- A failed edge attention read shows inline; the other sources' rows still list. -->
+    <ActionNeeded
+      rows={actionRows}
+      {onAction}
+      edgeError={attention.isError ? attention.error : null}
+      onEdgeRetry={() => void attention.refetch()}
+    >
+      {#snippet top()}
         {#if testEdgeIds.length > 0}
           <EndpointTestCard
             edgeIds={testEdgeIds}
@@ -240,10 +380,28 @@
             }}
           />
         {/if}
-        <AttentionList {items} {onAction} max={5} plain />
-      </div>
+      {/snippet}
+    </ActionNeeded>
+  {/if}
+
+  {#if setup.data && !setup.data.complete}
+    <section aria-labelledby="readiness">
+      <h2 id="readiness" class="mb-1 text-base font-semibold">Readiness</h2>
+      <p class="text-muted-foreground mb-3 text-sm">
+        What is left before addresses can be replaced on their own.
+      </p>
+      <ReadinessChecklist status={setup.data} compact />
     </section>
   {/if}
+
+  <AutomaticWork
+    {automation}
+    automationNote={autoNote}
+    {automationBusy}
+    onAutomation={(v) => void setAutomation(v)}
+  />
+
+  <OverviewTiles {tiles} />
 
   {#if summary.data && rows.length === 0}
     <div class="rounded-lg border border-dashed p-8 text-center">
@@ -257,7 +415,8 @@
       </Button>
     </div>
   {:else if rows.length > 0}
-    <section aria-label="Fronted nodes">
+    <section aria-labelledby="fronted-nodes">
+      <h2 id="fronted-nodes" class="mb-3 text-base font-semibold">Fronted nodes</h2>
       <ul class="space-y-2">
         {#each rows as row, i (row.relay.id)}
           <li>
@@ -303,31 +462,11 @@
     </section>
   {/if}
 
-  <footer
-    class="text-muted-foreground flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-sm"
-  >
-    {#if automation !== null}
-      <div class="space-y-1">
-        <div class="flex items-center gap-3">
-          <Switch
-            id="automation-switch"
-            checked={automation}
-            disabled={automationBusy}
-            onCheckedChange={(v) => void setAutomation(v)}
-          />
-          <Label for="automation-switch" class="font-normal">
-            Automatic replacement is {automation ? 'on' : 'off'}
-          </Label>
-        </div>
-        {#if autoNote}
-          <p class="max-w-prose text-xs">{autoNote}</p>
-        {/if}
-      </div>
-    {:else}
-      <span></span>
-    {/if}
+  <RecentActivity entries={activity} />
+
+  <footer class="text-muted-foreground border-t pt-4 text-sm">
     <Link href={edgesPaths.overview()} class="hover:text-foreground underline underline-offset-4">
-      All origins
+      All fronted nodes
     </Link>
   </footer>
 </div>
