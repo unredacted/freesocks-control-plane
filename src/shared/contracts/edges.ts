@@ -2081,7 +2081,8 @@ const noCoverage = { asked: false, windowMs: 0, sources: [] };
  * for: `eyeball` home-network probes only, `topped_up` with data-centre ones
  * (too few home-network probes for a verdict), `any` probe. `eyeball` /
  * `total` = the country's home-network / all probes in Globalping's listing
- * then, `limit` = asked for, `needs` = the vantages a verdict needs. Only
+ * then, `limit` = asked for, `needs` = the vantages a verdict needs,
+ * `networks` = the network setting then (`edge.probe.networks`). Only
  * while it still describes the checks (lib/edges/sni/namePool.ts).
  */
 export const CountryViewNamePool = z.object({
@@ -2091,7 +2092,7 @@ export const CountryViewNamePool = z.object({
   total: z.number(),
   limit: z.number(),
   needs: z.number(),
-  preferEyeball: z.boolean(),
+  networks: z.enum(['home', 'home_first', 'any']),
 });
 export type CountryViewNamePool = z.infer<typeof CountryViewNamePool>;
 
@@ -2633,7 +2634,7 @@ export const EdgeConfigView = z.object({
           perCountryLimit: z.number(),
           hourlyBudget: z.number(),
           agreementVantages: z.number(),
-          preferEyeball: z.boolean(),
+          networks: z.enum(['home', 'home_first', 'any']),
         })
         .passthrough(),
     })

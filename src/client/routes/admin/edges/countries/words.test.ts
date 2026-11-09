@@ -702,13 +702,17 @@ describe('the whole path of an address', () => {
 
 describe('namePoolLines', () => {
   const at = Date.parse('2026-11-05T00:00:00Z');
-  const base = { at, limit: 3, needs: 3, preferEyeball: true };
+  const base = { at, limit: 3, needs: 3, networks: 'home_first' as const };
   it('says nothing before a batch, or where home-network probes were enough', () => {
     expect(W.namePoolLines(null)).toEqual([]);
     expect(W.namePoolLines({ ...base, mode: 'eyeball', eyeball: 30, total: 40 })).toEqual([]);
-    // The preference off: nothing to say about home networks.
+    // Any network: nothing to say about home networks.
     expect(
-      W.namePoolLines({ ...base, preferEyeball: false, mode: 'any', eyeball: 0, total: 9 }),
+      W.namePoolLines({ ...base, networks: 'any', mode: 'any', eyeball: 0, total: 9 }),
+    ).toEqual([]);
+    // Home only with enough of them: nothing either.
+    expect(
+      W.namePoolLines({ ...base, networks: 'home', mode: 'eyeball', eyeball: 3, total: 9 }),
     ).toEqual([]);
   });
 
@@ -727,9 +731,23 @@ describe('namePoolLines', () => {
     );
     expect(lines[1]).toMatch(/stay not judged/);
     for (const l of lines) expect(l).not.toMatch(/—|_/);
-    // The same holds with the preference off.
+    // The same holds under any network.
     expect(
-      W.namePoolLines({ ...base, preferEyeball: false, mode: 'any', eyeball: 0, total: 1 }),
+      W.namePoolLines({ ...base, networks: 'any', mode: 'any', eyeball: 0, total: 1 }),
     ).toHaveLength(1);
+  });
+
+  it('home networks only, too few of them: says checks may not reach a verdict and how to top them up', () => {
+    const lines = W.namePoolLines({
+      ...base,
+      networks: 'home',
+      mode: 'eyeball',
+      eyeball: 2,
+      total: 9,
+    });
+    expect(lines).toEqual([
+      'Globalping has only 2 home-network probes here, fewer than the 3 vantages a verdict needs. Probes come from home networks only, so checks from here may not reach a verdict. "Home networks first" in the probe settings tops them up with data centres.',
+    ]);
+    for (const l of lines) expect(l).not.toMatch(/—|_|names|meant for/);
   });
 });

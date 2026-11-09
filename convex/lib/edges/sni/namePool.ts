@@ -8,6 +8,7 @@
  */
 import type { DatabaseReader } from '../../../_generated/server';
 import type { NamePool } from '../probes/nameCheck';
+import { PROBE_NETWORKS, type ProbeNetworks } from '../probes/networks';
 
 export const namePoolKey = (country: string) => `sniVantage:namePool:${country}`;
 
@@ -34,7 +35,18 @@ export function parseNamePool(value: string): NotedNamePool | null {
   const needs = count(raw.needs);
   if (at === null || eyeball === null || total === null || limit === null || needs === null)
     return null;
-  if (typeof raw.preferEyeball !== 'boolean') return null;
+  // A note from before `edge.probe.networks` carried the old switch: on asked
+  // home networks first and topped up, off asked any probe.
+  const networks: ProbeNetworks | null = (PROBE_NETWORKS as readonly unknown[]).includes(
+    raw.networks,
+  )
+    ? (raw.networks as ProbeNetworks)
+    : typeof raw.preferEyeball === 'boolean'
+      ? raw.preferEyeball
+        ? 'home_first'
+        : 'any'
+      : null;
+  if (networks === null) return null;
   return {
     at,
     mode: raw.mode as NamePool['mode'],
@@ -42,7 +54,7 @@ export function parseNamePool(value: string): NotedNamePool | null {
     total,
     limit,
     needs,
-    preferEyeball: raw.preferEyeball,
+    networks,
   };
 }
 
@@ -64,7 +76,7 @@ const MIN_FRESH_MS = 24 * 3_600_000;
  * The note while it still describes the checks: Globalping is still a name
  * check source, the note is newer than two check intervals (a country with
  * names on a published address gets a batch at least once an interval), and
- * the limit, the floor and the home-network preference are what they were.
+ * the limit, the floor and the network setting are what they were.
  * Otherwise null: the page says nothing rather than something stale.
  */
 export function currentNamePool(
@@ -74,13 +86,13 @@ export function currentNamePool(
     globalping: boolean;
     limit: number;
     needs: number;
-    preferEyeball: boolean;
+    networks: ProbeNetworks;
     intervalHours: number;
   },
 ): NotedNamePool | null {
   if (!note || !now.globalping) return null;
   if (now.at - note.at > Math.max(MIN_FRESH_MS, 2 * now.intervalHours * 3_600_000)) return null;
   if (note.limit !== Math.max(1, Math.min(now.limit, 10))) return null;
-  if (note.needs !== now.needs || note.preferEyeball !== now.preferEyeball) return null;
+  if (note.needs !== now.needs || note.networks !== now.networks) return null;
   return note;
 }
