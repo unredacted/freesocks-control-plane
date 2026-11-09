@@ -76,6 +76,8 @@ const name = (over: Partial<CountryViewName> = {}): CountryViewName => ({
   lists: null,
   name: 'n.example',
   family: 'f',
+  familyLabel: null,
+  blockedElsewhere: [],
   status: 'active',
   drainUntil: null,
   qualified: true,

@@ -5110,6 +5110,19 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   (§ Real-host controls) and member reports are shown beside it, and `offered` says whether a
   member there may be handed it (an `hrw1` listener never hands a name blocked there). Each
   address also lists what the real-host controls of the names measured on it said.
+- **The SNIs of a country** (`snis`, detail route; pure `countrySnis` in
+  `lib/edges/country/view.ts`): every active server name of the transports members there are
+  handed (an L4 address of it is handed to some of the sampled members: an L7 front presents its
+  own hostname, which shows with its addresses, and nothing rendered hands out no name), once
+  over every node, with its name list (slug and label), its state there and basis (as above), the
+  largest share of members there handed it, how many transports offer it, and where it is used,
+  from the marks copied on the transport (what selection reads, § Names for the member's
+  country): `shared` (blocked in no other censored country), `some` (blocked in some:
+  `blockedElsewhere` names them), `only_here` (blocked in every other one) or `not_here`
+  (blocked there, so members there never get it). Built from the views already made: no further
+  read. A country off the list gets the shared names only, so it has none. The summary counts
+  them per country (`snis {used, onlyHere}`). Each name row of a transport carries
+  `familyLabel` and `blockedElsewhere` too.
 - **What a member there is handed** is `assignEndpoints` itself, run over 240 fixed synthetic
   render keys, one listener at a time (every other listener's edges ineligible, as in a body
   carrying only that transport), with the deployment's render rule for the `other` family as a

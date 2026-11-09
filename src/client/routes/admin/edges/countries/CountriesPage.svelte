@@ -24,6 +24,7 @@
     switchNotes,
     totalsLine,
   } from './words';
+  import { sniSummaryLine } from './sniWords';
 
   const summary = countryViewSummaryQuery();
   let now = $derived(summary.data?.generatedAt ?? Date.now());
@@ -114,9 +115,10 @@
                     ? 'One location is meant for it.'
                     : `${c.meantFor.locations} locations are meant for it.`}
                 {/if}
+                {sniSummaryLine(c.snis, c.country) ?? ''}
                 {c.listed.nameChecksRun
-                  ? 'Names are checked from inside.'
-                  : 'Names are not checked from inside.'}
+                  ? 'SNIs are checked from inside.'
+                  : 'SNIs are not checked from inside.'}
                 {c.totals.lastEvidenceAt
                   ? `Newest evidence ${relativeTime(c.totals.lastEvidenceAt, now)}.`
                   : 'No evidence yet.'}
