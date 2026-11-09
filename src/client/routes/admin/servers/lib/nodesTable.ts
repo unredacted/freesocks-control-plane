@@ -25,6 +25,7 @@
  *   filterCounts(rows) -> count per filter
  *   addressesWords(origin, status) -> "3 fronted, 1 spare" / "Direct" / ...
  *   pickStatus(candidates) -> the most urgent { dot, sentence }
+ *   waitsForWipe(intent), tableState(queries), setupsStopped(before, now)
  *   rowHref(row) -> the node's page, or the origin's own page
  *
  * The old All origins query becomes the Nodes query in ../../edges/lib/routes.ts
@@ -125,6 +126,45 @@ export interface BuildInput {
   backends: readonly BackendInput[];
   origins: readonly OriginRow[];
   statuses: ReadonlyMap<string, OriginStatus>;
+  /**
+   * Backends (by id) the page does not show (the Backend chip keeps another
+   * one): their nodes' origins are left out, never listed as stray origins.
+   */
+  hiddenBackendIds?: ReadonlySet<string>;
+}
+
+/**
+ * An adopted node whose retirement waits at the wipe: nothing reports a wipe
+ * the role never runs, so it waits for the admin's "The machine is gone".
+ */
+export function waitsForWipe(
+  intent: Pick<NodeIntentView, 'adopted' | 'retirement'> | null,
+): boolean {
+  return !!intent?.adopted && intent.retirement?.stage === 'ready_to_wipe';
+}
+
+/**
+ * What the Nodes table can show: `loading` until every query it reads has
+ * answered once, then `error` (naming the first that failed, so the page can
+ * offer Retry for it) or `ready`. A failed origin status read is an error, not
+ * an empty status: without it every fronted row would lose its sentence and
+ * Action needed its origin problems.
+ */
+export function tableState<K extends string>(
+  queries: ReadonlyArray<readonly [K, { isPending: boolean; isError: boolean }]>,
+): { kind: 'loading' } | { kind: 'error'; failed: K } | { kind: 'ready' } {
+  const failed = queries.find(([, q]) => q.isError);
+  if (failed) return { kind: 'error', failed: failed[0] };
+  if (queries.some(([, q]) => q.isPending)) return { kind: 'loading' };
+  return { kind: 'ready' };
+}
+
+/** The backends whose setup run was running before and is not now (each needs a fresh read). */
+export function setupsStopped(
+  before: ReadonlyMap<string, boolean>,
+  now: ReadonlyMap<string, boolean>,
+): string[] {
+  return [...before].filter(([slug, was]) => was && !now.get(slug)).map(([slug]) => slug);
 }
 
 const RANK: Record<RowDot, number> = { red: 4, amber: 3, blue: 2, grey: 1, green: 0 };
@@ -238,6 +278,7 @@ export function buildNodeRows(input: BuildInput): NodeRow[] {
         attention:
           picked.dot === 'red' ||
           picked.dot === 'amber' ||
+          waitsForWipe(intent) ||
           (b.attentionNodes?.has(node.nodeUuid) ?? false) ||
           originAttention(origin, status),
         retiring,
@@ -270,7 +311,7 @@ export function buildNodeRows(input: BuildInput): NodeRow[] {
         status,
         dot: st.dot,
         sentence: st.sentence,
-        attention: st.dot === 'amber' || st.dot === 'red',
+        attention: st.dot === 'amber' || st.dot === 'red' || waitsForWipe(intent),
         retiring: true,
         adoptable: false,
         runId: null,
@@ -282,6 +323,7 @@ export function buildNodeRows(input: BuildInput): NodeRow[] {
   for (const origin of input.origins) {
     if (claimed.has(origin.relay.id)) continue;
     const ref = origin.relay.origin;
+    if (ref.kind === 'panel-node' && input.hiddenBackendIds?.has(ref.backendServerId)) continue;
     const status = statusOf(origin);
     const words = originStatusWords(status);
     const backendRow =

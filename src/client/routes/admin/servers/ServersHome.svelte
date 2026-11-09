@@ -86,6 +86,8 @@
     filterNodeRows,
     parseLayer,
     parseShow,
+    setupsStopped,
+    tableState,
     type BackendInput,
     type NodeFilter,
     type NodeRow,
@@ -118,10 +120,13 @@
   const multi = $derived(instances.length > 1);
   const backend = $derived(backendOf(router.search, instances));
   const observable = $derived(instances.filter((i) => i.observable));
-  const slugs = $derived(observable.map((i) => i.slug));
-  // The backends the page shows (the Backend chip keeps one).
+  // The backends the page shows (the Backend chip keeps one): only they are read.
   const shownBackends = $derived(
     backend ? observable.filter((i) => i.slug === backend) : observable,
+  );
+  const slugs = $derived(shownBackends.map((i) => i.slug));
+  const hiddenBackendIds = $derived(
+    new Set(backend ? instances.filter((i) => i.slug !== backend).map((i) => i.id) : []),
   );
   const trees = serverTreesQuery(() => slugs);
   const intentLists = intentsListsQuery(() => slugs);
@@ -141,7 +146,7 @@
 
   // --- the rows
   const backendInputs = $derived<BackendInput[]>(
-    observable.flatMap((instance, idx) => {
+    shownBackends.flatMap((instance, idx) => {
       const tree = trees[idx]?.data;
       if (!tree) return [];
       const intents = intentLists[idx]?.data?.intents ?? [];
@@ -165,13 +170,22 @@
       backends: backendInputs,
       origins: edgeSummary.data?.relays ?? [],
       statuses,
+      hiddenBackendIds,
     }),
   );
   const backendRows = $derived(filterNodeRows(allRows, { show: 'all', backend }));
   const counts = $derived(filterCounts(backendRows));
   const rows = $derived(filterNodeRows(allRows, { show, layer, query, backend }));
-  const loading = $derived(
-    summary.isPending || edgeSummary.isPending || trees.some((t) => t.isPending),
+  // The origin statuses are part of every fronted row: a failed read is an
+  // error with Retry, never an empty status. A shown backend's tree that fails
+  // says so in its own status above (BackendStatus).
+  const table = $derived(
+    tableState([
+      ['summary', summary],
+      ['edges', edgeSummary],
+      ['attention', attention],
+      ...trees.map((t) => ['tree', { isPending: t.isPending, isError: false }] as const),
+    ]),
   );
   const chips = $derived<NodeFilter[]>(
     technical ? [...NODE_FILTERS, ...TECH_FILTERS] : [...NODE_FILTERS],
@@ -223,11 +237,12 @@
   // A setup run finishes in the background, and only the setup query polls
   // while it runs: when one stops, everything else (the summary's "set up"
   // flag, the trees' groups and transports) is re-read at once.
-  let setupsWereRunning = false;
+  // Per backend: one finishing while another still runs counts too.
+  let setupsRunning = new Map<string, boolean>();
   $effect(() => {
-    const running = setups.some((s) => s.data?.running ?? false);
-    if (setupsWereRunning && !running) invalidateServers(qc);
-    setupsWereRunning = running;
+    const now = new Map(slugs.map((slug, i) => [slug, setups[i]?.data?.running ?? false]));
+    if (setupsStopped(setupsRunning, now).length > 0) invalidateServers(qc);
+    setupsRunning = now;
   });
   // Closing the sheet re-reads too, whatever the run did meanwhile.
   let sheetWasOpen = false;
@@ -421,10 +436,14 @@
       {/if}
     </div>
 
-    {#if loading}
-      <Skeleton class="h-32" />
-    {:else if edgeSummary.isError}
+    {#if table.kind === 'error' && table.failed === 'summary'}
+      <AdminListState error={summary.error} onRetry={() => void summary.refetch()} />
+    {:else if table.kind === 'error' && table.failed === 'edges'}
       <AdminListState error={edgeSummary.error} onRetry={() => void edgeSummary.refetch()} />
+    {:else if table.kind === 'error'}
+      <AdminListState error={attention.error} onRetry={() => void attention.refetch()} />
+    {:else if table.kind === 'loading'}
+      <Skeleton class="h-32" />
     {:else if allRows.length === 0}
       <div class="rounded-lg border border-dashed p-8 text-center">
         <p class="text-muted-foreground mx-auto max-w-prose text-sm">
