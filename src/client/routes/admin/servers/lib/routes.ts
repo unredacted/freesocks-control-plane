@@ -10,7 +10,8 @@
  *   /admin/servers/nodes[?backend=<slug>]           Nodes: the nodes of one backend server
  *   /admin/servers/nodes/:uuid[?backend=<slug>][&test=<edgeId>]
  *                                                   one node: its machine, activation and edges
- *   /admin/servers/settings/backends                Settings -> Backends: the backend servers FCP issues keys on
+ *   /admin/servers/settings/backends[?backend=<slug>]
+ *                                                   Settings -> Backends: the backend servers FCP issues keys on
  *   /admin/servers/settings/mode-pools              Settings -> Mode pools: which mode groups each connection mode issues into
  *
  * Old addresses keep working: legacyRoutes.ts maps them here.
@@ -28,8 +29,9 @@ export const serversPaths = {
   overview: () => SERVERS_ROOT,
   /** The Nodes tab; `backend` selects a backend server by slug. */
   nodes: (opts: { backend?: string } = {}) => withBackend(`${SERVERS_ROOT}/nodes`, opts.backend),
-  /** Settings -> Backends. */
-  backends: () => `${SERVERS_ROOT}/settings/backends`,
+  /** Settings -> Backends; `backend` brings one backend server's row into view. */
+  backends: (opts: { backend?: string } = {}) =>
+    withBackend(`${SERVERS_ROOT}/settings/backends`, opts.backend),
   /** Settings -> Mode pools. */
   pools: () => `${SERVERS_ROOT}/settings/mode-pools`,
   /** One node of a backend (`test` opens the edges panel's test card for that address). */

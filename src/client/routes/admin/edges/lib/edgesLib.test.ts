@@ -122,7 +122,7 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     );
     expect(setupStepTarget('origin', null)).toBe('/admin/servers/origins?new=1');
     expect(setupStepTarget('account', 'relay-a')).toBe('/admin/servers/providers');
-    expect(setupStepTarget('rendering', null)).toBe('/admin/servers/settings?section=rendering');
+    expect(setupStepTarget('rendering', null)).toBe('/admin/servers/settings?group=subscriptions');
   });
   it('lists each pattern once', () => {
     const patterns = EDGES_ROUTES.map(([p]) => p);
@@ -239,7 +239,7 @@ describe('attention', () => {
       '/admin/servers/providers/acc1',
     );
     expect(attentionTarget(item({ action: 'thaw', relaySlug: null }))).toBe(
-      '/admin/servers/settings?section=maintenance',
+      '/admin/servers/settings?group=maintenance',
     );
   });
   it('falls back to the home without a origin', () => {

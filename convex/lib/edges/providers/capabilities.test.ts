@@ -17,6 +17,7 @@ import {
   discoveryMaySettle,
   edgeRoleOf,
   frontsAllowed,
+  isDnsOnly,
   originPortCarriedBy,
   protocolCarriedBy,
   unsupportedTransport,
@@ -103,11 +104,21 @@ const CONFIGS: Record<(typeof EDGE_PROVIDER_IDS)[number], EdgeProviderConfig> = 
       accountId: 'acct',
     },
   },
+  gandi: {
+    type: 'gandi',
+    apiToken: 'SECRET_GANDI',
+    zoneId: 'example.org',
+    zoneName: 'example.org',
+  },
 };
 
 /** L4 providers only (the balancer-shaped tests below); L7 fronts have their own checks. */
 const L4_IDS = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_CAPABILITIES[id].layer === 'l4');
-const L7_IDS = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_CAPABILITIES[id].layer === 'l7');
+/** L7 providers that can front (a DNS-only provider carries nothing: its own test below). */
+const L7_IDS = EDGE_PROVIDER_IDS.filter(
+  (id) => EDGE_PROVIDER_CAPABILITIES[id].layer === 'l7' && !EDGE_PROVIDER_CAPABILITIES[id].dnsOnly,
+);
+const DNS_ONLY_IDS = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_CAPABILITIES[id].dnsOnly);
 
 /** Valid settings per provider WITH a private network where the schema knows one. */
 const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<string, unknown>> = {
@@ -134,6 +145,7 @@ const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<s
     zoneId: '0123456789abcdef0123456789abcdef',
     zoneName: 'example.org',
   },
+  gandi: { zoneId: 'example.org', zoneName: 'example.org' },
 };
 
 const lbLedger: Ledger = {
@@ -265,6 +277,27 @@ describe('origin capability record ⇔ adapters', () => {
     },
   );
 
+  test.each([...DNS_ONLY_IDS])(
+    '%s: a DNS-only provider is a DNS account that carries nothing and builds nothing',
+    async (id) => {
+      const caps = EDGE_PROVIDER_CAPABILITIES[id];
+      expect(caps.role).toBe('dns');
+      expect(caps.providesDns).toBe(true);
+      expect(caps.needsDnsAccount).toBe(false);
+      expect(caps.l7Transports).toEqual([]);
+      for (const c of LISTENER_COMBOS) expect(protocolCarriedBy(id, c), c.key).toBe(false);
+      expect(isDnsOnly(id)).toBe(true);
+      const p = EDGE_PROVIDERS[id];
+      expect(() => p.planProvision(CONFIGS[id] as never, spec, {} as never)).toThrow();
+      expect(p.planDestroy(CONFIGS[id] as never, lbLedger)).toEqual([]);
+      expect(await p.inventory(CONFIGS[id] as never)).toEqual({
+        loadBalancers: [],
+        ips: [],
+        flavors: [],
+      });
+    },
+  );
+
   test('a DNS provider (role dns) hosts DNS and fronts only when its account is set to front', () => {
     for (const id of EDGE_PROVIDER_IDS) {
       const caps = EDGE_PROVIDER_CAPABILITIES[id];
@@ -272,7 +305,8 @@ describe('origin capability record ⇔ adapters', () => {
         expect(caps.providesDns).toBe(true);
         expect(frontsAllowed({ provider: id })).toBe(false);
         expect(frontsAllowed({ provider: id, frontsTraffic: false })).toBe(false);
-        expect(frontsAllowed({ provider: id, frontsTraffic: true })).toBe(true);
+        // A DNS-only provider never fronts, even on a row that says it does.
+        expect(frontsAllowed({ provider: id, frontsTraffic: true })).toBe(!caps.dnsOnly);
       } else {
         // An edge provider's account always fronts, whatever the row says.
         expect(frontsAllowed({ provider: id })).toBe(true);

@@ -183,6 +183,13 @@ describe('AUDIT_PAYLOAD_ALLOWLIST coverage', () => {
       'fromDailyAllocationBudget',
       'dailyAllocationBudget',
     ]);
+    // "Use anyway" on a server name off its list's network: counts, never the hostname or the reason.
+    expect(AUDIT_PAYLOAD_ALLOWLIST['edge.sni.names.use_anyway']).toEqual([
+      'slug',
+      'on',
+      'count',
+      'withReason',
+    ]);
     // "Skip restoring direct": the node and what held it, never the group key.
     expect(AUDIT_PAYLOAD_ALLOWLIST['edge.restore.direct_skipped']).toEqual([
       'relaySlug',

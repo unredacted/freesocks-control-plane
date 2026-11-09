@@ -118,7 +118,7 @@
                   </Button>
                 {:else}
                   <span class="text-muted-foreground text-xs">
-                    {b.state === 'released' ? 'Nothing to do' : 'Delete the relay first'}
+                    {b.state === 'released' ? 'Nothing to do' : 'Delete the origin first'}
                   </span>
                 {/if}
               </Table.Cell>

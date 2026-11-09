@@ -86,6 +86,9 @@ import {
 } from './cloudfront';
 import { __setCloudFrontEndpoint } from './cloudfront/sdk';
 import { fakeDnsZone } from '../testing/fakeCloudFront';
+import { fakeGandi, memoryMarks } from '../testing/fakeGandi';
+import { gandiProvider } from './gandi';
+import { __setGandiNsLookup, gandiDnsClient } from './dns/gandiDns';
 import { readFileSync } from 'node:fs';
 import ovhCatalog from './fixtures/pricing/ovh_public_cloud_catalog_lb.json';
 import scalewayCatalog from './fixtures/pricing/scaleway_catalog_lb_zone.json';
@@ -2309,6 +2312,53 @@ describe('wire contract: cloudfront', () => {
 });
 
 // --- the documented table ----------------------------------------------------------------
+
+// --- gandi (DNS only) -------------------------------------------------------------------
+
+describe('wire contract: gandi', () => {
+  afterEach(() => {
+    __setGandiNsLookup(null);
+    vi.unstubAllGlobals();
+  });
+
+  const cfg = {
+    type: 'gandi' as const,
+    apiToken: 'SECRET_GANDI',
+    zoneId: 'example.org',
+    zoneName: 'example.org',
+  };
+
+  test('the account half and the DNS client stay inside the contract and exercise all of it', async () => {
+    const api = fakeGandi();
+    __setGandiNsLookup(async () => ['ns-1-a.gandi.net']);
+    expect(await gandiProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+    await gandiProvider.discoverOptions!({ apiToken: cfg.apiToken });
+    expect(await gandiProvider.checkLocation!(cfg)).toMatchObject({ ok: true });
+
+    const dns = gandiDnsClient({ ...cfg, provider: 'gandi', accountId: 'a', marks: memoryMarks() });
+    const arg = (content: string) => ({
+      type: 'A' as const,
+      name: 'n.example.org',
+      content,
+      proxied: false,
+      comment: 'fcp:n',
+    });
+    const first = await dns.createRecord(arg('192.0.2.1')); // POST
+    const second = await dns.createRecord(arg('192.0.2.2')); // PATCH add
+    await dns.findRecordsByName('n.example.org');
+    await dns.getRecord(first.id);
+    await dns.listCaa();
+    await dns.deleteRecord(second.id); // PATCH remove
+    await dns.updateRecord!(first.id, arg('192.0.2.3')); // PUT
+    await dns.deleteRecord('A|n.example.org|192.0.2.3'); // DELETE
+
+    expectContractCovered('gandi', fromCaptured(api.stub.calls));
+    expect(api.stub.calls.every((c) => c.headers.authorization === 'Bearer SECRET_GANDI')).toBe(
+      true,
+    );
+    expect(api.stub.calls.every((c) => c.redirect === 'manual')).toBe(true);
+  });
+});
 
 describe('wire contract docs', () => {
   const DOC = new URL('../../../../docs/edges.md', import.meta.url);

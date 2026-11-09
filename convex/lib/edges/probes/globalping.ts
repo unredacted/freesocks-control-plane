@@ -19,8 +19,16 @@ import {
   type ProbeStarted,
   type ProbePoll,
   type ProbeTarget,
-  type VantageClass,
 } from './types';
+import {
+  asksByTag,
+  countryLocations,
+  isNoProbesError,
+  vantageClassOf,
+  type CountryProbeCounts,
+} from './networks';
+
+const NO_PROBES: CountryProbeCounts = { eyeball: 0, datacenter: 0, total: 0 };
 
 /** The slice of the SDK surface this module uses (structural, for injection). */
 export interface GlobalpingLike {
@@ -204,12 +212,19 @@ function ipVersionOf(target: ProbeTarget): { ipVersion?: 4 | 6 } {
 export function globalpingRequest(target: ProbeTarget, opts: ProbeRequestOptions) {
   const limit = Math.max(1, Math.min(opts.perCountryLimit, 10));
   const locations = [
-    ...opts.countries.map((country) => ({
-      country,
-      limit,
-      ...(opts.preferEyeball ? { tags: ['eyeball-network'] } : {}),
-    })),
-    // A control needs any vantage that answers, not a residential one.
+    // A country the listing does not have has no probe there now.
+    ...opts.countries.flatMap((country) =>
+      countryLocations(
+        country,
+        limit,
+        opts.networks,
+        opts.probeCounts ? (opts.probeCounts[country] ?? NO_PROBES) : null,
+      ),
+    ),
+    // Never by network type, whatever `networks` says: a control only tells a
+    // blocked address from a broken one, and any probe in an uncensored
+    // country that answers does that. Asking a home network there could leave
+    // a control country with no probe, and the round without its controls.
     ...(opts.controls ?? []).map((country) => ({ country, limit: 1 })),
   ];
   if (globalpingKind(target) === 'http') {
@@ -242,14 +257,6 @@ export function globalpingRequest(target: ProbeTarget, opts: ProbeRequestOptions
   };
 }
 
-function vantageOf(tags: unknown): VantageClass {
-  if (!Array.isArray(tags)) return 'unknown';
-  const t = tags.map((x) => String(x).toLowerCase());
-  if (t.includes('eyeball-network')) return 'eyeball';
-  if (t.includes('datacenter-network')) return 'datacenter';
-  return 'unknown';
-}
-
 interface ResultItem {
   probe?: { country?: unknown; asn?: unknown; network?: unknown; tags?: unknown };
   result?: {
@@ -267,7 +274,7 @@ export const GLOBALPING_USER_AGENT = 'tcp-reachability-probe/1.0';
 function probeBase(raw: ResultItem, country: string) {
   const asn = raw.probe?.asn != null ? `AS${String(raw.probe.asn)}` : undefined;
   const network = typeof raw.probe?.network === 'string' ? raw.probe.network : undefined;
-  return { country, asn, network, vantageClass: vantageOf(raw.probe?.tags) };
+  return { country, asn, network, vantageClass: vantageClassOf(raw.probe?.tags) };
 }
 
 /**
@@ -341,7 +348,18 @@ export async function globalpingStart(
   target: ProbeTarget,
   opts: ProbeRequestOptions,
 ): Promise<ProbeStarted> {
-  const res = await client.createMeasurement(globalpingRequest(target, opts));
+  const req = globalpingRequest(target, opts);
+  let res = await client.createMeasurement(req);
+  // `home_first`: no probe matched a network tag (the listing was stale or
+  // unread): any probe, once, at the same cost.
+  if (
+    !res.ok &&
+    opts.networks === 'home_first' &&
+    asksByTag(req) &&
+    isNoProbesError(res.response?.status, res.data)
+  ) {
+    res = await client.createMeasurement(globalpingRequest(target, { ...opts, networks: 'any' }));
+  }
   if (!res.ok || !res.data) {
     throw new Error(`globalping create failed: ${res.response?.status ?? 'no response'}`);
   }

@@ -355,7 +355,10 @@ export interface NodeInventoryRow {
   nodeUuid: string;
   name: string;
   usersOnline: number;
+  /** Connected and not disabled. */
   online: boolean;
+  /** Disabled in the backend on purpose (then `online` is false too). */
+  disabled?: boolean;
   /** The node's public address / port / country as the backend knows them (for the origin picker). */
   address?: string;
   port?: number;

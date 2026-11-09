@@ -31,6 +31,7 @@
  * Every provider call runs under an edge op claim; every DB change is a
  * mutation in edges / origins / edgeRotations / edgeReconcileMutations.
  */
+import { staleCountDue } from './edgeOwnPools';
 import { ConvexError } from 'convex/values';
 import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
@@ -438,8 +439,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   }
 
   // 4d'. FCP's own client check (edgeClientCheck.ts): a trusted location whose
-  // owner ticked an address there gets that tick as its evidence (what lets the
-  // check stand in for a tick there), and the service is asked how it is, so
+  // owner ticked an address there gets that tick as its evidence (shown on the
+  // account page), and the service is asked how it is, so
   // attention says when it stopped answering (nothing when it is not set up).
   try {
     await ctx.runMutation(internal.edgeVerification.fillTickedEvidence, {});
@@ -513,6 +514,16 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         if (r.removed) report.finalizedDeletes++;
         continue;
       }
+      // A country on its own addresses: once an hour, how many of its keys
+      // still hold a body from before its cutover (counts only).
+      if (staleCountDue(origin, now))
+        await ctx.scheduler.runAfter(0, internal.edgeOwnPools.countStale, { relayId: origin._id });
+      // A country's default picks: written onto a ready node (or taken away);
+      // the next pass fills their counts from the set as it now stands.
+      const defaults = await ctx.runMutation(internal.edgeCountryDefaults.applyToNode, {
+        relayId: origin._id,
+      });
+      if (defaults.changed) continue;
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
       // A guided setup owns the origin: nothing here publishes or provisions on it.
       if (origin.setupOwned) continue;
@@ -523,8 +534,14 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       if (maintenance.frozen) continue;
       if (starts >= EDGE_PLUMBING.maxReconcileStartsPerTick) continue;
       const originEdges = edges.filter((e) => e.relayId === origin._id);
+      // A spare made for some countries is theirs (step 5W fills their count
+      // with it): never one of the fills of what everyone is handed.
       const standbys = originEdges.filter(
-        (e) => e.status === 'active' && e.publication === 'unpublished' && hasPublishableAddress(e),
+        (e) =>
+          e.status === 'active' &&
+          e.publication === 'unpublished' &&
+          hasPublishableAddress(e) &&
+          !e.audienceIntent?.length,
       );
       const standbysOf = (listenerId: string) =>
         standbys.filter((e) => (e.listenerId as string) === listenerId);
@@ -532,6 +549,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         listenerId: string | null,
         publishOnDone: boolean,
         onlyLocationId?: Id<'edgeLocations'>,
+        audience?: string[],
       ) => {
         // An automatic provision that just failed is not started again every
         // tick (each attempt pays for what it built before the failing step).
@@ -551,6 +569,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             relayId: origin._id,
             ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
             ...(onlyLocationId ? { onlyLocationId } : {}),
+            ...(audience?.length ? { audience } : {}),
           }))
         )
           return;
@@ -561,6 +580,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           publishOnDone,
           ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
           ...(onlyLocationId ? { onlyLocationId } : {}),
+          ...(audience?.length ? { audience } : {}),
         });
         report.started++;
         starts++;
@@ -650,7 +670,12 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // a provision for it at that location only (selection keeps every rule:
       // cooling, a refused location, trust, the account's cap; nothing is
       // bought where one of them holds it back, or with no free slot for it).
-      if (uncovered.length === 0 && origin.providerSet?.some((p) => p.want !== undefined)) {
+      // Some countries' own addresses (a pick's `audiences`) are counted here
+      // too, over every pick holding them, and made for them.
+      if (
+        uncovered.length === 0 &&
+        origin.providerSet?.some((p) => p.want !== undefined || p.audiences?.length)
+      ) {
         const gap = await ctx.runQuery(internal.edgePickWants.nextCountGap, {
           relayId: origin._id,
         });
@@ -674,7 +699,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         // A free slot is what it needs: at the cap part of the deficit may be
         // blocked while one more address still fits.
         if (gap?.mayProvision && cfg.autoProvisionToDesired && free > 0) {
-          await provision(gap.listenerId, true, gap.locationId);
+          await provision(gap.listenerId, true, gap.locationId, gap.audience);
           continue;
         }
       }

@@ -31,7 +31,9 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { ActionCtx } from './_generated/server';
 import { edgeProviderFor, edgeProviderConfigFrom } from './lib/edges/providers/registry';
-import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
+import { dnsClientForProvider, isDnsProviderId } from './lib/edges/providers/dns/clients';
+import type { DnsZoneConfig } from './lib/edges/providers/types';
+import { dnsMarkStoreFor } from './lib/edges/dnsMarks';
 import { EdgeProviderError, refusalOf, scrubNames } from './lib/edges/providers/http';
 import {
   EDGE_PROVIDER_CAPABILITIES,
@@ -601,7 +603,7 @@ async function dnsConfigFor(
   ctx: ActionCtx,
   dnsAccountId: string,
   zone: { zoneId?: string; zoneName?: string },
-): Promise<{ apiToken: string; zoneId: string; zoneName: string; accountId: string }> {
+): Promise<DnsZoneConfig> {
   const dns = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
     id: dnsAccountId as Id<'edgeProviderAccounts'>,
   });
@@ -609,7 +611,13 @@ async function dnsConfigFor(
   const apiToken = (dns?.credentials as { apiToken?: string } | undefined)?.apiToken;
   const zoneId = zone.zoneId ?? dnsSettings?.zoneId;
   const zoneName = zone.zoneName ?? dnsSettings?.zoneName;
-  if (!dns || !EDGE_PROVIDER_CAPABILITIES[dns.provider].providesDns || !apiToken || !zoneId) {
+  if (
+    !dns ||
+    !EDGE_PROVIDER_CAPABILITIES[dns.provider].providesDns ||
+    !isDnsProviderId(dns.provider) ||
+    !apiToken ||
+    !zoneId
+  ) {
     throw new ConvexError<EdgeProviderOpsFailure>({
       code: 'dns_account_missing',
       message: 'the referenced DNS account is unusable',
@@ -618,7 +626,15 @@ async function dnsConfigFor(
       timedOut: false,
     });
   }
-  return { apiToken, zoneId, zoneName: zoneName ?? '', accountId: dnsAccountId };
+  return {
+    provider: dns.provider,
+    apiToken,
+    zoneId,
+    zoneName: zoneName ?? '',
+    accountId: dnsAccountId,
+    // A provider whose records hold no comment keeps FCP's markers here.
+    marks: dnsMarkStoreFor(ctx),
+  };
 }
 
 /** A location's placement, checked to belong to the account the call acts for. */
@@ -1281,12 +1297,14 @@ export const rotateCredentials = internalAction({
         const apiToken = (creds.credentials as { apiToken?: string }).apiToken ?? '';
         for (const z of zones) {
           try {
-            await cloudflareDnsClient({
+            const client = dnsClientForProvider(acct.provider, {
               apiToken,
               zoneId: z.zoneId,
               zoneName: z.zoneName,
               accountId: a.accountId,
-            }).readZone();
+            });
+            if (!client) throw new Error('not a DNS provider');
+            await client.readZone();
           } catch (err) {
             const code = toOpsFailure(err).data.code;
             // A zone only switched-off fronts with nothing in them name: they

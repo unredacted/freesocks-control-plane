@@ -12,8 +12,9 @@ import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
-import type { DnsClient, DnsRecord } from './lib/edges/providers/dns/types';
+import { dnsClientForProvider } from './lib/edges/providers/dns/clients';
+import type { DnsClient, DnsMarkStore, DnsRecord } from './lib/edges/providers/dns/types';
+import { dnsMarkStoreFor } from './lib/edges/dnsMarks';
 import { EdgeProviderError } from './lib/edges/providers/http';
 import { ADDRESS_NAME_TTL_S, planNameRecords } from './lib/edges/addressNames';
 import type { NameOrder } from './edgeNames';
@@ -22,11 +23,16 @@ type Outcome =
   | { kind: 'done'; records: Array<{ type: 'A' | 'AAAA'; recordId: string; content: string }> }
   | { kind: 'conflict'; reason: string }
   | { kind: 'failed'; code: string; final: boolean };
-type Zone = { apiToken: string; zoneId: string; zoneName: string; accountId: string };
+type Zone = {
+  apiToken: string;
+  zoneId: string;
+  zoneName: string;
+  accountId: string;
+  marks?: DnsMarkStore;
+};
 type ClientFactory = (provider: string, zone: Zone) => DnsClient | null;
 
-const realFactory: ClientFactory = (provider, zone) =>
-  provider === 'cloudflare' ? cloudflareDnsClient(zone) : null;
+const realFactory: ClientFactory = (provider, zone) => dnsClientForProvider(provider, zone);
 let factory: ClientFactory = realFactory;
 
 /** Test seam: the DNS client a name's zone is written through. */
@@ -124,6 +130,7 @@ async function clientFor(
     zoneId: zone.zoneId,
     zoneName: zone.zoneName,
     accountId: zone.dnsAccountId,
+    marks: dnsMarkStoreFor(ctx),
   });
 }
 
