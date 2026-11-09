@@ -148,7 +148,7 @@
       <div class="min-w-0 flex-1 space-y-1">
         <p class="flex flex-wrap items-center gap-2 font-medium" role="status">
           <StatusDot dot={status.dot} />
-          SNI lists: {status.text}
+          {status.text}
         </p>
         <p class="text-muted-foreground">
           {stepWords(step, transport)}

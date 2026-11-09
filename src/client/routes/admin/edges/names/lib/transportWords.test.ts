@@ -133,12 +133,12 @@ describe('the next step', () => {
     });
     expect(namesStatus(transport(), 'n-unprotected')).toEqual({
       dot: 'grey',
-      text: '4 SNIs on the port',
+      text: '4 SNIs on this port',
     });
     // A port nobody protects, on the SNI list's page.
     const bare = transport({ nodes: [] }, { inUse: 0, idle: 4 });
     expect(namesStep(bare, on, null)).toEqual({ kind: 'unprotected', here: false });
-    expect(namesStatus(bare, null).text).toBe('4 SNIs on the port');
+    expect(namesStatus(bare, null).text).toBe('4 SNIs on this port');
     expect(stepWords({ kind: 'unprotected', here: false }, bare)).toMatch(/^No node behind/);
   });
 

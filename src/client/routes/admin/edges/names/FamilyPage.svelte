@@ -491,7 +491,7 @@
               onCheckedChange={(v) => (picked = v === true ? [...pickable] : [])}
             />
             <Label for={`${uid}-all`} class="font-normal">
-              Pick the {pickable.length === 1 ? 'SNI' : `${pickable.length} SNIs`} shown
+              {pickable.length === 1 ? 'Select it' : `Select all ${pickable.length}`}
             </Label>
           </div>
         {/if}

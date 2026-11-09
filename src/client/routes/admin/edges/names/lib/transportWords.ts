@@ -120,7 +120,7 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   const inUse = node ? node.inUse : c.inUse;
   const waiting = node ? node.waitingTest : c.waitingTest;
   const parts = [
-    unprotected ? `${plural(t.listed, 'SNI')} on the port` : `${plural(inUse, 'SNI')} in use`,
+    unprotected ? `${plural(t.listed, 'SNI')} on this port` : `${plural(inUse, 'SNI')} in use`,
   ];
   if (waiting) parts.push(`${waiting} waiting for a test`);
   if (c.toSend) parts.push(`${c.toSend} to send`);
