@@ -21,7 +21,7 @@
  *   /admin/servers/snis/checks                      SNIs -> Checks from inside countries
  *   /admin/servers/snis/settings                    SNIs -> More settings (the numeric `edge.sni.*` knobs)
  *   /admin/servers/probes                           Probes
- *   /admin/servers/providers[/:id]                  Providers, one account
+ *   /admin/servers/providers[/:id]                  Providers (`?add=1`), one account (`?tab=`)
  *   /admin/servers/providers/templates              Providers -> All templates
  *   /admin/servers/settings                         Settings (`?group=`, `?q=`, `?changed=1`, `?field=`)
  *
@@ -150,10 +150,11 @@ export const edgesPaths = {
       listener?: string | null;
     },
   ) => withSearch(`${R}/origins/${enc(slug)}/details`, params),
-  /** `edit: 'new'` opens the add-account flow; `provider` preselects one in it. */
-  providers: (params?: { edit?: string | null; provider?: string | null }) =>
+  /** `add: '1'` opens the add-account flow; `provider` preselects one in it. */
+  providers: (params?: { add?: string | null; provider?: string | null }) =>
     withSearch(`${R}/providers`, params),
-  provider: (id: string, params?: { tab?: string }) =>
+  /** One account; `tab` is one of its tabs (providers/accountList.ts), `template` opens one. */
+  provider: (id: string, params?: { tab?: string; template?: string }) =>
     withSearch(`${R}/providers/${enc(id)}`, params),
   /** All templates, under Providers. */
   templates: (params?: { template?: string; provider?: string }) =>

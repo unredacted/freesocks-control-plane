@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  holdsAddresses,
   inventoryOwner,
   isTested,
   locationTrustWords,
@@ -151,5 +152,15 @@ describe('certificates in words', () => {
     });
     for (const state of ['issued', 'renewing', 'failed', 'absent', 'ambiguous', 'pending'])
       expect(sharedCertificateWords({ ...base, state }, NOW).detail).not.toContain('\u2014');
+  });
+});
+
+describe('holdsAddresses', () => {
+  it('a DNS account that fronts nothing holds no addresses', () => {
+    expect(holdsAddresses({ provider: 'cloudflare', frontsTraffic: false })).toBe(false);
+    expect(holdsAddresses({ provider: 'cloudflare', frontsTraffic: true })).toBe(true);
+    expect(holdsAddresses({ provider: 'gandi', frontsTraffic: true })).toBe(false);
+    expect(holdsAddresses({ provider: 'fastly' })).toBe(true);
+    expect(holdsAddresses({ provider: 'upcloud' })).toBe(true);
   });
 });

@@ -11,6 +11,8 @@
  *   inventoryOwner(lb)              'fcp' | 'foreign' for an inventory resource
  */
 import { codeLabel, type Tone } from '../../../../lib/edgeCodes';
+import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
+import type { EdgeProviderId } from '../../../../../shared/contracts/edgeProviderIds';
 import { displayValue } from '../lib/format';
 import { relativeTime } from '../lib/time';
 import type { KeyValueRow } from '../lib/types';
@@ -267,3 +269,17 @@ export function locationTrustWords(
     detail: 'Its first tested address trusts it.',
   };
 }
+
+/**
+ * A DNS account that fronts nothing holds no addresses: it writes the
+ * address hostnames in its zones. Its card says that, never "0 of 100
+ * addresses used", and it adds nothing to the address total.
+ */
+export function holdsAddresses(a: { provider: EdgeProviderId; frontsTraffic?: boolean }): boolean {
+  const meta = EDGE_PROVIDER_META[a.provider];
+  if (meta.dnsOnly) return false;
+  return meta.role !== 'dns' || a.frontsTraffic === true;
+}
+
+/** What a DNS account that fronts nothing does, after its state ("Connected, ..."). */
+export const DNS_ACCOUNT_DOES = 'writes the address hostnames in its DNS zones';

@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * One provider account as a card: Connected / Problem / Not tested, how many
-   * addresses are used, and the trust line (plan 1.7, exact words). The card
-   * opens the account page.
+   * addresses are used, the spend against its monthly cap (when it has a cost),
+   * and the trust line (plan 1.7, exact words). The card opens the account page.
    *
    * Props:
    *   account: EdgeProviderAccountAdmin
@@ -15,7 +15,8 @@
   import FakeBadge from '../components/FakeBadge.svelte';
   import { providerLabel } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
-  import { isTested } from '../providers/accountWords';
+  import { DNS_ACCOUNT_DOES, holdsAddresses, isTested } from '../providers/accountWords';
+  import { accountSpendWords } from '../providers/spendWords';
   import StatusDot from './StatusDot.svelte';
   import type { Dot } from './runStages';
 
@@ -32,6 +33,7 @@
     if (isTested(a)) return { label: 'Connected', dot: 'green' };
     return { label: 'Not tested', dot: 'amber' };
   });
+  const spend = $derived(accountSpendWords(a.cost));
   const date = (iso: string) => new Date(iso).toLocaleDateString();
   const trust = $derived.by((): string => {
     if (a.qualified && a.qualification) {
@@ -69,8 +71,12 @@
       <FakeBadge fake={a.fake} />
     </span>
     <span class="text-muted-foreground block text-sm">
-      {state.label}{#if usage}, {usage.liveEdges} of {usage.maxLiveEdges} addresses used{/if}.
+      {state.label}{#if !holdsAddresses(a)}, {DNS_ACCOUNT_DOES}{:else if usage}, {usage.liveEdges} of
+        {usage.maxLiveEdges} addresses used{/if}.
     </span>
+    {#if spend}
+      <span class="text-muted-foreground block text-sm">{spend}</span>
+    {/if}
     <span class="text-muted-foreground block text-sm">{trust}</span>
   </span>
   <ChevronRight

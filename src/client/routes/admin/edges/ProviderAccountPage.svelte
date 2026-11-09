@@ -1,8 +1,17 @@
 <script lang="ts">
   /**
-   * One provider account (`/admin/servers/providers/:id`; URL state `?tab` =
-   * overview | inventory | templates). The overview's Countries card grades
-   * each location from each checked country, with the location marks.
+   * One provider account (`/admin/servers/providers/:id`). URL state: `?tab` =
+   * overview | locations | countries | templates | inventory | credentials
+   * (providers/accountList.ts; anything else is the overview), and on the
+   * Templates tab `?template=<id>` (or `new`) opens the template editor.
+   *
+   *   Overview      readiness, the record, cost and cap, limits, availability
+   *   Locations     where it makes addresses, with every per-location action
+   *   Countries     each location graded from each checked country, with the marks
+   *   Templates     the templates this account can use (All templates is one link away)
+   *   Inventory     what lives at the provider, one location at a time
+   *   Credentials and DNS   credentials, settings, what it reaches, the DNS role,
+   *                 certificates and domains
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -18,7 +27,6 @@
     CardTitle,
   } from '@client/components/ui/card';
   import * as Select from '@client/components/ui/select';
-  import * as Table from '@client/components/ui/table';
   import * as Tabs from '@client/components/ui/tabs';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '../../../lib/api';
@@ -69,16 +77,15 @@
     testWords,
   } from './providers/accountWords';
   import { useAccountActions } from './providers/useAccountActions.svelte';
-  import { asParams, changedKeys, effectiveTemplate, qualificationState } from './templates/params';
+  import { ACCOUNT_TAB_LABELS, ACCOUNT_TABS, accountTab } from './providers/accountList';
+  import TemplatesPanel from './templates/TemplatesPanel.svelte';
+  import { effectiveTemplate, qualificationState } from './templates/params';
 
   interface Props {
     /** The provider account id from the route (`/admin/servers/providers/:id`). */
     id: string;
   }
   let { id }: Props = $props();
-
-  const TABS = ['overview', 'inventory', 'templates'] as const;
-  type Tab = (typeof TABS)[number];
 
   const qc = useQueryClient();
   const account = providerQuery(() => id);
@@ -87,9 +94,7 @@
   const templates = templatesQuery();
   const acct = useAccountActions();
   const tabParam = searchParam('tab', 'overview');
-  const tab = $derived<Tab>(
-    (TABS as readonly string[]).includes(tabParam.value) ? (tabParam.value as Tab) : 'overview',
-  );
+  const tab = $derived(accountTab(tabParam.value));
 
   const a = $derived(account.data ?? null);
   const u = $derived(usage.data?.accounts.find((x) => x.id === id));
@@ -100,13 +105,6 @@
   const tested = $derived(a ? testWords(a) : null);
   const q = $derived(a ? qualificationState(a, tplList) : null);
   const tpl = $derived(a ? effectiveTemplate(tplList, a) : null);
-  const myTemplates = $derived(
-    a
-      ? tplList.filter(
-          (t) => t.provider === a.provider && (t.accountId === null || t.accountId === a.id),
-        )
-      : [],
-  );
 
   // --- settings in words ---------------------------------------------------------------------------
   const accountNames = $derived(
@@ -222,7 +220,7 @@
       ? `${providerLabel(a.provider)} account. ${DNS_ONLY_ACCOUNT_BLURB}`
       : EDGE_PROVIDER_META[a.provider].role === 'dns'
         ? `${providerLabel(a.provider)} account: ${DNS_ACCOUNT_USES[useNow].label}. ${DNS_ACCOUNT_BLURB}`
-        : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
+        : `${providerLabel(a.provider)} account. Where it makes addresses, what it costs, and its credentials.`}
     back={{ href: edgesPaths.providers(), label: 'Providers' }}
   >
     {#snippet badges()}
@@ -256,12 +254,13 @@
   </SectionHeader>
 
   <Tabs.Root value={tab} onValueChange={(v) => (tabParam.value = v)}>
-    <Tabs.List>
-      <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
-      <Tabs.Trigger value="inventory">Inventory</Tabs.Trigger>
-      <Tabs.Trigger value="templates">Templates</Tabs.Trigger>
+    <Tabs.List class="h-auto flex-wrap justify-start" aria-label="Account">
+      {#each ACCOUNT_TABS as t (t)}
+        <Tabs.Trigger value={t}>{ACCOUNT_TAB_LABELS[t]}</Tabs.Trigger>
+      {/each}
     </Tabs.List>
 
+    <!-- Overview: readiness, the record, cost and cap, limits, availability. -->
     <Tabs.Content value="overview" class="space-y-6 pt-4">
       <Card>
         <CardHeader>
@@ -313,14 +312,99 @@
         </CardContent>
       </Card>
 
+      <Card>
+        <CardContent class="pt-6">
+          <KeyValue
+            title="Record"
+            rows={[
+              { label: 'Account ID', value: a.id, mono: true, copy: true },
+              { label: 'Added', value: relativeTime(a.createdAt) },
+              { label: 'Last changed', value: relativeTime(a.updatedAt) },
+              {
+                label: 'Template in use',
+                value: tpl ? tpl.name : 'None yet',
+                hint:
+                  tpl && a.defaultTemplateId === null ? 'The default of this provider' : undefined,
+              },
+            ]}
+            columns={1}
+          />
+        </CardContent>
+      </Card>
+
+      {#key a.id}
+        <CostCard account={a} />
+        <LimitsCard account={a} templates={tplList} />
+      {/key}
+
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Availability</CardTitle>
+          <CardDescription>
+            A disabled account gets no new edges. Its existing edges keep working and can still be
+            rotated away or destroyed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="flex flex-wrap items-center justify-between gap-3">
+          <Button
+            variant="outline"
+            disabled={acct.setEnabled.isPending}
+            onclick={() => acct.setEnabled.mutate({ id: a.id, enabled: !a.enabled })}
+          >
+            {a.enabled ? 'Disable account' : 'Enable account'}
+          </Button>
+          <Button variant="ghost" class="text-destructive" onclick={() => (deleteOpen = true)}>
+            Delete account
+          </Button>
+        </CardContent>
+      </Card>
+    </Tabs.Content>
+
+    <Tabs.Content value="locations" class="pt-4">
+      {#if tab === 'locations'}
+        <LocationsCard account={a} {accountNames} />
+      {/if}
+    </Tabs.Content>
+
+    <Tabs.Content value="countries" class="pt-4">
+      {#if tab === 'countries'}
+        <CountriesCard account={a} />
+      {/if}
+    </Tabs.Content>
+
+    <Tabs.Content value="templates" class="pt-4">
+      {#if tab === 'templates'}
+        <TemplatesPanel account={a} />
+        <p class="mt-4 text-sm">
+          <Link href={edgesPaths.templates()} class="underline">Open all templates</Link>
+        </p>
+      {/if}
+    </Tabs.Content>
+
+    <Tabs.Content value="inventory" class="pt-4">
+      {#if tab === 'inventory'}<InventoryTab accountId={a.id} locations={a.locations} />{/if}
+    </Tabs.Content>
+
+    <!-- Credentials and DNS: credentials, settings, what it reaches, DNS role, certificates, domains. -->
+    <Tabs.Content value="credentials" class="space-y-6 pt-4">
       <div class="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardContent class="pt-6">
+            <KeyValue
+              title="Credentials"
+              description="Write-only. Use Rotate credentials to replace them without losing the qualification."
+              rows={credentialRows}
+              columns={1}
+            />
+          </CardContent>
+        </Card>
         <Card>
           <CardContent class="space-y-6 pt-6">
             <KeyValue
               title="Settings"
               description={settingsRows.length > 0
-                ? "The account's own settings. Where its edges are created is set under Locations."
-                : 'This account has only credentials. Where its edges are created is set under Locations.'}
+                ? "The account's own settings. Where its edges are created is set on the Locations tab."
+                : 'This account has only credentials. Where its edges are created is set on the Locations tab.'}
               rows={settingsRows}
               columns={1}
             />
@@ -334,33 +418,6 @@
                 columns={1}
               />
             {/if}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent class="space-y-6 pt-6">
-            <KeyValue
-              title="Credentials"
-              description="Write-only. Use Rotate credentials to replace them without losing the qualification."
-              rows={credentialRows}
-              columns={1}
-            />
-            <KeyValue
-              title="Record"
-              rows={[
-                { label: 'Account ID', value: a.id, mono: true, copy: true },
-                { label: 'Added', value: relativeTime(a.createdAt) },
-                { label: 'Last changed', value: relativeTime(a.updatedAt) },
-                {
-                  label: 'Template in use',
-                  value: tpl ? tpl.name : 'None yet',
-                  hint:
-                    tpl && a.defaultTemplateId === null
-                      ? 'The default of this provider'
-                      : undefined,
-                },
-              ]}
-              columns={1}
-            />
           </CardContent>
         </Card>
       </div>
@@ -466,120 +523,6 @@
           </CardContent>
         </Card>
       {/if}
-
-      <LocationsCard account={a} {accountNames} />
-
-      <CountriesCard account={a} />
-
-      {#key a.id}
-        <CostCard account={a} />
-        <LimitsCard account={a} templates={tplList} />
-      {/key}
-
-      <Card>
-        <CardHeader>
-          <CardTitle class="text-base">Availability</CardTitle>
-          <CardDescription>
-            A disabled account gets no new edges. Its existing edges keep working and can still be
-            rotated away or destroyed.
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="flex flex-wrap items-center justify-between gap-3">
-          <Button
-            variant="outline"
-            disabled={acct.setEnabled.isPending}
-            onclick={() => acct.setEnabled.mutate({ id: a.id, enabled: !a.enabled })}
-          >
-            {a.enabled ? 'Disable account' : 'Enable account'}
-          </Button>
-          <Button variant="ghost" class="text-destructive" onclick={() => (deleteOpen = true)}>
-            Delete account
-          </Button>
-        </CardContent>
-      </Card>
-    </Tabs.Content>
-
-    <Tabs.Content value="inventory" class="pt-4">
-      {#if tab === 'inventory'}<InventoryTab accountId={a.id} locations={a.locations} />{/if}
-    </Tabs.Content>
-
-    <Tabs.Content value="templates" class="space-y-4 pt-4">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <p class="text-sm text-muted-foreground">
-          Templates this account can provision from: its own and the ones shared by every
-          {providerLabel(a.provider)} account.
-        </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onclick={() =>
-            router.navigate(edgesPaths.templates({ template: 'new', provider: a.provider }))}
-        >
-          New template
-        </Button>
-      </div>
-      {#if templates.isPending}
-        <Skeleton class="h-16 w-full" />
-      {:else if templates.isError}
-        <AdminListState error={templates.error} onRetry={() => void templates.refetch()} />
-      {:else if myTemplates.length === 0}
-        <AdminListState
-          emptyText="No template for this provider yet. Open Templates and use Seed defaults, or write a new one."
-        />
-      {:else}
-        <Table.Root>
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Name</Table.Head>
-              <Table.Head>Available to</Table.Head>
-              <Table.Head>Parameters</Table.Head>
-              <Table.Head>Role here</Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {#each myTemplates as t (t.id)}
-              {@const schema = templates.data?.schemas[a.provider]}
-              {@const diff = schema
-                ? changedKeys(asParams(t.params), schema.defaults, schema.fields).length
-                : 0}
-              <Table.Row>
-                <Table.Cell>
-                  <Link
-                    href={edgesPaths.templates({ template: t.id })}
-                    class="font-medium hover:underline">{t.name}</Link
-                  >
-                  {#if t.isDefault}<Badge variant="info" class="ms-2">Default</Badge>{/if}
-                </Table.Cell>
-                <Table.Cell
-                  >{t.accountId === null ? 'Every account' : 'Only this account'}</Table.Cell
-                >
-                <Table.Cell>
-                  {diff === 0
-                    ? 'Provider defaults'
-                    : `${diff} differ${diff === 1 ? 's' : ''} from default`}
-                </Table.Cell>
-                <Table.Cell>
-                  {#if tpl?.id === t.id}
-                    <Badge variant="success">In use</Badge>
-                    {#if q?.state === 'stale'}
-                      <span class="ms-1 text-xs text-muted-foreground"
-                        >changed since qualification</span
-                      >
-                    {/if}
-                  {:else}
-                    <span class="text-muted-foreground">Available</span>
-                  {/if}
-                </Table.Cell>
-              </Table.Row>
-            {/each}
-          </Table.Body>
-        </Table.Root>
-      {/if}
-      <p class="text-sm">
-        <Link href={edgesPaths.templates({ provider: a.provider })} class="underline"
-          >Open all {providerLabel(a.provider)} templates</Link
-        >
-      </p>
     </Tabs.Content>
   </Tabs.Root>
 
