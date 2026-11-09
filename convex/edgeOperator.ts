@@ -111,7 +111,12 @@ import {
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { readStateJson } from './lib/appStateJson';
 import { clientCheckService } from './lib/edges/clientCheck/client';
-import { CLIENT_CHECK_HEALTH_KEY, type ClientCheckHealthRecord } from './edgeClientCheck';
+import {
+  CLIENT_CHECK_HEALTH_KEY,
+  clientCheckReadiness,
+  type ClientCheckHealthRecord,
+} from './edgeClientCheck';
+import { pickUsable } from './lib/edges/assignedLocation';
 import { modeRefOf } from './nodeIntents';
 import { freedomAttention } from './freedomDelivery';
 import { resolveModeCatalog } from './lib/connectionModes';
@@ -1770,10 +1775,13 @@ export const attention = internalQuery({
         return e.publication === 'unpublished' && !!l && !verificationCurrent(e, l);
       });
       // Refused for want of a tested spare, or (FCP's own client check on) of a
-      // location where an address was tested.
+      // location assigned to the node (`no_ticked_location` is the code an older
+      // build stored for the same refusal).
       const refusal = relay.suspicion?.lastRotateError;
       const replaceRefused =
-        refusal === 'edge.no_verified_spare' || refusal === 'edge.no_ticked_location';
+        refusal === 'edge.no_verified_spare' ||
+        refusal === 'edge.no_assigned_location' ||
+        refusal === 'edge.no_ticked_location';
       if (relay.suspicion?.state === 'suspected' && (replaceRefused || untestedSpares.length > 0)) {
         const first = untestedSpares[0] ?? null;
         items.push({
@@ -2054,21 +2062,29 @@ export const attention = internalQuery({
           }
           held ??= e._id as string;
         }
-        // No spare, and every free slot held for set locations no address was
-        // tested in yet: a provision (upkeep's or Automatic) would buy in
-        // another location, an address that could only be a spare. The node
-        // page says to add a spare there and test it (docs/edges.md § "Provider sets").
+        // No spare, and every free slot held for set locations upkeep cannot
+        // use yet (not trusted, and FCP's own client check is not there to
+        // prove an address made there): a provision (upkeep's or Automatic)
+        // would buy in another location, an address that could only be a
+        // spare. The node page says so (docs/edges.md § "Provider sets").
         const slots = slotsOf(setState, relay);
+        const ccReady = (await clientCheckReadiness(ctx.db, cfg)) === 'ready';
         const untrustedOnly =
           standbys === 0 &&
           slots.free > 0 &&
           slots.held >= slots.free &&
-          setState.targets.every(
-            (t) =>
-              !!t.locationId &&
-              setState.picks?.find((p) => p.pick.locationId === t.locationId)?.location
-                .qualified === false,
-          );
+          setState.targets.every((t) => {
+            const row = t.locationId
+              ? setState.picks?.find((p) => p.pick.locationId === t.locationId)
+              : undefined;
+            return (
+              !!row?.location &&
+              !pickUsable(row.location, {
+                l4: edgeLayerOf(row.account.provider) === 'l4',
+                clientCheckReady: ccReady,
+              })
+            );
+          });
         items.push({
           ...base(relay),
           edgeId: publishable ?? held,

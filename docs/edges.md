@@ -753,8 +753,9 @@ promotes an L4 edge past its ceiling (`partial`, see § Probes, written by the s
 satisfying the gate), and backend online bits do not identify the path a member used. The one
 server-side confirmation is **FCP's own client check** (`method: client_check`, `by: system`,
 § "FCP's own client check"): real sing-box and Xray sessions through the address, which count
-only in a location the owner ticked an address in and only while `edge.clientCheck.enabled` is
-on (§ "Replacing a blocked address without a spare").
+only in a location an operator assigned to the node and only while `edge.clientCheck.enabled` is
+on (§ "Replacing a blocked address without a spare"). With it on, nobody has to test an L4
+address by hand: a person's test stays possible, never required.
 
 Consequences, applied consistently: a **replace** of an L4 edge switches to an already-tested
 spare of the same listener; with none, and FCP's own client check unable to prove a new one,
@@ -940,7 +941,8 @@ not, answering or not, the engines and their versions, the egress page's host, "
 address in use whose newest check found a client that does not get through, named per client;
 `client_check_unavailable` (warning; critical while `edge.clientCheck.enabled` is on): the
 service is set up and did not answer its last health check. With the switch off a check is
-advice only; with it on, a pass in a ticked location confirms the address (next section).
+advice only; with it on, a pass in a location assigned to the node confirms the address (next
+section).
 
 **Setting it up.** One secret, in the compose env (`.env.beta`, or `.env.prod`): the service reads
 it, and the deployer sets the same value on the deployment (`docker/deploy-entrypoint.sh`), so
@@ -954,36 +956,48 @@ connected) where it is unset.
 
 ### Replacing a blocked address without a spare
 
-Standing spares cost money every hour and still need a human tick, which is made from outside
-the censored country like FCP's own check. With **`edge.clientCheck.enabled`** on (the
-automation switch sets it when the client-check service is set up), FCP instead makes the
-replacement when it is needed and proves it itself.
+Standing spares cost money every hour and a person's test is made from outside the censored
+country just like FCP's own check. With **`edge.clientCheck.enabled`** on (the automation switch
+sets it when the client-check service is set up), FCP instead makes an address when it is needed
+and proves it itself, and **nobody has to test an L4 address by hand**: a person's test stays
+possible, never required.
 
-**Where.** Only in a **ticked location** (`lib/edges/tickedLocation.ts`): a location trusted by
-an operator on the evidence of an L4 endpoint they confirmed there with a real session
-(`edgeLocations.qualification` with `by: admin` and `evidence`). Every invalidation that clears a
-location's trust clears this too (a manual untrust, a credential or settings change, a template
-edit), so new load balancers of a template nobody tested never count. A trust override without a
-ticked endpoint does not count; a tick made later in such a location becomes its evidence
-(`confirmEndpoint`), a re-trust of the same template keeps it, and the reconcile pass fills it
-from a still-current ticked address there (`edgeVerification.fillTickedEvidence`, which also
-covers ticks made before this). The first address in any other location still needs a human.
-A `client_check` confirmation stands in for a tick only on the terms it was written on: the
-publication gate (`checkPublishable`, and the replace's choice of a spare) accepts it only while
-the switch is on and the edge's location is still ticked (`clientConfirmationStands`). An address
-in use keeps serving either way (the render reads the confirmation alone, so nothing is taken out
-of members' subscriptions), but once it is out of use it cannot go back in on that confirmation. A
-manual untrust also removes the `client_check` confirmation of that location's spares, so they
-show as untested.
+**Where.** In a location an operator **assigned** to the node
+(`lib/edges/assignedLocation.ts` `locationAssigned`): one of the node's picks (its provider set,
+or the picks of a guided setup run working on it, which join the set at go-live), or a location
+an operator trusted by hand (the Trust override, or a confirmed endpoint there; trust `by:
+admin`, with or without endpoint evidence). An operator who assigned a location chose it on
+purpose, and every address made there is proven by real clients before it is put in use, so no
+earlier test in that location, and no test after a template edit, is needed. Not assigned: a
+location switched off, one an operator untrusted by hand (`autoQualifyHold`, until trusted
+again), and one no operator chose for the node; automatic selection never uses such a location.
+(Before 2026-11 only a "ticked" location counted, one with an endpoint a person had confirmed;
+the endpoint evidence is still recorded, `edgeVerification.fillTickedEvidence`, and shown on the
+account page, but nothing depends on it.) A `client_check` confirmation stands only on the terms
+it was written on: the publication gate (`checkPublishable`, and the replace's choice of a
+spare) accepts it only while the switch is on and the edge's location is still assigned to its
+node (`clientConfirmationStands`). An address in use keeps serving either way (the render reads
+the confirmation alone, so nothing is taken out of members' subscriptions), but once it is out of
+use it cannot go back in on that confirmation. A manual untrust also removes the `client_check`
+confirmation of that location's spares, so they show as untested.
+
+**Every address FCP makes is checked.** With the check ready (below), a provision outside a
+guided setup run (upkeep's fill, a count fill, an operator's own) is in client-check mode too:
+an L4 address made in an assigned location goes through the same gate before it is published or
+kept as a spare, so a spare is tested when it is made. Upkeep may therefore fill a pick no
+address was tested in yet (`pickUsable`: the set's `trusted` flag, `location_short` and the
+`location_untrusted` code read the same rule). A guided setup run checks its own addresses at
+its "Try it" stage (§ "Guided setup runs").
 
 **Starting.** A replace of an L4 address (the detector's, "Replace now, address is blocked",
 "Replace address") with no tested spare is no longer refused `edge.no_verified_spare` when the
 check is ready (`clientCheckReadiness`: the switch on, the service configured, its last health
 answer ok and under 30 minutes old) and the start's own selection finds a candidate. The
-selection, in client-check mode, takes a tested spare first, then an untested L4 spare in a ticked
-location, then a new load balancer in a ticked location (L4 locations elsewhere do not count as
-trusted for it); none is `edge.no_ticked_location` (attention `needs_test` says so). The run is
-marked `clientCheckGate`.
+selection, in client-check mode, takes a tested spare first, then an untested L4 spare in an
+assigned location, then a new load balancer in an assigned location (other L4 locations do not
+count for it); none is `edge.no_assigned_location` (attention `needs_test` says so; a refusal an
+older build stored as `edge.no_ticked_location` reads the same). The run is marked
+`clientCheckGate`.
 
 **The gate** (`verifying`, after the describe and before the country wait; its own attempts and
 clock, `CLIENT_GATE`): the check runs against the replace's target, the address members use now,
@@ -999,7 +1013,7 @@ guard: a manual replace can force). "Could not check" (the service down, busy or
 test link) waits up to 15 minutes; a new address then ends as an untested spare
 (`unverified_standby`, never published), which the next replace takes and checks instead of
 buying another; a spare taken for the replace fails the run (`client_check_unavailable`). A pass
-that could not confirm (the location stopped being ticked, the switch went off) is the same
+that could not confirm (the location is no longer assigned, the switch went off) is the same
 fallback (`client_check_unconfirmed`). A spare whose latest check (against the configuration it
 holds now) found the address itself at fault (`address_failed`, `egress_mismatch`) is not taken
 by a later replace, which buys a new address instead; a later passing check, by hand or otherwise,
@@ -1010,7 +1024,7 @@ makes it a candidate again.
 concurrency limit, the account's daily allocation budget, live caps and monthly spend cap (the
 selection refuses), and the node's approved shape. A location whose provider refused the new
 load balancer for good (a quota) is held on the node for six hours, so the next automatic
-replace provisions in the next ticked location (§ "Provider sets", "A location that refused a
+replace provisions in the next assigned location (§ "Provider sets", "A location that refused a
 create"). Worst case per origin per day: as many
 short-lived load balancers as the daily cap, each destroyed after a failed check.
 
@@ -2053,7 +2067,7 @@ authoritative stage machine, every stage idempotent and re-enterable:
 | 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | unchanged           |
 | 3   | `provision`         | per target (a listener and a pick) without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedLocationId`, `allowUnqualified`) AND records `expect`; a live edge of the listener in that location, not used by another target, is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | unchanged           |
 | 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged per address family by `outsideCheckFor` (§ "Probe sources and verdicts"; `partial` is the L4 ceiling); L7 runs the front proof. Only a real refusal is `unreachable`: it gets one re-apply and a fresh check first (below), then asks the operator (`address_unreachable`); a family no source could test passes as `notChecked`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
-| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). The links come from the origin's test account, reset first when used up; one that cannot be reset is the card `test_account_used_up`, never a dead link (stage 4's L7 proof too). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
+| 4b  | `try_it`            | first, with FCP's own client check ready, **FCP checks each such L4 endpoint itself** (`edgeClientCheck.checkForSetup`, one per pass; a pass in the run's own pick confirms it, so nobody tests by hand and the card is never shown; a configuration already checked, pass or fail, is not asked again, and "could not check" is asked at most 3 times an attempt). Then, for what is left: one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). The links come from the origin's test account, reset first when used up; one that cannot be reset is the card `test_account_used_up`, never a dead link (stage 4's L7 proof too). Skipped when every listener is L7                                                                                                            | unchanged           |
 | 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | direct AND FCP Host |
 | 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | FCP Hosts only      |
 | 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | unchanged           |
@@ -2892,7 +2906,9 @@ held for what the node's set lacks (§ Publication, reserved allocation) and no 
 automatic work may use lowers it, what selection would pick could only ever be a spare, so the
 fill is not started (`edgeRotations.upkeepFillRefusal`, read fresh before the start; selection
 refuses the same pick as `pool_reserved`, § "Provider sets"). The usual cause is a set location
-no address was tested in yet: its first address is made there by hand and tested. A missing
+no address was tested in yet while FCP's own client check is off or not answering (with it
+ready, upkeep makes the first address there and the check proves it, § "Replacing a blocked
+address without a spare"). A missing
 location at its account's or its own live-edge cap, or out of today's allocations, holds the
 slot the same way (nothing is started that selection would refuse).
 
@@ -5824,7 +5840,9 @@ adapter (`asyncOps: true`):
 **Trust is per location.** `qualified`, `qualification`, `qualifiedTemplateHash` and
 `autoQualifyHold` live on the location; the account's `qualified` in the admin projection means
 any switched-on location is trusted. A new location is trusted by its first tested address (a
-Try it tick or a passing L7 proof) or by the Trust override. Editing an account's settings
+Try it tick or a passing L7 proof) or by the Trust override. With FCP's own client check on, an
+L4 location a node picks needs neither for automatic work there: the check proves each address
+made in it (§ "Replacing a blocked address without a spare"). Editing an account's settings
 untrusts every location; a credential rotation that passes its test keeps trust. Because that
 test needs no location, a rotation first reads every location still in use (switched on, or with
 edges) with the new key, through the adapter's inventory call (a CDN zone: its location check); a
@@ -7410,6 +7428,15 @@ it in Edges, Settings, to stop paying for spares). To roll back, turn the switch
 rotations finish, then run `edgeClientCheck:clearForRollback` with no arguments before deploying
 the older build (it clears the new fields and keeps an address FCP's check confirmed serving as a
 `named_connection`; run it again if the push is refused).
+
+**No hand tests** (§ "Replacing a blocked address without a spare", 2026-11): code only, no
+schema change, no new setting. With `edge.clientCheck.enabled` on and the service answering, an
+L4 address made in a location assigned to its node (one of its picks, a running setup run's
+picks, or trusted by hand) is checked by FCP and needs no person's test; upkeep may fill an
+untested pick; a setup run's "Try it" checks its addresses before it shows the card. With the
+switch off nothing changes. Rollback: deploy the older build; an address FCP confirmed in a
+location that was never ticked keeps serving while in use, but a spare confirmed that way needs a
+person's test again before it can be put in use (the older gate reads only ticked locations).
 
 **FCP's own test of a send** adds one setting (`edge.sni.autoConfirm`, off), a receipt kind
 (`client_check`), a receipt state (`failed`) and one optional receipt field (`check`); the

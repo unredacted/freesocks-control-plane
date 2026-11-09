@@ -149,7 +149,7 @@ describe('automation state and words', () => {
       /probes are off/,
     );
     const words = nodeAutomationWords(checks, { autoRotate: true, setupOwned: false });
-    expect(words.line).toMatch(/makes a new one in a location you tested/);
+    expect(words.line).toMatch(/makes a new one in one of this node's locations/);
     expect(words.spares).toBeNull();
     noEmDash(words.line);
   });

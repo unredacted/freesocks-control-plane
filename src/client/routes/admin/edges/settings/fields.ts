@@ -55,7 +55,7 @@ export const BASIC_SWITCHES: Field[] = [
     path: 'clientCheck.enabled',
     label: "Replace without a spare (FCP's own client check)",
     helper:
-      "On: with no tested spare, a blocked address is replaced by a new one in a location where you tested an address before, and FCP's own sing-box and Xray clients stand in for your test there. Off: a replacement needs a spare you tested, and the check is advice only.",
+      "On: nobody has to test an address by hand. A new address in one of a node's locations (a replacement, upkeep, a guided setup's Try it) is checked with FCP's own sing-box and Xray clients, and a pass counts as the test. Off: an address needs a person's test before it goes live, and the check is advice only.",
   },
   {
     kind: 'switch',

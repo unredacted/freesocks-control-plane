@@ -480,7 +480,7 @@ export function nodeAutomationWords(
     };
   if (config.clientCheck?.enabled)
     return {
-      line: 'When an address looks blocked, FCP makes a new one in a location you tested an address in, checks it with its own clients and moves members to it.',
+      line: "When an address looks blocked, FCP makes a new one in one of this node's locations, checks it with its own clients and moves members to it.",
       spares: null,
     };
   return {

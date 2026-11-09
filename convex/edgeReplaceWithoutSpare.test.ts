@@ -3,7 +3,8 @@
  * Replacing a blocked address without a spare (docs/edges.md § "Replacing a
  * blocked address without a spare"): with FCP's own client check on and
  * answering, a replace with no tested spare provisions a new load balancer in a
- * location the owner ticked an address in, proves it in `verifying` against the
+ * location an operator assigned to the node (one of its picks, or trusted by
+ * hand; nobody tests an address there first), proves it in `verifying` against the
  * address in use, and publishes it; a failed check publishes nothing and holds
  * the next try; "could not check" leaves an untested spare that the next
  * replace takes instead of buying again; a replacement blocked again soon holds
@@ -298,8 +299,34 @@ const replace = (
     targetEdgeId,
   });
 
+/**
+ * An untested spare: made while the check is off (with it on, FCP checks every
+ * address it makes in an assigned location), then the check back on.
+ */
+async function untestedSpare(
+  t: ReturnType<typeof convexTest>,
+  relayId: Id<'relays'>,
+  listenerId: Id<'relayListeners'>,
+): Promise<Id<'edges'>> {
+  await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'false'));
+  const r = await drain(
+    t,
+    (
+      await t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'provision',
+        trigger: 'manual',
+        publishOnDone: false,
+        listenerId,
+      })
+    ).rotationId,
+  );
+  await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'true'));
+  return r.toEdgeId!;
+}
+
 describe('replacing a blocked address without a spare', () => {
-  test('no spare: a new address in the ticked location, checked by FCP, published; the old one drains', async () => {
+  test('no spare: a new address in the assigned location, checked by FCP, published; the old one drains', async () => {
     vi.useFakeTimers();
     const w = world(() => ({ code: 'ok' }));
     const { t, relayId, listenerId, oldEdgeId } = await seed();
@@ -414,20 +441,7 @@ describe('replacing a blocked address without a spare', () => {
       address === NEW_EDGE ? { code: 'timeout' } : { code: 'ok' },
     );
     const { t, relayId, listenerId, oldEdgeId } = await seed();
-    const spare = (
-      await drain(
-        t,
-        (
-          await t.mutation(internal.edgeRotations.start, {
-            relayId,
-            kind: 'provision',
-            trigger: 'manual',
-            publishOnDone: false,
-            listenerId,
-          })
-        ).rotationId,
-      )
-    ).toEdgeId!;
+    const spare = await untestedSpare(t, relayId, listenerId);
     const first = await drain(t, (await replace(t, relayId, oldEdgeId)).rotationId);
     expect(first).toMatchObject({ phase: 'failed', outcome: 'client_check_failed' });
     expect(first.viaStandby).toBe(true);
@@ -443,7 +457,7 @@ describe('replacing a blocked address without a spare', () => {
     expect(w.lbs.size).toBe(2);
   });
 
-  test('a confirmation FCP wrote opens the publication gate only on its terms: the switch on, the location ticked', async () => {
+  test('a confirmation FCP wrote opens the publication gate only on its terms: the switch on, the location assigned', async () => {
     vi.useFakeTimers();
     world(() => ({ code: 'ok' }));
     const { t, relayId, listenerId, locationId } = await seed();
@@ -472,11 +486,19 @@ describe('replacing a blocked address without a spare', () => {
     expect(await gate()).toEqual({ ok: false, code: 'unverified_endpoint' });
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'true'));
     expect(await gate()).toEqual({ ok: true });
-    // The location no longer ticked (its evidence gone, however that happened).
+    // Its tick's evidence gone: still trusted by an operator, so still assigned.
     await t.run((ctx) =>
       ctx.db.patch(locationId, { qualification: { by: 'admin', at: Date.now() } }),
     );
+    expect(await gate()).toEqual({ ok: true });
+    // No longer trusted and not one of the node's picks: assigned no more.
+    await t.run((ctx) => ctx.db.patch(locationId, { qualified: false, qualification: undefined }));
     expect(await gate()).toEqual({ ok: false, code: 'unverified_endpoint' });
+    // One of the node's picks, trusted or not: assigned again.
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, { providerSet: [{ locationId, addedAt: Date.now() }] }),
+    );
+    expect(await gate()).toEqual({ ok: true });
   });
 
   test('one address in use of 2 wanted while replacements count on the check: single_address', async () => {
@@ -516,10 +538,126 @@ describe('replacing a blocked address without a spare', () => {
     expect(attention.fleet.kind).toBe('protected');
   });
 
-  test('no ticked location: refused before anything is bought', async () => {
-    world(() => ({ code: 'ok' }));
+  test('trusted by hand with no address ever tested there: nobody tests, FCP makes and checks it', async () => {
+    vi.useFakeTimers();
+    const w = world(() => ({ code: 'ok' }));
     const { t, relayId, oldEdgeId } = await seed({ ticked: false });
-    await expect(replace(t, relayId, oldEdgeId)).rejects.toThrow(/no_ticked_location/);
+    const r = await drain(t, (await replace(t, relayId, oldEdgeId)).rotationId);
+    expect(r).toMatchObject({ phase: 'done', outcome: 'published' });
+    expect(w.lbs.size).toBe(1);
+    expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.verification).toMatchObject({
+      method: 'client_check',
+      by: 'system',
+    });
+  });
+
+  test("one of the node's picks, never trusted or tested: FCP makes and checks it there", async () => {
+    vi.useFakeTimers();
+    const w = world(() => ({ code: 'ok' }));
+    const { t, relayId, oldEdgeId, locationId } = await seed({ ticked: false });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(locationId, { qualified: false, qualification: undefined });
+      await ctx.db.patch(relayId, { providerSet: [{ locationId, addedAt: Date.now() }] });
+    });
+    const r = await drain(t, (await replace(t, relayId, oldEdgeId)).rotationId);
+    expect(r).toMatchObject({ phase: 'done', outcome: 'published' });
+    expect(w.lbs.size).toBe(1);
+  });
+
+  test('no location assigned to the node: refused before anything is bought', async () => {
+    world(() => ({ code: 'ok' }));
+    const { t, relayId, oldEdgeId, locationId } = await seed({ ticked: false });
+    await t.run((ctx) => ctx.db.patch(locationId, { qualified: false, qualification: undefined }));
+    await expect(replace(t, relayId, oldEdgeId)).rejects.toThrow(/no_assigned_location/);
+  });
+
+  test("a location untrusted by hand is not assigned, even as one of the node's picks", async () => {
+    world(() => ({ code: 'ok' }));
+    const { t, relayId, oldEdgeId, locationId } = await seed({ ticked: false });
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, { providerSet: [{ locationId, addedAt: Date.now() }] }),
+    );
+    await t.mutation(internal.edgeLocations.setQualified, { id: locationId, qualified: false });
+    await expect(replace(t, relayId, oldEdgeId)).rejects.toThrow(/no_assigned_location/);
+  });
+
+  test('upkeep fills a pick nobody tested: the new address is checked by FCP and put in use', async () => {
+    vi.useFakeTimers();
+    const w = world(() => ({ code: 'ok' }));
+    const { t, relayId, listenerId, locationId } = await seed({ ticked: false });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(locationId, { qualified: false, qualification: undefined });
+      await ctx.db.patch(relayId, {
+        providerSet: [{ locationId, addedAt: Date.now() }],
+        desiredPublished: 2,
+      });
+    });
+    const r = await drain(
+      t,
+      (
+        await t.mutation(internal.edgeRotations.start, {
+          relayId,
+          kind: 'provision',
+          trigger: 'reconcile',
+          publishOnDone: true,
+          listenerId,
+        })
+      ).rotationId,
+    );
+    expect(r).toMatchObject({ phase: 'done', outcome: 'published' });
+    expect(r.events.map((e) => e.code)).toEqual(expect.arrayContaining(['client_check']));
+    expect(w.lbs.size).toBe(1);
+    expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!).toMatchObject({
+      publication: 'published',
+      verification: { method: 'client_check', by: 'system' },
+    });
+  });
+
+  test('with the check off, upkeep never buys in a pick nobody tested', async () => {
+    vi.useFakeTimers();
+    const w = world(() => ({ code: 'ok' }));
+    const { t, relayId, listenerId, locationId } = await seed({ ticked: false, enabled: false });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(locationId, { qualified: false, qualification: undefined });
+      await ctx.db.patch(relayId, { providerSet: [{ locationId, addedAt: Date.now() }] });
+    });
+    const r = await drain(
+      t,
+      (
+        await t.mutation(internal.edgeRotations.start, {
+          relayId,
+          kind: 'provision',
+          trigger: 'reconcile',
+          publishOnDone: true,
+          listenerId,
+        })
+      ).rotationId,
+    );
+    expect(r.phase).toBe('failed');
+    expect(w.lbs.size).toBe(0);
+  });
+
+  test("an operator's spare is checked by FCP as it is made: nobody tests it", async () => {
+    vi.useFakeTimers();
+    world(() => ({ code: 'ok' }));
+    const { t, relayId, listenerId } = await seed();
+    const r = await drain(
+      t,
+      (
+        await t.mutation(internal.edgeRotations.start, {
+          relayId,
+          kind: 'provision',
+          trigger: 'manual',
+          publishOnDone: false,
+          listenerId,
+        })
+      ).rotationId,
+    );
+    expect(r.phase).toBe('done');
+    expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!).toMatchObject({
+      publication: 'unpublished',
+      verification: { method: 'client_check', by: 'system' },
+    });
   });
 
   test('the switch off: today’s rule (a tested spare or nothing)', async () => {
@@ -871,20 +1009,12 @@ describe('the pieces', () => {
     expect(reblockedSoon(rep, { replacement: { reblockHours: 0 } }, now)).toBe(false);
   });
 
-  test('a passing check by hand confirms a spare only in a ticked location with the switch on; an untrust clears it', async () => {
+  test('a passing check by hand confirms a spare only in an assigned location with the switch on; an untrust clears it', async () => {
     vi.useFakeTimers();
     world(() => ({ code: 'ok' }));
     const { t, relayId, listenerId, locationId } = await seed();
     // A spare in that location (provisioned, untested).
-    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
-      relayId,
-      kind: 'provision',
-      trigger: 'manual',
-      publishOnDone: false,
-      listenerId,
-    });
-    const r = await drain(t, rotationId);
-    const spare = r.toEdgeId!;
+    const spare = await untestedSpare(t, relayId, listenerId);
     expect((await t.query(internal.edges.get, { id: spare }))!.verification).toBeUndefined();
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'false'));
     expect(await t.action(internal.edgeClientCheck.check, { edgeId: spare })).toMatchObject({

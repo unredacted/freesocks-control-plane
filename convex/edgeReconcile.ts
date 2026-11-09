@@ -438,8 +438,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   }
 
   // 4d'. FCP's own client check (edgeClientCheck.ts): a trusted location whose
-  // owner ticked an address there gets that tick as its evidence (what lets the
-  // check stand in for a tick there), and the service is asked how it is, so
+  // owner ticked an address there gets that tick as its evidence (shown on the
+  // account page), and the service is asked how it is, so
   // attention says when it stopped answering (nothing when it is not set up).
   try {
     await ctx.runMutation(internal.edgeVerification.fillTickedEvidence, {});

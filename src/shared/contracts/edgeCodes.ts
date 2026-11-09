@@ -146,9 +146,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'unverified_endpoint',
   'edge_unhealthy',
   // replace: no tested spare on the listener (L4), or (FCP's own client check on)
-  // no location where an address was tested
+  // no location assigned to the node
   'no_verified_spare',
-  'no_ticked_location',
+  'no_assigned_location',
   // automatic replace: held for the transport, or a replacement blocked again soon,
   // or paused for some countries (a new name was blocked there before use), or
   // the CDN refused outright there (its reference site fails too)
