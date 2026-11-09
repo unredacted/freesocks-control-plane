@@ -1904,6 +1904,9 @@ export default defineSchema({
         v.object({
           code: v.string(),
           since: v.number(),
+          // The node's publication epoch the cutover moved it to: a key whose
+          // body (a fetch or a mirror refresh) was rendered at it or later has it.
+          epoch: v.optional(v.number()),
           stale: v.optional(v.object({ at: v.number(), keys: v.number() })),
         }),
       ),

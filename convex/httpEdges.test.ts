@@ -376,6 +376,14 @@ describe('origin admin routes', () => {
     expect(scopeFor(['setup-runs', 'run1', 'continue'], 'POST')).toBe('admin:servers:manage');
     expect(scopeFor(['relays', 'r1', 'require-edges'], 'POST')).toBe('admin:servers:manage');
     expect(scopeFor(['relays', 'r1', 'reprotect'], 'POST')).toBe('admin:servers:manage');
+    // A country on its own addresses: the rehearsal is a read, the cutover a write.
+    expect(scopeFor(['relays', 'r1', 'own-pools', 'IR', 'preview'], 'POST')).toBe(
+      'admin:servers:read',
+    );
+    expect(scopeFor(['relays', 'r1', 'own-pools', 'IR'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['relays', 'r1', 'own-pools', 'IR', 'preview', 'x'], 'POST')).toBe(
+      'admin:servers:manage',
+    );
     // The by-slug view is a plain read: the register scope is accepted nowhere under the prefix.
     expect(scopeFor(['relays', 'by-slug', 'n'], 'GET')).toBe('admin:servers:read');
     for (const [parts, method] of [

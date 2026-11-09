@@ -24,11 +24,17 @@ import {
   registerRelay,
 } from './lib/edges/testing/fixtures';
 import { refuseNetwork } from './lib/edges/testing/mockFetch';
+import { writeMaintenance } from './lib/edges/maintenance';
+import { STEER_SINCE_KEY } from './edgeRender';
+import { signValue } from './lib/cookies';
 
 const modules = import.meta.glob('./**/*.*s');
 
+const ADMIN_SIGN_KEY = 'test-admin-sign';
+
 beforeEach(() => {
   vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
+  vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', ADMIN_SIGN_KEY);
   vi.stubEnv('IP_HASH_SALT', 'test-salt');
   vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
   refuseNetwork();
@@ -197,7 +203,7 @@ describe('cutting a country over', () => {
     const before = (await relayOf(w)).publicationEpoch;
     expect(await cutover(w, 'ir')).toMatchObject({ changed: true });
     const r = await relayOf(w);
-    expect(r.ownPools).toEqual([{ code: 'IR', since: expect.any(Number) }]);
+    expect(r.ownPools).toEqual([{ code: 'IR', since: expect.any(Number), epoch: before + 1 }]);
     expect(r.publicationEpoch).toBe(before + 1);
     expect(await cutover(w, 'IR')).toMatchObject({ changed: false });
     // Blocked after the cutover: stopping is still allowed.
@@ -207,7 +213,12 @@ describe('cutting a country over', () => {
       country: 'IR',
       state: 'blocked',
     });
+    // And during a maintenance freeze, which refuses a cutover.
+    await w.t.run((c) =>
+      writeMaintenance(c.db, { frozen: true, since: Date.now(), reason: 'drain' }),
+    );
     expect(await cutover(w, 'IR', false)).toMatchObject({ changed: true });
+    await expect(cutover(w, 'IR')).rejects.toThrow(/maintenance/);
     const after = await relayOf(w);
     expect(after.ownPools).toBeUndefined();
     expect(after.publicationEpoch).toBe(before + 2);
@@ -247,6 +258,32 @@ describe('cutting a country over', () => {
       code: 'RU',
     });
     expect(ru.refusal?.code).toBe('edge.audience_no_pool');
+  });
+});
+
+describe("the detector's view", () => {
+  test('a settled cutover of a listed country vetoes; one taken off the list no longer does', async () => {
+    const w = await world();
+    await w.t.run((c) =>
+      c.db.insert('appState', { key: STEER_SINCE_KEY, value: '1', updatedAt: 1 }),
+    );
+    await cutover(w, 'IR');
+    const since = (await relayOf(w)).ownPools![0]!.since;
+    const own = async (now: number) =>
+      (await w.t.query(internal.edgeDetector.relayContext, { relayId: w.relayId, now }))!.steering
+        ?.own;
+    // Not settled yet (one refresh interval and the revalidation window).
+    expect(await own(since + 1)).toEqual([]);
+    const later = since + 2 * 24 * 3_600_000;
+    expect(await own(later)).toEqual(['IR']);
+    await w.t.run((c) =>
+      upsertSettingRow(
+        c,
+        CENSORED_COUNTRIES_KEY,
+        JSON.stringify([{ code: 'RU', checkEdges: true, checkNamesInside: false }]),
+      ),
+    );
+    expect(await own(later)).toEqual([]);
   });
 });
 
@@ -330,7 +367,7 @@ describe('attention and the count of keys on an older body', () => {
       });
       return ctx.db.insert('users', { tierId, status: 'active', updatedAt: since });
     });
-    const key = (country: string, at: number) =>
+    const key = (country: string, at: number, epoch?: number) =>
       w.t.run((ctx) =>
         ctx.db.insert('subscriptions', {
           userId,
@@ -343,6 +380,7 @@ describe('attention and the count of keys on an older body', () => {
           pinnedNode: FIXTURE_NODE,
           state: 'active',
           lastRender: { at, epoch: 1, family: 'singbox', listenerKeys: ['u'], country },
+          ...(epoch !== undefined ? { lastRenderedEpoch: epoch } : {}),
           updatedAt: at,
         }),
       );
@@ -350,6 +388,9 @@ describe('attention and the count of keys on an older body', () => {
     await key('IR', since - 2);
     await key('IR', since + 1);
     await key('RU', since - 1);
+    // A mirror refreshed since the cutover (its rendered epoch moved, not its snapshot).
+    const cutEpoch = (await relayOf(w)).ownPools![0]!.epoch!;
+    await key('IR', since - 3, cutEpoch);
     expect(await w.t.action(internal.edgeOwnPools.countStale, { relayId: w.relayId })).toEqual({
       counts: [2],
     });
@@ -391,5 +432,41 @@ describe('the rollback', () => {
     expect(r.audienceReplacesPerDay).toBeUndefined();
     expect(r.publicationEpoch).toBeGreaterThan(before);
     expect((await w.t.run(async (c) => (await c.db.get(rid))!)).ownPool).toBeUndefined();
+  });
+});
+
+describe('the admin API', () => {
+  test('the rehearsal and the cutover by their exact paths; anything longer is no route', async () => {
+    const w = await world();
+    const adminUserId = await w.t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'op',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    const sid = `asid-${Math.random().toString(36).slice(2)}`;
+    await w.t.mutation(internal.sessions.create, {
+      sid,
+      kind: 'admin',
+      adminUserId,
+      ttlMs: 3_600_000,
+    });
+    const cookie = `fs_admin_session=${await signValue(sid, ADMIN_SIGN_KEY)}`;
+    const call = (path: string, body: unknown) =>
+      w.t.fetch(`/api/v1/admin/edges/relays/${w.relayId}/${path}`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    expect((await call('own-pools/IR/preview/extra', { own: true })).status).toBe(404);
+    expect((await relayOf(w)).ownPools).toBeUndefined();
+    const preview = await call('own-pools/IR/preview', {});
+    expect(preview.status).toBe(200);
+    expect(await preview.json()).toMatchObject({ code: 'IR', own: false, refusal: null });
+    const res = await call('own-pools/IR', { own: true });
+    expect(res.status).toBe(200);
+    expect((await relayOf(w)).ownPools).toMatchObject([{ code: 'IR' }]);
   });
 });

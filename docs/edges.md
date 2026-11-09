@@ -5035,7 +5035,9 @@ address, never the one everyone shares. Dormant until a country is cut over.
 - **The detector.** Once the cutover has settled (one refresh interval and the revalidation
   window, as the steering vetoes wait), that country's evidence no longer replaces a shared
   address on the node: evidence only from cut-over countries is vetoed `own_pool`; in mixed
-  evidence the rest is judged as before. Evidence that names no country still replaces it.
+  evidence the rest is judged as before. Evidence that names no country still replaces it, and
+  a country taken off the censored-country list no longer vetoes (its members' stored countries
+  are cleared, so they are on shared addresses again).
 - **Its own budget.** A replacement of the country's own address spends that country's budget on
   the node: `edge.audience.replacesPerDay` per node, per transport, per UTC day (default 1, 0 to
   10, 0 = never automatic), a country's own value in `edge.audience.replacesPerDayByCountry`
@@ -5053,12 +5055,13 @@ address, never the one everyone shares. Dormant until a country is cut over.
   the rendezvous walk on the node (`audience_needs_spread`), an entry for the country on one of the
   node's picks (`audience_no_pool`), its own addresses at their count on every transport
   (`audience_pool_short`) and none of them blocked there (`audience_pool_blocked`). Stopping is
-  never refused. Each change moves the node's publication epoch and refreshes the mirrors, so
+  never refused, not even in a maintenance freeze or during a setup run. Each change moves the node's publication epoch and refreshes the mirrors, so
   apps move at their next refresh.
 - **The rehearsal** (`cutoverPreview`): before a cutover, over synthetic seats steered by that
   country, how many move and how many still hold a shared address before and after.
 - **Keys on an older body.** Once an hour per node, the keys of each cut-over country whose last
-  body predates its cutover are counted (counts only, `relays.ownPools[].stale`; attention
+  body predates its cutover are counted (a mirror refreshed since, at the cutover's epoch
+  `ownPools[].epoch` or later, is not) (counts only, `relays.ownPools[].stale`; attention
   `audience_stale_keys`, info). Their apps keep shared addresses that this country's reports no
   longer replace.
 - **Admin API:** `POST relays/{id}/own-pools/{code} {own}` (audited `edge.relay.own_pool`),

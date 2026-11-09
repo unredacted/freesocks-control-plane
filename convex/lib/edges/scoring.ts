@@ -415,8 +415,9 @@ export interface SteeringInput {
   lanes?: boolean;
   /**
    * Countries cut over to their own addresses on this node whose cutover has
-   * settled (lib/edges/ownPools.ts `settledOwnCodes`): no evidence of theirs
-   * replaces a shared address. Absent = none.
+   * settled (lib/edges/ownPools.ts `settledOwnCodes`) and that are still on
+   * the censored-country list: no evidence of theirs replaces a shared
+   * address. Absent = none.
    */
   own?: string[];
 }

@@ -91,8 +91,9 @@ export function diffConfig(
     const from = base[path];
     if (to === undefined || sameValue(from, to)) continue;
     if (isPlainObject(to) && isPlainObject(from)) {
-      // One row per changed field of a rule, but the whole rule is what is sent.
-      for (const field of Object.keys(to).sort()) {
+      // One row per changed field of a rule (or map), but the whole object is
+      // what is sent; a field only the stored object has was removed.
+      for (const field of [...new Set([...Object.keys(from), ...Object.keys(to)])].sort()) {
         if (!sameValue(from[field], to[field])) {
           out.push({
             path,

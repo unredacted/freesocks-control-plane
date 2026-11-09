@@ -139,6 +139,13 @@ describe('settings fields', () => {
     });
   });
 
+  it('saves a map with one of its entries removed', () => {
+    const path = 'audience.replacesPerDayByCountry';
+    const changes = diffConfig({ [path]: { RU: 3 } }, { [path]: {} });
+    expect(changes).toEqual([{ path, display: `${path}.RU`, from: 3, to: undefined, send: {} }]);
+    expect(buildPatch(changes)).toEqual({ [path]: {} });
+  });
+
   it('gives every bounded path a number field and every number field bounds', () => {
     const numbers = ALL_FIELDS.filter((f) => f.kind === 'number').map((f) => f.path);
     const bounded = Object.keys(EDGE_CONFIG_BOUNDS).filter(

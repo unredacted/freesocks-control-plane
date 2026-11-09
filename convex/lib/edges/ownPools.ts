@@ -22,6 +22,7 @@ import { EDGE_PICK_SAMPLE, sampleSeat } from './edgePick';
 export interface OwnPool {
   code: string;
   since: number;
+  epoch?: number;
   stale?: { at: number; keys: number };
 }
 

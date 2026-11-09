@@ -343,17 +343,24 @@ async function steeringInputFor(
   const style = origin.backendServerId
     ? await deliveryStyleOf(ctx, origin.backendServerId)
     : 'subscription';
+  const curated = (await resolveCensoredCountries(ctx.db)).codes;
   return {
     published,
     paths: deliveryPathsOf(cfg.render, style),
     checked: cfg.probe.countries,
-    curated: (await resolveCensoredCountries(ctx.db)).codes,
+    curated,
     held: await heldCountries(ctx.db, cfg.probe.countries, now),
     freedomListeners: await freedomListenersOf(ctx, origin),
     ...(lanesOn(origin) ? { lanes: true } : {}),
-    // A cutover settles like steering: its members hold their own addresses by now.
+    // A cutover settles like steering: its members hold their own addresses by
+    // now. Only a country still on the list: one taken off it has no members
+    // steered there any more, so they are on shared addresses again.
     ...(origin.ownPools?.length
-      ? { own: settledOwnCodes(origin, steeringSettleMs(cfg), now) }
+      ? {
+          own: settledOwnCodes(origin, steeringSettleMs(cfg), now).filter((c) =>
+            curated.includes(c),
+          ),
+        }
       : {}),
   };
 }

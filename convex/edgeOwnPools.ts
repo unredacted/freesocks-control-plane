@@ -169,8 +169,9 @@ async function applyOwnPool(
   const was = ownCodesOf(relay).includes(code);
   if (was === own) return false;
   const now = Date.now();
+  // The epoch bump below moves the node to `publicationEpoch + 1`.
   const ownPools = own
-    ? [...(relay.ownPools ?? []), { code, since: now }]
+    ? [...(relay.ownPools ?? []), { code, since: now, epoch: relay.publicationEpoch + 1 }]
     : (relay.ownPools ?? []).filter((p) => p.code !== code);
   await ctx.db.patch(relay._id, {
     ownPools: ownPools.length > 0 ? ownPools : undefined,
@@ -198,13 +199,15 @@ export const setOwnPool = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
-    await assertAdmission(ctx.db, 'setup.start');
     const relay = await ctx.db.get(a.relayId);
     if (!relay || relay.deleting)
       throw new ConvexError({ code: 'not_found', message: 'Node not found' });
-    await assertNoRunningSetup(ctx.db, relay);
     const code = normalize(a.code);
+    // Only a cutover is new work: stopping is never refused (maintenance, a
+    // setup run or a rotation would otherwise pin the country to its own).
     if (a.own) {
+      await assertAdmission(ctx.db, 'setup.start');
+      await assertNoRunningSetup(ctx.db, relay);
       await assertNoRotationOrQuarantine(ctx.db, relay);
       const refusal = await cutoverRefusal(ctx, relay, code, Date.now());
       if (refusal) throw new ConvexError(refusal);
@@ -237,7 +240,7 @@ export const setOwnPoolEverywhere = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
-    await assertAdmission(ctx.db, 'setup.start');
+    if (a.own) await assertAdmission(ctx.db, 'setup.start');
     const code = normalize(a.code);
     const results: Array<{ relaySlug: string; changed: boolean; refusal: string | null }> = [];
     for (const relay of await ctx.db.query('relays').collect()) {
@@ -312,13 +315,29 @@ export function staleCountDue(relay: Doc<'relays'>, now: number): boolean {
   );
 }
 
+/**
+ * A key of a cut-over country still on a body from before its cutover: its
+ * last render was shaped for that country before the cutover, and nothing it
+ * was handed since (a fetch, or a mirror refresh, which moves only the
+ * rendered epoch) was rendered at the cutover's epoch or later.
+ */
+export function staleForPool(
+  key: { lastRender?: { country?: string; at: number }; lastRenderedEpoch?: number },
+  pool: { code: string; since: number; epoch?: number },
+): boolean {
+  if (key.lastRender?.country !== pool.code || key.lastRender.at >= pool.since) return false;
+  return !(pool.epoch !== undefined && (key.lastRenderedEpoch ?? -1) >= pool.epoch);
+}
+
 /** One page of a node's keys in one state: per cut-over country, those whose last body predates it. */
 export const stalePage = internalQuery({
   args: {
     backendServerId: v.id('backendServers'),
     nodeName: v.string(),
     state: v.union(v.literal('active'), v.literal('disabled')),
-    pools: v.array(v.object({ code: v.string(), since: v.number() })),
+    pools: v.array(
+      v.object({ code: v.string(), since: v.number(), epoch: v.optional(v.number()) }),
+    ),
     now: v.number(),
     cursor: v.union(v.string(), v.null()),
     numItems: v.number(),
@@ -335,10 +354,7 @@ export const stalePage = internalQuery({
       .paginate({ cursor: a.cursor, numItems: a.numItems });
     const inUse = res.page.filter((s) => keyInUse(s, a.now));
     return {
-      counts: a.pools.map(
-        (p) =>
-          inUse.filter((s) => s.lastRender?.country === p.code && s.lastRender.at < p.since).length,
-      ),
+      counts: a.pools.map((p) => inUse.filter((s) => staleForPool(s, p)).length),
       isDone: res.isDone,
       continueCursor: res.continueCursor,
     };
@@ -375,7 +391,11 @@ export const countStale = internalAction({
     });
     if (!relay?.backendServerId || !relay.nodeName || relay.renaming || !relay.ownPools?.length)
       return null;
-    const pools = relay.ownPools.map((p) => ({ code: p.code, since: p.since }));
+    const pools = relay.ownPools.map((p) => ({
+      code: p.code,
+      since: p.since,
+      ...(p.epoch !== undefined ? { epoch: p.epoch } : {}),
+    }));
     const now = Date.now();
     const counts = pools.map(() => 0);
     for (const state of ['active', 'disabled'] as const) {
@@ -400,7 +420,7 @@ export const countStale = internalAction({
       relayId,
       nodeName: relay.nodeName,
       at: now,
-      counts: pools.map((p, i) => ({ ...p, keys: counts[i]! })),
+      counts: pools.map((p, i) => ({ code: p.code, since: p.since, keys: counts[i]! })),
     });
     return { counts };
   },
