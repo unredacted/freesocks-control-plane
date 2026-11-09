@@ -25,6 +25,7 @@ import {
   type TimedReading,
 } from './lib/edges/probes/globalping';
 import { saveGlobalpingReadings } from './lib/edges/probes/globalpingNote';
+import { countAllProbes, type CountryProbeCounts } from './lib/edges/probes/networks';
 import { checkhostNodes, checkhostPoll, checkhostStart } from './lib/edges/probes/checkhost';
 import { ripeAtlasPoll, ripeAtlasStart, type AtlasStarted } from './lib/edges/probes/ripeatlas';
 import { internalProbe, type InternalProbeDeps } from './lib/edges/probes/internal';
@@ -32,6 +33,7 @@ import {
   shortError,
   type ProbeAddressKind,
   type ProbeProtocol,
+  type ProbeRequestOptions,
   type ProbeResult,
   type ProbeTarget,
   type RequestedFamily,
@@ -91,6 +93,26 @@ export function parseTarget(
   };
 }
 
+/**
+ * Globalping's free probe listing counted per country and kept for an hour
+ * (`probes.saveProbeCounts`); null when it cannot be read (then home-network
+ * probes are asked, and any probe when none matched).
+ */
+async function listProbeCounts(
+  ctx: ActionCtx,
+  client: GlobalpingLike,
+): Promise<Record<string, CountryProbeCounts> | null> {
+  if (!client.listProbes) return null;
+  try {
+    const listed = await client.listProbes();
+    const counts = listed.ok ? countAllProbes(listed.data) : null;
+    if (counts) await ctx.runMutation(internal.probes.saveProbeCounts, { counts });
+    return counts;
+  } catch {
+    return null;
+  }
+}
+
 async function finish(ctx: ActionCtx, runId: Id<'probeRuns'>, results: ProbeResult[]) {
   await ctx.runMutation(internal.probes.finishRun, { runId, results });
 }
@@ -111,11 +133,11 @@ export const execute = internalAction({
     if (c.servername) target.servername = c.servername;
     // Error strings are stored: a hostname target's own name never goes into one.
     const redact = target.addressKind === 'name' ? [target.address] : [];
-    const opts = {
+    const opts: ProbeRequestOptions = {
       // The checked countries, or for a contained address those of its audience.
       countries: c.countries,
       perCountryLimit: cfg.probe.perCountryLimit,
-      preferEyeball: cfg.probe.preferEyeball,
+      networks: cfg.probe.networks,
       // Fixed when the round was requested (per-country checks, external sources only).
       controls: run.controls ?? [],
     };
@@ -135,6 +157,10 @@ export const execute = internalAction({
           const readings: TimedReading[] = [];
           const client = recordingClient(globalpingFactory(secrets.globalpingToken), readings);
           try {
+            if (cfg.probe.networks === 'home_first') {
+              const counts = c.probeCounts ?? (await listProbeCounts(ctx, client));
+              if (counts) opts.probeCounts = counts;
+            }
             const kind = globalpingKind(target);
             // Never start what Globalping would refuse half-way: a run that does
             // not fit its limit is no evidence, not a failing country.

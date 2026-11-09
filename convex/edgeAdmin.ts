@@ -5,6 +5,7 @@
  * resolutions for parked edges, and the per-family render preview. Route
  * plumbing is in httpEdges.ts.
  */
+import { ownCodesOf } from './lib/edges/ownPools';
 import { ConvexError, v } from 'convex/values';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -194,6 +195,7 @@ export const configView = internalQuery({
       defaults: flattenEdgeConfig(EDGE_DEFAULTS),
       bounds: EDGE_CONFIG_BOUNDS,
       nameZones,
+      censoredCountries: (await resolveCensoredCountries(ctx.db)).codes,
     };
   },
 });
@@ -806,6 +808,7 @@ export async function renderPreviewFor(
         preferDistinctProviders: cfg.render.preferDistinctProviders,
         ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
         ...(lanesOn(origin) ? { memberLane: lane ?? 'trusted' } : {}),
+        ...(origin.ownPools?.length ? { ownCountries: ownCodesOf(origin) } : {}),
         originAddress: '192.0.2.10',
         deliveryStyle: origin.backendServerId
           ? await deliveryStyleOf(ctx, origin.backendServerId)

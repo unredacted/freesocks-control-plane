@@ -611,7 +611,7 @@ without a provider set; manual provisioning, a guided setup run's chosen account
 and a pick of the node's provider set (the operator chose it, § "Provider sets") work
 regardless.
 
-Each **DNS provider's** account (capability `role: 'dns'`, Cloudflare today) says what it is
+Each **DNS provider's** account (capability `role: 'dns'`: Cloudflare and Gandi) says what it is
 for: **DNS only** (the default) or **DNS and fronting** (`edgeProviderAccounts.frontsTraffic`,
 chosen in the account form and on the account page; `frontsAllowed` in
 `providers/capabilities.ts` reads it, and an edge provider's account always fronts). A DNS-only
@@ -624,7 +624,10 @@ selection passes it over. Nor does attention ask to trust it (no `account_unqual
 carries no traffic). Switching an account to DNS only leaves its published edges as they are.
 The choice is deliberately separate from `l7.autoSelect`: letting automation pick L7 fronts
 must not turn a DNS account into one (§ "Adding a DNS provider", § "Cloudflare fronts"). It
-replaced the deployment-wide switch `edge.l7.dnsProvidersFront` (§ "Deploy notes").
+replaced the deployment-wide switch `edge.l7.dnsProvidersFront` (§ "Deploy notes"). A
+provider that can only do DNS (capability `dnsOnly`: Gandi) has no such choice: its accounts
+are DNS only, `frontsTraffic: true` is refused, and `frontsAllowed` is false whatever the row
+says.
 
 ### Publication
 
@@ -750,8 +753,9 @@ promotes an L4 edge past its ceiling (`partial`, see § Probes, written by the s
 satisfying the gate), and backend online bits do not identify the path a member used. The one
 server-side confirmation is **FCP's own client check** (`method: client_check`, `by: system`,
 § "FCP's own client check"): real sing-box and Xray sessions through the address, which count
-only in a location the owner ticked an address in and only while `edge.clientCheck.enabled` is
-on (§ "Replacing a blocked address without a spare").
+only in a location an operator assigned to the node and only while `edge.clientCheck.enabled` is
+on (§ "Replacing a blocked address without a spare"). With it on, nobody has to test an L4
+address by hand: a person's test stays possible, never required.
 
 Consequences, applied consistently: a **replace** of an L4 edge switches to an already-tested
 spare of the same listener; with none, and FCP's own client check unable to prove a new one,
@@ -937,7 +941,8 @@ not, answering or not, the engines and their versions, the egress page's host, "
 address in use whose newest check found a client that does not get through, named per client;
 `client_check_unavailable` (warning; critical while `edge.clientCheck.enabled` is on): the
 service is set up and did not answer its last health check. With the switch off a check is
-advice only; with it on, a pass in a ticked location confirms the address (next section).
+advice only; with it on, a pass in a location assigned to the node confirms the address (next
+section).
 
 **Setting it up.** One secret, in the compose env (`.env.beta`, or `.env.prod`): the service reads
 it, and the deployer sets the same value on the deployment (`docker/deploy-entrypoint.sh`), so
@@ -951,36 +956,48 @@ connected) where it is unset.
 
 ### Replacing a blocked address without a spare
 
-Standing spares cost money every hour and still need a human tick, which is made from outside
-the censored country like FCP's own check. With **`edge.clientCheck.enabled`** on (the
-automation switch sets it when the client-check service is set up), FCP instead makes the
-replacement when it is needed and proves it itself.
+Standing spares cost money every hour and a person's test is made from outside the censored
+country just like FCP's own check. With **`edge.clientCheck.enabled`** on (the automation switch
+sets it when the client-check service is set up), FCP instead makes an address when it is needed
+and proves it itself, and **nobody has to test an L4 address by hand**: a person's test stays
+possible, never required.
 
-**Where.** Only in a **ticked location** (`lib/edges/tickedLocation.ts`): a location trusted by
-an operator on the evidence of an L4 endpoint they confirmed there with a real session
-(`edgeLocations.qualification` with `by: admin` and `evidence`). Every invalidation that clears a
-location's trust clears this too (a manual untrust, a credential or settings change, a template
-edit), so new load balancers of a template nobody tested never count. A trust override without a
-ticked endpoint does not count; a tick made later in such a location becomes its evidence
-(`confirmEndpoint`), a re-trust of the same template keeps it, and the reconcile pass fills it
-from a still-current ticked address there (`edgeVerification.fillTickedEvidence`, which also
-covers ticks made before this). The first address in any other location still needs a human.
-A `client_check` confirmation stands in for a tick only on the terms it was written on: the
-publication gate (`checkPublishable`, and the replace's choice of a spare) accepts it only while
-the switch is on and the edge's location is still ticked (`clientConfirmationStands`). An address
-in use keeps serving either way (the render reads the confirmation alone, so nothing is taken out
-of members' subscriptions), but once it is out of use it cannot go back in on that confirmation. A
-manual untrust also removes the `client_check` confirmation of that location's spares, so they
-show as untested.
+**Where.** In a location an operator **assigned** to the node
+(`lib/edges/assignedLocation.ts` `locationAssigned`): one of the node's picks (its provider set,
+or the picks of a guided setup run working on it, which join the set at go-live), or a location
+an operator trusted by hand (the Trust override, or a confirmed endpoint there; trust `by:
+admin`, with or without endpoint evidence). An operator who assigned a location chose it on
+purpose, and every address made there is proven by real clients before it is put in use, so no
+earlier test in that location, and no test after a template edit, is needed. Not assigned: a
+location switched off, one an operator untrusted by hand (`autoQualifyHold`, until trusted
+again), and one no operator chose for the node; automatic selection never uses such a location.
+(Before 2026-11 only a "ticked" location counted, one with an endpoint a person had confirmed;
+the endpoint evidence is still recorded, `edgeVerification.fillTickedEvidence`, and shown on the
+account page, but nothing depends on it.) A `client_check` confirmation stands only on the terms
+it was written on: the publication gate (`checkPublishable`, and the replace's choice of a
+spare) accepts it only while the switch is on and the edge's location is still assigned to its
+node (`clientConfirmationStands`). An address in use keeps serving either way (the render reads
+the confirmation alone, so nothing is taken out of members' subscriptions), but once it is out of
+use it cannot go back in on that confirmation. A manual untrust also removes the `client_check`
+confirmation of that location's spares, so they show as untested.
+
+**Every address FCP makes is checked.** With the check ready (below), a provision outside a
+guided setup run (upkeep's fill, a count fill, an operator's own) is in client-check mode too:
+an L4 address made in an assigned location goes through the same gate before it is published or
+kept as a spare, so a spare is tested when it is made. Upkeep may therefore fill a pick no
+address was tested in yet (`pickUsable`: the set's `trusted` flag, `location_short` and the
+`location_untrusted` code read the same rule). A guided setup run checks its own addresses at
+its "Try it" stage (§ "Guided setup runs").
 
 **Starting.** A replace of an L4 address (the detector's, "Replace now, address is blocked",
 "Replace address") with no tested spare is no longer refused `edge.no_verified_spare` when the
 check is ready (`clientCheckReadiness`: the switch on, the service configured, its last health
 answer ok and under 30 minutes old) and the start's own selection finds a candidate. The
-selection, in client-check mode, takes a tested spare first, then an untested L4 spare in a ticked
-location, then a new load balancer in a ticked location (L4 locations elsewhere do not count as
-trusted for it); none is `edge.no_ticked_location` (attention `needs_test` says so). The run is
-marked `clientCheckGate`.
+selection, in client-check mode, takes a tested spare first, then an untested L4 spare in an
+assigned location, then a new load balancer in an assigned location (other L4 locations do not
+count for it); none is `edge.no_assigned_location` (attention `needs_test` says so; a refusal an
+older build stored as `edge.no_ticked_location` reads the same). The run is marked
+`clientCheckGate`.
 
 **The gate** (`verifying`, after the describe and before the country wait; its own attempts and
 clock, `CLIENT_GATE`): the check runs against the replace's target, the address members use now,
@@ -996,7 +1013,7 @@ guard: a manual replace can force). "Could not check" (the service down, busy or
 test link) waits up to 15 minutes; a new address then ends as an untested spare
 (`unverified_standby`, never published), which the next replace takes and checks instead of
 buying another; a spare taken for the replace fails the run (`client_check_unavailable`). A pass
-that could not confirm (the location stopped being ticked, the switch went off) is the same
+that could not confirm (the location is no longer assigned, the switch went off) is the same
 fallback (`client_check_unconfirmed`). A spare whose latest check (against the configuration it
 holds now) found the address itself at fault (`address_failed`, `egress_mismatch`) is not taken
 by a later replace, which buys a new address instead; a later passing check, by hand or otherwise,
@@ -1007,7 +1024,7 @@ makes it a candidate again.
 concurrency limit, the account's daily allocation budget, live caps and monthly spend cap (the
 selection refuses), and the node's approved shape. A location whose provider refused the new
 load balancer for good (a quota) is held on the node for six hours, so the next automatic
-replace provisions in the next ticked location (§ "Provider sets", "A location that refused a
+replace provisions in the next assigned location (§ "Provider sets", "A location that refused a
 create"). Worst case per origin per day: as many
 short-lived load balancers as the daily cap, each destroyed after a failed check.
 
@@ -2050,7 +2067,7 @@ authoritative stage machine, every stage idempotent and re-enterable:
 | 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | unchanged           |
 | 3   | `provision`         | per target (a listener and a pick) without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedLocationId`, `allowUnqualified`) AND records `expect`; a live edge of the listener in that location, not used by another target, is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | unchanged           |
 | 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged per address family by `outsideCheckFor` (§ "Probe sources and verdicts"; `partial` is the L4 ceiling); L7 runs the front proof. Only a real refusal is `unreachable`: it gets one re-apply and a fresh check first (below), then asks the operator (`address_unreachable`); a family no source could test passes as `notChecked`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
-| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). The links come from the origin's test account, reset first when used up; one that cannot be reset is the card `test_account_used_up`, never a dead link (stage 4's L7 proof too). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
+| 4b  | `try_it`            | first, with FCP's own client check ready, **FCP checks each such L4 endpoint itself** (`edgeClientCheck.checkForSetup`, one per pass; a pass in the run's own pick confirms it, so nobody tests by hand and the card is never shown; a configuration already checked, pass or fail, is not asked again, and "could not check" is asked at most 3 times an attempt). Then, for what is left: one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). The links come from the origin's test account, reset first when used up; one that cannot be reset is the card `test_account_used_up`, never a dead link (stage 4's L7 proof too). Skipped when every listener is L7                                                                                                            | unchanged           |
 | 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | direct AND FCP Host |
 | 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | FCP Hosts only      |
 | 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | unchanged           |
@@ -2889,7 +2906,9 @@ held for what the node's set lacks (§ Publication, reserved allocation) and no 
 automatic work may use lowers it, what selection would pick could only ever be a spare, so the
 fill is not started (`edgeRotations.upkeepFillRefusal`, read fresh before the start; selection
 refuses the same pick as `pool_reserved`, § "Provider sets"). The usual cause is a set location
-no address was tested in yet: its first address is made there by hand and tested. A missing
+no address was tested in yet while FCP's own client check is off or not answering (with it
+ready, upkeep makes the first address there and the check proves it, § "Replacing a blocked
+address without a spare"). A missing
 location at its account's or its own live-edge cap, or out of today's allocations, holds the
 slot the same way (nothing is started that selection would refuse).
 
@@ -3045,25 +3064,54 @@ from the action (one `paginate` per query, as Convex requires).
 
 Opt-in (`alerts.*` in `appSettings`, Admin -> Settings -> Operator alerts; `GET /api/v1/admin/alerts`
 with the settings read scope, `PATCH` sealed with the write scope, `POST /api/v1/admin/alerts/test`
-sends one test). Every five minutes the `alerts-dispatch` cron reads the attention list and
-posts the NEW alert-worthy items once, in one notification, to the webhook as ntfy-compatible
-JSON:
+sends one test). Every five minutes the `alerts-dispatch` cron reads the attention list and a few
+system signals and posts what is due to the webhook as ntfy JSON, one notification per alert
+(`convex/alerts.ts`; the words and the send plan are `convex/lib/alertMessages.ts`, pure and
+tested):
 
 ```json
 {
   "topic": "<if set>",
-  "title": "Edges: 2 new alerts",
-  "message": "quarantine (flip_unconfirmed): 1\nnode_ready_to_protect: 1\n\nOpen Admin, Edges for the details.",
-  "priority": 5,
-  "tags": ["rotating_light"]
+  "title": "Address unreachable: Frankfurt 1",
+  "message": "An address in use at CDN main, Europe is reachable from 0 of 6 probes in IR.\nSince 10:20 UTC (1 h 40 min).\nNext: Check the country view; replace the address if FCP has not.",
+  "priority": 4,
+  "tags": ["warning", "edge_unreachable"],
+  "click": "https://<admin origin>/admin/edges/relays/<slug>?tab=edges&edge=<id>"
 }
 ```
 
-Alert-worthy: every critical item (quarantine, fleet brake, a provider whose API keeps failing,
-a stuck rotation, dark members, a reappeared direct Host, a blocked node with no tested spare, an
-ambiguous Host); the prompts FCP never acts on by itself: `node_ready_to_protect`,
-`node_awaiting_approval`, `freedom_node_withheld` and `location_refused`; and a **suspected block
-FCP is holding back**: `block_suspected` (a warning) whose `facts.heldBack` is set. The detector
+The title names what happened and where (the node's label, a provider account's or location's
+label, a backend's slug, a job's name). The body is three lines: what, with the numbers that
+matter; since when (the item's own start, else when FCP first saw it); the next step. Priority
+follows severity: 5 for a critical item, 4 for a warning, 3 for a prompt that only waits on the
+operator (`node_ready_to_protect`, `node_awaiting_approval`), 2 for "Resolved". The click link
+opens the page the attention row's button opens (`alertPath`, kept in step with the admin's
+`attentionTarget` by a test), on the first origin in `WEBAUTHN_ORIGIN` (https; without one,
+alerts go out without a link).
+
+What alerts:
+
+- every critical attention item (quarantine, fleet brake, automatic replacement stopped, an
+  address parked for the operator, a provider whose API keeps failing, a stuck rotation, an
+  ambiguous Host, dark members, refusals over the threshold, a reappeared direct Host, a blocked
+  node with no tested spare, a failing shared certificate, a DNS record stuck while removing,
+  only country-limited addresses left, the client check down while replacements count on it);
+- the prompts FCP never acts on by itself: `node_ready_to_protect`, `node_awaiting_approval`,
+  `freedom_node_withheld` and `location_refused`;
+- the warnings where FCP stops on its own until the operator acts, or members lose an address:
+  `account_spend_cap`, `fleet_rotation_cap`, `edge_unreachable` (after 30 min on the list: FCP
+  usually replaces a blocked address sooner) and `probe_source_failing` (after 1 h);
+- a **suspected block FCP is holding back** (below);
+- system signals outside the attention list (`alerts.systemSignals`): an active backend whose
+  health check has not passed for 30 min (`backend_unhealthy`), a node its backend reports
+  offline while its fresh node list says it is enabled, and not being retired (`node_offline`,
+  after 15 min; the inventory keeps the backend's `disabled` flag for this), a scheduled job
+  stopped or failing every run by the dashboard's own rule, or never run at all once the same
+  grace has passed since alerts first saw it missing (`cron_stale`, `cron_failing`;
+  `alerts-dispatch` cannot report itself, so watch it from outside), and an edge provider account
+  at 90% of its monthly cap (`spend_near_cap`).
+
+The suspected block: `block_suspected` (a warning) whose `facts.heldBack` is set. The detector
 judges it each pass on the whole decision (`replacementHeldBack`, `lib/edges/scoring.ts`, stored as
 `relays.suspicion.heldBack`): the decision is a veto, and the same decision with the holds lifted
 (automation and the node's Auto rotate on, `detect.allowProbeOnlyAutoRotate` on, no cooldown, no
@@ -3074,15 +3122,27 @@ checked before the outage and evidence gates, so an offline node, an address dow
 protocol-level block, no address named or probe sources gone quiet behind `edge_disabled` never
 alert from this item, nor do a running rotation, a guided setup's origin, the steering holds
 (`country_scoped`, `country_wide`: members are already routed around) and the holds that alert as
-their own items (`quarantined`, `fleet_brake`). The push reads `block_suspected
-(<veto>): 1`. An item is sent once
-while it stays on the list at any severity (`appState` `alerts:state` holds the sent ids); one
-that clears and comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
-and is retried next tick. **Alerts carry kinds, short codes and counts only**: never a member,
-a token, an address, a node or origin name, a provider or a region. The webhook URL must be
-https and pass the infra SSRF check (`ALLOW_INTERNAL_BACKENDS=true` admits http in
-development); redirects are not followed. The topic and the access token (sent as `Bearer`) are
-write-only: the admin view shows whether each is set and the webhook's origin, nothing more.
+their own items (`quarantined`, `fleet_brake`). The push names the hold ("daily cap reached").
+
+Repeats (`appState` `alerts:state`): an item is sent once while it stays on the list at any
+severity. A critical one still open after 12 h is sent again ("Still open"), once per 12 h, in one
+message for all of them. An alerted item that stays off the list for 10 minutes is reported
+"Resolved" (one message for all that resolved in a tick) and forgotten, so a recurrence alerts
+again; one back within the 10 minutes stays open and nothing is sent. Several new items of one kind
+in a tick share one message naming the first three; at most four new messages go out per tick, most
+urgent first, and the rest wait for the next ticks so each still arrives in full. A failed post
+records a short code (`network`, `timeout`, the status), sends
+nothing more that tick, and is retried next tick; "Last sent" moves whenever any post went
+through. A held-down alert's "Since" counts from when FCP first saw it.
+
+**What leaves**: operator-facing labels (a node's label, a provider account's or location's label,
+a backend's slug, a transport tag, a country code, a job's name) and counts. Never a member, a
+token, an address, a hostname, a credential or a provider's free-text error; a label that looks like
+an IP address is dropped. Point alerts at an ntfy server you run, or at least a topic only you know.
+The webhook URL must be https and pass the infra SSRF check (`ALLOW_INTERNAL_BACKENDS=true` admits
+http in development); redirects are not followed. The topic and the access token (sent as
+`Bearer`) are write-only: the admin view shows whether each is set and the webhook's origin,
+nothing more.
 
 To poll instead (or as well), read `GET /api/v1/admin/edges/attention` with a read-only API
 token (`admin:servers:read`); every item carries `kind`, `severity`, `code` and `action`.
@@ -3494,7 +3554,7 @@ Routes, under `/api/v1/admin/edges/sni/`: `GET|PATCH config` (settings scope),
 `GET|POST families`, `GET|PATCH|DELETE families/{slug}`, `POST families/{slug}/names` (a pasted
 list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, `invalid`,
 `in_other_family`, `burned`), `POST families/{slug}/names/{retire|reactivate|burn|recheck}`,
-`POST families/{slug}/names/country`,
+`POST families/{slug}/names/use-anyway`, `POST families/{slug}/names/country`,
 `POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`,
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
@@ -3593,8 +3653,9 @@ volunteers' home connections. These rules are built in, not settings:
 **Which probes** (Globalping; `lib/edges/probes/nameCheck.ts` `createFirstNameMeasurement`).
 A batch's first measurement picks the probes; every later one reuses them. Before it, FCP reads
 Globalping's probe listing (`GET /v1/probes`, free and not rate limited) and counts the
-country's probes by network tag (`planNameProbes`). With `edge.probe.preferEyeball` on (the
-default):
+country's probes by network tag (`planNameProbes`). What it asks follows `edge.probe.networks`
+(§ "Probe sources and verdicts"): at `home` (the default) home-network probes only, however few
+the country has, and a refusal stands; at `any`, any probe. At `home_first`:
 
 | The country's probes                                                                        | The first measurement asks for                                                                                                |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -3606,19 +3667,21 @@ Every case is **one** ask of at most `perCountryLimit` probes, what each measure
 budgeted at, so a short country costs no more tests than any other. If Globalping refuses that ask
 because the probes went away since the listing, the batch waits the source spacing and asks for
 any probe once. Without a usable listing (it failed, or it carries no network tag anywhere),
-the batch asks for home-network probes and then any probe, as before, and notes nothing.
+the batch asks for home-network probes and then any probe, and notes nothing.
 
 Where a country has **fewer probes in all** than `minVantages`, the batch runs on what there is
 and its names stay not judged: the floor is not lowered for one country, because so few probes
 on so few networks cannot tell a blocked name from a broken probe or network (another source,
 such as RIPE Atlas, can still add vantages: a batch's sources are counted together). What the
 listing said is noted per country (`appState` `sniVantage:namePool:<CC>`, `lib/edges/sni/namePool.ts`).
-The country page says when the checks there also use data-centre (or any) probes, and when names
-cannot be judged there on Globalping alone. It shows the note only while it still describes the
-checks: Globalping is still a name-check source, the note is newer than two check intervals (at
-least a day), and the limit, the floor and the preference are unchanged. Measured on 2026-11-05:
-AE has two home-network probes (topped up, so it can now be judged); MM has one probe in all
-(stays not judged, and says so). The same applies to the real-site checks of candidate names
+The country page says when the checks there also use data-centre (or any) probes, when home
+networks only leaves the country short of a verdict, and when names cannot be judged there on
+Globalping alone. It shows the note only while it still describes the checks: Globalping is
+still a name-check source, the note is newer than two check intervals (at least a day), and the
+limit, the floor and `edge.probe.networks` are unchanged (a note from before the setting reads
+as `home_first` when the old switch was on, `any` when off). Measured on 2026-11-05 under the
+top-up: AE had two home-network probes (topped up, so it could be judged); MM has one probe in
+all (stays not judged, and says so). The same applies to the real-site checks of candidate names
 (§ Finding names).
 
 **Residual risk** (accepted by turning a country on; the page says so next to the switch):
@@ -3869,8 +3932,8 @@ off the network now, and the locations learn their network again.
 `edge.sni.network_bound`; a change puts every name back to waiting for its first check, so none is
 used, by a rebind either, until it was checked against the new network): qualification adds two
 checks before the handshake. Every address the target resolves to must be on the network
-(`q_target_off_network`), and the name must resolve, every answer on it (`q_off_network`: a name
-that does not resolve is not a site there). A name of such a family is not checked at all while
+(`q_target_off_network`), and the name must resolve (`q_name_unresolved`: a name that does not
+resolve is not a site there), every answer on it (`q_off_network`). A name of such a family is not checked at all while
 its network has no ranges yet (it waits; it is never failed for that).
 
 **What qualification walks past steps aside.** A pass takes the oldest-checked names first. A
@@ -3879,6 +3942,46 @@ yet) is deferred (`sniFamilies.deferQualification`: its `checkedAt` becomes now,
 and only when nothing moved it meanwhile), so it leaves the head of the queue and can never crowd
 out the names that are due. Whatever makes it checkable again marks it due: a reactivation, the
 family switched back on, the network's ranges moving.
+
+**Using a server name off the network anyway.** An operator may know better than the network
+check: a server name (SNI) that resolves outside the family's network can still be confirmed to
+work from inside a country. "Use anyway" on that entry (the family page, a row failing with
+`q_off_network`; `POST sni/families/{slug}/names/use-anyway {snis, on, reason?}`, audited
+`edge.sni.names.use_anyway` with the admin, `on`, the count and whether a reason was given, never
+the hostname or the reason) stores `sniNames.networkOverride {by, at, reason?}` (a reason is at
+most 300 characters) and marks the name due. Qualification then lifts the name's own network check
+and nothing else (`qualificationNetworkVerdict` in `lib/edges/networks.ts`): the target must
+still be on the network (`q_target_off_network` is never lifted), the handshake must still pass,
+and a name that comes back suspended still needs to qualify. It is then used like any other
+qualified name: rollouts, auto-confirm, the checks from inside a country, per-country marks and
+the renderer treat it as they treat every name (blocked or failing verdicts still apply). Each
+check under the override records `qualification.offNetwork` when the name resolved outside the
+network, and the row
+keeps saying so ("Used anyway: it resolves outside the list's network", who set it, when, the
+reason) with "Stop using anyway" next to it.
+
+- **Never automatic.** Only the admin route writes `networkOverride`; finding names
+  (`sniHuntOps`) and the qualification pass without it refuse an off-network name exactly as
+  before, and nothing reads a country check, a member report or a client check as a reason to
+  set it. A test scans the backend for every writer.
+- **Taking it back** (`on: false`) clears it and its `offNetwork` mark and marks the name due:
+  the next pass applies the
+  normal check, so a name still off the network fails (`q_off_network`) and leaves members the
+  way any failing name does (suspended after `edge.sni.suspendAfterFails`).
+- **A name that stops resolving at all** is refused even with the override (`q_name_unresolved`):
+  the operator vouched for a site that lives on another network, not for one that is gone (a
+  lapsed domain is a giveaway and may change hands). It fails and is suspended like any failing
+  name (an origin keeps its last name), the override stays, and the name comes back by itself
+  once it resolves again.
+- **A family's network change** drops every override of its names: each was said about the old
+  network.
+- **A check that ran while it changed** does not count: the pass hands back whether it judged the
+  name under the override, and a verdict judged under the other state is dropped, so the recheck
+  the operator asked for still happens.
+- A family with no network refuses it (`edge.sni.no_network`). A burned name never gets one, and
+  a burn clears it; taking it back works on any name.
+- "Use anyway" is offered only for `q_off_network`, which means the name was seen resolving
+  elsewhere: a name that does not resolve at all is `q_name_unresolved`, with or without it.
 
 **A transport scoped to a network.** Binding a family on a network to a transport scopes it:
 `relayListeners.networkId` is written on every listener of that transport (by the bind, on every
@@ -4416,6 +4519,62 @@ off) or when it is all the address has (`literalFamilies`).
 | Globalping     | A TCP ping to the literal, its own family; only probes that can reach IPv6 answer.                                                                                                                        | `measurementOptions.ipVersion` is sent for a NAME only: Globalping refuses it next to an IP literal (400, `request_refused`). Works without a token, at the anonymous limit. |
 | RIPE Atlas     | `af: 6` measurements, from probes with IPv6.                                                                                                                                                              | Needs a key and credits; off by default.                                                                                                                                     |
 
+**Which networks Globalping probes come from** (`edge.probe.networks`, Settings, Probes,
+"Globalping probe networks"; `lib/edges/probes/networks.ts`). Globalping tags every probe as a
+home network (`eyeball-network`: a consumer ISP, the kind of network members connect from) or a
+data centre (`datacenter-network`), never both. One setting covers every Globalping ask from a
+checked country: address rounds (`probeOps`) and the checks of server names from inside a
+country (`sniVantageOps`, and `sniHuntOps.countryBatch` for candidate names):
+
+| Value            | Address rounds                                                                                                                                                                                                                                                                                                                                                | Name checks                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `home` (default) | home-network probes only, in every checked country                                                                                                                                                                                                                                                                                                            | home-network probes only; a refusal (no probe matched) stands  |
+| `home_first`     | from Globalping's probe listing (counted at most once an hour, `appState` `globalping:probeCounts`): a country with fewer home-network probes than `perCountryLimit` is topped up with data-centre ones in the same ask, and asks any probe when the two together are too few; without a listing, home networks, then any probe once on a "no probes" refusal | the table in § "Checks from inside a country" ("Which probes") |
+| `any`            | any probe                                                                                                                                                                                                                                                                                                                                                     | any probe                                                      |
+
+Every value asks the same number of tests (`perCountryLimit` per checked country), so the
+Globalping budget does not move. Never by network type, whatever the setting: control countries
+(one vantage each in an uncensored country: any probe that answers tells a blocked address from a
+broken one, and a home-network tag there could leave a control country with no probe) and the
+timing of a candidate's site from a node's place (§ "Finding names": the node sits in a data
+centre). check-host.net and RIPE Atlas do not tag their vantages. The Probes page shows, per
+country of each run, how many results came from home networks and how many from data centres.
+`edge.probe.networks` replaced the switch `edge.probe.preferEyeball` (§ "Deploy notes").
+
+**What home networks only costs.** A country with few home-network probes gets fewer results,
+and one with none gets none from Globalping. Globalping's public listing (`GET /v1/probes`, free)
+on 2026-11-08 had 5,478 probes, 1,608 of them on home networks. Some censored countries:
+
+| Country                        | Home networks | Data centres | All    |
+| ------------------------------ | ------------- | ------------ | ------ |
+| CN                             | 31            | 29           | 60     |
+| RU                             | 34            | 139          | 173    |
+| VN                             | 21            | 21           | 42     |
+| TR                             | 14            | 25           | 39     |
+| BY                             | 9             | 4            | 13     |
+| KZ                             | 8             | 10           | 18     |
+| BD                             | 8             | 20           | 28     |
+| PK                             | 7             | 5            | 12     |
+| TJ                             | 6             | 0            | 6      |
+| IR                             | 4             | 4            | 8      |
+| AE                             | 3             | 9            | 12     |
+| AZ                             | 3             | 7            | 10     |
+| EG                             | 1             | 3            | 4      |
+| VE                             | 1             | 1            | 2      |
+| SA                             | 0             | 5            | 5      |
+| MM                             | 0             | 1            | 1      |
+| QA, OM, KW                     | 0             | 1 each       | 1 each |
+| UZ, TM, ET, CU, IQ, SY, SD, KP | 0             | 0            | 0      |
+
+Probes come and go, so these move. At the defaults (`perCountryLimit` 3, name-check
+`minVantages` 3): EG, VE, SA, MM, QA, OM and KW get at most one result from home networks, or
+none, so a name checked there is not judged on Globalping alone; AE and AZ have exactly three,
+so one probe offline is enough to leave a batch short. An address round still reads with fewer
+vantages ("reachable" needs one home-network success), but "unreachable" needs
+`probe.agreementVantages` failing networks, so a country with one home-network probe can never
+call an address unreachable from Globalping alone. Where that matters more than where the probes
+sit, "Home networks first" tops those countries up with data centres at the same cost.
+
 **Three kinds of answer** (`lib/edges/probes/types.ts` `RunOutcome`). A vantage either
 **reached** the address, was **refused** by it (connection refused, reset, no answer, a failed
 handshake where the handshake is the measurement), or **could not test** at all. "Could not
@@ -4937,6 +5096,176 @@ in it is ever handed it.
 - **Where it shows:** each address on the node page says "(only for Iran, Russia)", and the
   preview's reasons say "only for IR, RU" for a contained endpoint.
 
+### Countries with their own addresses
+
+A node may keep addresses only for some countries at one of its picks
+(`relays.providerSet[].audiences`, `convex/edgeAudiences.ts`; pure rules in
+`convex/lib/edges/audience.ts` and the count in `convex/lib/edges/providerSet.ts`). Where a
+location only for some countries (§ Addresses only for some countries) holds them for every node
+picking it, this holds them for one node at one pick, so one location (an L4 region) or one CDN
+zone can serve addresses for Iran, for Russia and for everyone at once, and a country may have its
+own zone: each zone is its own location, so a country's entry on another zone's pick is a zone of
+its own, and an entry on the zone everyone uses shares it. Dormant until an entry is saved.
+
+- **An entry** is `{codes, want}`: the countries (1 to 4, on the censored-country list) and how
+  many addresses of each transport the pick carries the node keeps for them. The count is over
+  **every pick holding exactly those countries** (`Requirement.audienceWants`), so a second pick
+  with an entry and no count is a second place: upkeep makes their address at the first place
+  nothing holds back (cooling, a refused create, untrusted, the account's cap), in set order. One
+  pick's entries never share a country. Addresses for them anywhere on the node count, and only
+  addresses contained to exactly them.
+- **An address made for them** carries them from when it is planned (`edges.audienceIntent`,
+  written by the rotation that makes it: upkeep's fill of their count, `edgeRotations.audience`,
+  or the replacement of an address of theirs at a pick whose entry covers its countries) and
+  takes them as its audience at its first publication wherever it is (`audienceAtPublish` with
+  `made`), under the taint rule of § Addresses only for some countries. At a location only for
+  some countries, the location's countries rule: an address made for others is never published
+  there, and one made for exactly them keeps the location's switch-date rule. Everything there applies
+  from then on: who is handed it (fail closed), never the template, the detector's
+  `outside_audience`, probes only from its countries, names moving only within one audience.
+  It is also **meant for** them (§ Locations meant for a country, `meantFor` on the published
+  edge): their members are handed it before everyone's addresses, which stay their backup.
+- **Theirs only.** A spare made for them fills their count or replaces one of their addresses;
+  no fill of everyone's addresses takes it (the coverage fill, the lanes, the origin-wide fill,
+  a count of everyone's, a replacement of everyone's address). The pool admits it as theirs
+  (`publishedRefOf` reads the intent), and the pool grows by their count (it is part of the
+  deficit), within `MAX_DESIRED_PUBLISHED`. With address lanes on, the pool is the lanes, plus
+  the contained addresses in use (theirs, or at a location only for some countries), plus what
+  the counts still ask for.
+- **A pick serving its countries only** (`audienceOnly`): no address everyone is handed is
+  made there from then on (no coverage, no diversity, no count of everyone's, no fill, no
+  replacement of everyone's address). It needs an entry first, no count of everyone's there, and
+  another pick carrying each of its transports for everyone (`edge.audience_leaves_none`).
+  Addresses for everyone already there stay. No count for everyone may be saved there while it is
+  on. Switching it off, or removing its last entry, makes it serve everyone again (checked
+  against the pool's size).
+- **Guards:** ordering by country on (`edge.audience_needs_steering`), the rendezvous walk on the
+  node (`edge.audience_needs_spread`; the node keeps it while it holds an entry), never at a
+  location only for some countries (`edge.audience_on_only_location`; and such a location may not
+  be switched to only while a node keeps entries there, `edge.audience_on_pick`), and the pool's
+  size (`edge.set_too_large`, judged as the set will stand: nothing cooling, and the edited pick
+  as if its location and account were on). A provision for countries no pick holds is refused at start
+  (`edge.audience_not_picked`).
+- **Admin API:** `POST relays/{id}/providers/{locationId}/audiences {codes, want}` (want null =
+  a place with no count of its own; `{remove: true}` drops the entry: addresses made for it stay
+  theirs and keep serving), audited `edge.relay.pick_audience`;
+  `POST relays/{id}/providers/{locationId}/audience-only {only}`, audited
+  `edge.relay.pick_audience_only`. Attention `location_short` names the countries
+  (`facts.countries`) when the short count is theirs.
+- **Privacy-family keys** are never handed a contained address, so an entry on a node serving
+  privacy keys only buys addresses nobody is handed: use it on Freedom nodes.
+- **Rollback:** `edgeAudiences:clearAudiencePicksForRollback` (no arguments; refused while a run
+  for some countries is in flight): every entry and "countries only" flag goes, then every
+  rotation and address forgets what it was made for (each a page at a time, in the background). Addresses already
+  contained stay contained (the build before knows them); a spare made for them and never
+  published becomes an ordinary spare (nobody was handed it). To go back further, the rollback of
+  § Addresses only for some countries follows.
+
+### A country on its own addresses
+
+Once a node keeps addresses for a country (§ Countries with their own addresses), it may **cut
+that country over** (`relays.ownPools[]`, `convex/edgeOwnPools.ts`; pure rules in
+`convex/lib/edges/ownPools.ts`). A block in that country then replaces only that country's
+address, never the one everyone shares. Dormant until a country is cut over.
+
+- **Who is handed what.** A member steered by that country is handed its own addresses first, for
+  the primary **and** the backup (`assignEndpoints` `ownPool`: inside "not blocked there", its own
+  before the lane, meant for, the band and the tier). A shared address only as a fallback: as the
+  backup when the country has one address of its own (a load balancer), or first when every one
+  of its own is blocked there or cannot be handed out (attention `audience_pool_down`). Other
+  members, unlocated ones and mirrors without the member's answer are handed exactly what they
+  were; a mirror with the answer is ordered like the member.
+- **The detector.** Once the cutover has settled (one refresh interval and the revalidation
+  window, as the steering vetoes wait), that country's evidence no longer replaces a shared
+  address on the node: evidence only from cut-over countries is vetoed `own_pool`; in mixed
+  evidence the rest is judged as before. Evidence that names no country still replaces it, and
+  a country taken off the censored-country list no longer vetoes (its members' stored countries
+  are cleared, so they are on shared addresses again).
+- **Its own budget.** A replacement of the country's own address spends that country's budget on
+  the node: `edge.audience.replacesPerDay` per node, per transport, per UTC day (default 1, 0 to
+  10, 0 = never automatic), a country's own value in `edge.audience.replacesPerDayByCountry`
+  (`{"IR": 2}`; the strictest of an address's countries), a node's own in
+  `relays.audienceReplacesPerDay`, counted in `relays.audienceReplaces`. The fleet's and each
+  country's values are under Admin -> Edges -> Settings, Rotation (a blank country follows the
+  fleet). It never counts against,
+  nor waits for, the node's daily cap, its cooldown or the fleet's daily cap (the fleet brake
+  still holds it, and a node whose only evidence is on such addresses never counts toward the
+  brake). Used up: veto `audience_budget` (an automatic start is refused `edge.audience_budget`);
+  an operator's replace is counted, never refused. The re-block hold applies as for any address.
+- **Prerequisites** (`edge.audience_*` refusals): the country on the censored-country list,
+  ordering by country on (`audience_needs_steering`), the country question on
+  (`audience_needs_ask`: a mirror without the member's answer can carry only shared addresses),
+  the rendezvous walk on the node (`audience_needs_spread`), an entry for the country on one of the
+  node's picks (`audience_no_pool`), its own addresses at their count on every transport
+  (`audience_pool_short`) and none of them blocked there (`audience_pool_blocked`). Stopping is
+  never refused, not even in a maintenance freeze or during a setup run. Each change moves the node's publication epoch and refreshes the mirrors, so
+  apps move at their next refresh.
+- **The rehearsal** (`cutoverPreview`): before a cutover, over synthetic seats steered by that
+  country, how many move and how many still hold a shared address before and after.
+- **Keys on an older body.** Once an hour per node, the keys of each cut-over country whose last
+  body predates its cutover are counted (a mirror refreshed since, at the cutover's epoch
+  `ownPools[].epoch` or later, is not) (counts only, `relays.ownPools[].stale`; attention
+  `audience_stale_keys`, info). Their apps keep shared addresses that this country's reports no
+  longer replace.
+- **Admin API:** `POST relays/{id}/own-pools/{code} {own}` (audited `edge.relay.own_pool`),
+  `POST relays/{id}/own-pools/{code}/preview` (read only), `POST relays/{id}/own-budget
+{perDay}` (`null` follows the country's, else the fleet's; audited `edge.relay.own_budget`),
+  `POST countries/own-pools/{code} {own}` (every node keeping addresses for it where it may be
+  now, one result per node with its refusal).
+- **Rollback:** `edgeOwnPools:clearOwnPoolsForRollback` (no arguments; refused while a
+  replacement of a country's own address is in flight): every cutover, budget and count goes
+  (each node's epoch moves, mirrors refreshed), then every rotation forgets it was one, a page at
+  a time in the background. The countries' own addresses stay contained (§ Countries with their
+  own addresses has the next rollback).
+
+### A country's default picks
+
+So that every freedom node keeps addresses for a country without one entry per node, the fleet
+keeps a **default per country** (or a few countries together): the picks its own addresses go to,
+in order, each with a count of each transport it carries or none (a fallback place)
+(`countryDefaults`, `convex/edgeCountryDefaults.ts`; pure planner in
+`convex/lib/edges/countryDefaults.ts`). Dormant until a default is saved.
+
+- **Upkeep writes them** (each pass, before step 5W) onto every ready node as entries of its picks
+  (§ Countries with their own addresses), marked `fromDefault`. A location the node does not pick
+  is added as a pick serving its countries only (`audienceOnly`, `fromDefault`; kept so, and
+  starting from its account's options copied in, as any pick joining a node). Only locations
+  that carry one of the node's freedom transports (a transport only freedom-family modes use);
+  nodes with none take nothing. The next pass fills the counts as for any entry.
+- **Never on its own:** a node a guided setup owns (after go-live, the next pass), one with a
+  rotation running (the next pass), a quarantined one or one under a restore (left alone), and
+  one where writing them would need the operator: ordering by country off, no rendezvous walk
+  (switching it moves members once), more than six locations, or a pool that would grow past its
+  size (an entry added or a count raised, judged with the defaults' locations as if usable). Such a node waits (`relays.countryDefaultsWaiting`, attention
+  `country_defaults_waiting` with the refusal code).
+- **The node's own entries win.** A country a node keeps by hand (any entry not from the defaults)
+  takes no default there, and the defaults' entries for it go (a default for several countries
+  still serves the others there, as an entry for them alone). A hand entry at a pick replaces a
+  default entry sharing a country there. A node may opt out of a country
+  (`relays.countryDefaultsOptOut`).
+- **Changing or removing a default** follows on every node at its next pass. A removed entry's
+  addresses stay theirs and keep serving; a pick the defaults added goes with its last entry once
+  nothing is live there (until then it serves its countries only). A guided re-protect keeps the
+  picks the defaults added.
+- **A location a default names** may not be switched to only for some countries
+  (`edge.audience_on_pick`).
+- **Saving** needs listed countries (1 to 4, none already in another default), ordering by country
+  on, 1 to 4 locations, distinct, none only for some countries, and at least one with a count.
+  Billable once applied: **the preview** says, per node, what it would add or remove, why it would
+  wait, and per location the new addresses and their monthly price, with the fleet's total per
+  currency.
+- **Cutting a country over** stays per node (§ A country on its own addresses): on every node at
+  once with `POST countries/own-pools/{code}`.
+- **Admin API:** `GET countries/defaults`; `POST countries/defaults {codes, picks: [{locationId,
+want}]}` (want null = a fallback place; audited `edge.country_default`);
+  `POST countries/defaults/remove {codes}`; `POST countries/defaults/preview {codes?, picks?}`
+  (read only: the stored defaults, with `codes` replaced by `picks`, or removed with `picks: []`);
+  `POST relays/{id}/country-defaults/{code} {optOut}` (audited
+  `edge.relay.country_defaults_opt_out`). Upkeep's writes are audited `edge.relay.country_defaults`.
+- **Rollback:** `edgeCountryDefaults:clearCountryDefaultsForRollback` (no arguments): every default
+  goes, and every node keeps what they wrote as its own entries (its countries' addresses stay as
+  they are).
+
 ### Latency over the whole path
 
 Every member's traffic leaves the service at the NODE, so the nearest address is not always the
@@ -5110,6 +5439,19 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   (§ Real-host controls) and member reports are shown beside it, and `offered` says whether a
   member there may be handed it (an `hrw1` listener never hands a name blocked there). Each
   address also lists what the real-host controls of the names measured on it said.
+- **The SNIs of a country** (`snis`, detail route; pure `countrySnis` in
+  `lib/edges/country/view.ts`): every active server name of the transports members there are
+  handed (an L4 address of it is handed to some of the sampled members: an L7 front presents its
+  own hostname, which shows with its addresses, and nothing rendered hands out no name), once
+  over every node, with its name list (slug and label), its state there and basis (as above), the
+  largest share of members there handed it, how many transports offer it, and where it is used,
+  from the marks copied on the transport (what selection reads, § Names for the member's
+  country): `shared` (blocked in no other censored country), `some` (blocked in some:
+  `blockedElsewhere` names them), `only_here` (blocked in every other one) or `not_here`
+  (blocked there, so members there never get it). Built from the views already made: no further
+  read. A country off the list gets the shared names only, so it has none. The summary counts
+  them per country (`snis {used, onlyHere}`). Each name row of a transport carries
+  `familyLabel` and `blockedElsewhere` too.
 - **What a member there is handed** is `assignEndpoints` itself, run over 240 fixed synthetic
   render keys, one listener at a time (every other listener's edges ineligible, as in a body
   carrying only that transport), with the deployment's render rule for the `other` family as a
@@ -5668,7 +6010,9 @@ adapter (`asyncOps: true`):
 **Trust is per location.** `qualified`, `qualification`, `qualifiedTemplateHash` and
 `autoQualifyHold` live on the location; the account's `qualified` in the admin projection means
 any switched-on location is trusted. A new location is trusted by its first tested address (a
-Try it tick or a passing L7 proof) or by the Trust override. Editing an account's settings
+Try it tick or a passing L7 proof) or by the Trust override. With FCP's own client check on, an
+L4 location a node picks needs neither for automatic work there: the check proves each address
+made in it (§ "Replacing a blocked address without a spare"). Editing an account's settings
 untrusts every location; a credential rotation that passes its test keeps trust. Because that
 test needs no location, a rotation first reads every location still in use (switched on, or with
 edges) with the new key, through the adapter's inventory call (a CDN zone: its location check); a
@@ -6823,10 +7167,14 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
 A **DNS provider** holds the records FCP writes for L7 fronts and fronts no member traffic
 itself unless its account is set to DNS and fronting (capability `role: 'dns'`, mirrored in
 `src/client/lib/edgeProviderMeta.ts`; the admin console lists it under "DNS providers" and the
-Fastly and CloudFront forms ask for one first; § "L7 edges"). Cloudflare is the only one today. The seam is the `DnsClient` interface in
+Fastly and CloudFront forms ask for one first; § "L7 edges"). There are two: Cloudflare and
+Gandi LiveDNS (§ "Gandi LiveDNS"). The seam is the `DnsClient` interface in
 `convex/lib/edges/providers/dns/types.ts`, which the Fastly and CloudFront adapters use (through their
 `dnsClientFor` factory) instead of any vendor SDK, and which the origin names of front nodes
-(`nodeIntentOps.ts`) are written through:
+(`nodeIntentOps.ts`) and the address names (`edgeNameOps.ts`) are written through. Every one
+of them gets its client from ONE factory, `providers/dns/clients.ts` (`dnsClientForZone` /
+`dnsClientForProvider`), chosen by the DNS account's provider; an action that has the account
+row uses `lib/edges/dnsAccountClient.ts`. The interface:
 
 - `createRecord`, `findRecordsByName`, `getRecord`, `deleteRecord` over A, AAAA and CNAME
   records in ONE zone, and the optional `updateRecord` (a record's content changed in place: how
@@ -6844,16 +7192,66 @@ Fastly and CloudFront forms ask for one first; § "L7 edges"). Cloudflare is the
 - `zoneId`, `zoneName` and `accountId` (the FCP account the credentials came from), recorded in
   every DNS ledger resource so cleanup acts on the zone the records were written into.
 
+**Ownership without record comments.** A provider whose records cannot hold a comment keeps
+the marker in FCP's own **`dnsRecordMarks`** table instead (`convex/dnsRecordMarks.ts`; one
+row per record FCP wrote, keyed by zone, name, type and content), read and written through the
+`DnsMarkStore` the action hands the client (`lib/edges/dnsMarks.ts`; `DnsZoneConfig.marks`).
+The client reports the stored marker as the record's `comment`, so every caller's ownership
+check is unchanged. The marker is never written into the zone (no TXT record or anything else
+a resolver could read): a public marker would let anyone who sees one front name link it to
+the others. A client without a store reads and deletes but refuses to create
+(`dns_marks_unavailable`).
+
 A new DNS provider needs: the id with its credentials and settings schemas (§ "Adding an edge
 provider", steps 1 and 2; its placement names the zone, its catalog lists the zones its token
-reaches), a `DnsClient` beside `cloudflareDns.ts`
+reaches; a zone id other than Cloudflare's 32 hex characters also needs the Fastly and
+CloudFront placements' `DNS_ZONE_ID` to accept it), a `DnsClient` beside `cloudflareDns.ts`
 (no transport retries, logging off, errors reduced to an HTTP status and a short code, never a
-response body), a credential test that accepts every token kind the provider issues,
-`role: 'dns'` and `providesDns: true` in its capability row, and `dnsClientFor` / the origin-name
-writer / the address-name writer (`edgeNameOps.ts`, whose factory already picks by provider)
-choosing the client by the DNS account's provider instead of assuming Cloudflare. A
-provider that can never front would also need the `EdgeProvider` front lifecycle made optional
-for it; that split has not been needed yet.
+response body; record comments, or the mark store), a credential test that accepts every token
+kind the provider issues, `role: 'dns'` and `providesDns: true` in its capability row (and
+`dnsOnly` when it can never front), a case in `providers/dns/clients.ts`, and its rows in the
+wire contract.
+
+### Gandi LiveDNS
+
+`convex/lib/edges/providers/gandi.ts` (the account: credential test, domain list, location
+check) and `providers/dns/gandiDns.ts` (the `DnsClient`), hand-rolled on `providerFetch`:
+there is no maintained Gandi SDK for JavaScript. A Gandi account is a DNS account only
+(`dnsOnly`): LiveDNS proxies nothing, so its edge lifecycle refuses to plan and answers that
+nothing exists.
+
+- **Credentials:** a personal access token (`Authorization: Bearer`) of the organization that
+  owns the domains, limited to them, with the permission to see and change their DNS records.
+  The deprecated API key is not accepted. Gandi tokens expire: rotate the account's
+  credentials before the date set on the token. A 401, or a 403 from a token without the
+  LiveDNS permission, is `token_rejected`.
+- **Domain listing:** LiveDNS lists only the personal organization's domains unless asked
+  for another organization's by its `sharing_id`, so the credential test and the zone list
+  first list the organizations the token acts for (`GET /v5/organization/organizations`, at
+  most 10) and then each one's domains. A token that may not list organizations falls back
+  to the plain listing.
+- **Locations** are domains, named by the domain itself (LiveDNS has no zone ids: `zoneId`
+  equals `zoneName`).
+- **Records** are record sets (name, type, a list of values) with no id and no comment. A
+  `DnsRecord` is one value; its id is `<type>|<fqdn>|<value>`, so a create whose answer was
+  lost is found again by what it holds. A create reads the set first: absent, it POSTs the set;
+  present, it PATCHes the value in (`add_rrset_values`); the same value already there is FCP's
+  only when its mark says so (a lost answer), anyone else's is refused
+  (`dns_record_exists`). The mark is written before the record and dropped when the create is
+  refused for good. A delete removes the set when the value is its last, else PATCHes the value
+  out. An update replaces a one-value set with one PUT (a moved name is never without a
+  record) and otherwise adds and removes in one PATCH.
+- **What LiveDNS does not do:** nothing is proxied (`dns_proxy_unsupported`), no CNAME is
+  flattened (`flatten_cname` is refused, `flattensAllCnames` is false; LiveDNS's apex alias is
+  the separate ALIAS type), record tags are ignored, and a TTL below 300 seconds (or
+  Cloudflare's automatic 1) is sent as 300.
+- **Delegation:** a domain can sit in LiveDNS without being served by it. `readZone` answers
+  `not_delegated` when the public NS answer names no LiveDNS server (`ns-<n>-<x>.gandi.net`),
+  or none of the hashed servers LiveDNS assigned the zone; a location check reports it as
+  `zone_not_active`. The zone's `/nameservers` answer alone cannot prove delegation: with NS
+  records at the apex it returns those records, not Gandi's servers. A public lookup that
+  fails or answers nothing stays `active`.
+- **Rate limit:** 1,000 requests a minute per address.
 
 **Cloudflare tokens.** FCP accepts both kinds Cloudflare issues. A user API token verifies at
 `/user/tokens/verify`; an account-owned token is unknown there (`1000 Invalid API Token`) and
@@ -7023,8 +7421,31 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | GET    | `^/2020-05-31/distribution/[^/]+/config$`                                           | read the distribution config and its ETag before disabling it                                                                                                               | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | cloudfront | PUT    | `^/2020-05-31/distribution/[^/]+/config$`                                           | disable the distribution (If-Match the ETag read)                                                                                                                           | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| gandi      | GET    | `^/v5/organization/organizations$`                                                  | the organizations the token acts for: whose domains to list                                                                                                                 | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains$ ?per_page`                                                   | list one organization's domains: credential test, zone list                                                                                                                 | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+$`                                                       | read one domain: location check, zone read                                                                                                                                  | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+/nameservers$`                                           | the domain's assigned LiveDNS name servers: is the zone delegated to them                                                                                                   | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+/records/[^/]+$`                                         | every record set at one name: discovery by name                                                                                                                             | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | one record set: read before a write, a record read back, CAA                                                                                                                | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | POST   | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | create a record set holding one value                                                                                                                                       | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | PATCH  | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | add or remove one value of a record set that holds others                                                                                                                   | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | PUT    | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | replace the one value of a record set in one request: a moved name                                                                                                          | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | DELETE | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | delete a record set whose only value is FCP's                                                                                                                               | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
 
 ## Deploy notes
+
+**Globalping probe networks** (2026-11-08, § "Probe sources and verdicts") replace the switch
+`edge.probe.preferEyeball` ("Prefer residential networks") with `edge.probe.networks`: no
+schema change, no env change. `seedCutover` runs `seed:migrateProbeNetworks` (idempotent): a
+stored "off" becomes `any`, anything else `home` (the new default); a stored
+`edge.probe.networks` wins; then the old row is deleted. What changes on a deployment that had
+the switch on (or never set): name checks no longer top a short country up with data-centre
+probes, and a country with too few home-network probes stays not judged (the country page says
+so); address rounds are unchanged (they asked home networks only before too). Choose
+`home_first` to keep the top-up. The country pages' probe notes from before read as
+`home_first` and are hidden until the next batch. To roll back, run
+`seed:restoreProbeNetworksForRollback` (no arguments) before deploying the older build: it
+writes the old switch back (off for `any`, on otherwise).
 
 **Names in apps** (§ "Names in apps") add one optional field (`edgeLocations.memberPlace`), one
 admin call (`POST providers/{id}/locations/{locationId}/member-place`), one audit action
@@ -7111,6 +7532,14 @@ or transport is on one, and `carries` and publication behave as before. To roll 
 network first (unbind or move its families, then `DELETE networks/{slug}`): the older schema has
 none of those fields, and a location's learned network is cleared with its network.
 
+**Use anyway** (§ "Using a server name off the network anyway") adds two optional fields
+(`sniNames.networkOverride`, `sniNames.qualification.offNetwork`), one route, one audit action
+(`edge.sni.names.use_anyway`) and one qualification word (`q_name_unresolved`, which a family on
+a network now uses for a name that does not resolve, formerly `q_off_network`): one deploy, no
+migration, no env change. Nothing changes until an operator says "use anyway". To roll back,
+take back every override first (`on: false`, which clears both fields): the older schema has
+neither.
+
 **Country delivery, walk fixes** change what members receive, nothing in the schema: a listener
 whose names carry a per-country mark is on `hrw1` (each move audited `relay.listener.sni_pick`,
 `reason: country_marks`), names that reach a listener carry their marks, a steered member no
@@ -7169,6 +7598,38 @@ it in Edges, Settings, to stop paying for spares). To roll back, turn the switch
 rotations finish, then run `edgeClientCheck:clearForRollback` with no arguments before deploying
 the older build (it clears the new fields and keeps an address FCP's check confirmed serving as a
 `named_connection`; run it again if the push is refused).
+
+**No hand tests** (§ "Replacing a blocked address without a spare", 2026-11): code only, no
+schema change, no new setting. With `edge.clientCheck.enabled` on and the service answering, an
+L4 address made in a location assigned to its node (one of its picks, a running setup run's
+picks, or trusted by hand) is checked by FCP and needs no person's test; upkeep may fill an
+untested pick; a setup run's "Try it" checks its addresses before it shows the card. With the
+switch off nothing changes. Rollback: deploy the older build; an address FCP confirmed in a
+location that was never ticked keeps serving while in use, but a spare confirmed that way needs a
+person's test again before it can be put in use (the older gate reads only ticked locations).
+
+**Countries with their own addresses** (§ "Countries with their own addresses", 2026-11): three
+optional fields (`relays.providerSet[].audiences` and `.audienceOnly`, `edges.audienceIntent`,
+`edgeRotations.audience`), no setting, no migration; nothing changes until an entry is saved.
+Rollback: `edgeAudiences:clearAudiencePicksForRollback` with no arguments (refused while a run
+for some countries is in flight); it pages in the background through nodes, rotations, then
+addresses, and the older build deploys once its last page ran (contained addresses stay
+contained, as the older build knows them).
+
+**A country's default picks** (§ "A country's default picks", 2026-11): a table
+(`countryDefaults`) and fields `relays.providerSet[].fromDefault`,
+`relays.providerSet[].audiences[].fromDefault`, `relays.countryDefaultsOptOut` and
+`relays.countryDefaultsWaiting`; no setting, no migration; nothing changes until a default is
+saved. Rollback: `edgeCountryDefaults:clearCountryDefaultsForRollback` with no arguments, before
+the rollback of a country on its own addresses.
+
+**A country on its own addresses** (§ "A country on its own addresses", 2026-11): fields
+`relays.ownPools`, `relays.audienceReplaces`, `relays.audienceReplacesPerDay` and
+`edgeRotations.ownPool`, two settings (`edge.audience.replacesPerDay` 1,
+`edge.audience.replacesPerDayByCountry` empty), no migration; nothing changes until a country is
+cut over. Rollback: `edgeOwnPools:clearOwnPoolsForRollback` with no arguments (refused while a
+replacement of a country's own address is in flight), before the rollback of countries with
+their own addresses.
 
 **FCP's own test of a send** adds one setting (`edge.sni.autoConfirm`, off), a receipt kind
 (`client_check`), a receipt state (`failed`) and one optional receipt field (`check`); the

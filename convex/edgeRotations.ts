@@ -21,6 +21,14 @@
  *    `hosts_changed`, which rolls back, never converges.
  *  - a rollback that cannot converge QUARANTINES the origin; nothing bypasses it.
  */
+import {
+  isOwnAddress,
+  ownBudgetKey,
+  ownBudgetPerDay,
+  ownCodesOf,
+  ownReplacesToday,
+  withOwnReplace,
+} from './lib/edges/ownPools';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -185,7 +193,7 @@ import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
 import { networkPrefixes } from './edgeNetworks';
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './edgeClientCheck';
-import { locationTicked } from './lib/edges/tickedLocation';
+import { assignedPicksOf, locationAssigned } from './lib/edges/assignedLocation';
 import { replacementPlacement, replacementPolicyOf } from './lib/edges/replacementHolders';
 import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } from './edgeLanes';
 import { edgeLaneOf } from './lib/edges/lanes';
@@ -201,7 +209,14 @@ import {
 } from './lib/edges/autoReplaceHolds';
 import { cdnRefusedCountries } from './lib/edges/referenceSites';
 import { audienceForPublish } from './edgeAudiences';
-import { locationTakes, onlyCodesOf } from './lib/edges/audience';
+import {
+  covers,
+  locationTakes,
+  onlyCodesOf,
+  pickIntentFor,
+  pickTakes,
+  sameCodes,
+} from './lib/edges/audience';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -406,10 +421,11 @@ export const upkeepFillRefusal = internalQuery({
     relayId: v.id('relays'),
     listenerId: v.optional(v.id('relayListeners')),
     onlyLocationId: v.optional(v.id('edgeLocations')),
+    audience: v.optional(v.array(v.string())),
   },
   handler: async (
     ctx,
-    { relayId, listenerId, onlyLocationId },
+    { relayId, listenerId, onlyLocationId, audience },
   ): Promise<'pool_reserved' | null> => {
     const origin = await ctx.db.get(relayId);
     if (!origin?.providerSet) return null;
@@ -421,6 +437,7 @@ export const upkeepFillRefusal = internalQuery({
         publishOnDone: true,
         ...(listenerId ? { listenerId } : {}),
         ...(onlyLocationId ? { onlyLocationId } : {}),
+        ...(audience?.length ? { audience } : {}),
       },
       origin,
       null,
@@ -963,6 +980,12 @@ const startArgs = {
    * location. Unlike `requestedLocationId` it is no explicit request.
    */
   onlyLocationId: v.optional(v.id('edgeLocations')),
+  /**
+   * A provision for some countries' own addresses (a count's fill, step 5W, or
+   * the operator's): made at a pick holding exactly these, and theirs
+   * (`edges.audienceIntent`). Refused unless some pick holds them.
+   */
+  audience: v.optional(v.array(v.string())),
   /** A replace's explicit spare (L4): that tested spare of the same listener, or nothing. */
   requestedSpareEdgeId: v.optional(v.id('edges')),
   /**
@@ -999,6 +1022,7 @@ export interface StartRotationArgs {
   allowUnqualified?: boolean;
   requestedLocationId?: Id<'edgeLocations'>;
   onlyLocationId?: Id<'edgeLocations'>;
+  audience?: string[];
   requestedSpareEdgeId?: Id<'edges'>;
   requestedOptions?: unknown;
   reason?: string;
@@ -1070,6 +1094,12 @@ export async function collectStartBlockers(
    * the cooldown or the re-block hold, which stay whole for trusted ones.
    */
   openLane: boolean;
+  /**
+   * A replace of an address made for a country cut over on this node
+   * (convex/edgeOwnPools.ts): that country's own budget, never the node's or
+   * the fleet's daily cap or the cooldown.
+   */
+  ownPool: boolean;
 }> {
   const blockers: StartBlocker[] = [];
   const push = (code: string, message: string) => blockers.push({ code, message });
@@ -1085,6 +1115,7 @@ export async function collectStartBlockers(
       listenerId: a.listenerId,
       approval,
       openLane: false,
+      ownPool: false,
     };
   }
   const cfg = await resolveEdgeConfig(ctx.db);
@@ -1116,14 +1147,21 @@ export async function collectStartBlockers(
   }
   // A replace of an open address on a node with lanes: its own budget below.
   const early = a.kind === 'replace' && a.targetEdgeId ? await ctx.db.get(a.targetEdgeId) : null;
-  const openLane = !!early && early.relayId === a.relayId && isOpenLaneReplace(origin, early);
+  // A replace of a cut-over country's own address: its own budget below.
+  const ownPool = !!early && early.relayId === a.relayId && isOwnAddress(early, ownCodesOf(origin));
+  const openLane =
+    !ownPool && !!early && early.relayId === a.relayId && isOpenLaneReplace(origin, early);
   // The fleet guards (lib/edges/fleet.ts), read in the same transaction that
   // would start the rotation: a mass block holds every automatic rotation, and
   // the fleet's daily cap bounds them together. Never applied to a manual start.
   if (a.trigger === 'detector') {
     if ((await readFleetBrake(ctx.db)).engaged)
       push('edge.fleet_brake', 'Automatic rotation is held fleet-wide: many origins look blocked');
-    if (!openLane && (await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay)
+    if (
+      !openLane &&
+      !ownPool &&
+      (await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay
+    )
       push('edge.fleet_daily_cap', 'The fleet-wide daily cap on automatic rotations is reached');
   }
   if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
@@ -1206,7 +1244,21 @@ export async function collectStartBlockers(
       }
     }
     if (!force) {
-      if (openLane) {
+      if (ownPool) {
+        // A cut-over country's own addresses: its own daily budget (an
+        // operator's replace is counted, never refused by it).
+        if (a.trigger !== 'manual' && early) {
+          const key = ownBudgetKey(early.audience!, early.listenerId);
+          if (
+            ownReplacesToday(origin, key, todayKey(now)) >=
+            ownBudgetPerDay(origin, early.audience!, cfg.audience)
+          )
+            push(
+              'edge.audience_budget',
+              'This country\u2019s own addresses used today\u2019s replacement budget on this node; they are replaced again tomorrow',
+            );
+        }
+      } else if (openLane) {
         // Open addresses are expected to be blocked: their own small budget,
         // so they can never use up what trusted ones need (docs/edges.md
         // "Address enumeration").
@@ -1245,7 +1297,7 @@ export async function collectStartBlockers(
       const automatic = a.trigger === 'detector' || a.trigger === 'reconcile';
       if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg, automatic))) {
         // FCP may make the replacement itself and prove it with its own client
-        // check, in a location the owner ticked an address in (docs/edges.md
+        // check, in a location an operator assigned to the node (docs/edges.md
         // § "Replacing a blocked address without a spare"). The start asks the
         // same selection the run will, so it is not waived for nothing.
         const ready = (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
@@ -1259,10 +1311,10 @@ export async function collectStartBlockers(
             )
           : null;
         if (!sel || (!sel.standbyId && !sel.account)) {
-          if (sel?.accountFailure === 'no_ticked_location')
+          if (sel?.accountFailure === 'no_assigned_location')
             push(
-              'edge.no_ticked_location',
-              'No location where an address was tested can take the replacement; test an address there first',
+              'edge.no_assigned_location',
+              'No location assigned to this node can take the replacement; add one to its locations',
             );
           else if (sel?.accountFailure === 'locations_refused')
             push(
@@ -1478,7 +1530,7 @@ export async function collectStartBlockers(
         'Nothing fits what the node was approved for; review and approve it again',
       );
   }
-  return { blockers, origin, cfg, targetEdge, listenerId, approval, openLane };
+  return { blockers, origin, cfg, targetEdge, listenerId, approval, openLane, ownPool };
 }
 
 export const start = internalMutation({
@@ -1568,6 +1620,27 @@ async function needsHostFlipFor(
 }
 
 /**
+ * The countries an address this run makes at `locationId` is for (its
+ * `audienceIntent`), from the node's pick there: a count's fill takes the entry
+ * holding exactly its countries; a replacement of a contained address takes an
+ * entry covering every country it served. Null = everyone's (as before).
+ */
+async function audienceIntentOf(
+  db: QueryCtx['db'],
+  r: Doc<'edgeRotations'>,
+  origin: Origin,
+  locationId: Id<'edgeLocations'> | null,
+): Promise<string[] | null> {
+  if (!locationId) return null;
+  const pick = origin.providerSet?.find((p) => p.locationId === locationId);
+  if (!pick?.audiences?.length) return null;
+  if (r.audience?.length) return pickIntentFor(pick, r.audience, 'exact');
+  if (r.kind !== 'replace' || !r.targetEdgeId) return null;
+  const target = await db.get(r.targetEdgeId);
+  return pickIntentFor(pick, target?.audience, 'covers');
+}
+
+/**
  * The ONLY way a rotation row comes into being (the `start` mutation and the
  * reconcile cron's standby publish both call this): every guard — quarantine,
  * deleting, one rotation per origin, the global concurrency cap, publishability,
@@ -1638,6 +1711,25 @@ export async function startRotation(
       });
     requestedOptions = JSON.stringify(checked.options);
   }
+  // Some countries' own addresses: a provision, for countries a pick holds.
+  const audience = a.audience?.length ? [...new Set(a.audience)].sort() : undefined;
+  if (audience) {
+    if (a.kind !== 'provision')
+      throw new ConvexError({
+        code: 'validation',
+        message: 'Only a new address can be made for some countries',
+      });
+    const held = (origin.providerSet ?? []).some(
+      (p) =>
+        (!a.requestedLocationId || p.locationId === a.requestedLocationId) &&
+        pickIntentFor(p, audience, 'exact') !== null,
+    );
+    if (!held)
+      throw new ConvexError({
+        code: 'edge.audience_not_picked',
+        message: 'No location of this node keeps addresses for those countries',
+      });
+  }
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
     kind: a.kind,
@@ -1645,6 +1737,7 @@ export async function startRotation(
     burn: a.burn ?? false,
     force,
     ...(g.openLane ? { openLane: true } : {}),
+    ...(g.ownPool ? { ownPool: true as const } : {}),
     forceGeoEvidence: a.forceGeoEvidence === true ? true : undefined,
     publishOnDone: a.kind === 'provision' ? (a.publishOnDone ?? false) : undefined,
     targetEdgeId: a.targetEdgeId,
@@ -1656,6 +1749,7 @@ export async function startRotation(
     requestedLocationId:
       a.kind === 'provision' || a.kind === 'replace' ? a.requestedLocationId : undefined,
     onlyLocationId: a.kind === 'provision' ? a.onlyLocationId : undefined,
+    ...(audience ? { audience } : {}),
     requestedSpareEdgeId: a.kind === 'replace' ? a.requestedSpareEdgeId : undefined,
     requestedOptions,
     affectedCountries: a.affectedCountries?.slice(0, 20),
@@ -1681,11 +1775,21 @@ export async function startRotation(
   });
   // The open lane counts against its own budget only (convex/edgeLanes.ts).
   if (g.openLane) await countFleetOpenReplace(ctx.db, now);
-  else if (a.trigger === 'detector') await countFleetRotation(ctx.db, now);
+  else if (a.trigger === 'detector' && !g.ownPool) await countFleetRotation(ctx.db, now);
   const today = todayKey(now);
+  const ownTarget = g.ownPool ? g.targetEdge : null;
   await ctx.db.patch(a.relayId, {
     activeRotationId: id,
-    ...(a.kind === 'replace' && !g.openLane
+    ...(ownTarget
+      ? {
+          audienceReplaces: withOwnReplace(
+            origin,
+            ownBudgetKey(ownTarget.audience!, ownTarget.listenerId),
+            today,
+          ),
+        }
+      : {}),
+    ...(a.kind === 'replace' && !g.openLane && !g.ownPool
       ? {
           rotationsDayKey: today,
           rotationsToday: (origin.rotationsDayKey === today ? origin.rotationsToday : 0) + 1,
@@ -2529,6 +2633,7 @@ export const commitSelection = internalMutation({
         layer,
         provisionIntent,
         planSize: sizeOf(account.provider, a.templateParams as Record<string, unknown> | undefined),
+        audienceIntent: await audienceIntentOf(ctx.db, r, origin, a.locationId ?? null),
       });
     } catch (err) {
       const code =
@@ -3127,11 +3232,14 @@ export const finalize = internalMutation({
       ...(sameProviderL7
         ? { l7ReplacementsDayKey: today, l7ReplacementsToday: usedToday + 1 }
         : {}),
-      // An open-lane replace sets no cooldown: it would hold the trusted lane back.
+      // An open-lane replace, and one of a cut-over country's own addresses, set
+      // no cooldown: it would hold the replacements of everyone's addresses back.
       ...(r.kind === 'replace'
         ? {
             lastRotatedAt: now,
-            ...(r.openLane ? {} : { cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }),
+            ...(r.openLane || r.ownPool
+              ? {}
+              : { cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }),
           }
         : {}),
       // A detector burn: the burned address's pick cools on this origin (D6),
@@ -3513,6 +3621,8 @@ export interface SelectionRequest {
   requestedLocationId?: Id<'edgeLocations'>;
   /** Upkeep filling one pick's count: the set's selection, at this location only. */
   onlyLocationId?: Id<'edgeLocations'>;
+  /** A provision for some countries' own addresses: only at picks holding exactly them. */
+  audience?: string[];
   /** A replace's explicit spare: that one or nothing. */
   requestedSpareEdgeId?: Id<'edges'>;
   /** Started by a guided setup run (the operator chose its account). */
@@ -3752,35 +3862,44 @@ export async function selectionContext(
   // create one of this node's addresses: the same request would be refused the
   // same way, so the next location is taken (lib/edges/refusedLocations.ts).
   const refused = automatic ? refusedLocationsOf(origin, now) : new Set<string>();
-  // A replace of an L4 address with FCP's own client check on and answering:
-  // the replacement may be an untested L4 spare or a NEW load balancer, both in
-  // a location the owner ticked an address in, proven by the check in
-  // `verifying` before anything is published (docs/edges.md § "Replacing a
-  // blocked address without a spare").
+  // FCP's own client check on and answering: a replace of an L4 address, and a
+  // provision outside a guided setup run (upkeep, a count fill, an operator's
+  // own), make L4 addresses only in a location an operator assigned to the
+  // node (lib/edges/assignedLocation.ts), take an untested L4 spare there or
+  // buy a NEW load balancer there, and prove it with the check in `verifying`
+  // before anything is published (docs/edges.md § "Replacing a blocked address
+  // without a spare"). No person tests it first. A setup run checks its own
+  // addresses at its "Try it" stage.
+  const clientCheckReady = (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
   const clientCheckMode =
-    rotation.kind === 'replace' &&
-    !!targetEdge &&
-    (targetEdge.layer ?? edgeLayerOf(targetEdge.provider)) !== 'l7' &&
-    (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
-  const tickedCache = new Map<string, boolean>();
-  const tickedAt = async (locationId: Id<'edgeLocations'> | string | null | undefined) => {
+    clientCheckReady &&
+    ((rotation.kind === 'replace' &&
+      !!targetEdge &&
+      (targetEdge.layer ?? edgeLayerOf(targetEdge.provider)) !== 'l7') ||
+      (rotation.kind === 'provision' && !rotation.setupRun));
+  const assignedPicks = await assignedPicksOf(ctx.db, origin);
+  const assignedCache = new Map<string, boolean>();
+  const assignedAt = async (locationId: Id<'edgeLocations'> | string | null | undefined) => {
     if (!locationId) return false;
     const key = locationId as string;
-    if (!tickedCache.has(key))
-      tickedCache.set(key, locationTicked(await ctx.db.get(locationId as Id<'edgeLocations'>)));
-    return tickedCache.get(key)!;
+    if (!assignedCache.has(key))
+      assignedCache.set(
+        key,
+        locationAssigned(await ctx.db.get(locationId as Id<'edgeLocations'>), assignedPicks),
+      );
+    return assignedCache.get(key)!;
   };
   const isL4 = (e: Edge) => (e.layer ?? edgeLayerOf(e.provider)) !== 'l7';
   // A confirmation FCP wrote counts only on the terms it was written on (the
-  // switch on, the location still ticked); the publication gate says the same.
+  // switch on, the location still assigned); the publication gate says the same.
   const eligibleSpare = async (e: Edge, l: VerifiableListener | undefined) =>
     standbyEligible(e, l) &&
     (e.verification?.method !== 'client_check' ||
-      (cfg.clientCheck.enabled && (await tickedAt(e.locationId))));
+      (cfg.clientCheck.enabled && (await assignedAt(e.locationId))));
   // An untested spare the run checks itself; never one whose latest check
   // found the address itself at fault (a later passing check lifts that).
   const checkableSpare = async (e: Edge, l: VerifiableListener | undefined) =>
-    clientCheckMode && isL4(e) && !clientCheckFailedNow(e, l) && (await tickedAt(e.locationId));
+    clientCheckMode && isL4(e) && !clientCheckFailedNow(e, l) && (await assignedAt(e.locationId));
   const inSet = origin.providerSet
     ? new Set(origin.providerSet.map((p) => p.locationId as string))
     : null;
@@ -3798,7 +3917,11 @@ export async function selectionContext(
   };
   // An only location takes only a contained replacement it covers, or its own
   // count's fill (lib/edges/audience.ts `locationTakes`); a spare there is no
-  // one else's, unless the operator named it.
+  // one else's, unless the operator named it. A node's pick that holds
+  // countries of its own takes their fill, and one serving its countries only
+  // takes nothing everyone may be handed (`pickTakes`).
+  const pickAt = (locationId: string) =>
+    origin.providerSet?.find((p) => (p.locationId as string) === locationId) ?? null;
   const takesAt = new Map<string, boolean>();
   const locationTakesHere = async (locationId: string): Promise<boolean> => {
     if (!takesAt.has(locationId)) {
@@ -3808,10 +3931,29 @@ export async function selectionContext(
         locationTakes(l?.forCountries ?? null, {
           audience: targetEdge?.audience ?? null,
           countFillHere: rotation.onlyLocationId === locationId,
-        }),
+        }) &&
+          pickTakes(pickAt(locationId), {
+            fillFor: rotation.audience ?? null,
+            audience: targetEdge?.audience ?? null,
+          }),
       );
     }
     return takesAt.get(locationId)!;
+  };
+  // What an address made at a pick for this run is for (as `audienceIntentOf`).
+  const intentAt = (locationId: string): string[] | null =>
+    rotation.audience?.length
+      ? pickIntentFor(pickAt(locationId), rotation.audience, 'exact')
+      : rotation.kind === 'replace'
+        ? pickIntentFor(pickAt(locationId), targetEdge?.audience, 'covers')
+        : null;
+  // A spare made for some countries is theirs: it fills their count, or
+  // replaces an address of theirs; never anything everyone is handed.
+  const spareFitsAudience = (e: Edge): boolean => {
+    const made = e.audienceIntent;
+    if (rotation.audience?.length) return !!made?.length && sameCodes(made, rotation.audience);
+    if (!made?.length) return true;
+    return !!targetEdge?.audience?.length && covers(made, targetEdge.audience);
   };
   for (const e of edges) {
     const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
@@ -3835,6 +3977,7 @@ export async function selectionContext(
       // account set to DNS only.
       hasAddress:
         hasPublishableAddress(e) &&
+        spareFitsAudience(e) &&
         ((await eligibleSpare(e, slotOfEdge)) || (await checkableSpare(e, slotOfEdge))) &&
         (await onItsNetwork(e, slotOfEdge)) &&
         // A load balancer the node already had is left as it is, never reused.
@@ -3902,7 +4045,7 @@ export async function selectionContext(
       account: null,
       accountFailure: null,
       template: null,
-      // An untested spare in a ticked location: the run checks it itself.
+      // An untested spare in an assigned location: the run checks it itself.
       clientCheck:
         !!spare &&
         clientCheckMode &&
@@ -3990,11 +4133,16 @@ export async function selectionContext(
     // read; a Scaleway location with no project to create in).
     const placeProblem = await placeProblemOf(ctx.db, a, where);
     if (placeProblem) return failure(placeProblem);
-    if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
-    // With FCP's own client check, an L4 replacement is made only where the
-    // owner ticked an address (the check stands in for a tick only there).
-    const namedCheck = clientCheckMode && edgeLayerOf(a.provider) === 'l4';
-    if (namedCheck && !locationTicked(where)) return failure('no_ticked_location');
+    // With FCP's own client check, an L4 address may be made in a location an
+    // operator assigned to the node though no address there was tested yet: the
+    // check proves it before it is published. An L4 replacement is made only
+    // there; a provision elsewhere goes on as before, without the check.
+    const namedL4 = clientCheckMode && edgeLayerOf(a.provider) === 'l4';
+    const namedCheck = namedL4 && locationAssigned(where, assignedPicks);
+    if (!where.qualified && !rotation.allowUnqualified && !namedCheck)
+      return failure('no_qualified_account');
+    if (namedL4 && !namedCheck && rotation.kind === 'replace')
+      return failure('no_assigned_location');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
       return failure('account_mismatch');
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
@@ -4075,7 +4223,11 @@ export async function selectionContext(
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
       // An only location takes no address everyone may be handed.
       if (!(await locationTakesHere(loc._id as string))) continue;
-      if (onlyCodesOf(loc.forCountries)) fitsAudience.add(loc._id as string);
+      if (
+        onlyCodesOf(loc.forCountries) ||
+        pickIntentFor(pickAt(loc._id as string), targetEdge?.audience, 'covers')
+      )
+        fitsAudience.add(loc._id as string);
       // A zone where this front could not get its certificate is never picked.
       const certificate = certificateRefusalFor(
         a,
@@ -4149,11 +4301,13 @@ export async function selectionContext(
         id: a._id as string,
         locationId: loc._id as string,
         provider: a.provider,
-        // With FCP's own client check, an L4 location counts only where the
-        // owner ticked an address (lib/edges/tickedLocation.ts).
+        // With FCP's own client check, an L4 location counts exactly where an
+        // operator assigned it to the node (lib/edges/assignedLocation.ts):
+        // tested before or not, the check proves what is made there.
         qualified:
-          loc.qualified &&
-          (!clientCheckMode || edgeLayerOf(a.provider) !== 'l4' || locationTicked(loc)),
+          clientCheckMode && edgeLayerOf(a.provider) === 'l4'
+            ? locationAssigned(loc, assignedPicks)
+            : loc.qualified,
         priority: a.priority,
         dailyAllocationBudget: a.dailyAllocationBudget,
         allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
@@ -4206,6 +4360,8 @@ export async function selectionContext(
           locationId: c.locationId,
           provider: c.provider,
           locationKey,
+          // Made here for some countries: judged as theirs (it lowers their count).
+          ...(intentAt(c.locationId!) ? { audience: intentAt(c.locationId!)! } : {}),
         }).lowersDeficit,
         providerNew: !mine.some((p) => p.provider === c.provider),
         locationKeyNew: !mine.some((p) => p.locationKey === locationKey),
@@ -4215,8 +4371,8 @@ export async function selectionContext(
     }
     // Upkeep filling a free slot buys only what can take one: with every free
     // slot held for what the set lacks, an address anywhere else would only be
-    // a spare (bought for nothing). Its first address in a location that is not
-    // trusted yet is made and tested by hand.
+    // a spare (bought for nothing). A location not trusted yet takes its first
+    // address only when FCP's own client check is there to prove it.
     const slots = slotsOf(state, origin);
     const onlyLowering =
       automatic &&
@@ -4245,7 +4401,7 @@ export async function selectionContext(
       listener,
       standbyId: null,
       account: null,
-      accountFailure: 'no_ticked_location',
+      accountFailure: 'no_assigned_location',
       template: null,
     };
   if (!picked.ok)
@@ -5412,7 +5568,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
     return;
   }
   // FCP's own client check: a replacement made (or an untested spare taken) in
-  // a ticked location is proven by real clients before it is published.
+  // an assigned location is proven by real clients before it is published.
   if ((edge.layer ?? 'l4') !== 'l7' && r.clientCheckGate) {
     const gate = await clientGate(ctx, c, edge);
     if (gate.kind === 'fail') {
@@ -5471,7 +5627,7 @@ export const CLIENT_CHECK_FAIL_COOLDOWN_MS = 60 * 60_000;
 /**
  * The client gate (docs/edges.md § "Replacing a blocked address without a
  * spare"). The check runs against the address members use now as the control
- * (the replace's target), and a pass in a ticked location confirms the new
+ * (the replace's target), and a pass in an assigned location confirms the new
  * address (`edges.verification`, method `client_check`), which is what the
  * publication gate then reads. A verdict that the address does not work is
  * tried three times, 30 s apart, then fails the run (`client_check_failed`):
@@ -5479,7 +5635,7 @@ export const CLIENT_CHECK_FAIL_COOLDOWN_MS = 60 * 60_000;
  * service down or busy, no test link) waits up to 15 minutes; then a NEW
  * address goes on as today (it ends an untested spare, never published) and a
  * spare taken for the replace fails the run (`client_check_unavailable`). A
- * check that passed but could not confirm (the location is no longer ticked,
+ * check that passed but could not confirm (the location is no longer assigned,
  * the switch went off) is the same fallback.
  */
 async function clientGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {

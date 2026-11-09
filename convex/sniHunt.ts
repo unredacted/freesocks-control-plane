@@ -1750,7 +1750,7 @@ export const countryBatchContext = internalQuery({
       gate,
       country,
       perCountryLimit: vcfg.perCountryLimit,
-      preferEyeball: (await resolveEdgeConfig(ctx.db)).probe.preferEyeball,
+      networks: (await resolveEdgeConfig(ctx.db)).probe.networks,
       minVantages: vcfg.minVantages,
       spacingMs: EDGE_PLUMBING.probeSourceSpacingMs,
       token: secrets.globalpingToken,

@@ -599,6 +599,14 @@ export interface AssignOptions {
    */
   memberLane?: 'open' | 'trusted';
   /**
+   * With an `edgeCountry`: that country is cut over to its own addresses on
+   * this node (docs/edges.md "A country on its own addresses"). Inside "not
+   * blocked there", an address made for it (`audience` names it) comes first,
+   * for the primary and for the backup, before the lane; a shared one is
+   * handed only where none of its own is left. Absent = no cutover.
+   */
+  ownPool?: boolean;
+  /**
    * @deprecated No longer consulted: a retired server name is never selected,
    * whoever held it. Kept so existing callers type-check; remove at will.
    */
@@ -799,11 +807,17 @@ function assignByTier(
   };
   const tiers = pool.map(tierOf);
   const lanes = pool.map((e) => rule.laneRank?.(e) ?? 0);
-  // Not blocked there first; inside that, the lane, then meant for, then the
-  // band, then the tier. With every lane 0, every edge equally meant and every
-  // band near this orders exactly as the tier does.
+  // A country on its own addresses: theirs (0) before shared ones (1). Without
+  // a cutover every edge ranks 0 and nothing changes.
+  const shared = pool.map((e) =>
+    opts.ownPool && country && !(e.audience ?? []).includes(country) ? 1 : 0,
+  );
+  // Not blocked there first; inside that, their own, the lane, then meant for,
+  // then the band, then the tier. With every edge their own (or none), every
+  // lane 0, every edge equally meant and every band near this orders exactly
+  // as the tier does.
   const rank = (i: number) =>
-    tiers[i] === 2 ? 32 + lanes[i]! : 16 * lanes[i]! + 2 * group(i) + tiers[i]!;
+    tiers[i] === 2 ? 64 + lanes[i]! : 32 * shared[i]! + 16 * lanes[i]! + 2 * group(i) + tiers[i]!;
   let best: number | null = null;
   for (let i = 0; i < pool.length; i++)
     if (assignable[i] && (best === null || rank(i) < best)) best = rank(i);
@@ -828,6 +842,7 @@ function assignByTier(
         e,
         key: [
           tiers[i] === 2 ? 1 : 0,
+          shared[i]!,
           lanes[i]!,
           distinct && e.provider === primaryEdge.provider ? 1 : 0,
           // Meant for and the band count only among the edges not blocked there.

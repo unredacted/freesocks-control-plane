@@ -5,6 +5,7 @@
  * in this layer (docs/privacy.md §7): the target is an operator-owned address,
  * the vantages are third-party probes.
  */
+import type { CountryProbeCounts, ProbeNetworks } from './networks';
 
 export type ProbeSource = 'globalping' | 'checkhost' | 'ripeatlas' | 'internal';
 export type VantageClass = 'eyeball' | 'datacenter' | 'unknown';
@@ -103,7 +104,14 @@ export interface ProbeTarget {
 export interface ProbeRequestOptions {
   countries: string[];
   perCountryLimit: number;
-  preferEyeball: boolean;
+  /** Which kinds of network Globalping probes come from (lib/edges/probes/networks.ts). */
+  networks: ProbeNetworks;
+  /**
+   * `home_first` only: the probe listing counted per country, to top a country
+   * short of home-network probes up with data-centre ones. Absent: home-network
+   * probes are asked, and any probe when none matched.
+   */
+  probeCounts?: Record<string, CountryProbeCounts>;
   /**
    * Uncensored control countries asked in the same measurement, ONE vantage
    * each (per-country checks): they tell a blocked edge from a broken one.
