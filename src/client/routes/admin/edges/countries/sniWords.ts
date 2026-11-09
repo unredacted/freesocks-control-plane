@@ -1,5 +1,5 @@
 /**
- * The words of a country's server names (SNIs) (pure; unit-tested): which
+ * The words of a country's SNIs (pure; unit-tested): which
  * SNIs members there get, from which name list, what they count as there,
  * and whether other countries use them too (`CountryViewSni.scope`, from the
  * marks the selection reads).
@@ -29,7 +29,7 @@ function orList(items: readonly string[]): string {
 }
 
 export function sniCardTitle(code: string): string {
-  return `Server names (SNIs) in ${countryShort(code)}`;
+  return `SNIs in ${countryShort(code)}`;
 }
 
 export const SNI_CARD_INTRO =

@@ -72,7 +72,7 @@ describe('sniWords', () => {
   });
 
   test('the card and the country name', () => {
-    expect(sniCardTitle('IR')).toBe('Server names (SNIs) in Iran');
+    expect(sniCardTitle('IR')).toBe('SNIs in Iran');
     expect(countryShort('XX')).toBe('XX');
   });
 

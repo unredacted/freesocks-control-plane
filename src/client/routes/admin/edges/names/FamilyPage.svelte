@@ -857,7 +857,7 @@
 />
 <ConfirmDialog
   bind:open={anywayOpen}
-  title={anywayOn ? 'Use this server name (SNI) anyway?' : 'Stop using it anyway?'}
+  title={anywayOn ? 'Use this SNI anyway?' : 'Stop using it anyway?'}
   body={anywayOn
     ? 'It resolves outside the list’s network, so it does not match the network of the address it is shown on. Use it only if you know it works where members are. Every other check still applies. If it stops resolving, it is not used until it resolves again.'
     : 'It is checked against the list’s network again, like any other SNI. If it still resolves outside it, it fails and leaves members like any failing SNI.'}

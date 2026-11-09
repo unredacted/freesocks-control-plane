@@ -280,7 +280,7 @@ const ERROR_WORDS: Record<string, string> = {
     "The list's network has no address ranges yet. Read them again, or add ranges by hand.",
   'edge.sni.network_edges_off':
     "Some addresses in use on this port are not on the list's network. Replace them first.",
-  'edge.sni.no_network': 'This list has no network, so every server name (SNI) is on it already.',
+  'edge.sni.no_network': 'This list has no network, so every SNI is on it already.',
   'edge.network.bad_asn': 'Each ASN is a number, at most eight of them.',
   'edge.network.bad_prefix': 'Each range is an address and a length, like 192.0.2.0/24.',
   'edge.network.empty': 'A network needs an ASN or a range.',
