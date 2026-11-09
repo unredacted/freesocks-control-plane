@@ -35,6 +35,7 @@ const item = (over: Partial<AttentionItem>): AttentionItem => ({
   relayId: 'r1',
   edgeId: null,
   listenerKey: null,
+  listenerTag: null,
   accountId: null,
   rotationId: null,
   code: null,
@@ -311,6 +312,9 @@ describe('attention', () => {
     // A failed run's kind is its title, never a "Provision run" fact.
     expect(attentionFactsLine(item({ facts: { kind: 'provision', phase: 'failed' } }))).toBe('');
     expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');
+    expect(
+      attentionSubject(item({ listenerKey: 'freedomweb2hl30v', listenerTag: 'FREEDOM_WEBSOCKET' })),
+    ).toBe('Origin relay-a, transport Freedom WebSocket');
     expect(attentionSubject(item({ relaySlug: null }))).toBe('');
   });
 });
