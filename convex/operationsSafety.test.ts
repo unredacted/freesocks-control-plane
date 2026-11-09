@@ -27,7 +27,8 @@ import {
   fleetBrakeEngages,
   writeFleetBrake,
 } from './lib/edges/fleet';
-import { alertMessage, alertWorthy } from './alerts';
+import { alertWorthy } from './alerts';
+import { RESOLVE_AFTER_MS } from './lib/alertMessages';
 import {
   FIXTURE_NODE,
   FIXTURE_ORIGIN,
@@ -476,7 +477,8 @@ describe('operator alerts', () => {
     expect(JSON.stringify(audit)).not.toMatch(/secret-topic|tk_secret|alerts\.example/);
   });
 
-  test('a new critical item is sent once, as kinds and counts; a recurrence alerts again; a failed post is retried', async () => {
+  test('a new critical item is sent once, with its node and a link; it resolves once gone; a failed post is retried', async () => {
+    vi.stubEnv('WEBAUTHN_ORIGIN', 'https://admin.example.org');
     const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t);
     await t.mutation(internal.alerts.setConfig, {
@@ -487,10 +489,19 @@ describe('operator alerts', () => {
     });
     const r = receiver();
     // The fixture node is bound with nothing published: its members are dark.
-    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1 });
-    expect(String(r.posts[0].body.message)).toContain('members_dark (empty_pool): 1');
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1, messages: 1 });
+    expect(r.posts[0].body).toMatchObject({
+      title: `Members get nothing: ${FIXTURE_NODE}`,
+      priority: 5,
+      tags: ['rotating_light', 'members_dark'],
+    });
+    expect(String(r.posts[0].body.message)).toContain('no address is in use');
+    expect(String(r.posts[0].body.message).split('\n')).toHaveLength(3);
+    expect(String(r.posts[0].body.click)).toMatch(
+      /^https:\/\/admin\.example\.org\/admin\/edges\/relays\//,
+    );
     // Still on the list: not sent again.
-    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0 });
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0, messages: 0 });
     expect(r.posts).toHaveLength(1);
     // A new item: only it is sent.
     await quarantine(t, fx.relayId);
@@ -499,25 +510,108 @@ describe('operator alerts', () => {
     expect(r.posts[1]).toMatchObject({
       url: 'https://alerts.example.org',
       auth: 'Bearer tk_1',
-      body: { topic: 'ops-topic', priority: 5 },
+      body: { topic: 'ops-topic', priority: 5, title: `Node paused for safety: ${FIXTURE_NODE}` },
     });
-    expect(String(r.posts[1].body.message)).toContain('quarantine (flip_unconfirmed): 1');
-    expect(String(r.posts[1].body.message)).not.toContain('members_dark');
-    // Never a name, an address or an id.
+    expect(String(r.posts[1].body.message)).toContain('flip unconfirmed');
+    expect(String(r.posts[1].body.click)).toContain('tab=rotations');
+    // Never an address or an internal id.
     const sent = JSON.stringify(r.posts.map((p) => p.body));
-    expect(sent).not.toContain(FIXTURE_NODE);
     expect(sent).not.toContain(FIXTURE_ORIGIN);
     expect(sent).not.toContain(fx.relayId);
-    // Cleared, then back: it alerts again.
+    // Cleared and back within the resolve window: still the same open alert.
     await t.run((ctx) => ctx.db.patch(fx.relayId, { quarantine: undefined }));
     await t.action(internal.alerts.dispatch, {});
+    await quarantine(t, fx.relayId);
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ messages: 0 });
+    // Cleared for good: "Resolved" once the window passes, then forgotten.
+    await t.run((ctx) => ctx.db.patch(fx.relayId, { quarantine: undefined }));
+    await t.action(internal.alerts.dispatch, {});
+    expect(r.posts).toHaveLength(2);
+    vi.useFakeTimers({ now: Date.now() + RESOLVE_AFTER_MS + 60_000, toFake: ['Date'] });
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ messages: 1 });
+    expect(r.posts[2].body).toMatchObject({
+      title: `Resolved: Node paused for safety: ${FIXTURE_NODE}`,
+      priority: 2,
+      tags: ['white_check_mark'],
+    });
+    // Back after it resolved: a new alert, and a failed post is tried again.
     await quarantine(t, fx.relayId);
     r.answer(500);
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0, error: '500' });
     expect((await t.query(internal.alerts.view, {})).lastError).toBe('500');
     r.answer(200);
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1, error: null });
-    expect(r.posts).toHaveLength(4);
+    expect(r.posts).toHaveLength(5);
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  test('a node offline alerts only when the fresh inventory says it is enabled; a job that never ran waits out its grace', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fx.serverId, { lastHealthOkAt: Date.now() });
+      const row = {
+        backendServerId: fx.serverId,
+        usersOnline: 0,
+        online: false,
+        lastStatsAt: Date.now(),
+      };
+      await ctx.db.insert('backendNodeInventory', {
+        ...row,
+        nodeUuid: 'u-off',
+        name: 'Down 1',
+        disabled: false,
+      });
+      await ctx.db.insert('backendNodeInventory', {
+        ...row,
+        nodeUuid: 'u-dis',
+        name: 'Parked',
+        disabled: true,
+      });
+      // From before the flag was kept: not known, so not judged.
+      await ctx.db.insert('backendNodeInventory', { ...row, nodeUuid: 'u-old', name: 'Old row' });
+      await ctx.db.insert('backendNodeInventory', {
+        ...row,
+        nodeUuid: 'u-on',
+        name: 'Up',
+        online: true,
+        disabled: false,
+      });
+    });
+    const signals = await t.query(internal.alerts.systemSignals, {});
+    const offline = signals.filter((s) => s.kind === 'node_offline');
+    expect(offline.map((s) => s.labels.node)).toEqual(['Down 1']);
+    expect(offline[0]!.path).toContain('/admin/servers/nodes/u-off');
+    // No heartbeat at all: each job is raised with a hold-down of its own staleness grace.
+    const never = signals.filter((s) => s.kind === 'cron_stale');
+    expect(never.length).toBeGreaterThan(0);
+    expect(never.every((s) => s.facts.never === true && (s.holdDownMs ?? 0) > 0)).toBe(true);
+    expect(never.some((s) => s.facts.job === 'alerts-dispatch')).toBe(false);
+  });
+
+  test('a post that went through counts as sent though a later one failed', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t);
+    await t.mutation(internal.alerts.setConfig, {
+      enabled: true,
+      url: 'https://alerts.example.org',
+    });
+    await quarantine(t, fx.relayId);
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: ++calls === 1 ? 200 : 503 })),
+    );
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({
+      sent: 1,
+      messages: 1,
+      error: '503',
+    });
+    const view = await t.query(internal.alerts.view, {});
+    expect(view.lastSentAt).not.toBeNull();
+    expect(view.lastError).toBe('503');
+    expect(view.openAlerts).toBe(1);
   });
 
   test('turning alerts back on sends what is open once more: nothing was reconciled while off', async () => {
@@ -540,8 +634,11 @@ describe('operator alerts', () => {
     // On again: it is reported.
     await t.mutation(internal.alerts.setConfig, { enabled: true });
     await t.action(internal.alerts.dispatch, {});
-    expect(r.posts).toHaveLength(sentBefore + 1);
-    expect(String(r.posts.at(-1)!.body.message)).toContain('quarantine');
+    // Both open items (the dark members and the pause) are sent again, one each.
+    expect(r.posts).toHaveLength(sentBefore * 2);
+    expect(r.posts.slice(sentBefore).map((p) => String(p.body.title))).toContain(
+      `Node paused for safety: ${FIXTURE_NODE}`,
+    );
   });
 
   test('disabled: nothing is read or sent', async () => {
@@ -571,7 +668,7 @@ describe('operator alerts', () => {
     ).toBe(false);
   });
 
-  test('a held block is sent once as its kind and veto, and not again while it stays held', async () => {
+  test('a held block is sent once with its hold, and not again while it stays held', async () => {
     const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t);
     await t.mutation(internal.alerts.setConfig, {
@@ -614,10 +711,14 @@ describe('operator alerts', () => {
     await suspect('edge_disabled', true);
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1, error: null });
     expect(r.posts).toHaveLength(before + 1);
-    expect(r.posts.at(-1)!.body).toMatchObject({ priority: 4, tags: ['warning'] });
-    expect(String(r.posts.at(-1)!.body.message)).toContain('block_suspected (edge_disabled): 1');
+    expect(r.posts.at(-1)!.body).toMatchObject({
+      priority: 4,
+      tags: ['warning', 'block_suspected'],
+      title: `Looks blocked, not replaced: ${FIXTURE_NODE}`,
+    });
+    expect(String(r.posts.at(-1)!.body.message)).toContain('edges switched off');
     const sent = JSON.stringify(r.posts.at(-1)!.body);
-    expect(sent).not.toContain(FIXTURE_NODE);
+    expect(sent).not.toContain(FIXTURE_ORIGIN);
     expect(sent).not.toContain(fx.relayId);
     // Still suspected, now held by the daily cap: the same item, not sent again.
     await suspect('daily_cap', true);
@@ -630,20 +731,6 @@ describe('operator alerts', () => {
     const after = (await t.run((ctx) => ctx.db.get(fx.relayId)))!.suspicion!;
     expect(after.heldBack).toBeUndefined();
     expect(after).toMatchObject({ state: 'suspected', veto: 'daily_cap' });
-  });
-
-  test('the message drops a code that is not a short identifier', () => {
-    const m = alertMessage(
-      [
-        { id: 'a', kind: 'quarantine', severity: 'critical', code: 'rotation_timeout during x' },
-        { id: 'b', kind: 'node_ready_to_protect', severity: 'warning', code: null },
-      ],
-      '',
-    );
-    expect(m.message).toContain('quarantine: 1');
-    expect(m.message).toContain('node_ready_to_protect: 1');
-    expect(m.message).not.toContain('during');
-    expect(m).not.toHaveProperty('topic');
   });
 });
 

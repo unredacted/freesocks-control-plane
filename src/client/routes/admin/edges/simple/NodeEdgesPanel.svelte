@@ -2,7 +2,7 @@
   /**
    * A node's edges, as one panel (no tabs): the status sentence (the server's
    * origin status, worded by lib/statusWords.ts), the actions (Go live or
-   * Replace address, and More: a spare, Protect again, Origin details, Remove
+   * Replace address, and More: a spare, Protect again, Technical details, Remove
    * protection), the paused card, the test card, the addresses in use per
    * transport, the per-node automatic switch and recent activity in plain
    * words. URL state: `?test=<edgeId>` opens the test card for that address.
@@ -65,6 +65,15 @@
    * Props:
    *   slug: string                          the origin's slug
    *   enrolled?: { stage: string } | null   the enrolled node behind it (Servers knows)
+   *   heading?: boolean                     its own "Edges" heading (default true; a node
+   *                                         page's Addresses section has its own)
+   *   activity?: boolean                    Recent activity at its foot (default true; a node
+   *                                         page shows it as its Activity section, NodeActivity)
+   *   runHref?: (runId) => string           where a run's progress opens (default: the
+   *                                         protect sheet on Overview; a node page shows it inline)
+   *   protectHref?: (server, node) => string  where "Continue setup" opens the protect sheet
+   *   detailsHref?: string                  where "Technical details" goes (default: the
+   *                                         origin details address, which finds the fold)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -81,7 +90,6 @@
     PLAIN_ATTENTION_ACTION_LABELS,
     codeExplain,
     codeLabel,
-    plainAuditActionLabel,
     plainWords,
     restorePhaseWords,
     SKIP_DIRECT,
@@ -101,7 +109,6 @@
     relayListenersQuery,
     relayLookupQuery,
     relayProvidersQuery,
-    relayTimelineQuery,
     reprotectRelay,
     requireRelayEdges,
     resolveEdgeOperator,
@@ -115,7 +122,6 @@
   import type { EdgeAdmin, EdgePickView } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
   import UpdatedAgo from '../../UpdatedAgo.svelte';
-  import Timeline from '../components/Timeline.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
   import ReplaceDialog from '../relay/ReplaceDialog.svelte';
   import { ATTENTION_ACTION_PLAN } from '../lib/attention';
@@ -126,9 +132,9 @@
   import { transportName } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
   import { oneAddressNote, originSentence, statusOf } from '../lib/statusWords';
-  import { timelineLinkParams } from '../relay/relayLogic';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import AddressRow from './AddressRow.svelte';
+  import NodeActivity from './NodeActivity.svelte';
   import NodeProvidersCard from './NodeProvidersCard.svelte';
   import PausedCard from './PausedCard.svelte';
   import SpareDialog from './SpareDialog.svelte';
@@ -147,8 +153,23 @@
   interface Props {
     slug: string;
     enrolled?: { stage: string } | null;
+    heading?: boolean;
+    activity?: boolean;
+    runHref?: (runId: string) => string;
+    protectHref?: (server: string, node: string) => string;
+    detailsHref?: string;
   }
-  let { slug, enrolled = null }: Props = $props();
+  let {
+    slug,
+    enrolled = null,
+    heading = true,
+    activity = true,
+    runHref,
+    protectHref,
+    detailsHref,
+  }: Props = $props();
+  /** Where a run's progress opens: the page's own place, else the protect sheet on Overview. */
+  const runLink = (id: string): string => (runHref ? runHref(id) : edgesPaths.home({ run: id }));
   const uid = $props.id();
 
   const qc = useQueryClient();
@@ -166,7 +187,6 @@
   const edgesQ = relayEdgesQuery(ref);
   // The pool against the provider set: what the free slots are held for, per spare.
   const setQ = relayProvidersQuery(ref);
-  const timelineQ = relayTimelineQuery(ref);
   const config = edgeConfigQuery();
   const countriesQ = edgeCountriesQuery({ busy: (d) => anyCountryCheckPending(d) });
   const testParam = searchParam('test');
@@ -298,11 +318,13 @@
       !relay.restore &&
       !relay.deleting &&
       published.length === 0
-      ? edgesPaths.home({
-          protect: '1',
-          server: relay.origin.backendServerId,
-          node: relay.origin.nodeUuid,
-        })
+      ? protectHref
+        ? protectHref(relay.origin.backendServerId, relay.origin.nodeUuid)
+        : edgesPaths.home({
+            protect: '1',
+            server: relay.origin.backendServerId,
+            node: relay.origin.nodeUuid,
+          })
       : null,
   );
 
@@ -394,19 +416,6 @@
     if (listenerKey) renewing = { edgeId, listenerId: edge.listenerId, listenerKey };
   }
 
-  // A run that failed or kept its address a spare links to the run itself.
-  const runHref = (entry: {
-    action: string;
-    targetType: string | null;
-    targetId: string | null;
-    payload: unknown;
-  }) => {
-    if (entry.action !== 'edge.rotation_failed' && entry.action !== 'edge.publish_held')
-      return null;
-    const rotation = timelineLinkParams(entry)?.rotation;
-    return rotation ? edgesPaths.relay(slug, { tab: 'rotations', rotation }) : null;
-  };
-
   let autoBusy = $state(false);
   async function setAuto(next: boolean) {
     if (!relay) return;
@@ -432,7 +441,7 @@
         toast.message('Test each address first. Going live continues once every one works.');
       } else {
         toast.success('Going live.');
-        router.navigate(edgesPaths.home({ run: res.runId }));
+        router.navigate(runLink(res.runId));
       }
       invalidateRelay(qc, slug);
     } catch (e) {
@@ -443,24 +452,30 @@
   }
 </script>
 
-<section aria-labelledby={`${uid}-edges`} class="touch-44 space-y-6">
+<section
+  aria-labelledby={heading ? `${uid}-edges` : undefined}
+  aria-label={heading ? undefined : 'Edges'}
+  class="touch-44 space-y-6"
+>
   <div class="flex flex-wrap items-start justify-between gap-3">
     <div class="min-w-0">
-      <h2 id={`${uid}-edges`} class="text-base font-semibold">Edges</h2>
+      {#if heading}
+        <h2 id={`${uid}-edges`} class="text-base font-semibold">Edges</h2>
+      {/if}
       {#if relay && status}
         <p class="mt-1 flex flex-wrap items-center gap-x-2 text-sm font-medium" role="status">
           <StatusDot dot={status.dot} />
           {originSentence(status)}
           {#if runId}
             <Link
-              href={edgesPaths.home({ run: runId })}
+              href={runLink(runId)}
               class="text-primary inline-flex min-h-11 items-center text-sm font-normal underline underline-offset-4 sm:min-h-0"
             >
               Watch
             </Link>
           {:else if failedRunId}
             <Link
-              href={edgesPaths.home({ run: failedRunId })}
+              href={runLink(failedRunId)}
               class="text-primary inline-flex min-h-11 items-center text-sm font-normal underline underline-offset-4 sm:min-h-0"
             >
               Open the run
@@ -516,8 +531,10 @@
             {#if canProtectAgain && !protectAgainFirst}
               <DropdownMenu.Item onSelect={() => (againOpen = true)}>Front again</DropdownMenu.Item>
             {/if}
-            <DropdownMenu.Item onSelect={() => router.navigate(edgesPaths.relay(relay.slug))}>
-              Origin details
+            <DropdownMenu.Item
+              onSelect={() => router.navigate(detailsHref ?? edgesPaths.relay(relay.slug))}
+            >
+              Technical details
             </DropdownMenu.Item>
             <DropdownMenu.Separator />
             <DropdownMenu.Item
@@ -551,7 +568,7 @@
         onClose={closeTest}
         onRetried={(id) => {
           closeTest();
-          router.navigate(edgesPaths.home({ run: id }));
+          router.navigate(runLink(id));
         }}
         onDoesNotWork={doesNotWork}
         onAllDone={() => {
@@ -564,7 +581,7 @@
             void retrySetupRun(runId, {})
               .then(() => {
                 toast.success('Going live.');
-                router.navigate(edgesPaths.home({ run: runId }));
+                router.navigate(runLink(runId));
               })
               .catch((e) => toast.error(edgeErrorMessage(e)));
         }}
@@ -670,7 +687,7 @@
           const l = listeners.find((x) => x.listenerKey === key);
           return l ? transportName(l) : key;
         }}
-        onRunStarted={(id) => router.navigate(edgesPaths.home({ run: id }))}
+        onRunStarted={(id) => router.navigate(runLink(id))}
         rows={addressRows}
       />
     {:else}
@@ -735,26 +752,9 @@
       />
     </section>
 
-    <section aria-labelledby={`${uid}-activity`}>
-      <h3 id={`${uid}-activity`} class="mb-3 text-sm font-semibold">Recent activity</h3>
-      {#if timelineQ.isPending}
-        <Skeleton class="h-24 w-full" />
-      {:else if timelineQ.isError}
-        <AdminListState error={timelineQ.error} onRetry={() => void timelineQ.refetch()} />
-      {:else}
-        <Timeline
-          entries={timelineQ.data?.entries ?? []}
-          max={8}
-          labelFor={plainAuditActionLabel}
-          hrefFor={runHref}
-          listenerName={(key) => {
-            const l = listeners.find((x) => x.listenerKey === key);
-            return l ? transportName(l) : 'a transport';
-          }}
-          label="Recent activity"
-        />
-      {/if}
-    </section>
+    {#if activity}
+      <NodeActivity {slug} />
+    {/if}
   {:else}
     <Skeleton class="h-32 w-full" />
   {/if}
@@ -895,7 +895,7 @@
       const res = await reprotectRelay(relay.id);
       toast.success('Fronting again. The progress opens now.');
       invalidateRelay(qc, slug);
-      router.navigate(edgesPaths.home({ run: res.runId }));
+      router.navigate(runLink(res.runId));
     }}
   />
   <ActionConfirm

@@ -4,6 +4,7 @@ import {
   globalpingKind,
   globalpingRequest,
   globalpingStart,
+  globalpingTestsOf,
   globalpingPoll,
   parseGlobalpingHttpResults,
   parseGlobalpingResults,
@@ -35,7 +36,7 @@ import {
   unreachableCountries,
 } from './verdict';
 import { runOutcome, shortError, vantageHasNoRoute } from './types';
-import type { ProbeResult, ProbeTarget } from './types';
+import type { ProbeRequestOptions, ProbeResult, ProbeTarget } from './types';
 
 const target: ProbeTarget = {
   address: '198.51.100.7',
@@ -53,10 +54,10 @@ const nameTarget: ProbeTarget = {
   protocol: 'tls',
   requestedFamily: 'any',
 };
-const opts = { countries: ['IR', 'RU'], perCountryLimit: 3, preferEyeball: true };
+const opts: ProbeRequestOptions = { countries: ['IR', 'RU'], perCountryLimit: 3, networks: 'home' };
 
 describe('globalping', () => {
-  test('request: TCP ping on the edge port, per-country limits, eyeball tag when preferred', () => {
+  test('request: TCP ping on the edge port, per-country limits, home-network tag by default', () => {
     const req = globalpingRequest(target, opts);
     expect(req).toMatchObject({
       type: 'ping',
@@ -76,10 +77,100 @@ describe('globalping', () => {
       { country: 'IR', limit: 3, tags: ['eyeball-network'] },
       { country: 'RU', limit: 3, tags: ['eyeball-network'] },
     ]);
-    expect(globalpingRequest(target, { ...opts, preferEyeball: false }).locations[0]).toEqual({
+    expect(globalpingRequest(target, { ...opts, networks: 'any' }).locations[0]).toEqual({
       country: 'IR',
       limit: 3,
     });
+  });
+
+  test('request: the network setting, per country; controls never by network', () => {
+    const counts = {
+      IR: { eyeball: 2, datacenter: 4, total: 6 },
+      RU: { eyeball: 30, datacenter: 100, total: 130 },
+      MM: { eyeball: 0, datacenter: 1, total: 1 },
+    };
+    const at = (networks: ProbeRequestOptions['networks'], probeCounts?: typeof counts) =>
+      globalpingRequest(target, {
+        countries: ['IR', 'RU', 'MM'],
+        perCountryLimit: 3,
+        networks,
+        controls: ['DE'],
+        ...(probeCounts ? { probeCounts } : {}),
+      }).locations;
+    // Home only: every checked country asks home networks, however few it has.
+    expect(at('home', counts)).toEqual([
+      { country: 'IR', limit: 3, tags: ['eyeball-network'] },
+      { country: 'RU', limit: 3, tags: ['eyeball-network'] },
+      { country: 'MM', limit: 3, tags: ['eyeball-network'] },
+      { country: 'DE', limit: 1 },
+    ]);
+    // Home first: a short country is topped up with data centres, one with
+    // too few of both asks any probe; the tests asked stay the same.
+    const first = at('home_first', counts);
+    expect(first).toEqual([
+      { country: 'IR', limit: 2, tags: ['eyeball-network'] },
+      { country: 'IR', limit: 1, tags: ['datacenter-network'] },
+      { country: 'RU', limit: 3, tags: ['eyeball-network'] },
+      { country: 'MM', limit: 3 },
+      { country: 'DE', limit: 1 },
+    ]);
+    expect(globalpingTestsOf({ locations: first })).toBe(10);
+    expect(globalpingTestsOf({ locations: at('home', counts) })).toBe(10);
+    // A country the listing does not have: any probe.
+    expect(
+      globalpingRequest(target, {
+        countries: ['UZ'],
+        perCountryLimit: 3,
+        networks: 'home_first',
+        probeCounts: counts,
+      }).locations,
+    ).toEqual([{ country: 'UZ', limit: 3 }]);
+    // Home first without a listing: home networks (any probe only on a refusal).
+    expect(at('home_first')).toEqual(at('home'));
+    // Any network: no tag anywhere.
+    expect(at('any', counts)).toEqual([
+      { country: 'IR', limit: 3 },
+      { country: 'RU', limit: 3 },
+      { country: 'MM', limit: 3 },
+      { country: 'DE', limit: 1 },
+    ]);
+  });
+
+  test('start: under home first a "no probes" refusal is asked again with any probe, once; home only never', async () => {
+    const asked: unknown[] = [];
+    const refusing = {
+      async createMeasurement(req: unknown) {
+        asked.push(req);
+        const tagged = (req as { locations: Array<{ tags?: string[] }> }).locations.some(
+          (l) => l.tags,
+        );
+        return tagged
+          ? {
+              ok: false,
+              response: new Response('{}', { status: 422 }),
+              data: { error: { type: 'no_probes_found' } },
+            }
+          : { ok: true, data: { id: 'm-any' } };
+      },
+      async getMeasurement() {
+        return { ok: false };
+      },
+    };
+    const started = await globalpingStart(refusing, target, { ...opts, networks: 'home_first' });
+    expect(started.externalId).toBe('m-any');
+    expect(asked.map((r) => (r as { locations: unknown }).locations)).toEqual([
+      [
+        { country: 'IR', limit: 3, tags: ['eyeball-network'] },
+        { country: 'RU', limit: 3, tags: ['eyeball-network'] },
+      ],
+      [
+        { country: 'IR', limit: 3 },
+        { country: 'RU', limit: 3 },
+      ],
+    ]);
+    asked.length = 0;
+    await expect(globalpingStart(refusing, target, opts)).rejects.toThrow(/422/);
+    expect(asked).toHaveLength(1);
   });
 
   test('user agent is generic: names neither the project nor what is probed', () => {

@@ -394,6 +394,8 @@ export interface PlannedEdgeInput {
   provisionIntent?: ProvisionIntent | null;
   /** The load balancer size the edge builds (its effective template's), frozen for its cost. */
   planSize?: string | null;
+  /** Made for these countries (a node's pick for them): `edges.audienceIntent`. */
+  audienceIntent?: string[] | null;
 }
 
 /**
@@ -470,6 +472,7 @@ export async function insertPlannedEdge(
       : {}),
     provider: account.provider,
     ...(a.planSize ? { planSize: a.planSize } : {}),
+    ...(a.audienceIntent?.length ? { audienceIntent: a.audienceIntent } : {}),
     managed: true,
     name,
     steps: a.steps.map((s) => ({

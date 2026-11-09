@@ -1,12 +1,15 @@
 <script lang="ts">
   /**
-   * Censored countries (Settings): the one list the service uses wherever a
-   * country matters. Being on it makes a country one where SNIs are
-   * judged, a choice under "Where are you connecting from?", a row the status
-   * page's availability matrix can show, and a country the mode suggestion
-   * treats as censored. Two switches per country: probe edges from there, and
-   * check SNIs from inside it (opt-in, with the risk said beside it).
-   * The whole list is saved at once (PUT /api/v1/admin/censored-countries).
+   * The censored-country list, edited on Servers -> Countries: the one list
+   * the service uses wherever a country matters. Being on it makes a country
+   * one where SNIs are judged, a choice under "Where are you connecting
+   * from?", a row the status page's availability matrix can show, and a
+   * country the mode suggestion treats as censored. Two switches per country:
+   * check edges from there, and check SNIs from inside it (opt-in, with the
+   * risk said beside it); each country page has the same two switches under
+   * "Checks from here". The whole list is saved at once (censoredSave).
+   *
+   * Props: id?: string   the card's element id (the page's "Add a country" scrolls to it)
    */
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
@@ -21,19 +24,25 @@
   import { Button } from '@client/components/ui/button';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { toast } from 'svelte-sonner';
-  import { apiClient } from '../../lib/api';
-  import { apiErrorMessage } from '../../lib/errors';
-  import { countryName } from '../../lib/countries';
-  import { adminCensoredCountriesQuery, queryKeys } from '../../lib/queries';
-  import { edgeKeys } from '../../lib/edgesApi';
-  import { sniKeys } from '../../lib/sniApi';
-  import { AdminCensoredCountries, type CensoredCountry } from '../../../shared/contracts/admin';
-  import CountryPicker from './edges/components/CountryPicker.svelte';
+  import Link from '@client/components/Link.svelte';
+  import { apiErrorMessage } from '@client/lib/errors';
+  import { countryName } from '@client/lib/countries';
+  import { adminCensoredCountriesQuery } from '@client/lib/queries';
+  import type { CensoredCountry } from '@shared/contracts/admin';
+  import CountryPicker from '../components/CountryPicker.svelte';
+  import { edgesPaths } from '../lib/routes';
+  import {
+    CHECK_SWITCHES,
+    movedCountry,
+    withCheck,
+    withCountry,
+    withoutCountry,
+    type CheckKey,
+  } from './censored';
+  import { censoredSave } from './censoredSave.svelte';
 
+  let { id }: { id?: string } = $props();
   const uid = $props.id();
-  const qc = useQueryClient();
   const list = adminCensoredCountriesQuery();
 
   let draft = $state<CensoredCountry[] | null>(null);
@@ -45,6 +54,11 @@
   // leaves them in place, and the operator trims the list here before saving.
   const overCap = $derived(rows.length > max);
 
+  const save = censoredSave({
+    success: 'Censored countries saved',
+    onSaved: () => (draft = null),
+  });
+
   function edit(next: CensoredCountry[]) {
     // An edit made while the PUT is in flight would be dropped when it lands.
     if (save.isPending) return;
@@ -52,58 +66,18 @@
   }
   function add(code: string | undefined) {
     picked = [];
-    if (!code || rows.some((r) => r.code === code) || rows.length >= max) return;
-    edit([...rows, { code, checkEdges: true, checkNamesInside: false }]);
+    if (code) edit(withCountry(rows, code, max));
   }
-  function remove(code: string) {
-    edit(rows.filter((r) => r.code !== code));
-  }
-  function move(i: number, by: -1 | 1) {
-    const j = i + by;
-    if (j < 0 || j >= rows.length) return;
-    const next = [...rows];
-    [next[i], next[j]] = [next[j]!, next[i]!];
-    edit(next);
-  }
-  function flag(code: string, key: 'checkEdges' | 'checkNamesInside', on: boolean) {
-    edit(rows.map((r) => (r.code === code ? { ...r, [key]: on } : r)));
-  }
-
-  const save = createMutation(() => ({
-    mutationFn: () =>
-      apiClient.put(
-        '/api/v1/admin/censored-countries',
-        { countries: rows },
-        AdminCensoredCountries,
-      ),
-    onSuccess: () => {
-      draft = null;
-      // Everything that shows a view of the list: the status matrix editor (its
-      // rows are the listed countries), the edges probe countries, the
-      // server-name countries and opt-ins.
-      for (const queryKey of [
-        queryKeys.adminCensoredCountries,
-        queryKeys.adminStatusPage,
-        edgeKeys.config,
-        sniKeys.all,
-      ])
-        void qc.invalidateQueries({ queryKey });
-      toast.success('Censored countries saved');
-    },
-    onError: (err) => {
-      toast.error('Could not save the censored countries', { description: apiErrorMessage(err) });
-    },
-  }));
+  const remove = (code: string) => edit(withoutCountry(rows, code));
+  const move = (i: number, by: -1 | 1) => edit(movedCountry(rows, i, by));
+  const flag = (code: string, key: CheckKey, on: boolean) => edit(withCheck(rows, code, key, on));
 </script>
 
-<Card>
+<Card {id}>
   <CardHeader>
     <CardTitle class="text-base">Censored countries</CardTitle>
     <CardDescription>
-      The one list used wherever a country matters. A country on it is one where SNIs are judged
-      country by country, a choice members get under "Where are you connecting from?", a row the
-      status page's availability matrix can show, and a place where the connection mode suggestion
-      follows that matrix.
+      The countries this tab shows, in order. Each one is checked and judged on its own.
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-4 text-sm">
@@ -134,7 +108,8 @@
       <p class="text-muted-foreground">
         "Check SNIs from inside" runs checks on other people's machines in that country, often home
         connections. Whoever runs one sees the address and the SNI. Turn it on only where that is
-        acceptable (Servers, SNIs, describes the checks).
+        acceptable (<Link href={edgesPaths.names()} class="underline underline-offset-2">SNIs</Link>
+        describes the checks).
       </p>
       {#if rows.length === 0}
         <p class="text-muted-foreground">No country is on the list.</p>
@@ -181,24 +156,17 @@
                 </span>
               </div>
               <div class="flex flex-wrap gap-x-6 gap-y-1">
-                <label class="flex items-center gap-2">
-                  <Checkbox
-                    id={`${uid}-edges-${r.code}`}
-                    checked={r.checkEdges}
-                    disabled={save.isPending}
-                    onCheckedChange={(v) => flag(r.code, 'checkEdges', v === true)}
-                  />
-                  <span>Check edges from here</span>
-                </label>
-                <label class="flex items-center gap-2">
-                  <Checkbox
-                    id={`${uid}-names-${r.code}`}
-                    checked={r.checkNamesInside}
-                    disabled={save.isPending}
-                    onCheckedChange={(v) => flag(r.code, 'checkNamesInside', v === true)}
-                  />
-                  <span>Check SNIs from inside</span>
-                </label>
+                {#each CHECK_SWITCHES as sw (sw.key)}
+                  <label class="flex items-center gap-2">
+                    <Checkbox
+                      id={`${uid}-${sw.key}-${r.code}`}
+                      checked={r[sw.key]}
+                      disabled={save.isPending}
+                      onCheckedChange={(v) => flag(r.code, sw.key, v === true)}
+                    />
+                    <span>{sw.label}</span>
+                  </label>
+                {/each}
               </div>
             </li>
           {/each}
@@ -219,7 +187,7 @@
             Undo changes
           </Button>
         {/if}
-        <Button onclick={() => save.mutate()} disabled={!dirty || overCap || save.isPending}>
+        <Button onclick={() => save.mutate(rows)} disabled={!dirty || overCap || save.isPending}>
           {save.isPending ? 'Saving…' : 'Save countries'}
         </Button>
       </div>

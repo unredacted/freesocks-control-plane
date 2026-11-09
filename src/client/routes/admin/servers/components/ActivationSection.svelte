@@ -23,7 +23,11 @@
    * its edges panel on the same page: protecting it again starts there
    * ("Protect again"), never in the protect sheet.
    *
-   * Props: slug, intent (NodeIntentView), origin (an Edges origin protects it)
+   * Props: slug, intent (NodeIntentView), origin (an Edges origin protects it),
+   *   onFront? (open the protect sheet for this node; default: on Overview),
+   *   onOpenRun? (a fronting run's progress; default: on Overview),
+   *   inlineRunId? (the run whose progress the page shows inline: its protection
+   *   then gets one line here, never a second approval card or "Open progress")
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -56,7 +60,17 @@
     slug,
     intent,
     origin = false,
-  }: { slug: string; intent: NodeIntentView; origin?: boolean } = $props();
+    onFront,
+    onOpenRun,
+    inlineRunId = null,
+  }: {
+    slug: string;
+    intent: NodeIntentView;
+    origin?: boolean;
+    onFront?: () => void;
+    onOpenRun?: (runId: string) => void;
+    inlineRunId?: string | null;
+  } = $props();
   const qc = useQueryClient();
 
   let busy = $state(false);
@@ -133,19 +147,27 @@
       : stageWords(intent),
   );
   // The fronted mirror of the approval card, while the protection waits for it.
-  let mirrorShown = $derived(
+  let mirrorWanted = $derived(
     !direct &&
       !intent.retirement &&
       intent.protection?.state === 'needs_you' &&
       intent.protection.need === 'node_not_approved' &&
       intent.stage !== 'activating',
   );
-  // The approval card carries Finish maintenance itself: the row below leaves it out.
-  let cardShown = $derived((direct && reviewable) || mirrorShown || !!atOnce);
+  // The page already shows this protection's progress (its approval card included).
+  let inlineRun = $derived(!!inlineRunId && intent.protection?.runId === inlineRunId);
+  let mirrorShown = $derived(mirrorWanted && !inlineRun);
+  // The approval card carries Finish maintenance itself (here or in the inline
+  // progress): the row below leaves it out.
+  let cardShown = $derived((direct && reviewable) || mirrorWanted || !!atOnce);
   const protect = () =>
-    router.navigate(
-      edgesPaths.home({ protect: '1', server: slug, node: intent.nodeUuid ?? undefined }),
-    );
+    onFront
+      ? onFront()
+      : router.navigate(
+          edgesPaths.home({ protect: '1', server: slug, node: intent.nodeUuid ?? undefined }),
+        );
+  const openRun = (runId: string) =>
+    onOpenRun ? onOpenRun(runId) : router.navigate(edgesPaths.home({ run: runId }));
   let needsDecision = $derived(intent.retirement?.stage === 'needs_admin');
   // The role never runs an adopted machine, so nothing reports its wipe: the
   // retirement waits for whoever cleaned it up to say so.
@@ -274,19 +296,17 @@
         maintenance={intent.maintenance}
       />
     </div>
+  {:else if !direct && intent.protection && !intent.retirement && inlineRun}
+    <p class="text-muted-foreground mt-3 text-sm">
+      Its fronting progress is shown above, with anything it needs from you.
+    </p>
   {:else if !direct && intent.protection && !intent.retirement}
     {@const p = intent.protection}
     <div
       class="bg-card mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm"
     >
       <span>{protectionWords(p, intent.stage)}</span>
-      <Button
-        size="sm"
-        variant="outline"
-        onclick={() => router.navigate(edgesPaths.home({ run: p.runId }))}
-      >
-        Open progress
-      </Button>
+      <Button size="sm" variant="outline" onclick={() => openRun(p.runId)}>Open progress</Button>
     </div>
     {#if mirrorShown}
       <div class="mt-3">

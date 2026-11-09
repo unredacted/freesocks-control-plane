@@ -1,60 +1,57 @@
 <script lang="ts">
   /**
-   * Admin -> Edges -> Countries -> one country (`/admin/edges/countries/<CC>`):
-   * every enabled origin, each of its transports, and for each its addresses
-   * and server names: what they count as from this country, why (a mark, the
-   * checks with controls, the checks from inside, the probes, member reports)
-   * and how old that is, which outside probe sources answer from here (and
-   * why one went quiet), plus what a member here is handed today (the
-   * assignment itself over a sample of keys). Read only: marks and checks are
-   * made on the node and name pages.
+   * Admin -> Servers -> Countries -> one country
+   * (`/admin/servers/countries/<CC>[?section=]`): "Can members here connect?"
+   * One section at a time, picked by the section bar (./sections.ts):
+   *
+   *   Summary                      the totals, what is switched off, and one line per section
+   *   Addresses for this country   locations set for it, then every origin's transports and
+   *                                addresses: what they count as here, why, and what members
+   *                                here are handed (CountryAddresses; holds the slot for the
+   *                                per-country edges design)
+   *   SNIs                         the SNIs of each REALITY transport from here (CountrySnis)
+   *   Lists                        the country lists FCP follows for it (CountryListsCard)
+   *   Probes                       the Probes tab's matrix with only this country (CountryProbes)
+   *   Checks from here             its two switches on the censored-country list (CountryChecks)
+   *   Exit                         where new keys of members who chose it go (CountryExit)
+   *
+   * "Mark an address for this country" (header) picks an address, then opens the
+   * mark dialog (CountryMarkAddress).
    *
    * Props: code: string (ISO 3166-1 alpha-2, upper case)
-   * All wording lives in ./words.ts (pure, unit-tested).
+   * All wording lives in ./words.ts and ./sections.ts (pure, unit-tested).
    */
-  import { exitSentence } from '../../../../lib/countryExits';
-  import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
-  import { Badge } from '@client/components/ui/badge';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import { Card, CardContent } from '@client/components/ui/card';
   import Link from '@client/components/Link.svelte';
   import { countryViewQuery } from '@client/lib/edgesApi';
-  import type { CountryViewAddress, CountryViewOrigin } from '@shared/contracts/edges';
+  import { searchParam } from '@client/lib/urlState.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
-  import CountryListsCard from './CountryListsCard.svelte';
-  import StatusBadge from '../components/StatusBadge.svelte';
-  import ProtocolBadge from '../components/ProtocolBadge.svelte';
-  import StatusDot from '../simple/StatusDot.svelte';
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
+  import CountryAddresses from './CountryAddresses.svelte';
+  import CountryChecks from './CountryChecks.svelte';
+  import CountryExit from './CountryExit.svelte';
+  import CountryListsCard from './CountryListsCard.svelte';
+  import CountryMarkAddress from './CountryMarkAddress.svelte';
+  import CountryProbes from './CountryProbes.svelte';
+  import CountrySectionBar from './CountrySectionBar.svelte';
+  import CountrySnis from './CountrySnis.svelte';
   import {
-    STATE_WORDS,
-    addressListsLine,
-    addressWhy,
-    checksLine,
+    COUNTRY_SECTIONS,
+    addressesDigest,
+    checksDigest,
+    countrySectionOf,
+    exitDigest,
+    snisDigest,
+    type CountrySection,
+  } from './sections';
+  import {
     countryLabel,
     coverageLines,
-    handedWords,
-    pathLine,
-    handshakeLine,
-    markLine,
-    gradeLine,
-    nameWhy,
-    listsLine,
-    meantForWords,
-    namePoolLines,
-    namesOnListsLine,
-    percent,
-    probesLine,
-    reportsLine,
-    realHostLine,
-    addressRealHostLine,
-    addressTimingLine,
-    targetAddsLine,
-    TARGET_ADDS_FLAG_WORDS,
-    roundLine,
-    staleAnswersLine,
+    coverageNote,
     switchNotes,
     totalsLine,
-    untilLine,
     HANDED_SCOPE,
   } from './words';
 
@@ -65,40 +62,24 @@
 
   const view = countryViewQuery(() => code);
   let now = $derived(view.data?.generatedAt ?? Date.now());
-
-  function originHref(o: CountryViewOrigin): string {
-    return o.kind === 'panel-node' ? edgesPaths.node(o.slug) : edgesPaths.relay(o.slug);
-  }
-  function addressHref(o: CountryViewOrigin, a: CountryViewAddress): string {
-    return a.edgeId
-      ? edgesPaths.relay(o.slug, { tab: 'edges', edge: a.edgeId })
-      : edgesPaths.relay(o.slug);
-  }
-  function evidenceLines(a: CountryViewAddress): string[] {
-    return [
-      markLine(a, now),
-      gradeLine(a, now),
-      roundLine(a, now),
-      handshakeLine(a, now),
-      probesLine(a, now),
-      staleAnswersLine(a, now),
-      addressRealHostLine(a, now),
-      addressTimingLine(a, now),
-    ].filter((x): x is string => !!x);
-  }
-  function handedLine(a: CountryViewAddress): string | null {
-    const parts: string[] = [];
-    if (a.handed.primary > 0) parts.push(`first address for ${percent(a.handed.primary)}`);
-    if (a.handed.backup > 0) parts.push(`backup for ${percent(a.handed.backup)}`);
-    return parts.length > 0 ? `Handed out here: ${parts.join(', ')} of members.` : null;
-  }
+  const sectionParam = searchParam('section');
+  const section = $derived(countrySectionOf(sectionParam.value));
+  const labelOf = (id: CountrySection) => COUNTRY_SECTIONS.find((s) => s.id === id)?.label ?? id;
 </script>
 
 <SectionHeader
   title={countryLabel(code)}
   back={{ href: edgesPaths.countries(), label: 'All countries' }}
   description="What works from here, why FCP thinks so, and what a member here is handed today."
-/>
+>
+  {#snippet actions()}
+    {#if view.data}
+      <CountryMarkAddress {code} origins={view.data.origins} listed={!!view.data.listed} />
+    {/if}
+  {/snippet}
+</SectionHeader>
+
+<CountrySectionBar {code} current={section} />
 
 {#if view.isPending}
   <p class="text-muted-foreground text-sm">Loading…</p>
@@ -106,271 +87,87 @@
   <p class="text-destructive text-sm">This country could not be loaded. Try again shortly.</p>
 {:else if view.data}
   {@const v = view.data}
-  {@const notes = [
-    ...(v.listed
-      ? []
-      : ['This country is not on the censored-country list, so nothing is checked from here.']),
-    ...switchNotes(v.switches, v.listed?.nameChecksRun ?? false),
-    ...(v.listed?.nameChecksRun ? namePoolLines(v.namePool) : []),
-  ]}
-  <Card class="mb-6">
-    <CardContent class="space-y-1 py-4 text-sm">
-      <p class="font-medium">{totalsLine(v.totals)}</p>
-      {#if v.totals.originsAtRisk > 0}
-        <p class="text-destructive">
-          {v.totals.originsAtRisk === 1
-            ? 'One node has no working published address here.'
-            : `${v.totals.originsAtRisk} nodes have no working published address here.`}
-        </p>
-      {/if}
-      <p class="text-muted-foreground">
-        {v.totals.lastEvidenceAt
-          ? `Newest evidence ${relativeTime(v.totals.lastEvidenceAt, now)}.`
-          : 'No evidence from here yet.'}
-        {v.controls.length > 0 ? `Control countries: ${v.controls.join(', ')}.` : ''}
-      </p>
-      {#each coverageLines(v.probes, v.sources, v.switches.probes, now) as line (line)}
-        <p class="text-muted-foreground">{line}</p>
-      {/each}
-      {#each notes as n (n)}<p class="text-muted-foreground">{n}</p>{/each}
-      <p class="text-muted-foreground">{HANDED_SCOPE}</p>
-    </CardContent>
-  </Card>
-
-  <Card class="mb-6">
-    <CardHeader class="pb-2">
-      <CardTitle class="text-base">Locations set for {countryLabel(code)}</CardTitle>
-    </CardHeader>
-    <CardContent class="space-y-2 text-sm">
-      {#if v.meantFor.length === 0}
-        <p class="text-muted-foreground">
-          No location is set for this country, so members here get addresses by what works here. Set
-          a location's countries on its provider account page.
-        </p>
-      {:else}
-        <ul class="divide-y rounded-md border">
-          {#each v.meantFor as l (l.locationId)}
-            {@const w = meantForWords(l)}
-            <li class="space-y-0.5 p-3">
-              <p class="flex flex-wrap items-center gap-2 font-medium">
-                <Link href={edgesPaths.provider(l.accountId)}>{l.label}</Link>
-                {#if l.blocked}<Badge variant="destructive">Blocked here</Badge>{/if}
-              </p>
-              <p class={l.blocked ? 'text-destructive' : 'text-muted-foreground'}>{w.state}</p>
-              <p class="text-muted-foreground text-xs">{w.detail}</p>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      <p class="text-muted-foreground">
-        {exitSentence(
+  {#if section === 'summary'}
+    {@const notes = [
+      ...(v.listed
+        ? []
+        : ['This country is not on the censored-country list, so nothing is checked from here.']),
+      ...switchNotes(v.switches, v.listed?.nameChecksRun ?? false),
+    ]}
+    {@const probesNote = coverageNote(v.probes, v.sources, v.switches.probes, now)}
+    {@const digests = [
+      { id: 'addresses' as const, line: addressesDigest(v.totals, v.meantFor) },
+      { id: 'snis' as const, line: snisDigest(v.totals) },
+      { id: 'lists' as const, line: 'The country lists FCP follows for it.' },
+      {
+        id: 'probes' as const,
+        line:
+          probesNote ??
+          (v.switches.probes
+            ? (coverageLines(v.probes, v.sources, true, now)[0] ?? 'Outside probes from here.')
+            : 'Probes are off.'),
+      },
+      { id: 'checks' as const, line: checksDigest(v.listed) },
+      {
+        id: 'exit' as const,
+        line: exitDigest(
           v.exits.map((e) => e.label),
           v.switches.steering,
-        )}
-      </p>
-    </CardContent>
-  </Card>
-
-  <CountryListsCard {code} />
-
-  {#if v.origins.length === 0}
-    <Card>
-      <CardContent class="text-muted-foreground py-8 text-center text-sm">
-        No origin is switched on.
+        ),
+      },
+    ]}
+    <Card class="mb-6">
+      <CardContent class="space-y-1 py-4 text-sm">
+        <p class="font-medium">{totalsLine(v.totals)}</p>
+        {#if v.totals.originsAtRisk > 0}
+          <p class="text-destructive">
+            {v.totals.originsAtRisk === 1
+              ? 'One node has no working published address here.'
+              : `${v.totals.originsAtRisk} nodes have no working published address here.`}
+          </p>
+        {/if}
+        <p class="text-muted-foreground">
+          {v.totals.lastEvidenceAt
+            ? `Newest evidence ${relativeTime(v.totals.lastEvidenceAt, now)}.`
+            : 'No evidence from here yet.'}
+          {v.controls.length > 0 ? `Control countries: ${v.controls.join(', ')}.` : ''}
+        </p>
+        {#each notes as n (n)}<p class="text-muted-foreground">{n}</p>{/each}
+        <p class="text-muted-foreground">{HANDED_SCOPE}</p>
       </CardContent>
     </Card>
+
+    <ul class="grid gap-3 sm:grid-cols-2" aria-label="Sections">
+      {#each digests as d (d.id)}
+        <li>
+          <Link
+            href={edgesPaths.country(code, { section: d.id })}
+            class="hover:bg-accent/40 focus-visible:ring-ring/50 flex h-full items-center gap-3 rounded-lg border px-4 py-3 outline-none focus-visible:ring-3"
+          >
+            <span class="min-w-0 flex-1">
+              <span class="block font-medium">{labelOf(d.id)}</span>
+              <span class="text-muted-foreground block text-sm">{d.line}</span>
+            </span>
+            <ChevronRight
+              class="text-muted-foreground size-4 shrink-0 rtl:rotate-180"
+              aria-hidden="true"
+            />
+          </Link>
+        </li>
+      {/each}
+    </ul>
+  {:else if section === 'addresses'}
+    <!-- The per-country edges card goes in CountryAddresses' `perCountry` slot. -->
+    <CountryAddresses {code} view={v} />
+  {:else if section === 'snis'}
+    <CountrySnis view={v} />
+  {:else if section === 'lists'}
+    <CountryListsCard {code} />
+  {:else if section === 'probes'}
+    <CountryProbes {code} view={v} />
+  {:else if section === 'checks'}
+    <CountryChecks {code} view={v} />
+  {:else if section === 'exit'}
+    <CountryExit {code} view={v} />
   {/if}
-
-  <div class="space-y-6">
-    {#each v.origins as o (o.relayId)}
-      <Card>
-        <CardHeader>
-          <CardTitle class="flex flex-wrap items-center gap-2 text-base">
-            <Link href={originHref(o)} class="underline-offset-2 hover:underline">
-              {o.label ?? o.nodeName ?? o.slug}
-            </Link>
-            {#if o.atRisk}
-              <Badge variant="destructive">No working address here</Badge>
-            {/if}
-            {#if !o.enabled}
-              <Badge variant="outline">Switched off</Badge>
-            {/if}
-          </CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-6 text-sm">
-          {#each o.listeners as l (l.listenerId)}
-            <section aria-label={`Transport ${l.key}`} class="space-y-3">
-              <div class="flex flex-wrap items-center gap-2">
-                <ProtocolBadge
-                  protocol={l.protocol}
-                  streamTransport={l.streamTransport}
-                  security={l.security}
-                />
-                <span class="text-muted-foreground">Transport {l.key}</span>
-                {#if !l.usable}<Badge variant="outline">Not in use</Badge>{/if}
-              </div>
-
-              {#if targetAddsLine(l, now)}
-                <div
-                  class={l.targetAdds?.flagged
-                    ? 'space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2'
-                    : 'text-muted-foreground'}
-                >
-                  <p>{targetAddsLine(l, now)}</p>
-                  {#if l.targetAdds?.flagged}<p>{TARGET_ADDS_FLAG_WORDS}</p>{/if}
-                </div>
-              {/if}
-
-              <div class="bg-muted/40 space-y-1 rounded-md px-3 py-2">
-                <p class="font-medium">What a member here is handed</p>
-                {#each handedWords(l.members) as line (line)}
-                  <p class="text-muted-foreground">{line}</p>
-                {/each}
-              </div>
-
-              <div>
-                <h3 class="mb-2 font-medium">Addresses</h3>
-                {#if l.addresses.length === 0}
-                  <p class="text-muted-foreground">No address in use or spare.</p>
-                {:else}
-                  <ul class="divide-border divide-y rounded-md border" aria-label="Addresses">
-                    {#each l.addresses as a (a.edgeId ?? a.address)}
-                      {@const words = STATE_WORDS[a.state]}
-                      <li class="space-y-1 px-3 py-2">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <StatusDot dot={words.dot} />
-                          <span class="font-medium">{words.label}</span>
-                          <Link
-                            href={addressHref(o, a)}
-                            class="font-mono break-all underline-offset-2 hover:underline"
-                          >
-                            {a.address}
-                          </Link>
-                          {#if a.v6}
-                            <span class="text-muted-foreground font-mono break-all">
-                              {a.v6.address}
-                              ({a.v6.state
-                                ? STATE_WORDS[a.v6.state].label.toLowerCase()
-                                : 'not known'})
-                            </span>
-                          {/if}
-                          {#if a.publication}
-                            <StatusBadge kind="publication" value={a.publication} />
-                          {/if}
-                          <span class="text-muted-foreground">
-                            {[a.provider, a.location, a.layer === 'l7' ? 'CDN front' : null]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </span>
-                        </div>
-                        <p class="text-muted-foreground">
-                          {addressWhy(a)}
-                          {untilLine(a.until, now) ?? ''}
-                        </p>
-                        {#if handedLine(a)}
-                          <p class="text-muted-foreground">{handedLine(a)}</p>
-                        {/if}
-                        {#if pathLine(a, code)}
-                          <p class="text-muted-foreground">{pathLine(a, code)}</p>
-                        {/if}
-                        {#if addressListsLine(a, now)}
-                          <p
-                            class={a.lists.some((m) => m.state === 'left')
-                              ? 'text-amber-700 dark:text-amber-400'
-                              : 'text-muted-foreground'}
-                          >
-                            {addressListsLine(a, now)}
-                          </p>
-                        {/if}
-                        {#if evidenceLines(a).length > 0}
-                          <details>
-                            <summary class="text-muted-foreground cursor-pointer select-none">
-                              Evidence
-                            </summary>
-                            <ul class="text-muted-foreground mt-1 list-disc space-y-0.5 ps-5">
-                              {#each evidenceLines(a) as line (line)}<li>{line}</li>{/each}
-                            </ul>
-                          </details>
-                        {/if}
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              </div>
-
-              {#if l.names.length > 0}
-                <div>
-                  <h3 class="mb-2 font-medium">SNIs</h3>
-                  {#if namesOnListsLine(l)}
-                    <p class="text-muted-foreground mb-2">{namesOnListsLine(l)}</p>
-                  {/if}
-                  <ul class="divide-border divide-y rounded-md border" aria-label="SNIs">
-                    {#each l.names as n (n.name)}
-                      {@const words = STATE_WORDS[n.state]}
-                      <li class="space-y-1 px-3 py-2">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <StatusDot dot={words.dot} />
-                          <span class="font-medium">{words.label}</span>
-                          <span class="font-mono break-all">{n.name}</span>
-                          {#if n.family}
-                            <Link
-                              href={edgesPaths.family(n.family)}
-                              class="text-muted-foreground underline underline-offset-2"
-                            >
-                              {n.family}
-                            </Link>
-                          {/if}
-                          {#if n.status === 'retired'}
-                            <Badge variant="outline">Draining</Badge>
-                          {:else if !n.offered}
-                            <Badge variant="outline">Not offered here</Badge>
-                          {/if}
-                          {#if n.qualified === false}
-                            <Badge variant="outline">The cover site stopped serving it</Badge>
-                          {/if}
-                        </div>
-                        <p class="text-muted-foreground">
-                          {nameWhy(n)}
-                          {n.markAt ? ` Marked ${relativeTime(n.markAt, now)}.` : ''}
-                          {n.handed > 0 ? ` Handed to ${percent(n.handed)} of members here.` : ''}
-                        </p>
-                        {#if checksLine(n, now)}
-                          <p class="text-muted-foreground">{checksLine(n, now)}</p>
-                        {/if}
-                        {#if realHostLine(n, now)}
-                          <p class="text-muted-foreground">{realHostLine(n, now)}</p>
-                        {/if}
-                        {#if listsLine(n)}
-                          <p class="text-muted-foreground">{listsLine(n)}</p>
-                        {/if}
-                        {#if reportsLine(n)}
-                          <p class="text-muted-foreground">{reportsLine(n)}</p>
-                        {/if}
-                      </li>
-                    {/each}
-                  </ul>
-                </div>
-              {/if}
-            </section>
-          {/each}
-
-          {#if o.direct}
-            {@const words = STATE_WORDS[o.direct.state]}
-            <section aria-label="The node itself" class="space-y-1">
-              <h3 class="font-medium">The node itself</h3>
-              <div class="flex flex-wrap items-center gap-2">
-                <StatusDot dot={words.dot} />
-                <span class="font-medium">{words.label}</span>
-                <span class="font-mono break-all">{o.direct.address}</span>
-              </div>
-              <p class="text-muted-foreground">{addressWhy(o.direct)}</p>
-              {#each evidenceLines(o.direct) as line (line)}
-                <p class="text-muted-foreground">{line}</p>
-              {/each}
-            </section>
-          {/if}
-        </CardContent>
-      </Card>
-    {/each}
-  </div>
 {/if}

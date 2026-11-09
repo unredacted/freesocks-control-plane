@@ -7,10 +7,15 @@
  * This file spells the section's own pages; the pages that came from the old
  * Edges section are spelled in ../../edges/lib/routes.ts (same root).
  *
- *   /admin/servers/nodes[?backend=<slug>]           Nodes: the nodes of one backend server
+ *   /admin/servers/nodes[?backend=<slug>][&show=][&columns=technical][&add=origin][&front=1][&node=][&run=]
+ *                                                   Nodes: every node of every backend in one table (lib/nodesTable.ts);
+ *                                                   `backend` keeps one backend, `show` a filter, `columns=technical`
+ *                                                   the old All origins columns, `add=origin` opens "Add an origin by hand",
+ *                                                   `front=1` the protect sheet (`backend`, `node` preset it), `run` a run's progress
  *   /admin/servers/nodes/:uuid[?backend=<slug>][&test=<edgeId>]
  *                                                   one node: its machine, activation and edges
- *   /admin/servers/settings/backends                Settings -> Backends: the backend servers FCP issues keys on
+ *   /admin/servers/settings/backends[?backend=<slug>]
+ *                                                   Settings -> Backends: the backend servers FCP issues keys on
  *   /admin/servers/settings/mode-pools              Settings -> Mode pools: which mode groups each connection mode issues into
  *
  * Old addresses keep working: legacyRoutes.ts maps them here.
@@ -23,13 +28,31 @@ export const SERVERS_ROOT = '/admin/servers';
 const withBackend = (path: string, backend?: string) =>
   backend ? `${path}?backend=${encodeURIComponent(backend)}` : path;
 
+/** The Nodes tab's own query (see the table above); empty values are left out. */
+export interface NodesParams {
+  backend?: string;
+  show?: string;
+  columns?: 'technical';
+  add?: 'origin';
+  front?: '1';
+  node?: string;
+  run?: string;
+}
+
 export const serversPaths = {
   /** The Overview tab (the section root). */
   overview: () => SERVERS_ROOT,
-  /** The Nodes tab; `backend` selects a backend server by slug. */
-  nodes: (opts: { backend?: string } = {}) => withBackend(`${SERVERS_ROOT}/nodes`, opts.backend),
-  /** Settings -> Backends. */
-  backends: () => `${SERVERS_ROOT}/settings/backends`,
+  /** The Nodes tab; `backend` keeps one backend server (by slug), the rest as in NodesParams. */
+  nodes: (opts: NodesParams = {}) => {
+    const qs = (['backend', 'show', 'columns', 'add', 'front', 'node', 'run'] as const)
+      .filter((k) => opts[k])
+      .map((k) => `${k}=${encodeURIComponent(opts[k]!)}`)
+      .join('&');
+    return `${SERVERS_ROOT}/nodes${qs ? `?${qs}` : ''}`;
+  },
+  /** Settings -> Backends; `backend` brings one backend server's row into view. */
+  backends: (opts: { backend?: string } = {}) =>
+    withBackend(`${SERVERS_ROOT}/settings/backends`, opts.backend),
   /** Settings -> Mode pools. */
   pools: () => `${SERVERS_ROOT}/settings/mode-pools`,
   /** One node of a backend (`test` opens the edges panel's test card for that address). */
@@ -87,7 +110,6 @@ export function tabOf(r: SectionRoute): ServersTab {
   }
   switch (r.route.page) {
     case 'node':
-    case 'overview':
     case 'relay':
       return 'nodes';
     case 'countries':
@@ -113,6 +135,12 @@ export function tabOf(r: SectionRoute): ServersTab {
     default:
       return 'overview';
   }
+}
+
+/** The backend server a URL names (`?backend=`) when it is one of `instances`, else null (every backend). */
+export function backendOf(search: string, instances: readonly { slug: string }[]): string | null {
+  const wanted = new URLSearchParams(search).get('backend');
+  return wanted && instances.some((i) => i.slug === wanted) ? wanted : null;
 }
 
 /** The backend server a URL selects (`?backend=`), else the first observable one, else the first. */

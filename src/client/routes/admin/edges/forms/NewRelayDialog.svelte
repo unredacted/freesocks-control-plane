@@ -2,7 +2,7 @@
   /**
    * Create an origin: its target, a slug, and (optionally) its first listeners.
    * Listeners can be added later from the origin's Listeners tab, so none is required here.
-   * All origins opens it as "New origin" for a manual address or a whole Outline
+   * Nodes -> Add -> "Add an origin by hand" opens it for a manual address or a whole Outline
    * server (`kinds`); a backend node is protected with Autopilot instead. The
    * new origin's page then offers its first edge.
    *
@@ -157,7 +157,7 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-3xl`}>
     <Dialog.Header>
-      <Dialog.Title>New origin</Dialog.Title>
+      <Dialog.Title>Add an origin by hand</Dialog.Title>
       <Dialog.Description>
         A server that sits behind edges. Its members only get published edges, never the origin
         address.

@@ -4,7 +4,7 @@
    * country"), the SNIs tab's "Checks from inside countries" view
    * (`/admin/servers/snis/checks`): the switch for `edge.sni.vantage.enabled`
    * with its residual risk beside it, the countries they run from (read only:
-   * Settings, Censored countries), the services, "Apply suggestions by
+   * changed on the Countries tab), the services, "Apply suggestions by
    * themselves", real-site checks, and the budget in one line (its numbers
    * are under SNIs, More settings).
    */
@@ -85,8 +85,8 @@
         <p class="text-muted-foreground">
           {checkedIn.length > 0 ? `${checkedIn.join(', ')}.` : 'None.'}
           These are the countries on the censored-country list with "Check SNIs from inside" on.
-          <Link href="/admin/settings" class="underline underline-offset-2">
-            Change them in Settings, Censored countries.
+          <Link href={edgesPaths.countries()} class="underline underline-offset-2">
+            Change them on the Countries tab.
           </Link>
         </p>
       </div>

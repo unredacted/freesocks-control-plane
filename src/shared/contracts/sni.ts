@@ -203,6 +203,16 @@ export const SniNameRow = z.object({
   tlsVersion: z.string().nullable(),
   alpn: z.string().nullable(),
   checkedAt: z.string().nullable(),
+  /** The last check saw it resolve outside the family's network. */
+  offNetwork: z.boolean().default(false),
+  /**
+   * An operator's "use anyway": it may be used although it resolves outside the
+   * family's network. Who said so, when, and why (a display name; free text).
+   */
+  useAnyway: z
+    .object({ at: z.string(), by: z.string().nullable(), reason: z.string().nullable() })
+    .nullable()
+    .default(null),
   blockedIn: z.array(z.string()),
   provenIn: z.array(z.string()),
   /** Curated countries where member reports single this name out. A hint, never a verdict. */

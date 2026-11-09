@@ -34,6 +34,8 @@ function name(n: string, o: Partial<SniNameRow> = {}): SniNameRow {
     tlsVersion: 'TLSv1.3',
     alpn: 'h2',
     checkedAt: null,
+    offNetwork: false,
+    useAnyway: null,
     blockedIn: [],
     provenIn: [],
     suspectIn: [],

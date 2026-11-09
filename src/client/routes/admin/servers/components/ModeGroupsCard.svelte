@@ -79,9 +79,9 @@
   }
 </script>
 
-<section aria-labelledby="mode-groups">
+<section aria-labelledby={`${uid}-title`}>
   <div class="mb-3 flex items-center justify-between gap-3">
-    <h2 id="mode-groups" class="text-base font-semibold">Mode groups</h2>
+    <h2 id={`${uid}-title`} class="text-base font-semibold">Mode groups</h2>
     {#if canWrite}
       <Button variant="outline" size="sm" onclick={() => start(null)}>Add a group</Button>
     {/if}

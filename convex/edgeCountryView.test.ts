@@ -445,6 +445,55 @@ describe('the country view', () => {
     expect(c.reports).toEqual({ weight: 4, suspect: false });
   });
 
+  test('the SNIs of a country: once each, its list, shared or only for it, and the count', async () => {
+    const { t, listenerId } = await setup();
+    // One name blocked in RU too; the transport picks by country, as any with a mark does.
+    await t.run(async (ctx) => {
+      const l = (await ctx.db.get(listenerId))!;
+      await ctx.db.patch(listenerId, {
+        sniPick: 'hrw1',
+        tlsNames: (l.tlsNames ?? []).map((n) =>
+          n.name === 'c.example' ? { ...n, blockedIn: ['RU'] } : n,
+        ),
+      });
+    });
+    const v = CountryViewResponse.parse(
+      await t.query(internal.edgeCountryView.country, { country: 'IR' }),
+    );
+    // Used ones first (most handed first), the one members here never get last.
+    expect(v.snis).toHaveLength(3);
+    expect(v.snis.at(-1)).toMatchObject({ name: 'a.example', scope: 'not_here' });
+    const byName = Object.fromEntries(v.snis.map((s) => [s.name, s]));
+    expect(byName['b.example']).toMatchObject({
+      scope: 'shared',
+      family: 'fam',
+      familyLabel: 'Fam',
+      transports: 1,
+    });
+    expect(byName['c.example']).toMatchObject({ scope: 'only_here', blockedElsewhere: ['RU'] });
+    expect(byName['a.example']).toMatchObject({ state: 'blocked', basis: 'mark', handed: 0 });
+    // Members here are handed the two it may give them, and never the blocked one.
+    expect(byName['b.example']!.handed + byName['c.example']!.handed).toBeGreaterThan(0);
+    // The transport's own rows say the same.
+    const c = v.origins[0]!.listeners[0]!.names.find((n) => n.name === 'c.example')!;
+    expect(c).toMatchObject({ familyLabel: 'Fam', blockedElsewhere: ['RU'] });
+    // The summary counts them per country: in RU, a.example is the one only for it.
+    const ir = await t.query(internal.edgeCountryView.summaryRow, { country: 'IR' });
+    const ru = await t.query(internal.edgeCountryView.summaryRow, { country: 'RU' });
+    expect(ir!.snis).toEqual({ used: 2, onlyHere: 1 });
+    expect(ru!.snis).toEqual({ used: 2, onlyHere: 1 });
+    // Off the list, the shared names only: no rows.
+    const de = await t.query(internal.edgeCountryView.country, { country: 'DE' });
+    expect(de.snis).toEqual([]);
+    // Nothing rendered hands out no SNI, so none counts as in use.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'false'));
+    expect((await t.query(internal.edgeCountryView.country, { country: 'IR' })).snis).toEqual([]);
+    expect((await t.query(internal.edgeCountryView.summaryRow, { country: 'IR' }))!.snis).toEqual({
+      used: 0,
+      onlyHere: 0,
+    });
+  });
+
   test('every line of a full country list fits a transaction', async () => {
     const t = convexTest({ schema, modules, transactionLimits: true });
     await insertPanelServer(t);

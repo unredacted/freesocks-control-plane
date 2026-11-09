@@ -1101,6 +1101,11 @@ export const CloudflareTemplate = z.object({
 });
 export type CloudflareTemplateParams = z.infer<typeof CloudflareTemplate>;
 
+/** Gandi LiveDNS builds no edge, so it has nothing to tune. */
+export const GandiTemplate = z.object({});
+export type GandiTemplateParams = z.infer<typeof GandiTemplate>;
+export const GANDI_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [];
+
 export const CLOUDFLARE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   ...LABEL_FIELD_DESCRIPTORS,
   {
@@ -1723,6 +1728,7 @@ export const EDGE_TEMPLATES: Record<EdgeProviderId, TemplateDefinition> = {
   cloudflare: template(CloudflareTemplate, CLOUDFLARE_TEMPLATE_FIELDS),
   fastly: template(FastlyTemplate, FASTLY_TEMPLATE_FIELDS),
   cloudfront: template(CloudFrontTemplate, CLOUDFRONT_TEMPLATE_FIELDS),
+  gandi: template(GandiTemplate, GANDI_TEMPLATE_FIELDS),
 };
 
 export interface CertificateDefinition {
@@ -1745,6 +1751,7 @@ export const EDGE_CERTIFICATE_OPTIONS: Record<EdgeProviderId, CertificateDefinit
   cloudflare: certificate(NO_CERTIFICATE, []),
   fastly: certificate(FastlyCertificateOptions, FASTLY_CERTIFICATE_FIELDS),
   cloudfront: certificate(CloudFrontCertificateOptions, CLOUDFRONT_CERTIFICATE_FIELDS),
+  gandi: certificate(NO_CERTIFICATE, []),
 };
 
 /** Every option of a provider, tuning then certificate: what the forms render. */

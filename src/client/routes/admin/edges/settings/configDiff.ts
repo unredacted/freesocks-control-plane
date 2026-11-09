@@ -19,11 +19,18 @@ export type FlatConfig = Record<string, unknown>;
 
 const CLIENTS = 'render.clients';
 
+/** Settings stored as one object (a map): mirrors the server's `EDGE_OBJECT_PATHS`. */
+export const OBJECT_PATHS: readonly string[] = ['audience.replacesPerDayByCountry'];
+
 export function flattenConfig(config: unknown): FlatConfig {
   const out: FlatConfig = {};
   const walk = (obj: Record<string, unknown>, prefix: string) => {
     for (const [k, val] of Object.entries(obj)) {
       const path = prefix ? `${prefix}.${k}` : k;
+      if (OBJECT_PATHS.includes(path)) {
+        out[path] = val;
+        continue;
+      }
       if (path === CLIENTS && val && typeof val === 'object') {
         for (const [fam, rule] of Object.entries(val as Record<string, unknown>)) {
           out[`${CLIENTS}.${fam}`] = rule;
@@ -84,8 +91,9 @@ export function diffConfig(
     const from = base[path];
     if (to === undefined || sameValue(from, to)) continue;
     if (isPlainObject(to) && isPlainObject(from)) {
-      // One row per changed field of a rule, but the whole rule is what is sent.
-      for (const field of Object.keys(to).sort()) {
+      // One row per changed field of a rule (or map), but the whole object is
+      // what is sent; a field only the stored object has was removed.
+      for (const field of [...new Set([...Object.keys(from), ...Object.keys(to)])].sort()) {
         if (!sameValue(from[field], to[field])) {
           out.push({
             path,

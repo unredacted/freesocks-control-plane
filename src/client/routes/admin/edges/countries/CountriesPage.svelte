@@ -1,14 +1,20 @@
 <script lang="ts">
   /**
-   * Admin -> Edges -> Countries (`/admin/edges/countries`): every country on the
-   * censored-country list with how many published addresses and server names
-   * work or are blocked there, nodes at risk, how many members there hold a
-   * blocked address, and when the outside probes from there fall short (not
-   * asked, or a source gone quiet and why). Each row opens the country (CountryPage).
+   * Admin -> Servers -> Countries (`/admin/servers/countries`): every country on
+   * the censored-country list with how many published addresses and SNIs work
+   * or are blocked there, nodes at risk, how many members there hold a blocked
+   * address, and when the outside probes from there fall short (not asked, or
+   * a source gone quiet and why). Each row opens the country (CountryPage).
+   *
+   * Below the rows: the list itself (CensoredCountriesCard, "Add a country"),
+   * and the Delivery card ("Where members connect from", CountryDeliveryCard).
+   * Both moved here from Admin -> Settings, which keeps link cards.
    *
    * All wording lives in ./words.ts (pure, unit-tested).
    */
+  import { tick } from 'svelte';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import { Button } from '@client/components/ui/button';
   import { Card, CardContent } from '@client/components/ui/card';
   import Link from '@client/components/Link.svelte';
   import { countryViewSummaryQuery } from '@client/lib/edgesApi';
@@ -16,6 +22,10 @@
   import StatusDot from '../simple/StatusDot.svelte';
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
+  import CensoredCountriesCard from './CensoredCountriesCard.svelte';
+  import CountriesNav from './CountriesNav.svelte';
+  import CountryDeliveryCard from './CountryDeliveryCard.svelte';
+  import { CENSORED_LIST_USES } from './censored';
   import {
     countryDot,
     countryLabel,
@@ -24,22 +34,34 @@
     switchNotes,
     totalsLine,
   } from './words';
+  import { sniSummaryLine } from './sniWords';
 
   const summary = countryViewSummaryQuery();
   let now = $derived(summary.data?.generatedAt ?? Date.now());
+
+  const EDITOR_ID = 'censored-countries';
+  const DELIVERY_ID = 'country-delivery';
+  /** Scroll to a card below and put the keyboard on its first control. */
+  async function goTo(id: string) {
+    await tick();
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.querySelector<HTMLElement>('input, button, select, textarea')?.focus({
+      preventScroll: true,
+    });
+  }
 </script>
+
+<CountriesNav current="countries" />
 
 <SectionHeader
   title="Countries"
   description="For each censored country: which addresses and SNIs work there, why FCP thinks so, and what members there are handed today."
 >
   {#snippet actions()}
-    <Link
-      href={edgesPaths.lists()}
-      class="border-input hover:bg-accent inline-flex h-8 items-center rounded-md border px-3 text-sm"
-    >
-      Country lists
-    </Link>
+    <Button size="sm" variant="outline" onclick={() => goTo(DELIVERY_ID)}>Delivery</Button>
+    <Button size="sm" onclick={() => goTo(EDITOR_ID)}>Add a country</Button>
   {/snippet}
 </SectionHeader>
 
@@ -54,13 +76,7 @@
       <CardContent class="text-muted-foreground space-y-1 py-4 text-sm">
         {#each notes as n (n)}<p>{n}</p>{/each}
         <p>
-          <Link href={edgesPaths.settings()} class="underline underline-offset-2">
-            Edges settings
-          </Link>
-          ·
-          <Link href="/admin/settings" class="underline underline-offset-2">
-            Censored countries
-          </Link>
+          <Link href={edgesPaths.settings()} class="underline underline-offset-2">Settings</Link>
         </p>
       </CardContent>
     </Card>
@@ -69,9 +85,7 @@
   {#if summary.data.countries.length === 0}
     <Card>
       <CardContent class="text-muted-foreground py-8 text-center text-sm">
-        No country is on the censored-country list.
-        <Link href="/admin/settings" class="underline underline-offset-2">Add one in Settings.</Link
-        >
+        No country is on the censored-country list. Add one below.
       </CardContent>
     </Card>
   {:else}
@@ -114,6 +128,7 @@
                     ? 'One location is set for it.'
                     : `${c.meantFor.locations} locations are set for it.`}
                 {/if}
+                {sniSummaryLine(c.snis, c.country) ?? ''}
                 {c.listed.nameChecksRun
                   ? 'SNIs are checked from inside.'
                   : 'SNIs are not checked from inside.'}
@@ -135,3 +150,9 @@
     </ul>
   {/if}
 {/if}
+
+<div class="mt-8 space-y-6">
+  <p class="text-muted-foreground text-sm">{CENSORED_LIST_USES}</p>
+  <CensoredCountriesCard id={EDITOR_ID} />
+  <CountryDeliveryCard id={DELIVERY_ID} />
+</div>

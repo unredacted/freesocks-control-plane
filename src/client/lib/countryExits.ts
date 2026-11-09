@@ -1,7 +1,7 @@
 /**
  * Exit location by country, admin side (docs/edges.md "Exit location by
- * country"): editing `delivery.country.exits` from the settings page, and the
- * country page's sentence. The server reads the setting fail-safe
+ * country"): editing `delivery.country.exits` from Servers -> Countries (the
+ * Delivery card, and each country page's Exit), and the country page's sentence. The server reads the setting fail-safe
  * (convex/lib/countryExits.ts `parseCountryExits`); these helpers keep what the
  * page writes inside the same rules.
  */
@@ -79,12 +79,12 @@ export function editorCountries(
  */
 export function exitSentence(labels: readonly string[], steering: boolean): string {
   if (labels.length === 0)
-    return 'New keys on Automatic go to the least-loaded location. Choose exit locations for this country under Settings.';
+    return 'New keys on Automatic go to the least-loaded location. Choose exit locations for this country below.';
   const list =
     labels.length === 1
       ? labels[0]!
       : `${labels.slice(0, -1).join(', ')} or ${labels[labels.length - 1]!}`;
   if (!steering)
-    return `Exit locations are set (${list}), but ordering by country is off, so new keys on Automatic go to the least-loaded location. Turn it on under Settings.`;
+    return `Exit locations are set (${list}), but ordering by country is off, so new keys on Automatic go to the least-loaded location. Turn it on under Delivery, on the Countries tab.`;
   return `New keys on Automatic of members who chose this country themselves go to ${list}, the first that can take them.`;
 }

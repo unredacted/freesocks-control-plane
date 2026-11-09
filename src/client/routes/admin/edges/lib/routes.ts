@@ -6,11 +6,13 @@
  * `edgesPaths`, the section resolves a pathname through `resolveEdgesRoute`.
  *
  *   /admin/servers                                  Overview (today: the fronted nodes and what needs you)
- *   /admin/servers/origins                          All origins (Nodes, technical view); `?new=1` opens "New origin"
+ *   /admin/servers/nodes?columns=technical          All origins: the Nodes table with its technical columns
+ *                                                   (`edgesPaths.overview`; `?add=origin` opens "Add an origin by hand").
+ *                                                   The old `/admin/servers/origins` redirects there.
  *   /admin/servers/origins/:slug                    an origin: a backend node redirects to its node page,
  *                                                   any other origin shows its edges panel here
  *   /admin/servers/origins/:slug/details            an origin's technical details (`?tab=`)
- *   /admin/servers/countries[/:CC]                  Countries
+ *   /admin/servers/countries[/:CC]                  Countries (`/:CC?section=` one section of a country)
  *   /admin/servers/countries/lists[/:id]            Countries -> Lists
  *   /admin/servers/snis                             SNIs: the SNI lists
  *   /admin/servers/snis/lists/:slug                 one SNI list (its own namespace, so no slug
@@ -21,7 +23,7 @@
  *   /admin/servers/probes                           Probes
  *   /admin/servers/providers[/:id]                  Providers, one account
  *   /admin/servers/providers/templates              Providers -> All templates
- *   /admin/servers/settings                         Settings (`?section=`)
+ *   /admin/servers/settings                         Settings (`?group=`, `?q=`, `?changed=1`, `?field=`)
  *
  * The old `/admin/edges/...` addresses redirect (../../servers/lib/legacyRoutes.ts).
  *
@@ -34,6 +36,11 @@
  */
 import { matchRoute } from '../../../../lib/matchRoute';
 import type { SetupStepId } from '../../../../../shared/contracts/edgeCodes';
+import {
+  groupOfSection,
+  type LegacySettingsSection,
+  type SettingsGroupId,
+} from '../settings/groups';
 
 export const RELAY_TABS = ['overview', 'edges', 'listeners', 'rotations', 'probes'] as const;
 export type RelayTab = (typeof RELAY_TABS)[number];
@@ -41,7 +48,6 @@ export type RelayTab = (typeof RELAY_TABS)[number];
 export type EdgesRoute =
   | { page: 'home' }
   | { page: 'node'; slug: string }
-  | { page: 'overview' }
   | { page: 'relay'; slug: string }
   | { page: 'providers' }
   | { page: 'provider'; id: string }
@@ -64,7 +70,6 @@ const R = '/admin/servers';
 
 export const EDGES_ROUTES = [
   [R, 'home'],
-  [`${R}/origins`, 'overview'],
   [`${R}/origins/:slug`, 'node'],
   [`${R}/origins/:slug/details`, 'relay'],
   [`${R}/providers`, 'providers'],
@@ -130,9 +135,12 @@ export const edgesPaths = {
   /** An origin's page (`?test=<edgeId>` opens the test card for that address). */
   node: (slug: string, params?: { test?: string | null }) =>
     withSearch(`${R}/origins/${enc(slug)}`, params),
-  /** All origins (the technical fleet dashboard, under Nodes); `?new=1` opens "New origin". */
+  /**
+   * All origins: the Nodes table with its technical columns (`filter` and
+   * `layer` as All origins spelled them; `new: '1'` opens "Add an origin by hand").
+   */
   overview: (params?: { filter?: string; layer?: string; new?: string | null }) =>
-    withSearch(`${R}/origins`, params),
+    `${R}/nodes${originsToNodesSearch(withSearch('', params))}`,
   relay: (
     slug: string,
     params?: {
@@ -151,7 +159,21 @@ export const edgesPaths = {
   templates: (params?: { template?: string; provider?: string }) =>
     withSearch(`${R}/providers/templates`, params),
   probes: (params?: { target?: string; range?: string }) => withSearch(`${R}/probes`, params),
-  settings: (params?: { section?: string }) => withSearch(`${R}/settings`, params),
+  /**
+   * Settings: one `group`, a `field` to scroll to, or a search `q`. An old card
+   * name (`section`) opens the group that holds it now.
+   */
+  settings: (params?: {
+    group?: SettingsGroupId;
+    field?: string;
+    q?: string;
+    section?: LegacySettingsSection;
+  }) =>
+    withSearch(`${R}/settings`, {
+      group: params?.group ?? groupOfSection(params?.section),
+      field: params?.field,
+      q: params?.q,
+    }),
   /** SNI lists (the SNIs tab), and one list. */
   names: () => `${R}/snis`,
   family: (slug: string) => `${R}/snis/lists/${enc(slug)}`,
@@ -162,13 +184,50 @@ export const edgesPaths = {
   sniChecks: () => `${R}/snis/checks`,
   /** The numeric `edge.sni.*` knobs ("More settings"). */
   sniSettings: () => `${R}/snis/settings`,
-  /** The Countries tab: every censored country, and one country in full. */
+  /**
+   * The Countries tab: every censored country (with the list editor and the
+   * Delivery card), and one country in full (`section` picks one of its
+   * sections, ../countries/sections.ts; Summary when left out).
+   */
   countries: () => `${R}/countries`,
-  country: (code: string) => `${R}/countries/${enc(code.toUpperCase())}`,
+  country: (code: string, params?: { section?: string | null }) =>
+    withSearch(`${R}/countries/${enc(code.toUpperCase())}`, params),
   /** Country lists: every list FCP follows, and one list. */
   lists: () => `${R}/countries/lists`,
   list: (id: string) => `${R}/countries/lists/${enc(id)}`,
 };
+
+/** Old All origins `?filter=` values and the Nodes `?show=` each became. */
+const ORIGIN_FILTERS: Record<string, string> = {
+  attention: 'attention',
+  dark: 'dark',
+  quarantined: 'quarantined',
+  unpublished: 'unpublished',
+};
+
+/**
+ * The old All origins query (`/admin/servers/origins`, before that
+ * `/admin/edges/advanced/origins`) as the Nodes query: the technical columns
+ * on, `filter` as `show` (`all` and unknown values dropped), `layer` kept
+ * when it is l4 or l7, `new=1` ("New origin") as `add=origin`. Any other
+ * param is kept, in order.
+ */
+export function originsToNodesSearch(search: string): string {
+  const out = new URLSearchParams();
+  out.set('columns', 'technical');
+  for (const [k, v] of new URLSearchParams(search)) {
+    if (k === 'columns') continue;
+    if (k === 'filter') {
+      const show = ORIGIN_FILTERS[v];
+      if (show) out.set('show', show);
+    } else if (k === 'new') {
+      if (v === '1') out.set('add', 'origin');
+    } else if (k === 'layer') {
+      if (v === 'l4' || v === 'l7') out.set('layer', v);
+    } else out.append(k, v);
+  }
+  return `?${out.toString()}`;
+}
 
 /**
  * Where a readiness step (`setup-status`) is done now that the step-by-step
@@ -192,8 +251,8 @@ export function setupStepTarget(step: SetupStepId, slug: string | null): string 
     case 'publish':
       return slug ? edgesPaths.relay(slug, { tab: 'edges' }) : edgesPaths.overview();
     case 'rendering':
-      return edgesPaths.settings({ section: 'rendering' });
+      return edgesPaths.settings({ group: 'subscriptions' });
     case 'automation':
-      return edgesPaths.settings({ section: 'rotation' });
+      return edgesPaths.settings({ group: 'replacement' });
   }
 }

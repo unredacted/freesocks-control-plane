@@ -4,7 +4,10 @@
    * quarantined, a live rotation banner, then origin / pool / delivery /
    * detector cards and the merged timeline.
    *
-   * Props: origin; edges; listeners; connectionPlan; onOpenEdge; onOpenRotation
+   * Props: origin; edges; listeners; connectionPlan; onOpenEdge; onOpenRotation;
+   *   notices? (default true): the quarantine resolver, deleting and rotation
+   *   notices (OriginNotices.svelte) first; a node's page shows them in Summary
+   *   and passes false
    */
   import type { z } from 'zod';
   import type {
@@ -14,7 +17,6 @@
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
-  import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { relayTimelineQuery } from '@client/lib/edgesApi';
   import { originBusy } from '@client/lib/livePoll';
@@ -26,7 +28,7 @@
   import DetectorCard from './DetectorCard.svelte';
   import OriginCard from './OriginCard.svelte';
   import PoolCard from './PoolCard.svelte';
-  import QuarantineResolver from './QuarantineResolver.svelte';
+  import OriginNotices from './OriginNotices.svelte';
   import { timelineLinkParams } from './relayLogic';
 
   interface Props {
@@ -36,8 +38,17 @@
     connectionPlan: Array<z.infer<typeof RelayConnectionPlanEntry>>;
     onOpenEdge: (edgeId: string) => void;
     onOpenRotation: (rotationId: string) => void;
+    notices?: boolean;
   }
-  let { relay, edges, listeners, connectionPlan, onOpenEdge, onOpenRotation }: Props = $props();
+  let {
+    relay,
+    edges,
+    listeners,
+    connectionPlan,
+    onOpenEdge,
+    onOpenRotation,
+    notices = true,
+  }: Props = $props();
 
   const timelineQ = relayTimelineQuery({
     slug: () => relay.slug,
@@ -52,32 +63,8 @@
 </script>
 
 <div class="space-y-4">
-  {#if relay.quarantine}
-    <QuarantineResolver {relay} {onOpenEdge} {onOpenRotation} />
-  {/if}
-
-  {#if relay.deleting}
-    <div class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
-      This origin is being deleted. The page disappears once its last edge is destroyed.
-    </div>
-  {/if}
-
-  {#if relay.activeRotationId}
-    <div
-      class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-sm"
-      role="status"
-    >
-      <span>
-        <span class="font-medium">A rotation is running.</span>
-        Other pool changes wait until it finishes. This page refreshes every ten seconds.
-      </span>
-      <Button
-        size="sm"
-        onclick={() => relay.activeRotationId && onOpenRotation(relay.activeRotationId)}
-      >
-        Watch it
-      </Button>
-    </div>
+  {#if notices}
+    <OriginNotices {relay} {onOpenEdge} {onOpenRotation} />
   {/if}
 
   <div class="grid items-start gap-4 xl:grid-cols-2">

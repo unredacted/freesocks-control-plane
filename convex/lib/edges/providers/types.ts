@@ -18,6 +18,7 @@
 import type { z } from 'zod';
 import type { EdgeProviderId } from '../../edgeProviderIds';
 import type { ProviderPlan } from '../pricing';
+import type { DnsMarkStore } from './dns/types';
 
 // --- per-provider config (credentials + settings merged, as the actions see it) ---
 
@@ -54,13 +55,25 @@ export interface OvhConfig {
   subnetId: string;
   gatewayId?: string;
 }
-/** The Cloudflare DNS zone a Fastly edge writes its records into (the referenced DNS account, resolved). */
+/** One zone of a DNS account, with the account's token: what a DNS client is built from. */
 export interface CloudflareDnsConfig {
   apiToken: string;
   zoneId: string;
   zoneName: string;
   /** The edgeProviderAccounts id the credentials came from (recorded in DNS resource meta). */
   accountId: string;
+}
+/** The providers whose accounts can hold FCP's DNS records (capability `providesDns`). */
+export type DnsProviderId = 'cloudflare' | 'gandi';
+/**
+ * The DNS zone a Fastly or CloudFront edge writes its records into (the
+ * referenced DNS account, resolved). `provider` picks the client (absent =
+ * Cloudflare, the only DNS provider before Gandi); `marks` is FCP's private
+ * ownership store, which a provider without record comments needs to write.
+ */
+export interface DnsZoneConfig extends CloudflareDnsConfig {
+  provider?: DnsProviderId;
+  marks?: DnsMarkStore;
 }
 export interface CloudflareConfig {
   type: 'cloudflare';
@@ -99,7 +112,7 @@ export interface FastlyConfig {
    */
   wildcardDomain?: 'activated' | 'classic';
   /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
-  dns?: CloudflareDnsConfig;
+  dns?: DnsZoneConfig;
 }
 export interface CloudFrontConfig {
   type: 'cloudfront';
@@ -114,9 +127,21 @@ export interface CloudFrontConfig {
    */
   certificateScope?: 'wildcard';
   /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
-  dns?: CloudflareDnsConfig;
+  dns?: DnsZoneConfig;
+}
+/**
+ * Gandi LiveDNS: a DNS account only (it fronts nothing). Its zones are its
+ * locations, named by the domain itself (LiveDNS has no zone ids).
+ */
+export interface GandiConfig {
+  type: 'gandi';
+  /** A personal access token (the deprecated API key is not accepted). */
+  apiToken: string;
+  zoneId: string;
+  zoneName: string;
 }
 export type EdgeProviderConfig =
+  | GandiConfig
   | GcoreConfig
   | UpcloudConfig
   | ScalewayConfig
