@@ -5,6 +5,7 @@
  *   INTERNAL_COUNTRY                     the pseudo country of FCP's own connect check
  *   KIND_LABELS / KIND_ORDER             target kinds in words, in display order
  *   groupTargets(targets, filter?)       -> [{ kind, label, targets }] (empty groups dropped)
+ *   matrixColumns(countries, only?)      the country columns (all, or one country's)
  *   targetDetail(target)                 the server's detail line in words
  *   verdictLabel(v) / verdictTone(v)     a verdict in words + badge tone
  *   matrixCell(target, country)          one cell: words, tone and a tooltip line
@@ -51,6 +52,17 @@ export function groupTargets(
     label: KIND_LABELS[kind],
     targets: kept.filter((t) => t.kind === kind),
   })).filter((g) => g.targets.length > 0);
+}
+
+/**
+ * The country columns the matrix shows: every probed country, or only `only`
+ * (a country page's filtered copy; none when that country is not probed).
+ * FCP's own connect check is always added after them by the table.
+ */
+export function matrixColumns(countries: readonly string[], only?: string | null): string[] {
+  if (!only) return [...countries];
+  const c = only.toUpperCase();
+  return countries.filter((x) => x === c);
 }
 
 /**
@@ -127,6 +139,10 @@ export interface CountryTally {
   control: boolean;
   ok: number;
   fail: number;
+  /** Results by the network type of their vantage (Globalping tags its probes; other sources do not). */
+  home: number;
+  datacentre: number;
+  unknown: number;
 }
 /** Per country, the checked countries first and the controls after them (never mixed). */
 export function countryTally(results: ProbeRunAdmin['results']): CountryTally[] {
@@ -134,13 +150,39 @@ export function countryTally(results: ProbeRunAdmin['results']): CountryTally[] 
   for (const r of results) {
     const control = r.control === true;
     const key = `${control ? 'c' : 'v'}:${r.country}`;
-    const cur = by.get(key) ?? { country: r.country, control, ok: 0, fail: 0 };
+    const cur = by.get(key) ?? {
+      country: r.country,
+      control,
+      ok: 0,
+      fail: 0,
+      home: 0,
+      datacentre: 0,
+      unknown: 0,
+    };
     if (r.ok) cur.ok++;
     else cur.fail++;
+    if (r.vantageClass === 'eyeball') cur.home++;
+    else if (r.vantageClass === 'datacenter') cur.datacentre++;
+    else cur.unknown++;
     by.set(key, cur);
   }
   const all = [...by.values()];
   return [...all.filter((t) => !t.control), ...all.filter((t) => t.control)];
+}
+
+/**
+ * Which networks a country's results came from, in words ("2 home, 1 data
+ * centre"); empty when no result says (a source that does not tag its
+ * vantages).
+ */
+export function networkMix(t: Pick<CountryTally, 'home' | 'datacentre' | 'unknown'>): string {
+  if (t.home === 0 && t.datacentre === 0) return '';
+  const parts = [
+    t.home > 0 ? `${t.home} home` : '',
+    t.datacentre > 0 ? `${t.datacentre} data centre` : '',
+    t.unknown > 0 ? `${t.unknown} not known` : '',
+  ];
+  return parts.filter(Boolean).join(', ');
 }
 
 export interface ProbeRound {

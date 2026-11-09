@@ -17,7 +17,6 @@ import {
   huntSwitchLine,
   placeLine,
   sweepCostWords,
-  familySlugFor,
   huntImportWords,
   matchesHuntFilter,
   nearWords,
@@ -172,7 +171,7 @@ describe('find names words', () => {
     );
   });
 
-  test('the Advanced page: switch, sweep cost, place', () => {
+  test('the Find more page: switch, sweep cost, place', () => {
     expect(huntSwitchLine(true, 30)).toMatch(/^On\. .*every 30 days/);
     expect(huntSwitchLine(false, 30)).toMatch(/^Off\./);
     expect(sweepCostWords({ depth: 300_000, wwwDepth: 100_000, lookupsPerSecond: 20 })).toBe(
@@ -231,6 +230,5 @@ describe('find names words', () => {
     ).toBe('2 SNIs added, 1 already here, 1 already in an SNI list.');
     expect(parsePlace(' us ', ' Springfield ')).toEqual({ country: 'US', city: 'Springfield' });
     expect(parsePlace('USA', '')).toBeNull();
-    expect(familySlugFor('www.example.co.uk')).toBe('example-co-uk');
   });
 });

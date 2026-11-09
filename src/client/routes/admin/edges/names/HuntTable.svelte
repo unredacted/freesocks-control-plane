@@ -4,7 +4,7 @@
    * filters (usable, not usable, all), each name with its state and a one-line
    * reason, what was measured (the handshakes, timing, countries, OONI,
    * sources, the score) under Details, and the other names of one site folded
-   * behind the first. Picked names can be added to a name list (its normal
+   * behind the first. Picked names can be added to an SNI list (its normal
    * path: each is checked like a pasted name), ignored (the name or its whole
    * site), checked again, measured now, or have their sites looked up in
    * certificate logs. Nothing here is applied by itself.
@@ -51,7 +51,7 @@
   }: {
     kind: 'network' | 'family';
     slug: string;
-    /** Where picked names may be added: the name lists on the network. */
+    /** Where picked names may be added: the SNI lists on the network. */
     families: { slug: string; label: string }[];
   } = $props();
 

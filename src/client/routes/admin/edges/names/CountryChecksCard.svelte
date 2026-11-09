@@ -1,10 +1,12 @@
 <script lang="ts">
   /**
    * Checks from inside countries (docs/edges.md "Checks from inside a
-   * country"), on the Advanced page: the switch for `edge.sni.vantage.enabled`
+   * country"), the SNIs tab's "Checks from inside countries" view
+   * (`/admin/servers/snis/checks`): the switch for `edge.sni.vantage.enabled`
    * with its residual risk beside it, the countries they run from (read only:
-   * Settings, Censored countries), the services, "Apply suggestions by
-   * themselves", real-site checks, and the budget in one line.
+   * changed on the Countries tab), the services, "Apply suggestions by
+   * themselves", real-site checks, and the budget in one line (its numbers
+   * are under SNIs, More settings).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -16,6 +18,8 @@
   import { ApiCallError } from '@client/lib/api';
   import { invalidateSni, patchSniConfig, sniConfigQuery } from '@client/lib/sniApi';
   import type { SniConfigPatch } from '../../../../../shared/contracts/sni';
+  import SectionHeader from '../components/SectionHeader.svelte';
+  import { edgesPaths } from '../lib/routes';
   import { sniErrorWords, vantageState } from './lib/words';
 
   const qc = useQueryClient();
@@ -42,17 +46,18 @@
   }
 </script>
 
-{#if vantage}
-  <Card class="mt-6">
+<SectionHeader
+  title="Checks from inside countries"
+  description="Measurement services try each SNI on one of your published addresses from inside the countries you turn on. SNI list pages then suggest where an SNI works or is blocked, and you decide what is applied."
+/>
+
+{#if config.isPending}
+  <p class="text-muted-foreground text-sm">Loading…</p>
+{:else if config.isError}
+  <p class="text-destructive text-sm">{sniErrorWords(codeOf(config.error))}</p>
+{:else if vantage}
+  <Card>
     <CardContent class="space-y-4 py-5 text-sm">
-      <div>
-        <h2 class="text-base font-medium">Checks from inside countries</h2>
-        <p class="text-muted-foreground mt-1">
-          Measurement services try each SNI on one of your published addresses from inside the
-          countries you turn on. SNI list pages then suggest where an SNI works or is blocked, and
-          you decide what is applied.
-        </p>
-      </div>
       <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
         These checks run on other people's machines in those countries, often home connections. Each
         is one member-like handshake with an SNI a large site serves, at most every few days per
@@ -80,8 +85,8 @@
         <p class="text-muted-foreground">
           {checkedIn.length > 0 ? `${checkedIn.join(', ')}.` : 'None.'}
           These are the countries on the censored-country list with "Check SNIs from inside" on.
-          <Link href="/admin/settings" class="underline underline-offset-2">
-            Change them in Settings, Censored countries.
+          <Link href={edgesPaths.countries()} class="underline underline-offset-2">
+            Change them on the Countries tab.
           </Link>
         </p>
       </div>
@@ -105,7 +110,13 @@
           />
           <Label for={`${uid}-ra`} class="font-normal">RIPE Atlas</Label>
           {#if vantage.sources.ripeatlas && !config.data?.vantageSources.ripeatlas}
-            <span class="text-muted-foreground">Needs its key under Edges, Settings.</span>
+            <span class="text-muted-foreground">
+              Needs its key under
+              <Link
+                href={edgesPaths.settings({ section: 'probes' })}
+                class="underline underline-offset-2">Settings, Probes</Link
+              >.
+            </span>
           {/if}
         </div>
       </fieldset>
@@ -149,6 +160,9 @@
       <p class="text-muted-foreground">
         At most {vantage.hourlyBudget} checks an hour, each SNI again after
         {vantage.intervalHours} hours, from up to {vantage.perCountryLimit} vantages.
+        <Link href={edgesPaths.sniSettings()} class="underline underline-offset-2">
+          Change these numbers.
+        </Link>
       </p>
     </CardContent>
   </Card>

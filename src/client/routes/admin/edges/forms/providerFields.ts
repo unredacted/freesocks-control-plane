@@ -350,6 +350,29 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       placeholder: 'front.example',
     },
   ],
+  gandi: [
+    {
+      key: 'zoneId',
+      label: 'Domain',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'zones',
+      required: true,
+      help: 'A domain in Gandi LiveDNS that the token reaches.',
+    },
+    {
+      key: 'zoneName',
+      label: 'Domain name',
+      kind: 'text',
+      step: 'placement',
+      location: true,
+      required: true,
+      readOnly: true,
+      help: 'Filled from the chosen domain.',
+      placeholder: 'front.example',
+    },
+  ],
 };
 
 /** Secret field names as the server lists them, in words. Unknown names are humanised by the form. */
@@ -369,6 +392,8 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
     'A user or account API token scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report zone settings. Add Transform Rules Edit and Origin Rules Edit only if this account also fronts traffic.',
   fastly:
     'A global-scope API token from a dedicated automation user. The account also needs the WebSockets product entitlement.',
+  gandi:
+    "A personal access token of the organization that owns the domains, limited to them, allowed to see and change their DNS records (LiveDNS). The older API key is not accepted. Gandi tokens expire, so rotate this account's credentials before the date you set.",
   cloudfront:
     'An access key of a dedicated IAM user. Its policy allows cloudfront:CreateDistribution, GetDistribution, GetDistributionConfig, UpdateDistribution, DeleteDistribution, ListDistributions, CreateOriginRequestPolicy, ListOriginRequestPolicies and ListDistributionsByOriginRequestPolicyId, and acm:RequestCertificate, DescribeCertificate, ListCertificates and DeleteCertificate in us-east-1. No IAM or Lambda permissions.',
 };

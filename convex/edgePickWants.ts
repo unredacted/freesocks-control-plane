@@ -20,7 +20,10 @@ import { internal } from './_generated/api';
 import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
+import { MAX_DESIRED_PUBLISHED, resolveEdgeConfig } from './lib/edgeConfig';
+import { pickUsable } from './lib/edges/assignedLocation';
+import { edgeLayerOf } from './lib/edges/providers/capabilities';
+import { clientCheckReadiness } from './edgeClientCheck';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { MAX_PICK_WANT, pickWant } from './lib/edges/providerSet';
@@ -28,6 +31,7 @@ import { carries, coolingOf, setStateOf, type SetState } from './lib/edges/setSt
 import { parseOptionValues } from './lib/edges/providers/options';
 import { hasPublishableAddress } from './lib/edges/ip';
 import { audienceForPublish } from './edgeAudiences';
+import { sameCodes } from './lib/edges/audience';
 import { capRefusal, costAdmin, edgeCostAt, sizeAt, spendOf } from './edgePlans';
 import { atCap } from './lib/edges/pricing';
 
@@ -53,6 +57,12 @@ export interface CountGap {
   /** Tested or not, active spares of that transport there (upkeep publishes one first). */
   spares: Id<'edges'>[];
   cause: LocationShortCause | null;
+  /**
+   * The count some countries' own addresses ask for (`relays.providerSet[]
+   * .audiences`): counted over every pick holding them, made at the first one
+   * nothing holds back (`locationId`), contained to exactly these.
+   */
+  audience?: string[];
 }
 
 /**
@@ -67,9 +77,17 @@ export async function countGapsOf(
   now: number,
   state?: SetState,
 ): Promise<CountGap[]> {
-  if (!relay.providerSet?.some((p) => pickWant(p.want) !== undefined)) return [];
+  if (
+    !relay.providerSet?.some(
+      (p) => pickWant(p.want) !== undefined || p.audiences?.some((a) => pickWant(a.want)),
+    )
+  )
+    return [];
   const s = state ?? (await setStateOf(db, relay, now));
   const cooling = coolingOf(relay, now);
+  // A location not trusted yet is usable when FCP's own client check can
+  // prove what is made there (lib/edges/assignedLocation.ts `pickUsable`).
+  const ccReady = (await clientCheckReadiness(db, await resolveEdgeConfig(db), now)) === 'ready';
   // The node's spares as upkeep finds them: active, not in use, with an address.
   const standbys = (
     await db
@@ -77,10 +95,26 @@ export async function countGapsOf(
       .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id).eq('status', 'active'))
       .collect()
   ).filter((e) => e.publication === 'unpublished' && hasPublishableAddress(e));
+  const causeAt = async (
+    p: NonNullable<Doc<'relays'>['providerSet']>[number],
+    row: NonNullable<SetState['picks']>[number],
+  ): Promise<LocationShortCause | null> =>
+    cooling.has(p.locationId as string)
+      ? 'pick_cooling'
+      : (relay.refusedLocations ?? []).some((r) => r.locationId === p.locationId && r.until > now)
+        ? 'locations_refused'
+        : !pickUsable(row.location, {
+              l4: edgeLayerOf(row.account.provider) === 'l4',
+              clientCheckReady: ccReady,
+            })
+          ? 'location_untrusted'
+          : (await capHit(db, row.account, row.location, p.options))
+            ? 'account_spend_cap_reached'
+            : null;
   const gaps: CountGap[] = [];
   for (const p of relay.providerSet) {
     const want = pickWant(p.want);
-    if (want === undefined) continue;
+    if (want === undefined || p.audienceOnly) continue;
     const row = s.picks?.find((r) => r.pick.locationId === (p.locationId as string));
     if (!row || !row.usable) continue;
     const listeners = s.listeners.filter((l) =>
@@ -96,18 +130,7 @@ export async function countGapsOf(
           x.listenerKey === l.listenerKey && x.locationId === (p.locationId as string) && counts(x),
       ).length;
       if (inUse >= want) continue;
-      const held = (relay.refusedLocations ?? []).some(
-        (r) => r.locationId === p.locationId && r.until > now,
-      );
-      const cause: LocationShortCause | null = cooling.has(p.locationId as string)
-        ? 'pick_cooling'
-        : held
-          ? 'locations_refused'
-          : !row.location.qualified
-            ? 'location_untrusted'
-            : (await capHit(db, row.account, row.location, p.options))
-              ? 'account_spend_cap_reached'
-              : null;
+      const cause = await causeAt(p, row);
       gaps.push({
         locationId: p.locationId,
         label: row.location.label,
@@ -119,12 +142,77 @@ export async function countGapsOf(
         inUse,
         spares: await sparesTakingAudience(
           db,
-          standbys.filter((e) => e.listenerId === l._id && e.locationId === p.locationId),
+          standbys.filter(
+            (e) =>
+              e.listenerId === l._id && e.locationId === p.locationId && !e.audienceIntent?.length,
+          ),
           !!only,
         ),
         cause,
       });
     }
+  }
+  // Some countries' own addresses: per transport, over every pick holding them.
+  for (const w of s.requirement.audienceWants) {
+    const l = s.listeners.find((x) => x.listenerKey === w.listenerKey);
+    if (!l) continue;
+    const inUse = s.published.filter(
+      (x) =>
+        x.listenerKey === w.listenerKey && !!x.audience?.length && sameCodes(x.audience, w.codes),
+    ).length;
+    if (inUse >= w.want) continue;
+    // The places in set order, cooling ones included (named, never bought into).
+    const places: Array<{
+      p: NonNullable<Doc<'relays'>['providerSet']>[number];
+      row: NonNullable<SetState['picks']>[number];
+    }> = [];
+    for (const p of relay.providerSet) {
+      if (!p.audiences?.some((a) => sameCodes(a.codes, w.codes))) continue;
+      const row = s.picks?.find((r) => r.pick.locationId === (p.locationId as string));
+      if (!row || !row.usable) continue;
+      if (!carries(row, l, { websocketNode: s.websocketNode, originAddress: relay.originAddress }))
+        continue;
+      places.push({ p, row });
+    }
+    let chosen: (typeof places)[number] | null = null;
+    let cause: LocationShortCause | null = null;
+    for (const place of places) {
+      const c = await causeAt(place.p, place.row);
+      if (c === null) {
+        chosen = place;
+        cause = null;
+        break;
+      }
+      if (!chosen) {
+        chosen = place;
+        cause = c;
+      }
+    }
+    if (!chosen) continue;
+    gaps.push({
+      locationId: chosen.p.locationId,
+      label: chosen.row.location.label,
+      accountId: chosen.row.account._id,
+      accountName: chosen.row.account.name,
+      listenerId: l._id,
+      listenerKey: l.listenerKey,
+      want: w.want,
+      inUse,
+      // A spare made for exactly these countries, wherever it is (it is theirs).
+      spares: await sparesTakingAudience(
+        db,
+        standbys.filter(
+          (e) =>
+            e.listenerId === l._id &&
+            !!e.audienceIntent?.length &&
+            sameCodes(e.audienceIntent, w.codes) &&
+            !cooling.has(e.locationId as string),
+        ),
+        true,
+      ),
+      cause,
+      audience: w.codes,
+    });
   }
   return gaps;
 }
@@ -176,6 +264,7 @@ export const nextCountGap = internalQuery({
     locationId: Id<'edgeLocations'>;
     spares: Id<'edges'>[];
     mayProvision: boolean;
+    audience?: string[];
   } | null> => {
     const relay = await ctx.db.get(relayId);
     if (!relay) return null;
@@ -187,10 +276,17 @@ export const nextCountGap = internalQuery({
         locationId: withSpare.locationId,
         spares: withSpare.spares,
         mayProvision: false,
+        ...(withSpare.audience ? { audience: withSpare.audience } : {}),
       };
     const buy = gaps.find((g) => g.cause === null);
     return buy
-      ? { listenerId: buy.listenerId, locationId: buy.locationId, spares: [], mayProvision: true }
+      ? {
+          listenerId: buy.listenerId,
+          locationId: buy.locationId,
+          spares: [],
+          mayProvision: true,
+          ...(buy.audience ? { audience: buy.audience } : {}),
+        }
       : null;
   },
 });
@@ -304,6 +400,17 @@ export const setPickWant = internalMutation({
     await assertNoRunningSetup(ctx.db, relay);
     await assertNoRotationOrQuarantine(ctx.db, relay);
     const want = cleanWant(a.want);
+    // A pick serving its countries only makes nothing for everyone: a count
+    // there would wait unseen and come back over the pool's size later.
+    if (
+      want !== null &&
+      relay.providerSet?.find((p) => p.locationId === a.locationId)?.audienceOnly
+    )
+      throw new ConvexError({
+        code: 'validation',
+        message:
+          'This location keeps addresses for its countries only: switch that off before setting a count for everyone',
+      });
     const effect = await wantEffect(ctx.db, relay, a.locationId, want);
     if (effect.tooLarge)
       throw new ConvexError({

@@ -688,7 +688,7 @@ export const batchContext = internalQuery({
       gate,
       country,
       perCountryLimit: cfg.perCountryLimit,
-      preferEyeball: edgeCfg.probe.preferEyeball,
+      networks: edgeCfg.probe.networks,
       minVantages: cfg.minVantages,
       spacingMs: EDGE_PLUMBING.probeSourceSpacingMs,
       secrets,
@@ -758,7 +758,7 @@ const namePoolV = v.object({
   total: v.number(),
   limit: v.number(),
   needs: v.number(),
-  preferEyeball: v.boolean(),
+  networks: v.union(v.literal('home'), v.literal('home_first'), v.literal('any')),
 });
 
 /** How a batch found its Globalping probes in a country (lib/edges/sni/namePool.ts). */

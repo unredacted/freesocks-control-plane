@@ -63,7 +63,7 @@ import {
   type VerificationListenerLike,
 } from './lib/edges/verification';
 import { resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
-import { locationTicked } from './lib/edges/tickedLocation';
+import { edgeLocationAssigned } from './lib/edges/assignedLocation';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { nodeAddressesOf } from './nodeIntents';
 
@@ -238,11 +238,12 @@ export const record = internalMutation({
 
 /**
  * A passing check confirms the address for publication (docs/edges.md §
- * "Replacing a blocked address without a spare") only where FCP's own check may
- * stand in for the owner's tick: the switch is on (`edge.clientCheck.enabled`),
- * the address is L4 and in a location the owner ticked an address in, and the
- * sessions proved the configuration it holds now. An owner's own current tick
- * is never replaced. The record binds like a tick (stale the same way).
+ * "Replacing a blocked address without a spare") with no person testing it:
+ * the switch is on (`edge.clientCheck.enabled`), the address is L4 and in a
+ * location an operator assigned to its node (lib/edges/assignedLocation.ts:
+ * one of its picks, or trusted by hand), and the sessions proved the
+ * configuration it holds now. An owner's own current tick is never replaced.
+ * The record binds like a tick (stale the same way).
  */
 async function confirmByCheck(
   ctx: MutationCtx,
@@ -254,8 +255,7 @@ async function confirmByCheck(
   if (!(await resolveEdgeConfig(ctx.db)).clientCheck.enabled) return false;
   if ((edge.layer ?? edgeLayerOf(edge.provider)) === 'l7') return false;
   if (edge.status !== 'active' && edge.status !== 'verifying') return false;
-  const location = edge.locationId ? await ctx.db.get(edge.locationId) : null;
-  if (!locationTicked(location)) return false;
+  if (!(await edgeLocationAssigned(ctx.db, edge))) return false;
   const raw = await ctx.db.get(edge.listenerId);
   if (!raw || raw.retired) return false;
   const listener = await verificationListenerOf(ctx.db, raw);
@@ -726,6 +726,51 @@ export const clearForRollback = internalMutation({
       return { cleared, done: false };
     }
     return { cleared, done: true };
+  },
+});
+
+/**
+ * Whether a guided setup run may check this address with FCP's own client
+ * instead of asking a person (`checkForSetup`): the check is ready, and the
+ * address has no verdict yet for the configuration it holds now (a verdict
+ * for it, pass or fail, is not asked again: the run's card then offers the
+ * person's test, and "Try again" asks once more only after a change).
+ */
+export const setupCheckDue = internalQuery({
+  args: { edgeId: v.id('edges') },
+  handler: async (ctx, { edgeId }): Promise<boolean> => {
+    const edge = await ctx.db.get(edgeId);
+    if (!edge || (edge.layer ?? edgeLayerOf(edge.provider)) === 'l7') return false;
+    const cfg = await resolveEdgeConfig(ctx.db);
+    if ((await clientCheckReadiness(ctx.db, cfg)) !== 'ready') return false;
+    const raw = await ctx.db.get(edge.listenerId);
+    if (!raw || raw.retired) return false;
+    const listener = await verificationListenerOf(ctx.db, raw);
+    if (verificationCurrent(edge, listener)) return false;
+    const c = edge.clientCheck;
+    const b = verificationBinding(edge, listener);
+    return !(c && b && b.configHash === c.configHash && b.listenerRevision === c.listenerRevision);
+  },
+});
+
+/**
+ * A guided setup run's "Try it" stage (docs/edges.md § "Guided setup runs"):
+ * FCP checks the address with its own client before any person is asked. A
+ * pass in a location the run picked confirms it (`confirmByCheck`), so the
+ * run goes on with nobody testing by hand. `skipped` = not due (the check is
+ * not ready, or this configuration was checked already).
+ */
+export const checkForSetup = internalAction({
+  args: { edgeId: v.id('edges') },
+  handler: async (
+    ctx,
+    { edgeId },
+  ): Promise<'confirmed' | 'unconfirmed' | 'failed' | 'unavailable' | 'skipped'> => {
+    if (!(await ctx.runQuery(internal.edgeClientCheck.setupCheckDue, { edgeId }))) return 'skipped';
+    const out = await runClientCheck(ctx, { edgeId, by: 'system' });
+    if (!out.checked) return 'unavailable';
+    if (!out.ok) return 'failed';
+    return out.confirmed ? 'confirmed' : 'unconfirmed';
   },
 });
 

@@ -1,13 +1,15 @@
 <script lang="ts">
   /**
-   * Find more SNIs (`/admin/servers/snis/find`; docs/edges.md "The
-   * page"): what most setups never need, in one place. Finding names (its
-   * switch, its line saying what is true now; each network's "Search it" and
-   * where its nodes are, taken from a node when one of its ports was managed),
-   * the top-sites search (a secondary button that says its cost first), the
-   * networks, imports (a pasted list or a seed file), and checks from inside
-   * countries. Sources are passive only: no address range is ever scanned.
-   * Nothing found is added by itself.
+   * SNIs -> Find more (`/admin/servers/snis/find`; docs/edges.md "The page"):
+   * what most setups never need, in one place. Finding SNIs (its switch, its
+   * line saying what is true now; each network's "Include it in the top-sites
+   * search" and where its nodes are, taken from a node when one of its ports
+   * was managed), the top-sites search (a secondary button that says its cost
+   * first), the networks, and imports (a pasted list or a seed file; a seed's
+   * missing SNI lists open the one "Add an SNI list" dialog, prefilled).
+   * Sources are passive only: no address range is ever scanned. Nothing found
+   * is added by itself. Checks from inside countries and the numeric knobs
+   * are sub-views of their own (SnisNav).
    *
    * Wording lives in ./lib/huntWords.ts and ./lib/words.ts (pure, unit-tested).
    */
@@ -22,7 +24,6 @@
   import { ApiCallError } from '@client/lib/api';
   import {
     cancelSweep,
-    createFamily,
     createNetwork,
     familiesQuery,
     huntQuery,
@@ -35,8 +36,9 @@
   import type { SniHuntImported, SniHuntOverview } from '../../../../../shared/contracts/sni';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
-  import CountryChecksCard from './CountryChecksCard.svelte';
+  import AddSniListDialog from './AddSniListDialog.svelte';
   import NetworksCard from './NetworksCard.svelte';
+  import { seedFrom, type AddListFrom } from './lib/addList';
   import { edgesPaths } from '../lib/routes';
   import {
     huntImportWords,
@@ -123,13 +125,16 @@
     importText = '';
     toast.success(huntImportWords(r));
   }
-</script>
 
-<p class="mb-2 text-sm">
-  <Link href={edgesPaths.names()} class="text-muted-foreground underline underline-offset-4">
-    SNIs
-  </Link>
-</p>
+  // A seed's SNI list: the one dialog, prefilled from the seed, its short id
+  // locked so the next import of the seed finds the list (lib/addList.ts seedFrom).
+  let addOpen = $state(false);
+  let addFrom = $state<AddListFrom>({ kind: 'site' });
+  function makeSeedList(f: SniHuntImported['proposals']['families'][number]) {
+    addFrom = seedFrom(f);
+    addOpen = true;
+  }
+</script>
 
 <SectionHeader
   title="Find more SNIs"
@@ -357,22 +362,7 @@
                 SNI list {f.label}, cover site <span class="font-mono">{f.targetAddress}</span>, on
                 {f.network}
               </span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onclick={() =>
-                  run(() =>
-                    createFamily({
-                      slug: f.slug,
-                      label: f.label,
-                      targetAddress: f.targetAddress,
-                      targetPort: f.targetPort,
-                      requireH2: f.requireH2,
-                      network: f.network,
-                    }),
-                  )}
-              >
+              <Button size="sm" variant="outline" disabled={busy} onclick={() => makeSeedList(f)}>
                 Make it
               </Button>
             </div>
@@ -385,8 +375,6 @@
     </CardContent>
   </Card>
 
-  <CountryChecksCard />
-
   <ConfirmDialog
     bind:open={sweepOpen}
     title="Search the top sites?"
@@ -398,3 +386,9 @@
     }}
   />
 {/if}
+
+<AddSniListDialog
+  bind:open={addOpen}
+  from={addFrom}
+  onAdded={() => toast.success('SNI list made. Import the seed again to fill it.')}
+/>

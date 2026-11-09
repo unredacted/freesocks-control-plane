@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Networks (docs/edges.md "Networks"): one or more ASNs and the address
-   * ranges they announce, plus ranges entered by hand. A name list on a
+   * ranges they announce, plus ranges entered by hand. An SNI list on a
    * network has its cover site and every name on it; a port using such a list
    * gets addresses only from locations on it. Ranges are counted here, never listed.
    *

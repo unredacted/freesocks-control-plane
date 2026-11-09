@@ -39,7 +39,9 @@ export const placeKey = (p: HuntPlace) => (p.city ? `${p.country}/${p.city}` : p
 /**
  * `HEAD /` over HTTPS from probes at the network's place, to an address
  * literal, presenting `host` (SNI and Host): the leg a REALITY node relays
- * every unauthenticated handshake over.
+ * every unauthenticated handshake over. Any probe there, whatever
+ * `edge.probe.networks` says: the node itself sits in a data centre, so no
+ * network type is nearer to the leg than another (lib/edges/probes/networks.ts).
  */
 export function timingRequest(
   t: { address: string; port: number; host: string },

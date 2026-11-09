@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One port a name list is used on, on the list's page: the same status line
+   * One port an SNI list is used on, on the list's page: the same status line
    * and next step as the node page (TransportNames, for every node at once),
    * then each node behind it with what its members get and, where names wait
    * for a test there, "Test one name" through one of its proven addresses.

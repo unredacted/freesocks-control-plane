@@ -504,12 +504,10 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
     out.push('Delivery by country is off: members are not steered away from blocked addresses.');
   if (!s.names) out.push('SNI lists are off, so SNIs are not judged per country.');
   else if (nameChecksHere === false)
-    out.push(
-      'SNIs are not checked from inside this country. Turn it on under Settings, Censored countries.',
-    );
+    out.push('SNIs are not checked from inside this country. Turn it on under Checks from here.');
   else if (nameChecksHere && !s.realHost)
     out.push(
-      'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under SNIs, Find more.',
+      'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under SNIs, Checks from inside countries.',
     );
   return out;
 }
@@ -540,7 +538,7 @@ function quietPart(s: SourceCoverage, health: readonly ProbeSourceHealth[], now:
 }
 
 const NOT_ASKED =
-  'Edges are not checked from here. "Check edges from here" is off for this country under Settings, Censored countries.';
+  'Edges are not checked from here. "Check edges from here" is off for this country: turn it on under Checks from here.';
 
 /**
  * One sentence for the countries list when the outside probes from there fall
@@ -605,10 +603,11 @@ export function coverageLines(
 /**
  * Which Globalping probes the newest name-check batch from there used, in
  * words (empty: nothing to say, no batch yet, or the note no longer describes
- * the checks). Too few home-network probes for a verdict: the checks also use
- * other probes. Fewer probes there in all than a verdict needs: names checked
- * from there stay not judged, and the page says why (the floor is not lowered
- * for one country).
+ * the checks). Too few home-network probes for a verdict: under "home first"
+ * the checks also use other probes; under "home networks only" they stay with
+ * the few there are, and may not reach a verdict. Fewer probes there in all
+ * than a verdict needs: names checked from there stay not judged, and the
+ * page says why (the floor is not lowered for one country).
  */
 export function namePoolLines(p: CountryViewNamePool | null | undefined): string[] {
   if (!p) return [];
@@ -624,9 +623,13 @@ export function namePoolLines(p: CountryViewNamePool | null | undefined): string
     out.push(
       `Globalping has ${home} here, fewer than the ${needs} an SNI verdict needs, so the SNI checks here also use data-centre probes.`,
     );
-  else if (p.mode === 'any' && p.preferEyeball)
+  else if (p.mode === 'any' && p.networks === 'home_first')
     out.push(
       `Globalping has ${home} here, fewer than the ${needs} an SNI verdict needs, so the SNI checks here use any probe there.`,
+    );
+  else if (p.networks === 'home' && p.eyeball < Math.min(p.needs, p.limit) && p.total >= p.needs)
+    out.push(
+      `Globalping has ${home} here, fewer than the ${needs} a verdict needs. Probes come from home networks only, so checks from here may not reach a verdict. "Home networks first" in the probe settings tops them up with data centres.`,
     );
   if (p.total < p.needs)
     out.push(

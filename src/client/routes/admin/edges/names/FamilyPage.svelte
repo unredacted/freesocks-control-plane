@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * One name list (`/admin/servers/snis/:slug`; docs/edges.md "The page"): the
+   * One SNI list (`/admin/servers/snis/:slug`; docs/edges.md "The page"): the
    * ports it is used on, each with its status and next step (FamilyPort), then
-   * ONE list of its names and the names found for it, each with one state on
+   * ONE list of its SNIs and the SNIs found for it, each with one state on
    * the way to members (lib/listWords.ts): Suggested, Being checked, Waiting
    * to be sent, Waiting for a test, In use; Failing, Retired, Burned,
    * Ignored, Not usable. Three filters. What was measured is under Details.
    *
-   * Picked names can be checked again, retired (confirmed: it states the name
+   * Picked SNIs can be checked again, retired (confirmed: it states the SNI
    * drain, `edge.sniDrainMinutes`), brought back, burned (typed), or marked
-   * for a curated country. Adding names by hand and the list's settings sit
+   * for a curated country. Adding SNIs by hand and the list's settings sit
    * below, folded away. "Rename" by the title changes the list's name only
    * (components/NameDialog): its slug is this page's link and never changes.
    *
@@ -22,6 +22,7 @@
   import { Button } from '@client/components/ui/button';
   import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
   import { Checkbox } from '@client/components/ui/checkbox';
+  import { Input } from '@client/components/ui/input';
   import * as Collapsible from '@client/components/ui/collapsible';
   import { Label } from '@client/components/ui/label';
   import { Skeleton } from '@client/components/ui/skeleton';
@@ -48,6 +49,7 @@
     removeFamily,
     sniConfigQuery,
     updateFamily,
+    useNamesAnyway,
     type NameAction,
   } from '@client/lib/sniApi';
   import { router } from '@client/stores/router.svelte';
@@ -82,7 +84,10 @@
   import {
     CHECK_WORDS,
     ago,
+    offersUseAnyway,
     sniErrorWords,
+    useAnywayDoneWords,
+    useAnywayWords,
     suspectWords,
     vantageAppliedWords,
     vantageLine,
@@ -159,6 +164,27 @@
     const words = nameActionWords(action, r as Parameters<typeof nameActionWords>[1]);
     if (words.includes('busy')) toast.warning(words);
     else toast.success(words);
+  }
+
+  // --- "use anyway": a server name off the list's network, on an operator's say ---------------
+  let anywayName = $state<string | null>(null);
+  let anywayOn = $state(true);
+  let anywayReason = $state('');
+  let anywayOpen = $state(false);
+  function askUseAnyway(name: string, on: boolean) {
+    anywayName = name;
+    anywayOn = on;
+    anywayReason = '';
+    anywayOpen = true;
+  }
+  async function setUseAnyway() {
+    const name = anywayName;
+    if (!name) return;
+    const on = anywayOn;
+    const reason = anywayReason.trim();
+    anywayOpen = false;
+    const r = await run(() => useNamesAnyway(slug, [name], on, on ? reason : undefined));
+    if (r) toast.success(useAnywayDoneWords(on, (r as { count: number }).count));
   }
 
   // --- a found name: add it, ignore it, or take it back ---------------------------------------
@@ -319,8 +345,8 @@
       <FamilyPort binding={b} />
     {:else}
       <p class="text-muted-foreground text-sm">
-        Not used by any port yet. Open a node under Servers and choose "Manage these SNIs with FCP"
-        on its REALITY transport, or use it on a port under Settings below.
+        Not used by any port yet. Open a node under Nodes and choose "Add an SNI list" on its
+        REALITY transport, or use it on a port under Settings below.
       </p>
     {/each}
   </section>
@@ -487,6 +513,32 @@
                     <span class="text-muted-foreground text-xs">{STATE_LABEL[r.state]}</span>
                   </p>
                   <p class="text-muted-foreground">{r.sentence}</p>
+                  {#if useAnywayWords(n)}
+                    <p class="text-amber-700 dark:text-amber-400">
+                      {useAnywayWords(n)}
+                      <Button
+                        variant="link"
+                        size="sm"
+                        class="h-auto p-0 align-baseline"
+                        disabled={busy}
+                        onclick={() => askUseAnyway(n.name, false)}
+                      >
+                        Stop using anyway
+                      </Button>
+                    </p>
+                  {:else if offersUseAnyway(n)}
+                    <p>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        class="h-auto p-0 align-baseline"
+                        disabled={busy}
+                        onclick={() => askUseAnyway(n.name, true)}
+                      >
+                        Use anyway
+                      </Button>
+                    </p>
+                  {/if}
                   {#if n.suspectIn.length > 0}
                     <p class="text-amber-700 dark:text-amber-400">{suspectWords(n.suspectIn)}</p>
                   {/if}
@@ -698,8 +750,8 @@
         <p class="font-medium">Use it on a port</p>
         {#if !bindOpen}
           <p class="text-muted-foreground">
-            Usually done with "Manage these SNIs with FCP" on a node's page. Here you can pick any
-            REALITY port with the same cover site.
+            Usually done with "Add an SNI list" on a node's page. Here you can pick any REALITY port
+            with the same cover site.
           </p>
           <Button variant="outline" size="sm" disabled={busy} onclick={startBind}>
             Pick a port
@@ -803,6 +855,29 @@
     void act('burn');
   }}
 />
+<ConfirmDialog
+  bind:open={anywayOpen}
+  title={anywayOn ? 'Use this SNI anyway?' : 'Stop using it anyway?'}
+  body={anywayOn
+    ? 'It resolves outside the list’s network, so it does not match the network of the address it is shown on. Use it only if you know it works where members are. Every other check still applies. If it stops resolving, it is not used until it resolves again.'
+    : 'It is checked against the list’s network again, like any other SNI. If it still resolves outside it, it fails and leaves members like any failing SNI.'}
+  confirmLabel={anywayOn ? 'Use anyway' : 'Stop using anyway'}
+  danger={!anywayOn}
+  onConfirm={setUseAnyway}
+>
+  <p class="font-mono text-sm break-words">{anywayName}</p>
+  {#if anywayOn}
+    <div class="space-y-1">
+      <Label for={`${uid}-anyway-reason`}>Reason (optional)</Label>
+      <Input
+        id={`${uid}-anyway-reason`}
+        bind:value={anywayReason}
+        maxlength={300}
+        placeholder="Works from inside the country"
+      />
+    </div>
+  {/if}
+</ConfirmDialog>
 <ConfirmDialog
   bind:open={removeOpen}
   title="Remove this list?"

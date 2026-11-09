@@ -65,6 +65,16 @@ export const SniConfigView = z.object({
 });
 export type SniConfigView = z.infer<typeof SniConfigView>;
 
+/**
+ * Slugs no SNI list may take: an SNI list's page is `/admin/servers/snis/<slug>`,
+ * and the SNIs tab's own views sit beside it (Find more, Checks from inside
+ * countries, More settings). The server refuses them, and a list made from a
+ * port's tag skips them.
+ */
+export const SNI_LIST_RESERVED_SLUGS = ['find', 'checks', 'settings'] as const;
+export const isReservedSniListSlug = (slug: string): boolean =>
+  (SNI_LIST_RESERVED_SLUGS as readonly string[]).includes(slug);
+
 /** `PATCH …/sni/config`: any subset, the vantage block nested. */
 /** The countries are not patched here: they come from the censored-country list. */
 export type SniConfigPatch = Partial<Omit<SniConfig, 'curatedCountries'>> & {
@@ -193,6 +203,16 @@ export const SniNameRow = z.object({
   tlsVersion: z.string().nullable(),
   alpn: z.string().nullable(),
   checkedAt: z.string().nullable(),
+  /** The last check saw it resolve outside the family's network. */
+  offNetwork: z.boolean().default(false),
+  /**
+   * An operator's "use anyway": it may be used although it resolves outside the
+   * family's network. Who said so, when, and why (a display name; free text).
+   */
+  useAnyway: z
+    .object({ at: z.string(), by: z.string().nullable(), reason: z.string().nullable() })
+    .nullable()
+    .default(null),
   blockedIn: z.array(z.string()),
   provenIn: z.array(z.string()),
   /** Curated countries where member reports single this name out. A hint, never a verdict. */

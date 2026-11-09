@@ -34,6 +34,9 @@ describe('the Servers section', () => {
     expect(resolveServersRoute(serversPaths.nodes()).page).toBe('nodes');
     expect(resolveServersRoute(serversPaths.backends()).page).toBe('backends');
     expect(resolveServersRoute(serversPaths.pools()).page).toBe('pools');
+    expect(serversPaths.backends({ backend: 'panel a' })).toBe(
+      '/admin/servers/settings/backends?backend=panel%20a',
+    );
     const node = serversPaths.node('u/1', { backend: 'p' });
     expect(node).toBe('/admin/servers/nodes/u%2F1?backend=p');
     expect(resolveServersRoute(node.split('?')[0]!)).toEqual({ page: 'node', uuid: 'u/1' });
@@ -68,6 +71,8 @@ describe('the Servers section', () => {
     expect(tab(edgesPaths.family('f1'))).toBe('snis');
     expect(tab(edgesPaths.findNames())).toBe('snis');
     expect(tab(edgesPaths.findNetwork('n1'))).toBe('snis');
+    expect(tab(edgesPaths.sniChecks())).toBe('snis');
+    expect(tab(edgesPaths.sniSettings())).toBe('snis');
     expect(tab(edgesPaths.probes())).toBe('probes');
     expect(tab(edgesPaths.providers())).toBe('providers');
     expect(tab(edgesPaths.provider('a1'))).toBe('providers');

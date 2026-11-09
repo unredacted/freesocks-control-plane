@@ -17,8 +17,9 @@
    *   disabled?: boolean
    *   onchange?: (next: number) => void     fires with every valid change
    *   class?: string
+   *   labelExtra?: Snippet                  shown after the label (a "Changed" badge)
    */
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
@@ -40,6 +41,7 @@
     disabled?: boolean;
     onchange?: (next: number) => void;
     class?: string;
+    labelExtra?: Snippet;
   }
   let {
     value = $bindable(),
@@ -55,6 +57,7 @@
     disabled = false,
     onchange,
     class: className,
+    labelExtra,
   }: Props = $props();
 
   const uid = $props.id();
@@ -115,7 +118,10 @@
 
 <div class={cn('space-y-1.5', className)}>
   <div class="flex items-center justify-between gap-2">
-    <Label for={`${uid}-input`}>{label}</Label>
+    <span class="flex flex-wrap items-center gap-2">
+      <Label for={`${uid}-input`}>{label}</Label>
+      {@render labelExtra?.()}
+    </span>
     {#if defaultValue !== undefined && value !== defaultValue}
       <Button
         type="button"

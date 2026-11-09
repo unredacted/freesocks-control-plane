@@ -67,7 +67,7 @@ import type {
   AdoptionInspection,
   ChildResource,
   CloudFrontConfig,
-  CloudflareDnsConfig,
+  DnsZoneConfig,
   CredentialTestResult,
   Discovery,
   EdgeDescription,
@@ -164,7 +164,7 @@ export const CLOUDFRONT_ALWAYS_SENT = [
 
 // --- DNS client and CAA injection -----------------------------------------------------------
 
-type DnsClientFactory = (cfg: CloudflareDnsConfig) => DnsClient | Promise<DnsClient>;
+type DnsClientFactory = (cfg: DnsZoneConfig) => DnsClient | Promise<DnsClient>;
 let dnsFactory: DnsClientFactory | null = null;
 /** Test seam: an in-memory DnsClient, so these tests never load the Cloudflare SDK. */
 export function __setCloudFrontDnsClientFactory(f: DnsClientFactory | null): void {
@@ -177,8 +177,8 @@ async function dnsClientFor(cfg: CloudFrontConfig): Promise<DnsClient> {
   if (!dns)
     throw refusal('dns', 'dns_account_missing', 'the referenced DNS account is not resolved');
   if (dnsFactory) return await dnsFactory(dns);
-  const mod = await import('./dns/cloudflareDns');
-  return mod.cloudflareDnsClient(dns);
+  const mod = await import('./dns/clients');
+  return mod.dnsClientForZone(dns);
 }
 
 let caaLookupOverride: CaaLookup | null = null;

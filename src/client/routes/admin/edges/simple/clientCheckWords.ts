@@ -38,9 +38,9 @@ export function clientCheckToast(outcome: EdgeClientCheckOutcome): {
   }
   const copy = CLIENT_CHECK_COPY[outcome.verdict];
   const engines = engineWords(outcome.engines);
-  // In a location you tested an address in, with the switch on, a pass counts as your test.
+  // In one of the node's locations (or one trusted by hand), with the switch on, a pass is the test.
   const confirmed = outcome.confirmed
-    ? 'It now counts as tested, since you tested an address in this location before.'
+    ? "It now counts as tested, since FCP's clients got through in one of this node's locations."
     : '';
   return {
     tone: outcome.ok ? (engines ? 'warning' : 'success') : 'error',

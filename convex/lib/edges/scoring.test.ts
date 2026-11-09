@@ -418,6 +418,38 @@ describe('autoRotateDecision', () => {
   const decide = (over: Partial<Parameters<typeof autoRotateDecision>[0]> = {}) =>
     autoRotateDecision({ evaluation: suspectedEv, cfg: on, origin, published, now, ...over });
 
+  describe("a cut-over country's own address", () => {
+    // e1 carries the evidence and is a cut-over country's own address.
+    const capped = { ...origin, rotationsToday: 3, cooldownUntil: now + 60_000 };
+    test('replaced on its own budget, past the daily cap, the cooldown and the fleet cap', () => {
+      expect(
+        decide({ origin: capped, own: { edgeIds: ['e1'], budgetLeft: ['e1'] } }),
+      ).toMatchObject({ edgeId: 'e1' });
+      expect(
+        decide({
+          origin: capped,
+          own: { edgeIds: ['e1'], budgetLeft: ['e1'] },
+          fleet: { brakeEngaged: false, rotationsToday: 99, rotationsPerDay: 12 },
+        }),
+      ).toMatchObject({ edgeId: 'e1' });
+      // The fleet brake (a mass block) still holds it.
+      expect(
+        decide({
+          own: { edgeIds: ['e1'], budgetLeft: ['e1'] },
+          fleet: { brakeEngaged: true, rotationsToday: 0, rotationsPerDay: 12 },
+        }),
+      ).toEqual({ veto: 'fleet_brake' });
+    });
+
+    test('its budget used up: vetoed, and the operator is told a replacement is held back', () => {
+      const args = { evaluation: suspectedEv, cfg: on, origin, published, now };
+      expect(decide({ own: { edgeIds: ['e1'], budgetLeft: [] } })).toEqual({
+        veto: 'audience_budget',
+      });
+      expect(replacementHeldBack({ ...args, own: { edgeIds: ['e1'], budgetLeft: [] } })).toBe(true);
+    });
+  });
+
   describe('with address lanes on', () => {
     // e1 carries the evidence. Open: it has its own budget and skips the caps.
     test('an open address is replaced on its own budget, past the cap and the cooldown', () => {

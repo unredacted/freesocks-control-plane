@@ -13,7 +13,6 @@
   import SettingsNav from '../servers/components/SettingsNav.svelte';
   import EdgesHome from './simple/EdgesHome.svelte';
   import NodePage from './simple/NodePage.svelte';
-  import EdgesOverview from './EdgesOverview.svelte';
   import RelayPage from './RelayPage.svelte';
   import EdgesProviders from './EdgesProviders.svelte';
   import ProviderAccountPage from './ProviderAccountPage.svelte';
@@ -24,6 +23,9 @@
   import FamilyPage from './names/FamilyPage.svelte';
   import NamesAdvanced from './names/NamesAdvanced.svelte';
   import FindNetwork from './names/FindNetwork.svelte';
+  import SnisNav from './names/SnisNav.svelte';
+  import CountryChecksCard from './names/CountryChecksCard.svelte';
+  import SniSettings from './names/SniSettings.svelte';
   import CountriesPage from './countries/CountriesPage.svelte';
   import CountryPage from './countries/CountryPage.svelte';
   import ListsPage from './countries/ListsPage.svelte';
@@ -39,8 +41,6 @@
   <EdgesHome />
 {:else if route.page === 'node'}
   <NodePage slug={route.slug} />
-{:else if route.page === 'overview'}
-  <EdgesOverview />
 {:else if route.page === 'relay'}
   <RelayPage slug={route.slug} />
 {:else if route.page === 'providers'}
@@ -55,13 +55,21 @@
   <SettingsNav current="settings" />
   <EdgesSettings />
 {:else if route.page === 'names'}
+  <SnisNav current="lists" />
   <NamesHome />
 {:else if route.page === 'family'}
   <FamilyPage slug={route.slug} />
 {:else if route.page === 'findNames'}
+  <SnisNav current="find" />
   <NamesAdvanced />
 {:else if route.page === 'findNetwork'}
   {#key route.slug}<FindNetwork slug={route.slug} />{/key}
+{:else if route.page === 'sniChecks'}
+  <SnisNav current="checks" />
+  <CountryChecksCard />
+{:else if route.page === 'sniSettings'}
+  <SnisNav current="settings" />
+  <SniSettings />
 {:else if route.page === 'countries'}
   <CountriesPage />
 {:else if route.page === 'country'}
