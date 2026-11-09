@@ -68,6 +68,7 @@
     mergeAttention,
     overviewTiles,
     atRiskCount,
+    frontedCount,
     oldestRead,
     statusSentence,
     type TimelineEntryInput,
@@ -109,7 +110,13 @@
     [...(summary.data?.relays ?? [])].sort((a, b) => a.relay.slug.localeCompare(b.relay.slug)),
   );
   const statuses = $derived(rows.map((r) => statusOf(attention.data?.origins, r.relay.slug)));
-  const fleet = $derived(attention.data?.fleet ?? null);
+  // The server's fleet counts only plain `protected` origins; a fronted node with a
+  // warning is still fronted (its warning is "at risk" and Action needed).
+  const fleet = $derived(
+    attention.data?.fleet
+      ? { ...attention.data.fleet, protected: frontedCount(attention.data.origins ?? []) }
+      : null,
+  );
 
   // Each observable backend's own queries (BackendFeed) and each fronted node's
   // timeline (TimelineFeed) hand their data up here, keyed by slug.

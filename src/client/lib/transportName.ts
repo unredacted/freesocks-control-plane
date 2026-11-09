@@ -29,6 +29,8 @@ const WORD: Record<string, string> = {
   VLESS: 'VLESS',
   VMESS: 'VMess',
   QUIC: 'QUIC',
+  CDN: 'CDN',
+  HTTP: 'HTTP',
 };
 
 /**
