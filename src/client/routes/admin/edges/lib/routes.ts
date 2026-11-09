@@ -12,7 +12,9 @@
  *   /admin/servers/origins/:slug/details            an origin's technical details (`?tab=`)
  *   /admin/servers/countries[/:CC]                  Countries
  *   /admin/servers/countries/lists[/:id]            Countries -> Lists
- *   /admin/servers/snis[/:slug]                     SNIs: the SNI lists, one list
+ *   /admin/servers/snis                             SNIs: the SNI lists
+ *   /admin/servers/snis/lists/:slug                 one SNI list (its own namespace, so no slug
+ *                                                   can collide with Find more)
  *   /admin/servers/snis/find[/:slug]                SNIs -> Find more: every network, one network
  *   /admin/servers/snis/checks                      SNIs -> Checks from inside countries
  *   /admin/servers/snis/settings                    SNIs -> More settings (the numeric `edge.sni.*` knobs)
@@ -72,13 +74,11 @@ export const EDGES_ROUTES = [
   [`${R}/probes`, 'probes'],
   [`${R}/settings`, 'settings'],
   [`${R}/snis`, 'names'],
-  // Before `:slug`: "find", "checks" and "settings" are no SNI list (the server
-  // refuses them as slugs: SNI_LIST_RESERVED_SLUGS).
+  [`${R}/snis/lists/:slug`, 'family'],
   [`${R}/snis/find`, 'findNames'],
   [`${R}/snis/find/:slug`, 'findNetwork'],
   [`${R}/snis/checks`, 'sniChecks'],
   [`${R}/snis/settings`, 'sniSettings'],
-  [`${R}/snis/:slug`, 'family'],
   [`${R}/countries`, 'countries'],
   // Before `:code`: "lists" is no country.
   [`${R}/countries/lists`, 'lists'],
@@ -154,7 +154,7 @@ export const edgesPaths = {
   settings: (params?: { section?: string }) => withSearch(`${R}/settings`, params),
   /** SNI lists (the SNIs tab), and one list. */
   names: () => `${R}/snis`,
-  family: (slug: string) => `${R}/snis/${enc(slug)}`,
+  family: (slug: string) => `${R}/snis/lists/${enc(slug)}`,
   /** Finding more SNIs: every network, and one network's candidates. */
   findNames: () => `${R}/snis/find`,
   findNetwork: (slug: string) => `${R}/snis/find/${enc(slug)}`,

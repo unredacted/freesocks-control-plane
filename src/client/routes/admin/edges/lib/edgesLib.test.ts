@@ -73,6 +73,8 @@ describe('resolveEdgesRoute / edgesPaths', () => {
       page: 'family',
       slug: 'fam a',
     });
+    // An SNI list called "find" is still that list, never Find more.
+    expect(resolveEdgesRoute(edgesPaths.family('find'))).toEqual({ page: 'family', slug: 'find' });
     // Finding more SNIs: its own address, never an SNI list's slug.
     expect(resolveEdgesRoute(edgesPaths.findNames())).toEqual({ page: 'findNames' });
     expect(resolveEdgesRoute(edgesPaths.findNetwork('net a'))).toEqual({
@@ -82,8 +84,9 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     // The other SNIs views: their own addresses, never an SNI list's slug.
     expect(resolveEdgesRoute(edgesPaths.sniChecks())).toEqual({ page: 'sniChecks' });
     expect(resolveEdgesRoute(edgesPaths.sniSettings())).toEqual({ page: 'sniSettings' });
+    // Lists live under /snis/lists/, so even a reserved word stays a list there.
     for (const slug of SNI_LIST_RESERVED_SLUGS)
-      expect(resolveEdgesRoute(edgesPaths.family(slug)).page).not.toBe('family');
+      expect(resolveEdgesRoute(edgesPaths.family(slug))).toEqual({ page: 'family', slug });
     expect(resolveEdgesRoute('/admin/servers/countries')).toEqual({ page: 'countries' });
     expect(resolveEdgesRoute(edgesPaths.country('ir'))).toEqual({ page: 'country', code: 'IR' });
     expect(resolveEdgesRoute(edgesPaths.lists())).toEqual({ page: 'lists' });

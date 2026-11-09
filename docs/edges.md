@@ -4309,8 +4309,8 @@ site** (the real site a REALITY port shows anyone without a member's key), and n
 for SNIs. The tab has four views, as a row of small links under the tab bar (`names/SnisNav.svelte`):
 **Lists** (`/admin/servers/snis`), **Find more** (`/admin/servers/snis/find`), **Checks from inside
 countries** (`/admin/servers/snis/checks`) and **More settings** (`/admin/servers/snis/settings`). A
-list's page is `/admin/servers/snis/{slug}`, so `find`, `checks` and `settings` are refused as list
-slugs (`SNI_LIST_RESERVED_SLUGS` in `src/shared/contracts/sni.ts`; a list made from a port's tag
+list's page is `/admin/servers/snis/lists/{slug}`, its own namespace; `find`, `checks` and `settings`
+are still refused as list slugs, so a list never shares a name with an SNIs view (`SNI_LIST_RESERVED_SLUGS` in `src/shared/contracts/sni.ts`; a list made from a port's tag
 skips them).
 
 **One "Add an SNI list" dialog** (`names/AddSniListDialog.svelte`, checks in
