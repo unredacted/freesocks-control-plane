@@ -24,6 +24,8 @@ import {
   registerRelay,
 } from './lib/edges/testing/fixtures';
 import { refuseNetwork } from './lib/edges/testing/mockFetch';
+import { publishedEdgesOf } from './edgeRender';
+import { assignEndpoints } from './lib/edges/assignment';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -316,6 +318,23 @@ describe('upkeep keeps their count (step 5W)', () => {
     // The count is met: nothing more is made for them.
     const forThem = (await rotations(w)).filter((r) => r.audience?.length);
     expect(forThem).toEqual([]);
+    // Meant for them: their members are handed it first, everyone's as the backup.
+    const published = await w.t.run(async (c) => {
+      const relay = (await c.db.get(w.relayId))!;
+      return (await publishedEdgesOf(c, relay, { kind: 'member' }, { includeIneligible: true }))
+        .published;
+    });
+    expect(published.find((p) => p.edgeId === theirs)?.meantFor).toEqual(['IR']);
+    for (let i = 0; i < 20; i++) {
+      const a = assignEndpoints(`seat-${i}`, published, {
+        now: Date.now(),
+        includeBackup: true,
+        edgePick: 'hrw1',
+        edgeCountry: 'IR',
+      });
+      expect(a.primary?.edge.edgeId).toBe(theirs);
+      expect(a.backup?.edge.audience).toBeUndefined();
+    }
   });
 
   test('a count met by an address of theirs anywhere asks for nothing; everyone’s never counts', async () => {

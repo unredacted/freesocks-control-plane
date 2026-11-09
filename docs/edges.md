@@ -4980,6 +4980,8 @@ its own, and an entry on the zone everyone uses shares it. Dormant until an entr
   there, and one made for exactly them keeps the location's switch-date rule. Everything there applies
   from then on: who is handed it (fail closed), never the template, the detector's
   `outside_audience`, probes only from its countries, names moving only within one audience.
+  It is also **meant for** them (§ Locations meant for a country, `meantFor` on the published
+  edge): their members are handed it before everyone's addresses, which stay their backup.
 - **Theirs only.** A spare made for them fills their count or replaces one of their addresses;
   no fill of everyone's addresses takes it (the coverage fill, the lanes, the origin-wide fill,
   a count of everyone's, a replacement of everyone's address). The pool admits it as theirs
