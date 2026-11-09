@@ -509,7 +509,7 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
     );
   else if (nameChecksHere && !s.realHost)
     out.push(
-      'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under SNIs, Find more.',
+      'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under SNIs, Checks from inside countries.',
     );
   return out;
 }
