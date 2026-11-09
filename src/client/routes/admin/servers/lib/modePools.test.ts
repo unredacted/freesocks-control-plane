@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { indexModeGroups, parseGroupList, poolSpread, readPoolLines, UUID_RE } from './modePools';
+import {
+  canonicalUuid,
+  indexModeGroups,
+  parseGroupList,
+  poolSpread,
+  readPoolLines,
+  UUID_RE,
+} from './modePools';
 
 const U1 = '11111111-1111-4111-8111-111111111111';
 const U2 = '22222222-2222-4222-8222-222222222222';
@@ -46,6 +53,23 @@ describe('readPoolLines', () => {
   });
 });
 
+describe('canonicalUuid', () => {
+  const index = indexModeGroups(trees);
+  test('saves a pasted uuid the way the backend spells it', () => {
+    expect(canonicalUuid(U1.toUpperCase(), index)).toBe(U1);
+    expect(canonicalUuid(U1, index)).toBe(U1);
+    // Spelled two ways on two backends: an exact match is kept as typed.
+    expect(canonicalUuid(U2.toUpperCase(), index)).toBe(U2.toUpperCase());
+    expect(canonicalUuid(U2, index)).toBe(U2);
+    // No backend reports it: kept as typed.
+    expect(canonicalUuid(U3.toUpperCase(), index)).toBe(U3.toUpperCase());
+  });
+  test('the preview says what will be saved', () => {
+    const [line] = readPoolLines(U1.toUpperCase(), index);
+    expect(line?.kind === 'group' && line.saved).toBe(U1);
+  });
+});
+
 describe('poolSpread', () => {
   const checks = [
     {
@@ -71,6 +95,7 @@ describe('poolSpread', () => {
         { slug: 'panel-b', name: 'Panel B', count: 1 },
       ],
       missing: 0,
+      missingUpTo: 0,
       withoutTransports: [{ slug: 'panel-a', name: 'Panel A', group: 'empty-a' }],
     });
   });
@@ -85,8 +110,30 @@ describe('poolSpread', () => {
       size: 0,
       found: [],
       missing: 0,
+      missingUpTo: 0,
       withoutTransports: [],
     });
     expect(poolSpread('other', [])).toMatchObject({ size: 0, missing: 0 });
+  });
+
+  test('a uuid on two backends never hides a group that is on none', () => {
+    // Pool of 2: U2 is on both backends, the other uuid on neither.
+    const two = [
+      {
+        slug: 'panel-a',
+        name: 'Panel A',
+        modes: [{ modeSlug: 'm', modeGroups: 2, unknownHere: 1, withoutTransports: [] }],
+      },
+      {
+        slug: 'panel-b',
+        name: 'Panel B',
+        modes: [{ modeSlug: 'm', modeGroups: 2, unknownHere: 1, withoutTransports: [] }],
+      },
+    ];
+    const spread = poolSpread('m', two, indexModeGroups(trees));
+    expect(spread.missing).toBe(0);
+    expect(spread.missingUpTo).toBe(1);
+    // Without a uuid held twice, the sum is exact.
+    expect(poolSpread('m', two, new Map())).toMatchObject({ missing: 0, missingUpTo: 0 });
   });
 });

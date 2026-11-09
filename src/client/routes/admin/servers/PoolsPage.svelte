@@ -24,6 +24,7 @@
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import {
     UUID_RE,
+    canonicalUuid,
     indexModeGroups,
     parseGroupList,
     poolSpread,
@@ -137,7 +138,9 @@
       for (const m of adminModes) {
         const text = draft[m.id] ?? '';
         if (!text.trim()) continue;
-        const uuids = parseGroupList(text);
+        // A uuid a backend reports is sent the way it spells it: the server
+        // compares exactly, and the preview matched it ignoring case.
+        const uuids = [...new Set(parseGroupList(text).map((u) => canonicalUuid(u, groupIndex)))];
         invalid.push(...uuids.filter((s) => !UUID_RE.test(s)));
         modes[m.id] = { groupUuids: uuids };
       }
@@ -199,7 +202,7 @@
           {#each g.children as m (m.id)}
             {@const summary = remnawaveSummary(m)}
             {@const bound = summary.bound}
-            {@const spread = poolSpread(m.id, poolChecks)}
+            {@const spread = poolSpread(m.id, poolChecks, groupIndex)}
             <div class="space-y-2">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <span class="font-medium">
@@ -242,6 +245,11 @@
                     <span class="text-amber-600 dark:text-amber-400"
                       >{spread.found.length > 0 ? ', ' : ''}{spread.missing} on no backend FCP reads</span
                     >
+                  {:else if spread.missingUpTo > 0}
+                    <span class="text-amber-600 dark:text-amber-400"
+                      >{spread.found.length > 0 ? ', ' : ''}up to {spread.missingUpTo} may be on no backend
+                      FCP reads (a group on several backends counts once on each)</span
+                    >
                   {/if}.
                   {#each spread.withoutTransports as w (`${w.slug}:${w.group}`)}
                     <span class="text-amber-600 dark:text-amber-400">
@@ -277,6 +285,9 @@
                             >
                           </span>
                         {/each}
+                        {#if line.saved !== line.text}
+                          <span class="text-muted-foreground">Saved as {line.saved}.</span>
+                        {/if}
                       {:else if line.kind === 'unknown'}
                         <span class="text-amber-600 dark:text-amber-400"
                           >Not a mode group on any backend FCP reads.</span

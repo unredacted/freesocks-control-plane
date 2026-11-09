@@ -24,7 +24,7 @@
   import * as Select from '@client/components/ui/select';
   import { cn } from '@client/lib/utils';
   import { searchParam } from '@client/lib/urlState.svelte';
-  import { edgeConfigQuery, freedomDeliveryQuery } from '@client/lib/edgesApi';
+  import { edgeConfigQuery, freedomDeliveryQuery, maintenanceQuery } from '@client/lib/edgesApi';
   import { serverSummaryQuery } from '@client/lib/serversApi';
   import { drainWarningCodes } from '@shared/contracts/edgeCodes';
   import AdminListState from '../AdminListState.svelte';
@@ -79,6 +79,8 @@
   // The switches outside the edge config, for "Changed" (both default to off).
   const freedom = freedomDeliveryQuery();
   const servers = serverSummaryQuery();
+  // Paused new work is off its normal state too: "changed only" keeps the card and its Resume.
+  const maintenance = maintenanceQuery();
 
   const families = $derived(config.data?.families ?? []);
   const entries = $derived(settingEntries(families));
@@ -116,6 +118,7 @@
     if (e.id === E.freedom) return freedom.data?.on === true;
     if (e.id === E.panelRead) return servers.data?.config['manage.observe'] === true;
     if (e.id === E.panelChanges) return servers.data?.config['manage.enabled'] === true;
+    if (e.id === E.pause) return maintenance.data?.frozen === true;
     // The stored value or the one typed: neither drops out while it is edited.
     return (
       changedFromDefault(current, defaults, e.paths) ||
@@ -170,9 +173,10 @@
     handledField = raw;
     const entry = untrack(() => entryById.get(raw.replace(/^edge\./, '')));
     if (!entry) return;
-    // Make sure nothing hides it: its group, no other search, not "changed only".
+    // Make sure nothing hides it: its group open (from All too), no other search,
+    // not "changed only".
     untrack(() => {
-      if (group !== ALL_GROUPS && group !== entry.group) groupParam.value = entry.group;
+      if (group !== entry.group) groupParam.value = entry.group;
       if (query) setQuery('');
       if (changedOnly) changedParam.value = '';
     });

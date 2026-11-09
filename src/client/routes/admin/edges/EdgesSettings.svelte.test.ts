@@ -6,7 +6,7 @@ import {
   EDGE_DEFAULTS,
   flattenEdgeConfig,
 } from '../../../../../convex/lib/edgeConfig';
-import { edgeConfigQuery } from '@client/lib/edgesApi';
+import { edgeConfigQuery, maintenanceQuery } from '@client/lib/edgesApi';
 import { router } from '@client/stores/router.svelte';
 import { mountWithQuery } from '../../../testing/mountWithQuery';
 import EdgesSettings from './EdgesSettings.svelte';
@@ -30,7 +30,7 @@ vi.mock('@client/lib/edgesApi', async (importOriginal) => ({
   }),
   freedomPreviewQuery: () => pending(),
   clientCheckStatusQuery: () => pending(),
-  maintenanceQuery: () => pending(),
+  maintenanceQuery: vi.fn(),
   deliveryBindingsQuery: () => pending(),
   trustSummaryQuery: () => pending(),
 }));
@@ -58,8 +58,11 @@ function configView(over: Record<string, unknown> = {}) {
 
 let app: ReturnType<typeof mountWithQuery> | null = null;
 
-async function mount(url: string, view = configView()): Promise<string> {
+async function mount(url: string, view = configView(), frozen = false): Promise<string> {
   router.navigate(url, { replace: true });
+  vi.mocked(maintenanceQuery).mockReturnValue(
+    loaded({ frozen, reason: frozen ? 'Panel upgrade' : null, since: null }) as never,
+  );
   vi.mocked(edgeConfigQuery).mockReturnValue(loaded(view) as never);
   app = mountWithQuery(new QueryClient(), EdgesSettings, {});
   flushSync();
@@ -144,5 +147,20 @@ describe('Settings, one searchable page', () => {
     expect(router.search).not.toContain('q=');
     expect(document.getElementById('setting-detect-windowMinutes')).not.toBeNull();
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  test("a deep link from All opens the field's group", async () => {
+    await mount('/admin/servers/settings?field=manage.observe');
+    await tick();
+    flushSync();
+    expect(router.search).toContain('group=maintenance');
+    expect(rowIds()).toContain('manage-observe');
+    expect(rowIds()).not.toContain('drainMinutes');
+  });
+
+  test('paused new work stays under "Show changed only", with Resume', async () => {
+    const t = await mount('/admin/servers/settings?changed=1', configView(), true);
+    expect(rowIds()).toContain('maintenance-pause');
+    expect(t).toContain('Resume new work');
   });
 });

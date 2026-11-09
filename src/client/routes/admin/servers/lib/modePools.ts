@@ -10,8 +10,10 @@
  * Exports:
  *   UUID_RE, parseGroupList(text)        the editor's input: one uuid per line (commas too), deduped
  *   indexModeGroups(trees)               lower-case uuid -> the backends' groups with that uuid
+ *   canonicalUuid(uuid, index)           the uuid as a backend spells it (the server compares exactly)
  *   readPoolLines(text, index)           each typed line, with the group it names or why not
- *   poolSpread(modeId, checks)           where a mode's bound groups were found, per backend
+ *   poolSpread(modeId, checks, index?)   where a mode's bound groups were found, per backend,
+ *                                        and how many are on none
  */
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -61,8 +63,19 @@ export function indexModeGroups(trees: readonly TreeGroups[]): GroupIndex {
   return out;
 }
 
+/**
+ * The uuid as a backend reports it. The lookup ignores case but the server
+ * compares uuids exactly, so a pasted uuid in other casing is saved the way the
+ * backend spells it. A uuid no backend reports is kept as typed.
+ */
+export function canonicalUuid(uuid: string, index: GroupIndex): string {
+  const refs = index.get(uuid.toLowerCase()) ?? [];
+  if (refs.some((r) => r.uuid === uuid)) return uuid;
+  return refs[0]?.uuid ?? uuid;
+}
+
 export type PoolLine =
-  | { text: string; kind: 'group'; groups: readonly GroupRef[] }
+  | { text: string; kind: 'group'; groups: readonly GroupRef[]; saved: string }
   | { text: string; kind: 'unknown' }
   | { text: string; kind: 'invalid' };
 
@@ -72,7 +85,7 @@ export function readPoolLines(text: string, index: GroupIndex): PoolLine[] {
     if (!UUID_RE.test(t)) return { text: t, kind: 'invalid' };
     const groups = index.get(t.toLowerCase());
     return groups && groups.length > 0
-      ? { text: t, kind: 'group', groups }
+      ? { text: t, kind: 'group', groups, saved: canonicalUuid(t, index) }
       : { text: t, kind: 'unknown' };
   });
 }
@@ -94,13 +107,24 @@ export interface PoolSpread {
   size: number;
   /** The backends holding some of them. */
   found: Array<{ slug: string; name: string; count: number }>;
-  /** Groups found on no backend checked. */
+  /** Groups surely found on no backend checked. */
   missing: number;
+  /**
+   * At most this many may be on no backend: a uuid on several backends counts
+   * once per backend, and the checks say only how many each holds, never which
+   * (the pool's uuids are write-only). Equal to `missing` when no uuid is
+   * on two of the checked backends.
+   */
+  missingUpTo: number;
   /** Groups found but granting no transport, by name. */
   withoutTransports: Array<{ slug: string; name: string; group: string }>;
 }
 
-export function poolSpread(modeId: string, checks: readonly PoolCheck[]): PoolSpread {
+export function poolSpread(
+  modeId: string,
+  checks: readonly PoolCheck[],
+  index: GroupIndex = new Map(),
+): PoolSpread {
   let size = 0;
   const found: PoolSpread['found'] = [];
   const withoutTransports: PoolSpread['withoutTransports'] = [];
@@ -113,6 +137,22 @@ export function poolSpread(modeId: string, checks: readonly PoolCheck[]): PoolSp
     for (const group of m.withoutTransports)
       withoutTransports.push({ slug: c.slug, name: c.name, group });
   }
-  const seen = found.reduce((n, f) => n + f.count, 0);
-  return { size, found, missing: Math.max(0, size - seen), withoutTransports };
+  // Presence summed per backend counts a uuid held by k checked backends k times.
+  const checked = new Set(found.map((f) => f.slug));
+  let overcount = 0;
+  for (const refs of index.values()) {
+    const holders = new Set(refs.map((r) => r.backendSlug).filter((b) => checked.has(b)));
+    if (holders.size > 1) overcount += holders.size - 1;
+  }
+  const summed = found.reduce((n, f) => n + f.count, 0);
+  const most = found.reduce((n, f) => Math.max(n, f.count), 0);
+  const distinctAtMost = Math.min(size, summed);
+  const distinctAtLeast = Math.min(size, Math.max(most, summed - overcount));
+  return {
+    size,
+    found,
+    missing: size - distinctAtMost,
+    missingUpTo: size - distinctAtLeast,
+    withoutTransports,
+  };
 }
