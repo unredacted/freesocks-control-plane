@@ -21,6 +21,14 @@
  *    `hosts_changed`, which rolls back, never converges.
  *  - a rollback that cannot converge QUARANTINES the origin; nothing bypasses it.
  */
+import {
+  isOwnAddress,
+  ownBudgetKey,
+  ownBudgetPerDay,
+  ownCodesOf,
+  ownReplacesToday,
+  withOwnReplace,
+} from './lib/edges/ownPools';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -1086,6 +1094,12 @@ export async function collectStartBlockers(
    * the cooldown or the re-block hold, which stay whole for trusted ones.
    */
   openLane: boolean;
+  /**
+   * A replace of an address made for a country cut over on this node
+   * (convex/edgeOwnPools.ts): that country's own budget, never the node's or
+   * the fleet's daily cap or the cooldown.
+   */
+  ownPool: boolean;
 }> {
   const blockers: StartBlocker[] = [];
   const push = (code: string, message: string) => blockers.push({ code, message });
@@ -1101,6 +1115,7 @@ export async function collectStartBlockers(
       listenerId: a.listenerId,
       approval,
       openLane: false,
+      ownPool: false,
     };
   }
   const cfg = await resolveEdgeConfig(ctx.db);
@@ -1132,14 +1147,21 @@ export async function collectStartBlockers(
   }
   // A replace of an open address on a node with lanes: its own budget below.
   const early = a.kind === 'replace' && a.targetEdgeId ? await ctx.db.get(a.targetEdgeId) : null;
-  const openLane = !!early && early.relayId === a.relayId && isOpenLaneReplace(origin, early);
+  // A replace of a cut-over country's own address: its own budget below.
+  const ownPool = !!early && early.relayId === a.relayId && isOwnAddress(early, ownCodesOf(origin));
+  const openLane =
+    !ownPool && !!early && early.relayId === a.relayId && isOpenLaneReplace(origin, early);
   // The fleet guards (lib/edges/fleet.ts), read in the same transaction that
   // would start the rotation: a mass block holds every automatic rotation, and
   // the fleet's daily cap bounds them together. Never applied to a manual start.
   if (a.trigger === 'detector') {
     if ((await readFleetBrake(ctx.db)).engaged)
       push('edge.fleet_brake', 'Automatic rotation is held fleet-wide: many origins look blocked');
-    if (!openLane && (await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay)
+    if (
+      !openLane &&
+      !ownPool &&
+      (await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay
+    )
       push('edge.fleet_daily_cap', 'The fleet-wide daily cap on automatic rotations is reached');
   }
   if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
@@ -1222,7 +1244,21 @@ export async function collectStartBlockers(
       }
     }
     if (!force) {
-      if (openLane) {
+      if (ownPool) {
+        // A cut-over country's own addresses: its own daily budget (an
+        // operator's replace is counted, never refused by it).
+        if (a.trigger !== 'manual' && early) {
+          const key = ownBudgetKey(early.audience!, early.listenerId);
+          if (
+            ownReplacesToday(origin, key, todayKey(now)) >=
+            ownBudgetPerDay(origin, early.audience!, cfg.audience)
+          )
+            push(
+              'edge.audience_budget',
+              'This country\u2019s own addresses used today\u2019s replacement budget on this node; they are replaced again tomorrow',
+            );
+        }
+      } else if (openLane) {
         // Open addresses are expected to be blocked: their own small budget,
         // so they can never use up what trusted ones need (docs/edges.md
         // "Address enumeration").
@@ -1494,7 +1530,7 @@ export async function collectStartBlockers(
         'Nothing fits what the node was approved for; review and approve it again',
       );
   }
-  return { blockers, origin, cfg, targetEdge, listenerId, approval, openLane };
+  return { blockers, origin, cfg, targetEdge, listenerId, approval, openLane, ownPool };
 }
 
 export const start = internalMutation({
@@ -1701,6 +1737,7 @@ export async function startRotation(
     burn: a.burn ?? false,
     force,
     ...(g.openLane ? { openLane: true } : {}),
+    ...(g.ownPool ? { ownPool: true as const } : {}),
     forceGeoEvidence: a.forceGeoEvidence === true ? true : undefined,
     publishOnDone: a.kind === 'provision' ? (a.publishOnDone ?? false) : undefined,
     targetEdgeId: a.targetEdgeId,
@@ -1738,11 +1775,21 @@ export async function startRotation(
   });
   // The open lane counts against its own budget only (convex/edgeLanes.ts).
   if (g.openLane) await countFleetOpenReplace(ctx.db, now);
-  else if (a.trigger === 'detector') await countFleetRotation(ctx.db, now);
+  else if (a.trigger === 'detector' && !g.ownPool) await countFleetRotation(ctx.db, now);
   const today = todayKey(now);
+  const ownTarget = g.ownPool ? g.targetEdge : null;
   await ctx.db.patch(a.relayId, {
     activeRotationId: id,
-    ...(a.kind === 'replace' && !g.openLane
+    ...(ownTarget
+      ? {
+          audienceReplaces: withOwnReplace(
+            origin,
+            ownBudgetKey(ownTarget.audience!, ownTarget.listenerId),
+            today,
+          ),
+        }
+      : {}),
+    ...(a.kind === 'replace' && !g.openLane && !g.ownPool
       ? {
           rotationsDayKey: today,
           rotationsToday: (origin.rotationsDayKey === today ? origin.rotationsToday : 0) + 1,
@@ -3185,11 +3232,14 @@ export const finalize = internalMutation({
       ...(sameProviderL7
         ? { l7ReplacementsDayKey: today, l7ReplacementsToday: usedToday + 1 }
         : {}),
-      // An open-lane replace sets no cooldown: it would hold the trusted lane back.
+      // An open-lane replace, and one of a cut-over country's own addresses, set
+      // no cooldown: it would hold the replacements of everyone's addresses back.
       ...(r.kind === 'replace'
         ? {
             lastRotatedAt: now,
-            ...(r.openLane ? {} : { cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }),
+            ...(r.openLane || r.ownPool
+              ? {}
+              : { cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }),
           }
         : {}),
       // A detector burn: the burned address's pick cools on this origin (D6),

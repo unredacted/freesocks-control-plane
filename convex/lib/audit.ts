@@ -531,6 +531,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // the countries and the count (-1 = the entry removed, 0 = a place with none).
   'edge.relay.pick_audience': ['relaySlug', 'placeKey', 'countries', 'want'],
   'edge.relay.pick_audience_only': ['relaySlug', 'placeKey', 'only'],
+  'edge.relay.own_pool': ['relaySlug', 'country', 'own'],
+  'edge.relay.own_budget': ['relaySlug', 'perDay'],
   // The automation switch: the one boolean it was set to.
   'edge.automation.set': ['on'],
   // Freedom modes only through edges (freedomDelivery.setEdgesOnly): what it was set to,

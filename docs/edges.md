@@ -5161,6 +5161,63 @@ its own, and an entry on the zone everyone uses shares it. Dormant until an entr
   published becomes an ordinary spare (nobody was handed it). To go back further, the rollback of
   § Addresses only for some countries follows.
 
+### A country on its own addresses
+
+Once a node keeps addresses for a country (§ Countries with their own addresses), it may **cut
+that country over** (`relays.ownPools[]`, `convex/edgeOwnPools.ts`; pure rules in
+`convex/lib/edges/ownPools.ts`). A block in that country then replaces only that country's
+address, never the one everyone shares. Dormant until a country is cut over.
+
+- **Who is handed what.** A member steered by that country is handed its own addresses first, for
+  the primary **and** the backup (`assignEndpoints` `ownPool`: inside "not blocked there", its own
+  before the lane, meant for, the band and the tier). A shared address only as a fallback: as the
+  backup when the country has one address of its own (a load balancer), or first when every one
+  of its own is blocked there or cannot be handed out (attention `audience_pool_down`). Other
+  members, unlocated ones and mirrors without the member's answer are handed exactly what they
+  were; a mirror with the answer is ordered like the member.
+- **The detector.** Once the cutover has settled (one refresh interval and the revalidation
+  window, as the steering vetoes wait), that country's evidence no longer replaces a shared
+  address on the node: evidence only from cut-over countries is vetoed `own_pool`; in mixed
+  evidence the rest is judged as before. Evidence that names no country still replaces it, and
+  a country taken off the censored-country list no longer vetoes (its members' stored countries
+  are cleared, so they are on shared addresses again).
+- **Its own budget.** A replacement of the country's own address spends that country's budget on
+  the node: `edge.audience.replacesPerDay` per node, per transport, per UTC day (default 1, 0 to
+  10, 0 = never automatic), a country's own value in `edge.audience.replacesPerDayByCountry`
+  (`{"IR": 2}`; the strictest of an address's countries), a node's own in
+  `relays.audienceReplacesPerDay`, counted in `relays.audienceReplaces`. The fleet's and each
+  country's values are under Admin -> Edges -> Settings, Rotation (a blank country follows the
+  fleet). It never counts against,
+  nor waits for, the node's daily cap, its cooldown or the fleet's daily cap (the fleet brake
+  still holds it, and a node whose only evidence is on such addresses never counts toward the
+  brake). Used up: veto `audience_budget` (an automatic start is refused `edge.audience_budget`);
+  an operator's replace is counted, never refused. The re-block hold applies as for any address.
+- **Prerequisites** (`edge.audience_*` refusals): the country on the censored-country list,
+  ordering by country on (`audience_needs_steering`), the country question on
+  (`audience_needs_ask`: a mirror without the member's answer can carry only shared addresses),
+  the rendezvous walk on the node (`audience_needs_spread`), an entry for the country on one of the
+  node's picks (`audience_no_pool`), its own addresses at their count on every transport
+  (`audience_pool_short`) and none of them blocked there (`audience_pool_blocked`). Stopping is
+  never refused, not even in a maintenance freeze or during a setup run. Each change moves the node's publication epoch and refreshes the mirrors, so
+  apps move at their next refresh.
+- **The rehearsal** (`cutoverPreview`): before a cutover, over synthetic seats steered by that
+  country, how many move and how many still hold a shared address before and after.
+- **Keys on an older body.** Once an hour per node, the keys of each cut-over country whose last
+  body predates its cutover are counted (a mirror refreshed since, at the cutover's epoch
+  `ownPools[].epoch` or later, is not) (counts only, `relays.ownPools[].stale`; attention
+  `audience_stale_keys`, info). Their apps keep shared addresses that this country's reports no
+  longer replace.
+- **Admin API:** `POST relays/{id}/own-pools/{code} {own}` (audited `edge.relay.own_pool`),
+  `POST relays/{id}/own-pools/{code}/preview` (read only), `POST relays/{id}/own-budget
+{perDay}` (`null` follows the country's, else the fleet's; audited `edge.relay.own_budget`),
+  `POST countries/own-pools/{code} {own}` (every node keeping addresses for it where it may be
+  now, one result per node with its refusal).
+- **Rollback:** `edgeOwnPools:clearOwnPoolsForRollback` (no arguments; refused while a
+  replacement of a country's own address is in flight): every cutover, budget and count goes
+  (each node's epoch moves, mirrors refreshed), then every rotation forgets it was one, a page at
+  a time in the background. The countries' own addresses stay contained (§ Countries with their
+  own addresses has the next rollback).
+
 ### Latency over the whole path
 
 Every member's traffic leaves the service at the NODE, so the nearest address is not always the
@@ -7510,6 +7567,14 @@ Rollback: `edgeAudiences:clearAudiencePicksForRollback` with no arguments (refus
 for some countries is in flight); it pages in the background through nodes, rotations, then
 addresses, and the older build deploys once its last page ran (contained addresses stay
 contained, as the older build knows them).
+
+**A country on its own addresses** (§ "A country on its own addresses", 2026-11): fields
+`relays.ownPools`, `relays.audienceReplaces`, `relays.audienceReplacesPerDay` and
+`edgeRotations.ownPool`, two settings (`edge.audience.replacesPerDay` 1,
+`edge.audience.replacesPerDayByCountry` empty), no migration; nothing changes until a country is
+cut over. Rollback: `edgeOwnPools:clearOwnPoolsForRollback` with no arguments (refused while a
+replacement of a country's own address is in flight), before the rollback of countries with
+their own addresses.
 
 **FCP's own test of a send** adds one setting (`edge.sni.autoConfirm`, off), a receipt kind
 (`client_check`), a receipt state (`failed`) and one optional receipt field (`check`); the

@@ -31,6 +31,7 @@
  * Every provider call runs under an edge op claim; every DB change is a
  * mutation in edges / origins / edgeRotations / edgeReconcileMutations.
  */
+import { staleCountDue } from './edgeOwnPools';
 import { ConvexError } from 'convex/values';
 import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
@@ -513,6 +514,10 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         if (r.removed) report.finalizedDeletes++;
         continue;
       }
+      // A country on its own addresses: once an hour, how many of its keys
+      // still hold a body from before its cutover (counts only).
+      if (staleCountDue(origin, now))
+        await ctx.scheduler.runAfter(0, internal.edgeOwnPools.countStale, { relayId: origin._id });
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
       // A guided setup owns the origin: nothing here publishes or provisions on it.
       if (origin.setupOwned) continue;

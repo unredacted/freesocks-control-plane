@@ -251,6 +251,14 @@ export const ROTATION_FIELDS: Field[] = [
   },
   {
     kind: 'number',
+    path: 'audience.replacesPerDay',
+    label: "A country's own addresses replaced per node",
+    unit: 'a day',
+    helper:
+      "For a country on its own addresses on a node: their own budget, per transport. It never uses the node's daily cap. 0: only by hand.",
+  },
+  {
+    kind: 'number',
     path: 'trust.strikesToSuspect',
     label: 'Suspect an account after',
     unit: 'strikes',
@@ -808,6 +816,9 @@ export const LIST_FIELDS: Field[] = [
   },
 ];
 
+/** The per-country budgets' own path (`{IR: 2}`; a country left out follows the line above). */
+export const AUDIENCE_BUDGETS_PATH = 'audience.replacesPerDayByCountry';
+
 /** The zone checklist's own path (a list of zone ids). */
 export const NAME_ZONES_PATH = 'names.zones';
 
@@ -819,7 +830,7 @@ export const SECTION_PATHS: Record<
   string[]
 > = {
   basics: [...pathsOf(BASIC_SWITCHES), ...pathsOf(BASIC_NUMBERS), AUTO_PROVISION.path],
-  rotation: pathsOf(ROTATION_FIELDS),
+  rotation: [...pathsOf(ROTATION_FIELDS), AUDIENCE_BUDGETS_PATH],
   rendering: pathsOf(RENDER_GLOBAL_FIELDS),
   detector: pathsOf(DETECTOR_FIELDS),
   probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS), ...pathsOf(COUNTRY_FIELDS)],

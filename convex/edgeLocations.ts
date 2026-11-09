@@ -18,6 +18,7 @@
  * it is created and whenever the account is tested (`recordCheck`). Rows are
  * operator-scale.
  */
+import { ownCodesOf } from './lib/edges/ownPools';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, MutationCtx, QueryCtx } from './_generated/server';
@@ -1171,6 +1172,7 @@ export const forCountriesEstimate = internalQuery({
             backupFirst,
             ...(o.edgePick ? { edgePick: o.edgePick } : {}),
             ...(lanesOn(o) ? { memberLane: 'trusted' as const } : {}),
+            ...(ownCodesOf(o).includes(country) ? { ownPool: true } : {}),
             minProvenForExclusive: cfg.country.minProvenForExclusive,
             curated,
           }),

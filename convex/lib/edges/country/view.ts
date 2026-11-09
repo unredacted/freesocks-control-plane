@@ -395,6 +395,8 @@ export interface OriginInput {
   edgePick?: EdgePickVersion;
   /** The node's address lanes are on (convex/edgeLanes.ts). */
   lanes?: boolean;
+  /** The countries cut over to their own addresses on this node (`relays.ownPools`). */
+  ownCountries?: readonly string[];
   /**
    * Latency ordering is on: what paths on this node are judged from
    * (edgeLatency.ts `latencyInputsFor`). Absent = no bands.
@@ -584,7 +586,7 @@ const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1
  * transport), the member's country as their stored one.
  */
 export function handedOn(
-  origin: Pick<OriginInput, 'enabled' | 'published' | 'edgePick' | 'latency'>,
+  origin: Pick<OriginInput, 'enabled' | 'published' | 'edgePick' | 'latency' | 'ownCountries'>,
   listener: Pick<ListenerInput, 'listenerId' | 'sniPick'>,
   s: ViewSettings,
   blockedEdges: ReadonlySet<string>,
@@ -643,6 +645,9 @@ export function handedOn(
       backupNames: s.rule.backupNames,
       where,
       edgeCountry: s.steering && listed ? s.country : null,
+      ...(s.steering && listed && origin.ownCountries?.includes(s.country)
+        ? { ownPool: true }
+        : {}),
       minProvenForExclusive: s.minProvenForExclusive,
       ...(pathMs ? { pathMs } : {}),
     });
