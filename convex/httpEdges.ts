@@ -1507,6 +1507,32 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         }),
       );
     }
+    // A country on its own addresses (edgeOwnPools.ts): cut it over on this node
+    // (`own: true`, refused until it may be) or stop (`own: false`); first what it
+    // changes for its members (read only); this node's own daily budget.
+    if (c === 'own-pools' && d && (!parts[4] || parts[4] === 'preview')) {
+      if (parts[4] === 'preview' && !parts[5])
+        return json(await ctx.runQuery(internal.edgeOwnPools.cutoverPreview, { relayId, code: d }));
+      if (typeof body.own !== 'boolean')
+        return errorJson('validation', 'own must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeOwnPools.setOwnPool, {
+          relayId,
+          code: d,
+          own: body.own,
+          ...act,
+        }),
+      );
+    }
+    if (c === 'own-budget' && !d) {
+      const perDay =
+        body.perDay === null ? null : typeof body.perDay === 'number' ? body.perDay : undefined;
+      if (perDay === undefined)
+        return errorJson('validation', 'perDay must be a number or null', 400);
+      return json(
+        await ctx.runMutation(internal.edgeOwnPools.setOwnBudget, { relayId, perDay, ...act }),
+      );
+    }
     if (c === 'auto-replace' && d === 'resume' && !parts[4])
       return json(
         await ctx.runMutation(internal.edgeRotations.resumeAutoReplace, {
@@ -1911,6 +1937,19 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     }
   }
   if (a === 'countries') {
+    // A country on its own addresses on every node where it may be now (or
+    // stopped on every node): one result per node that keeps addresses for it.
+    if (b === 'own-pools' && c && !parts[3]) {
+      if (typeof body.own !== 'boolean')
+        return errorJson('validation', 'own must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeOwnPools.setOwnPoolEverywhere, {
+          code: c,
+          own: body.own,
+          ...act,
+        }),
+      );
+    }
     if (b === 'marks' && !c) {
       // { scope: 'edge' | 'group', ref, country, state: 'proven' | 'blocked' | null }
       const scope = body.scope;

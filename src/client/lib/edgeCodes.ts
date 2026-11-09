@@ -1066,6 +1066,18 @@ const COPY = {
       'This node has addresses only for some countries in use, and ordering by country is off, so nobody is handed them.',
     fix: 'Turn ordering by country back on under Settings, or switch those locations back to everyone.',
   },
+  audience_pool_down: {
+    label: 'Country on shared addresses',
+    explain:
+      'This country is on its own addresses on this node, but every one of them for this transport is blocked there or cannot be handed out. Its members are handed shared addresses until one of theirs works again, and their reports still never replace a shared address.',
+    fix: "Replace the country's own address (Replace now, or wait for tomorrow's budget), or stop the country's own addresses on this node.",
+  },
+  audience_stale_keys: {
+    label: 'Keys not moved to own addresses',
+    explain:
+      "Keys of this country on this node still hold a body from before it moved to its own addresses. Their apps have not refreshed, so they keep the shared addresses, which are no longer replaced because of this country's reports.",
+    fix: 'Nothing to do for most: they move at their next refresh. Members who never refresh need to update their subscription in the app.',
+  },
   location_short: {
     label: 'Location short of addresses',
     explain:
@@ -1083,6 +1095,12 @@ const COPY = {
     explain:
       'This node hands its trusted addresses only to paid members and older accounts. Its open addresses, which new and suspected accounts get, are all gone, so those members get nothing until one is replaced.',
     fix: 'Wait for the next open address (its own daily budget), add one, or raise the open addresses wanted on the node.',
+  },
+  audience_budget: {
+    label: 'Country budget used',
+    explain:
+      "This country's own addresses on this node were replaced as often as today's budget allows. They never use the replacements kept for everyone's addresses.",
+    fix: 'They are replaced again tomorrow (UTC). Replace one by hand, or raise the budget under Settings or on the node.',
   },
   open_lane_budget: {
     label: 'Open address budget used',
@@ -1275,6 +1293,11 @@ const COPY = {
     label: 'Protocol-level block',
     explain:
       'Every edge suffers alike, which points at the protocol being blocked, not the address.',
+  },
+  own_pool: {
+    label: 'Country on its own addresses',
+    explain:
+      'Every report of this block comes from countries on their own addresses on this node. Their members are handed their own addresses, so a shared address is not replaced for them.',
   },
   outside_audience: {
     label: 'Blocked only outside its countries',

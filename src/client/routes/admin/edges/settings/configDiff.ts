@@ -19,11 +19,18 @@ export type FlatConfig = Record<string, unknown>;
 
 const CLIENTS = 'render.clients';
 
+/** Settings stored as one object (a map): mirrors the server's `EDGE_OBJECT_PATHS`. */
+export const OBJECT_PATHS: readonly string[] = ['audience.replacesPerDayByCountry'];
+
 export function flattenConfig(config: unknown): FlatConfig {
   const out: FlatConfig = {};
   const walk = (obj: Record<string, unknown>, prefix: string) => {
     for (const [k, val] of Object.entries(obj)) {
       const path = prefix ? `${prefix}.${k}` : k;
+      if (OBJECT_PATHS.includes(path)) {
+        out[path] = val;
+        continue;
+      }
       if (path === CLIENTS && val && typeof val === 'object') {
         for (const [fam, rule] of Object.entries(val as Record<string, unknown>)) {
           out[`${CLIENTS}.${fam}`] = rule;

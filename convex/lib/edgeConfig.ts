@@ -219,6 +219,16 @@ export interface EdgeConfig {
     openReplacesPerDay: number;
     openReplacesPerFleetDay: number;
   };
+  /**
+   * A country on its own addresses (convex/edgeOwnPools.ts): replacements of its
+   * own addresses per node, per transport, per UTC day (0 = never automatic),
+   * outside the node's and the fleet's caps. A country's own value wins over
+   * the fleet's; a node's own (`relays.audienceReplacesPerDay`) over both.
+   */
+  audience: {
+    replacesPerDay: number;
+    replacesPerDayByCountry: Record<string, number>;
+  };
   /** L7 (CDN front) edges. */
   l7: {
     /** Automatic selection of L7 accounts (detector replacements, auto-provision); a guided setup run's chosen account is used either way. Ships off. */
@@ -406,6 +416,10 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     openReplacesPerDay: 1,
     openReplacesPerFleetDay: 10,
   },
+  audience: {
+    replacesPerDay: 1,
+    replacesPerDayByCountry: {},
+  },
   l7: {
     autoSelect: false,
     maxSameProviderReplacementsPerDay: 2,
@@ -587,6 +601,8 @@ export const EDGE_KEYS = {
   'trust.strikeDays': 'edge.trust.strikeDays',
   'lanes.openReplacesPerDay': 'edge.lanes.openReplacesPerDay',
   'lanes.openReplacesPerFleetDay': 'edge.lanes.openReplacesPerFleetDay',
+  'audience.replacesPerDay': 'edge.audience.replacesPerDay',
+  'audience.replacesPerDayByCountry': 'edge.audience.replacesPerDayByCountry',
   'l7.autoSelect': 'edge.l7.autoSelect',
   'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
   'names.enabled': 'edge.names.enabled',
@@ -806,6 +822,15 @@ export function sanitizeRelayConfig(
         500,
         D.lanes.openReplacesPerFleetDay,
       ),
+    },
+    audience: {
+      replacesPerDay: sanitizeInt(
+        raw['audience.replacesPerDay'],
+        0,
+        MAX_AUDIENCE_REPLACES_PER_DAY,
+        D.audience.replacesPerDay,
+      ),
+      replacesPerDayByCountry: sanitizeCountryBudgets(raw['audience.replacesPerDayByCountry']),
     },
     l7: {
       autoSelect: sanitizeBool(raw['l7.autoSelect'], D.l7.autoSelect),
@@ -1267,6 +1292,23 @@ export function qualificationRenewLeadMs(): number {
 
 // --- per-origin knobs (one inheritance rule) ---------------------------------------------------------
 
+/** The most replacements of one country's own addresses a day a budget may allow. */
+export const MAX_AUDIENCE_REPLACES_PER_DAY = 10;
+
+/** `{IR: 2}`: listed-shape codes only, each 0..MAX (anything else dropped). */
+export function sanitizeCountryBudgets(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
+    const code = k.trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) continue;
+    if (typeof val !== 'number' || !Number.isInteger(val)) continue;
+    if (val < 0 || val > MAX_AUDIENCE_REPLACES_PER_DAY) continue;
+    out[code] = val;
+  }
+  return out;
+}
+
 /** The knobs an origin may override, as stored on `relays` (absent = follow the fleet). */
 export interface OriginOverrides {
   standbyPerRelay?: number;
@@ -1353,6 +1395,7 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'trust.strikeDays': { min: 1, max: 90 },
   'lanes.openReplacesPerDay': { min: 0, max: 50 },
   'lanes.openReplacesPerFleetDay': { min: 0, max: 500 },
+  'audience.replacesPerDay': { min: 0, max: MAX_AUDIENCE_REPLACES_PER_DAY },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
   'names.moveQuietDays': { min: 0, max: 365 },
   'lists.jumpFactor': { min: 2, max: 100 },
@@ -1384,11 +1427,18 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
  * per-family render rules kept as objects under `render.clients.<family>`. The
  * CMS diffs and resets against this shape.
  */
+/** Settings stored as one object (a map), never walked into dotted paths. */
+export const EDGE_OBJECT_PATHS: readonly string[] = ['audience.replacesPerDayByCountry'];
+
 export function flattenEdgeConfig(cfg: EdgeConfig): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const walk = (obj: Record<string, unknown>, prefix: string) => {
     for (const [k, val] of Object.entries(obj)) {
       const path = prefix ? `${prefix}.${k}` : k;
+      if (EDGE_OBJECT_PATHS.includes(path)) {
+        out[path] = val;
+        continue;
+      }
       if (path === 'render.clients') {
         for (const [fam, rule] of Object.entries(val as Record<string, unknown>))
           out[`render.clients.${fam}`] = rule;

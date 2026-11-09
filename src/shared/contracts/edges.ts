@@ -2618,6 +2618,8 @@ export const EdgeConfigView = z.object({
   nameZones: z
     .array(z.object({ id: z.string(), zone: z.string(), account: z.string() }))
     .default([]),
+  /** The censored-country list's codes (a country's own replacement budget). Absent from an older server. */
+  censoredCountries: z.array(z.string()).default([]),
 });
 export type EdgeConfigView = z.infer<typeof EdgeConfigView>;
 

@@ -1893,6 +1893,29 @@ export default defineSchema({
     // The open lane's own replacement count today (UTC day key): it never uses
     // the node's daily cap (`rotationsToday`), which stays whole for trusted ones.
     openReplaces: v.optional(v.object({ day: v.string(), count: v.number() })),
+    // Countries cut over to their own addresses on this node (docs/edges.md
+    // "A country on its own addresses", convex/edgeOwnPools.ts): their members are
+    // handed their own addresses first and for the backup (shared ones only as a
+    // fallback), and their evidence never replaces a shared address here once
+    // `since` plus the settle has passed. `stale`: the last hourly count of keys
+    // of that country whose last body still holds a shared address of this node.
+    ownPools: v.optional(
+      v.array(
+        v.object({
+          code: v.string(),
+          since: v.number(),
+          stale: v.optional(v.object({ at: v.number(), keys: v.number() })),
+        }),
+      ),
+    ),
+    // Replacements of a cut-over country's own addresses today, per (countries,
+    // transport) (`key` = "<codes space-joined>|<listenerId>"): their own budget,
+    // never the node's daily cap, the cooldown or the fleet's caps.
+    audienceReplaces: v.optional(
+      v.array(v.object({ key: v.string(), day: v.string(), count: v.number() })),
+    ),
+    // This node's override of the per-country daily budget (`edge.audience.replacesPerDay`).
+    audienceReplacesPerDay: v.optional(v.number()),
     // Per-origin OVERRIDES of the fleet knobs, one rule for all five
     // (`originPolicy` in lib/edgeConfig.ts): absent = follow `edge.*`.
     standbyPerRelay: v.optional(v.number()),
@@ -2595,6 +2618,9 @@ export default defineSchema({
     // A replace of an open address on a node with lanes (convex/edgeLanes.ts):
     // counted against the open lane's own budget, and it sets no cooldown.
     openLane: v.optional(v.boolean()),
+    // A replace of a cut-over country's own address (convex/edgeOwnPools.ts):
+    // counted against that country's own budget on the node, and it sets no cooldown.
+    ownPool: v.optional(v.literal(true)),
     trigger: v.union(
       v.literal('manual'),
       v.literal('detector'),

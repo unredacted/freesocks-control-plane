@@ -6,6 +6,14 @@
  * raise suspicion, and — only with edge-level evidence, every gate open and the
  * operator's opt-in — start a burn rotation of the suspected edge.
  */
+import {
+  isOwnAddress,
+  ownBudgetKey,
+  ownBudgetPerDay,
+  ownCodesOf,
+  ownReplacesToday,
+  settledOwnCodes,
+} from './lib/edges/ownPools';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
@@ -295,6 +303,8 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
         }
       : null,
     steering: await steeringInputFor(ctx, origin, cfg, now),
+    // Countries on their own addresses: theirs, and those with budget left today.
+    own: await ownInputOf(ctx, origin, cfg, published, now),
     since: now - edgeMs.detectWindow(cfg),
     baseline,
     usersOnline,
@@ -341,7 +351,38 @@ async function steeringInputFor(
     held: await heldCountries(ctx.db, cfg.probe.countries, now),
     freedomListeners: await freedomListenersOf(ctx, origin),
     ...(lanesOn(origin) ? { lanes: true } : {}),
+    // A cutover settles like steering: its members hold their own addresses by now.
+    ...(origin.ownPools?.length
+      ? { own: settledOwnCodes(origin, steeringSettleMs(cfg), now) }
+      : {}),
   };
+}
+
+/**
+ * A node's addresses made for countries cut over on it, and those whose own
+ * daily budget has a replacement left (convex/edgeOwnPools.ts); null = none.
+ */
+async function ownInputOf(
+  ctx: QueryCtx,
+  origin: Origin,
+  cfg: EdgeConfig,
+  published: ReadonlyArray<{ edgeId: string }>,
+  now: number,
+): Promise<{ edgeIds: string[]; budgetLeft: string[] } | null> {
+  const own = ownCodesOf(origin);
+  if (own.length === 0) return null;
+  const today = todayKey(now);
+  const edgeIds: string[] = [];
+  const budgetLeft: string[] = [];
+  for (const p of published) {
+    const e = await ctx.db.get(p.edgeId as Id<'edges'>);
+    if (!e || !isOwnAddress(e, own)) continue;
+    edgeIds.push(p.edgeId);
+    const key = ownBudgetKey(e.audience!, e.listenerId);
+    if (ownReplacesToday(origin, key, today) < ownBudgetPerDay(origin, e.audience!, cfg.audience))
+      budgetLeft.push(p.edgeId);
+  }
+  return { edgeIds, budgetLeft };
 }
 
 async function openEdgeIdsOf(
@@ -702,10 +743,15 @@ export const run = internalAction({
             report.suspected++;
             // A node whose only evidence is on open addresses (lanes on: they
             // are expected to be blocked) is no sign of a mass block.
+            // Nor is one whose only evidence is on a cut-over country's own
+            // addresses (their own budget, outside the fleet's guards).
             const openOnly =
-              !!w.lanes &&
+              (!!w.lanes || !!w.own) &&
               ev.edgeEvidence.length > 0 &&
-              ev.edgeEvidence.every((x) => w.lanes!.openEdgeIds.includes(x.edgeId));
+              ev.edgeEvidence.every(
+                (x) =>
+                  !!w.lanes?.openEdgeIds.includes(x.edgeId) || !!w.own?.edgeIds.includes(x.edgeId),
+              );
             if (!openOnly) brakeSuspected++;
           }
           evaluated.push({ origin: o, w, ev, sims });
@@ -752,6 +798,7 @@ export const run = internalAction({
             },
             ...(w.steering ? { steering: w.steering } : {}),
             ...(w.lanes ? { lanes: w.lanes } : {}),
+            ...(w.own ? { own: w.own } : {}),
           };
           const decision = autoRotateDecision(decisionArgs);
           const veto = 'veto' in decision ? decision.veto : null;

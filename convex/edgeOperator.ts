@@ -10,6 +10,7 @@
  * gathers facts. Nothing here returns credentials or addresses a deployment
  * uses beyond what the admin views already carry.
  */
+import { publishedEdgesOf } from './edgeRender';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
@@ -1988,6 +1989,55 @@ export const attention = internalQuery({
             action: 'open_relay',
             since: null,
           });
+      }
+      // A country on its own addresses (convex/edgeOwnPools.ts): a transport
+      // whose own addresses for it are all blocked there or cannot be handed
+      // out puts its members on shared ones (the fallback; its evidence still
+      // never moves them); keys still on a body from before the cutover (info).
+      if (relay.enabled && relay.ownPools?.length) {
+        const { published: pool } = await publishedEdgesOf(
+          ctx,
+          relay,
+          { kind: 'member' },
+          { includeIneligible: true },
+        );
+        for (const own of relay.ownPools) {
+          for (const l of setState.listeners) {
+            const carried = setState.requirement.audienceWants.some(
+              (w) => w.listenerKey === l.listenerKey && w.codes.includes(own.code),
+            );
+            if (!carried) continue;
+            const theirs = pool.filter(
+              (e) => e.listenerKey === l.listenerKey && !!e.audience?.includes(own.code),
+            );
+            const working = theirs.filter(
+              (e) => e.eligible !== false && !(e.blockedIn ?? []).includes(own.code),
+            );
+            if (working.length === 0)
+              items.push({
+                ...base(relay),
+                id: `audience_pool_down:${relay._id}:${own.code}:${l._id}`,
+                kind: 'audience_pool_down',
+                severity: 'warning',
+                listenerKey: l.listenerKey,
+                code: null,
+                facts: { country: own.code, inUse: theirs.length },
+                action: 'open_relay',
+                since: null,
+              });
+          }
+          if (own.stale && own.stale.keys > 0)
+            items.push({
+              ...base(relay),
+              id: `audience_stale_keys:${relay._id}:${own.code}`,
+              kind: 'audience_stale_keys',
+              severity: 'info',
+              code: null,
+              facts: { country: own.code, keys: own.stale.keys, countedAt: own.stale.at },
+              action: 'open_relay',
+              since: iso(own.since),
+            });
+        }
       }
       // The node's provider set: a pick that cools after a burn (no automatic
       // work goes there until it ends), and transports whose picks give no

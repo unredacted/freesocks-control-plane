@@ -178,6 +178,7 @@ async function load(db: Db): Promise<Loaded> {
         published,
         ...(relay.edgePick ? { edgePick: relay.edgePick } : {}),
         ...(lanesOn(relay) ? { lanes: true } : {}),
+        ...(relay.ownPools?.length ? { ownCountries: relay.ownPools.map((p) => p.code) } : {}),
         ...(await latencyContextOf(db, relay, published)),
       },
       edges,
