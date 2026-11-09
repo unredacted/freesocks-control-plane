@@ -1072,6 +1072,12 @@ const COPY = {
       'This country is on its own addresses on this node, but every one of them for this transport is blocked there or cannot be handed out. Its members are handed shared addresses until one of theirs works again, and their reports still never replace a shared address.',
     fix: "Replace the country's own address (Replace now, or wait for tomorrow's budget), or stop the country's own addresses on this node.",
   },
+  country_defaults_waiting: {
+    label: 'Country defaults waiting',
+    explain:
+      "A country's default picks are not written on this node yet: it needs the rendezvous walk, ordering by country, or room in its pool first. Its members there keep the shared addresses meanwhile.",
+    fix: 'Switch the node to the rendezvous walk on the node page (it moves members once), turn on ordering by country, or opt the node out of that country.',
+  },
   audience_stale_keys: {
     label: 'Keys not moved to own addresses',
     explain:

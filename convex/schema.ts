@@ -1822,6 +1822,10 @@ export default defineSchema({
                 codes: v.array(v.string()),
                 want: v.optional(v.number()),
                 addedAt: v.number(),
+                // Written by a country's default picks (docs/edges.md "A
+                // country's default picks"), which keep it in step; absent =
+                // the node's own entry, which the defaults never touch.
+                fromDefault: v.optional(v.literal(true)),
               }),
             ),
           ),
@@ -1830,9 +1834,17 @@ export default defineSchema({
           // only for some countries but for this node alone (a zone kept for
           // one country).
           audienceOnly: v.optional(v.literal(true)),
+          // Added by a country's default picks (the node did not pick the
+          // location): goes with its last entry once nothing is live there.
+          fromDefault: v.optional(v.literal(true)),
         }),
       ),
     ),
+    // Countries whose default picks this node does not take (docs/edges.md
+    // "A country's default picks"), and why the defaults wait on it (no
+    // rendezvous walk, a pool that would be too large), with when it was seen.
+    countryDefaultsOptOut: v.optional(v.array(v.string())),
+    countryDefaultsWaiting: v.optional(v.object({ code: v.string(), at: v.number() })),
     // Picks whose address the detector just burned here: no automatic work
     // allocates, provisions or publishes into them until `until`.
     cooling: v.optional(
@@ -2615,6 +2627,16 @@ export default defineSchema({
   // reads the explicit row fields below, never the bounded `events[]` log
   // (display-only); rows created before those fields existed fall back to the
   // event inference in edgeRotations.ts.
+  // A country's default picks (docs/edges.md "A country's default picks",
+  // convex/edgeCountryDefaults.ts): per country (or a few together), the picks
+  // its own addresses go to on every freedom node; upkeep writes them onto each
+  // ready node. Rollback: `edgeCountryDefaults:clearCountryDefaultsForRollback`.
+  countryDefaults: defineTable({
+    codes: v.array(v.string()),
+    picks: v.array(v.object({ locationId: v.id('edgeLocations'), want: v.optional(v.number()) })),
+    updatedAt: v.number(),
+  }),
+
   edgeRotations: defineTable({
     relayId: v.id('relays'),
     kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),

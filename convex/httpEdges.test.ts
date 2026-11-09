@@ -381,6 +381,14 @@ describe('origin admin routes', () => {
       'admin:servers:read',
     );
     expect(scopeFor(['relays', 'r1', 'own-pools', 'IR'], 'POST')).toBe('admin:servers:manage');
+    // A country's default picks: the preview is a read, saving and removing are writes.
+    expect(scopeFor(['countries', 'defaults', 'preview'], 'POST')).toBe('admin:servers:read');
+    expect(scopeFor(['countries', 'defaults'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['countries', 'defaults', 'remove'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['countries', 'defaults'], 'GET')).toBe('admin:servers:read');
+    expect(scopeFor(['relays', 'r1', 'country-defaults', 'IR'], 'POST')).toBe(
+      'admin:servers:manage',
+    );
     expect(scopeFor(['relays', 'r1', 'own-pools', 'IR', 'preview', 'x'], 'POST')).toBe(
       'admin:servers:manage',
     );

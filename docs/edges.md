@@ -5075,6 +5075,49 @@ address, never the one everyone shares. Dormant until a country is cut over.
   a time in the background. The countries' own addresses stay contained (§ Countries with their
   own addresses has the next rollback).
 
+### A country's default picks
+
+So that every freedom node keeps addresses for a country without one entry per node, the fleet
+keeps a **default per country** (or a few countries together): the picks its own addresses go to,
+in order, each with a count of each transport it carries or none (a fallback place)
+(`countryDefaults`, `convex/edgeCountryDefaults.ts`; pure planner in
+`convex/lib/edges/countryDefaults.ts`). Dormant until a default is saved.
+
+- **Upkeep writes them** (each pass, before step 5W) onto every ready node as entries of its picks
+  (§ Countries with their own addresses), marked `fromDefault`. A location the node does not pick
+  is added as a pick serving its countries only (`audienceOnly`, `fromDefault`). Only locations
+  that carry one of the node's freedom transports (a transport only freedom-family modes use);
+  nodes with none take nothing. The next pass fills the counts as for any entry.
+- **Never on its own:** a node a guided setup owns (after go-live, the next pass), one with a
+  rotation running (the next pass), and one where writing them would need the operator: ordering
+  by country off, no rendezvous walk (switching it moves members once), or a pool that would grow
+  past its size. Such a node waits (`relays.countryDefaultsWaiting`, attention
+  `country_defaults_waiting` with the refusal code).
+- **The node's own entries win.** A country a node keeps by hand (any entry not from the defaults)
+  takes no default there, and the defaults' entries for it go. A hand entry at a pick replaces a
+  default entry sharing a country there. A node may opt out of a country
+  (`relays.countryDefaultsOptOut`).
+- **Changing or removing a default** follows on every node at its next pass. A removed entry's
+  addresses stay theirs and keep serving; a pick the defaults added goes with its last entry once
+  nothing is live there (until then it serves its countries only). A guided re-protect keeps the
+  picks the defaults added.
+- **Saving** needs listed countries (1 to 4, none already in another default), ordering by country
+  on, 1 to 4 locations, distinct, none only for some countries, and at least one with a count.
+  Billable once applied: **the preview** says, per node, what it would add or remove, why it would
+  wait, and per location the new addresses and their monthly price, with the fleet's total per
+  currency.
+- **Cutting a country over** stays per node (§ A country on its own addresses): on every node at
+  once with `POST countries/own-pools/{code}`.
+- **Admin API:** `GET countries/defaults`; `POST countries/defaults {codes, picks: [{locationId,
+want}]}` (want null = a fallback place; audited `edge.country_default`);
+  `POST countries/defaults/remove {codes}`; `POST countries/defaults/preview {codes?, picks?}`
+  (read only: the stored defaults, with `codes` replaced by `picks`, or removed with `picks: []`);
+  `POST relays/{id}/country-defaults/{code} {optOut}` (audited
+  `edge.relay.country_defaults_opt_out`). Upkeep's writes are audited `edge.relay.country_defaults`.
+- **Rollback:** `edgeCountryDefaults:clearCountryDefaultsForRollback` (no arguments): every default
+  goes, and every node keeps what they wrote as its own entries (its countries' addresses stay as
+  they are).
+
 ### Latency over the whole path
 
 Every member's traffic leaves the service at the NODE, so the nearest address is not always the
@@ -7326,6 +7369,13 @@ Rollback: `edgeAudiences:clearAudiencePicksForRollback` with no arguments (refus
 for some countries is in flight); it pages in the background through nodes, rotations, then
 addresses, and the older build deploys once its last page ran (contained addresses stay
 contained, as the older build knows them).
+
+**A country's default picks** (§ "A country's default picks", 2026-11): a table
+(`countryDefaults`) and fields `relays.providerSet[].fromDefault`,
+`relays.providerSet[].audiences[].fromDefault`, `relays.countryDefaultsOptOut` and
+`relays.countryDefaultsWaiting`; no setting, no migration; nothing changes until a default is
+saved. Rollback: `edgeCountryDefaults:clearCountryDefaultsForRollback` with no arguments, before
+the rollback of a country on its own addresses.
 
 **A country on its own addresses** (§ "A country on its own addresses", 2026-11): fields
 `relays.ownPools`, `relays.audienceReplaces`, `relays.audienceReplacesPerDay` and
