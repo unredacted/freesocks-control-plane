@@ -5,6 +5,7 @@
  *   INTERNAL_COUNTRY                     the pseudo country of FCP's own connect check
  *   KIND_LABELS / KIND_ORDER             target kinds in words, in display order
  *   groupTargets(targets, filter?)       -> [{ kind, label, targets }] (empty groups dropped)
+ *   matrixColumns(countries, only?)      the country columns (all, or one country's)
  *   targetDetail(target)                 the server's detail line in words
  *   verdictLabel(v) / verdictTone(v)     a verdict in words + badge tone
  *   matrixCell(target, country)          one cell: words, tone and a tooltip line
@@ -51,6 +52,17 @@ export function groupTargets(
     label: KIND_LABELS[kind],
     targets: kept.filter((t) => t.kind === kind),
   })).filter((g) => g.targets.length > 0);
+}
+
+/**
+ * The country columns the matrix shows: every probed country, or only `only`
+ * (a country page's filtered copy; none when that country is not probed).
+ * FCP's own connect check is always added after them by the table.
+ */
+export function matrixColumns(countries: readonly string[], only?: string | null): string[] {
+  if (!only) return [...countries];
+  const c = only.toUpperCase();
+  return countries.filter((x) => x === c);
 }
 
 /**

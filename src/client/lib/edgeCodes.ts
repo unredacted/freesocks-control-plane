@@ -490,7 +490,7 @@ const COPY = {
   probe_countries_none: {
     label: 'No probe countries',
     explain: 'No country on the censored-country list has "Check edges from here" on.',
-    fix: 'Turn it on for a country under Settings, Censored countries.',
+    fix: 'Turn it on for a country under Servers, Countries: open the country, then Checks from here.',
   },
   edge_layer_disabled: {
     label: 'Edges switched off',

@@ -19,17 +19,10 @@
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
   import AlertsCard from './AlertsCard.svelte';
-  import CensoredCountriesCard from './CensoredCountriesCard.svelte';
   import HomeImageCard from './HomeImageCard.svelte';
-  import {
-    adminAnalyticsQuery,
-    adminCensoredCountriesQuery,
-    appSettingsQuery,
-    configQuery,
-    queryKeys,
-  } from '../../lib/queries';
-  import { EXIT_SLOTS, editorCountries, exitRows, slotsOf, withSlot } from '../../lib/countryExits';
-  import { countryName } from '../../lib/countries';
+  import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import { edgesPaths } from './edges/lib/routes';
+  import { withoutDeliveryKeys } from './edges/countries/delivery';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { AdminAnalyticsConfig, AppSettingsRecord } from '../../../shared/contracts/admin';
@@ -56,38 +49,24 @@
   // edits if the underlying query refetches in the background.
   let draft = $state<Record<string, unknown>>({});
   let initialized = $state(false);
-  // Free-text mirror of the exit ranges so typing a new line isn't reflowed by
-  // re-joining; parsed back into `draft` as a list on input.
-  let exitRangesText = $state('');
 
   $effect(() => {
     if (settings.data && !initialized) {
       draft = { ...settings.data };
-      exitRangesText = (
-        (settings.data['delivery.country.ownExitRanges'] as string[] | undefined) ?? []
-      ).join('\n');
       initialized = true;
     }
   });
 
-  // Exit location by country (docs/edges.md): one row per listed country, the
-  // member catalog's locations in order.
-  const censored = adminCensoredCountriesQuery();
-  const exits = $derived(exitRows(draft['delivery.country.exits']));
-  // Listed countries, then any that left the list but keep a mapping (to clear it).
-  const exitCountries = $derived(
-    editorCountries(
-      (censored.data?.countries ?? []).map((c) => c.code),
-      exits,
-    ),
-  );
-  const setExit = (country: string, slot: number, code: string) =>
-    (draft = { ...draft, 'delivery.country.exits': withSlot(exits, country, slot, code) });
-
   const save = createMutation(() => ({
     mutationFn: async () => {
       const SaveResponse = z.object({ settings: AppSettingsRecord });
-      const result = await apiClient.patch('/api/v1/admin/settings', draft, SaveResponse);
+      // "Where members connect from" is edited (and saved) on Servers -> Countries
+      // now: leave its settings out so this page never writes back a stale copy.
+      const result = await apiClient.patch(
+        '/api/v1/admin/settings',
+        withoutDeliveryKeys(draft),
+        SaveResponse,
+      );
       return result.settings;
     },
     onSuccess: (updated) => {
@@ -613,180 +592,19 @@
         </CardContent>
       </Card>
 
-      <!-- Where members connect from (lib/memberCountry.ts, docs/privacy.md) -->
+      <!-- Where members connect from: moved to Servers -> Countries (Delivery card) -->
       <Card>
         <CardHeader>
           <CardTitle class="text-base">Where members connect from</CardTitle>
           <CardDescription>
-            Off: the country the CDN reports is used for one response and stored nowhere. On: for
-            members of freedom modes left on Automatic, a country on the censored-country list is
-            stored with their key as a guess (shown to them and to admins, never logged, audited or
-            sent to analytics), forgotten the number of days below after it was last seen, and
-            deleted with the key. With ordering by distance on as well, the guess may be any
-            country, and another country replaces it only after a day. A member's own choice always
-            wins, and members who opt out are never ordered. Needs the deployment to be fronted by
-            Cloudflare (CF_FRONTED).
+            Guessing and asking a member's country, ordering addresses by country, the service's own
+            exit ranges and the exit location for each country are set on Servers, Countries.
           </CardDescription>
         </CardHeader>
-        <CardContent class="space-y-3 text-sm">
-          <label class="flex items-center gap-3">
-            <Checkbox
-              checked={draft['delivery.country.detect'] === true}
-              onCheckedChange={(v) => (draft = { ...draft, 'delivery.country.detect': v === true })}
-            />
-            <span>Guess the country from the connection</span>
-          </label>
-          <label class="flex items-center gap-3">
-            <Checkbox
-              checked={draft['delivery.country.ask'] === true}
-              onCheckedChange={(v) => (draft = { ...draft, 'delivery.country.ask': v === true })}
-            />
-            <span>
-              Ask members where they connect from at sign-up and when they add a mirror link (a
-              mirror can't tell where its reader is, so it is shaped only by this answer). Their
-              answer is the same one as on the account page, and "Somewhere else, or I'd rather not
-              say" is always an answer. Needs a censored-country list.
-            </span>
-          </label>
-          <label class="flex items-center gap-3">
-            <Checkbox
-              checked={draft['delivery.country.steer'] === true}
-              onCheckedChange={(v) => (draft = { ...draft, 'delivery.country.steer': v === true })}
-            />
-            <span>
-              Order each member's addresses by their country: addresses that work there first,
-              blocked ones only when nothing else is left (their own choice or a stored guess only)
-            </span>
-          </label>
-          <label class="flex items-center gap-3">
-            <Checkbox
-              checked={draft['delivery.country.latency'] === true}
-              onCheckedChange={(v) =>
-                (draft = { ...draft, 'delivery.country.latency': v === true })}
-            />
-            <span>
-              Also order them by distance: near addresses first, judged over the whole path from the
-              member's country through the address to the node (timed by probes where they run, else
-              from the map). Needs both switches above.
-            </span>
-          </label>
-          <div class="flex flex-wrap gap-6">
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="country-sticky-days">
-                Forget a guess after (days, 1 to 90)
-              </label>
-              <Input
-                id="country-sticky-days"
-                type="number"
-                min={1}
-                max={90}
-                class="w-32"
-                value={Number(draft['delivery.country.stickyDays'] ?? 30)}
-                oninput={(e) =>
-                  (draft = {
-                    ...draft,
-                    'delivery.country.stickyDays': Math.min(
-                      90,
-                      Math.max(1, Math.round(Number((e.target as HTMLInputElement).value) || 30)),
-                    ),
-                  })}
-              />
-            </div>
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="country-refresh-hours">
-                Write a guess again at most every (hours, 1 to 48)
-              </label>
-              <Input
-                id="country-refresh-hours"
-                type="number"
-                min={1}
-                max={48}
-                class="w-32"
-                value={Number(draft['delivery.country.refreshHours'] ?? 6)}
-                oninput={(e) =>
-                  (draft = {
-                    ...draft,
-                    'delivery.country.refreshHours': Math.min(
-                      48,
-                      Math.max(1, Math.round(Number((e.target as HTMLInputElement).value) || 6)),
-                    ),
-                  })}
-              />
-            </div>
-          </div>
-          <div>
-            <label class="text-xs text-muted-foreground mb-1 block" for="country-exit-ranges">
-              Extra exit ranges (CIDR, one per line)
-            </label>
-            <textarea
-              id="country-exit-ranges"
-              rows="3"
-              class="border-input bg-background w-full max-w-md rounded-md border px-3 py-2 font-mono text-xs"
-              placeholder="192.0.2.0/24"
-              value={exitRangesText}
-              oninput={(e) => {
-                exitRangesText = (e.target as HTMLTextAreaElement).value;
-                draft = {
-                  ...draft,
-                  'delivery.country.ownExitRanges': exitRangesText
-                    .split(/\s+/)
-                    .map((r) => r.trim())
-                    .filter((r) => r.length > 0)
-                    .slice(0, 64),
-                };
-              }}></textarea>
-            <p class="text-xs text-muted-foreground mt-1">
-              A request from one of the service's own exits (a member's app refreshing through the
-              tunnel) never sets a guess. Node, origin and edge addresses are known already; add
-              ranges traffic leaves from otherwise (NAT, a separate egress).
-            </p>
-          </div>
-          <div class="space-y-2">
-            <p class="font-medium">Exit location for each country</p>
-            <p class="text-xs text-muted-foreground">
-              A new key of a member on Automatic who chose one of these countries themselves goes to
-              the first of its locations that can take it, with ordering by country on. Never for a
-              guessed country, and keys already issued never move by themselves: the member's
-              account page offers them a one-time move instead. The location a key is on then hints
-              at the country its member chose, as a location they picked would.
-            </p>
-            {#if exitCountries.length === 0}
-              <p class="text-xs text-muted-foreground">
-                No country is on the censored-country list.
-              </p>
-            {:else}
-              <div class="space-y-2">
-                {#each exitCountries as c (c.code)}
-                  {@const slots = slotsOf(exits, c.code)}
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span class="w-32 text-xs">
-                      {countryName(c.code, 'en')}
-                      {#if !c.listed}
-                        <span class="text-muted-foreground block">
-                          Not on the list: unused, but it applies again if the country is listed.
-                          Clear it here.
-                        </span>
-                      {/if}
-                    </span>
-                    {#each Array.from({ length: EXIT_SLOTS }, (_, i) => i) as i (i)}
-                      <select
-                        aria-label={`${countryName(c.code, 'en')}: location ${i + 1}`}
-                        class="border-input bg-background h-9 rounded-md border px-2 text-xs"
-                        value={slots[i]}
-                        disabled={i > 0 && !slots[i - 1]}
-                        onchange={(e) => setExit(c.code, i, e.currentTarget.value)}
-                      >
-                        <option value="">{i === 0 ? 'Least loaded' : 'None'}</option>
-                        {#each cfg.data?.locations ?? [] as l (l.code)}
-                          <option value={l.code}>{l.label}</option>
-                        {/each}
-                      </select>
-                    {/each}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
+        <CardContent class="text-sm">
+          <Link href={edgesPaths.countries()} class="text-primary underline underline-offset-4">
+            Open Servers, Countries
+          </Link>
         </CardContent>
       </Card>
 
@@ -796,8 +614,22 @@
         </Button>
       </div>
 
-      <!-- The censored-country list (own endpoint + own save) -->
-      <CensoredCountriesCard />
+      <!-- The censored-country list: edited on Servers -> Countries -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Censored countries</CardTitle>
+          <CardDescription>
+            The one list used wherever a country matters: SNIs judged per country, the sign-up
+            "Where are you connecting from?" choice, the status page matrix and the mode suggestion.
+            It is edited on Servers, Countries, with each country's checks on its own page.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="text-sm">
+          <Link href={edgesPaths.countries()} class="text-primary underline underline-offset-4">
+            Edit the list on Servers, Countries
+          </Link>
+        </CardContent>
+      </Card>
 
       <!-- HPKE verification (own namespace + own save) -->
       <Card>

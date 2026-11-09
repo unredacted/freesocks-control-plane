@@ -16,6 +16,7 @@
   import { countryListsQuery } from '@client/lib/countryListsApi';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
+  import CountriesNav from './CountriesNav.svelte';
   import ListDialog from './ListDialog.svelte';
   import ListLookup from './ListLookup.svelte';
   import { countryLabel } from './words';
@@ -26,10 +27,11 @@
   let now = $state(Date.now());
 </script>
 
+<CountriesNav current="lists" />
+
 <SectionHeader
   title="Country lists"
   description="Community lists of hostnames and addresses that work, or are blocked, in a country. FCP keeps each change as a version and holds any that looks wrong for you. Lists are evidence only and never change what members get."
-  back={{ href: edgesPaths.countries(), label: 'Countries' }}
 >
   {#snippet actions()}
     <Button size="sm" onclick={() => (adding = true)}>Add a list</Button>

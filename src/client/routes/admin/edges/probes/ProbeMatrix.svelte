@@ -11,6 +11,7 @@
    *   onOpenTarget?: (key: string | null) => void
    *                                             when omitted the expansion is local state
    *   emptyText?: string                        shown when nothing matches
+   *   country?: string | null                   show only this country's column (a country page)
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -30,6 +31,7 @@
     KIND_SINGULAR,
     groupTargets,
     matrixCell,
+    matrixColumns,
     probeRequestSummary,
     skipNotes,
     targetDetail,
@@ -41,6 +43,7 @@
     openTarget?: string | null;
     onOpenTarget?: (key: string | null) => void;
     emptyText?: string;
+    country?: string | null;
   }
   let {
     filter,
@@ -48,12 +51,13 @@
     openTarget,
     onOpenTarget,
     emptyText = 'Nothing to probe yet. Publish an edge, opt an origin node in, or add a custom target.',
+    country = null,
   }: Props = $props();
 
   const qc = useQueryClient();
   const matrix = probeMatrixQuery();
   const groups = $derived(groupTargets(matrix.data?.targets ?? [], filter));
-  const countries = $derived(matrix.data?.countries ?? []);
+  const countries = $derived(matrixColumns(matrix.data?.countries ?? [], country));
   const columnCount = $derived(countries.length + (compact ? 3 : 5));
 
   let localOpen = $state<string | null>(null);

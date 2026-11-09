@@ -504,9 +504,7 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
     out.push('Delivery by country is off: members are not steered away from blocked addresses.');
   if (!s.names) out.push('SNI lists are off, so SNIs are not judged per country.');
   else if (nameChecksHere === false)
-    out.push(
-      'SNIs are not checked from inside this country. Turn it on under Settings, Censored countries.',
-    );
+    out.push('SNIs are not checked from inside this country. Turn it on under Checks from here.');
   else if (nameChecksHere && !s.realHost)
     out.push(
       'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under SNIs, Find more.',
@@ -540,7 +538,7 @@ function quietPart(s: SourceCoverage, health: readonly ProbeSourceHealth[], now:
 }
 
 const NOT_ASKED =
-  'Edges are not checked from here. "Check edges from here" is off for this country under Settings, Censored countries.';
+  'Edges are not checked from here. "Check edges from here" is off for this country: turn it on under Checks from here.';
 
 /**
  * One sentence for the countries list when the outside probes from there fall
