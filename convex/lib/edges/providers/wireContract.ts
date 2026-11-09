@@ -927,6 +927,61 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       },
     ],
   },
+  // --- DNS only: Gandi LiveDNS (API v5) ----------------------------------------------
+  gandi: {
+    source:
+      'https://api.gandi.net/docs/livedns/ (LiveDNS API v5) and https://api.gandi.net/docs/authentication/, 2026-11-08',
+    calls: [
+      {
+        method: 'GET',
+        path: '^/v5/livedns/domains$',
+        purpose: 'list the domains the token reaches: credential test, zone list',
+        query: ['per_page'],
+      },
+      {
+        method: 'GET',
+        path: '^/v5/livedns/domains/[^/]+$',
+        purpose: 'read one domain: location check, zone read',
+      },
+      {
+        method: 'GET',
+        path: '^/v5/livedns/domains/[^/]+/nameservers$',
+        purpose: "the domain's LiveDNS name servers: is the zone delegated to them",
+      },
+      {
+        method: 'GET',
+        path: '^/v5/livedns/domains/[^/]+/records/[^/]+$',
+        purpose: 'every record set at one name: discovery by name',
+      },
+      {
+        method: 'GET',
+        path: '^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$',
+        purpose: 'one record set: read before a write, a record read back, CAA',
+      },
+      {
+        method: 'POST',
+        path: '^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$',
+        purpose: 'create a record set holding one value',
+        body: ['rrset_values', 'rrset_ttl'],
+      },
+      {
+        method: 'PATCH',
+        path: '^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$',
+        purpose: 'add or remove one value of a record set that holds others',
+      },
+      {
+        method: 'PUT',
+        path: '^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$',
+        purpose: 'replace the one value of a record set in one request: a moved name',
+        body: ['rrset_values'],
+      },
+      {
+        method: 'DELETE',
+        path: '^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$',
+        purpose: "delete a record set whose only value is FCP's",
+      },
+    ],
+  },
 };
 
 // --- matching --------------------------------------------------------------------------

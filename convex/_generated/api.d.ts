@@ -35,6 +35,7 @@ import type * as countryLists from "../countryLists.js";
 import type * as cronHeartbeat from "../cronHeartbeat.js";
 import type * as crons from "../crons.js";
 import type * as deliveryRefusals from "../deliveryRefusals.js";
+import type * as dnsRecordMarks from "../dnsRecordMarks.js";
 import type * as donations from "../donations.js";
 import type * as edgeAdmin from "../edgeAdmin.js";
 import type * as edgeAttribution from "../edgeAttribution.js";
@@ -247,6 +248,7 @@ declare const fullApi: ApiFromModules<{
   cronHeartbeat: typeof cronHeartbeat;
   crons: typeof crons;
   deliveryRefusals: typeof deliveryRefusals;
+  dnsRecordMarks: typeof dnsRecordMarks;
   donations: typeof donations;
   edgeAdmin: typeof edgeAdmin;
   edgeAttribution: typeof edgeAttribution;

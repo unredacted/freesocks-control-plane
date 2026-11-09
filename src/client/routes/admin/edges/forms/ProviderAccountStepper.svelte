@@ -65,6 +65,7 @@
   import {
     DNS_ACCOUNT_BLURB,
     DNS_ACCOUNT_USES,
+    DNS_ONLY_ACCOUNT_BLURB,
     EDGE_PROVIDER_META,
     defaultProviderFor,
     dnsProviderNames,
@@ -317,7 +318,7 @@
         ...(Object.keys(optionValues).length > 0
           ? { optionDefaults: $state.snapshot(optionValues) }
           : {}),
-        ...(meta.role === 'dns' ? { frontsTraffic: dnsUse === 'front' } : {}),
+        ...(meta.role === 'dns' ? { frontsTraffic: !meta.dnsOnly && dnsUse === 'front' } : {}),
       });
       createdId = id;
       // The account exists from here on: a failed test is reported, never thrown away.
@@ -533,7 +534,9 @@
             <p class="text-muted-foreground text-xs">Only shown to admins.</p>
           </div>
         </div>
-        {#if meta.role === 'dns'}
+        {#if meta.role === 'dns' && meta.dnsOnly}
+          <p class="text-muted-foreground max-w-md text-xs">{DNS_ONLY_ACCOUNT_BLURB}</p>
+        {:else if meta.role === 'dns'}
           <div class="max-w-md space-y-1.5">
             <Label for={`${uid}-dns-use`}>What this account does</Label>
             <Select.Root

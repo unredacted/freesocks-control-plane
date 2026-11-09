@@ -75,6 +75,8 @@ export const EDGE_SETTINGS_SCHEMAS = {
     type: z.literal('cloudfront'),
     accessKeyId: z.string().regex(/^AKIA[A-Z0-9]{16}$/, 'access key id like AKIAXXXXXXXXXXXXXXXX'),
   }),
+  // DNS only: the personal access token alone; the domains it reaches are locations.
+  gandi: z.object({ type: z.literal('gandi') }),
 } as const;
 
 /** A DNS zone id as the zone's provider issues it (Cloudflare: 32 hex characters). */
@@ -88,6 +90,11 @@ const ZONE_NAME = z
     /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/,
     'zone name like example.org',
   );
+/**
+ * The zone a front's records go into, as its DNS account's provider names it:
+ * a Cloudflare zone id, or a Gandi LiveDNS domain (which has no other id).
+ */
+const DNS_ZONE_ID = z.union([ZONE_ID, ZONE_NAME]);
 
 /**
  * Where an edge's resources live, per provider: what a LOCATION holds and each
@@ -127,20 +134,27 @@ export const EDGE_PLACEMENT_SCHEMAS = {
   cloudflare: z.object({ type: z.literal('cloudflare'), zoneId: ZONE_ID, zoneName: ZONE_NAME }),
   fastly: z.object({
     type: z.literal('fastly'),
-    // An edgeProviderAccounts id of a DNS provider (Cloudflare today).
+    // An edgeProviderAccounts id of a DNS provider (Cloudflare or Gandi).
     dnsAccountId: z.string().min(1).max(64),
-    zoneId: ZONE_ID,
+    zoneId: DNS_ZONE_ID,
     zoneName: ZONE_NAME,
     // Absent = the Fastly account's default TLS configuration.
     tlsConfigurationId: z.string().min(1).max(64).optional(),
   }),
   cloudfront: z.object({
     type: z.literal('cloudfront'),
-    // An edgeProviderAccounts id of a DNS provider (Cloudflare today).
+    // An edgeProviderAccounts id of a DNS provider (Cloudflare or Gandi).
     dnsAccountId: z.string().min(1).max(64),
-    zoneId: ZONE_ID,
+    zoneId: DNS_ZONE_ID,
     zoneName: ZONE_NAME,
   }),
+  // A LiveDNS domain: its id is its name.
+  gandi: z
+    .object({ type: z.literal('gandi'), zoneId: ZONE_NAME, zoneName: ZONE_NAME })
+    .refine((p) => p.zoneId === p.zoneName, {
+      message: 'a Gandi zone id is its domain name',
+      path: ['zoneId'],
+    }),
 } as const;
 
 export type EdgePlacementFor<P extends EdgeProviderId> = z.infer<
@@ -160,6 +174,7 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   cloudflare: ['apiToken'],
   fastly: ['apiToken'],
   cloudfront: ['secretAccessKey'],
+  gandi: ['apiToken'],
 };
 
 /** Placement fields per provider: on a LOCATION (and frozen on each edge), never on the account. */
@@ -171,6 +186,7 @@ export const EDGE_PLACEMENT_SETTINGS: Record<EdgeProviderId, readonly string[]> 
   cloudflare: ['zoneId', 'zoneName'],
   fastly: ['dnsAccountId', 'zoneId', 'zoneName', 'tlsConfigurationId'],
   cloudfront: ['dnsAccountId', 'zoneId', 'zoneName'],
+  gandi: ['zoneId', 'zoneName'],
 };
 
 /**
@@ -192,6 +208,7 @@ export const EDGE_OBSERVED_PLACEMENT: Record<
   cloudflare: {},
   fastly: {},
   cloudfront: {},
+  gandi: {},
 };
 
 /** Account settings that still LOCATE every edge of the account: locked while any non-destroyed edge references it. */
@@ -205,6 +222,7 @@ export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> =
   cloudflare: [],
   fastly: [],
   cloudfront: [],
+  gandi: [],
 };
 
 /** Defaults frozen into each new edge's provisionIntent (L7); a change never moves an existing edge. */
@@ -216,6 +234,7 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   cloudflare: [],
   fastly: ['domainModel'],
   cloudfront: [],
+  gandi: [],
 };
 
 /**
@@ -235,6 +254,7 @@ export const EDGE_RETEST_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   cloudflare: [],
   fastly: [],
   cloudfront: [],
+  gandi: [],
 };
 
 /**
@@ -273,6 +293,7 @@ export const EDGE_INTENT_FACTS: Record<
     wildcardDomain: { planned: 'activated', legacy: 'classic' },
   },
   cloudfront: {},
+  gandi: {},
 };
 
 /**
@@ -288,6 +309,7 @@ export const EDGE_LEGACY_OPTION_SETTINGS: Record<EdgeProviderId, readonly string
   cloudflare: [],
   fastly: ['certificateAuthority', 'certificateScope'],
   cloudfront: [],
+  gandi: [],
 };
 
 /** The option defaults a settings payload (or a stored row) still carries the old way. */
@@ -307,6 +329,7 @@ export const EDGE_CREDENTIAL_IDENTIFIER_FIELDS: Record<EdgeProviderId, readonly 
   cloudflare: ['accountId'],
   fastly: [],
   cloudfront: ['accessKeyId'],
+  gandi: [],
 };
 
 /**
@@ -324,6 +347,7 @@ export const EDGE_LEGACY_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   cloudflare: ['zoneId', 'zoneName'],
   fastly: ['dnsAccountId', 'tlsConfigurationId'],
   cloudfront: [],
+  gandi: [],
 };
 
 /** The legacy keys a stored settings object still carries (usually none). */

@@ -350,6 +350,29 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       placeholder: 'front.example',
     },
   ],
+  gandi: [
+    {
+      key: 'zoneId',
+      label: 'Domain',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'zones',
+      required: true,
+      help: 'A domain in Gandi LiveDNS that the token reaches.',
+    },
+    {
+      key: 'zoneName',
+      label: 'Domain name',
+      kind: 'text',
+      step: 'placement',
+      location: true,
+      required: true,
+      readOnly: true,
+      help: 'Filled from the chosen domain.',
+      placeholder: 'front.example',
+    },
+  ],
 };
 
 /** Secret field names as the server lists them, in words. Unknown names are humanised by the form. */
@@ -369,6 +392,8 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
     'A user API token or an account API token, scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report the zone settings, and Transform Rules Edit and Origin Rules Edit only if this account will also front traffic.',
   fastly:
     'An API token with the global scope, issued on a dedicated automation user. The account also needs the WebSockets product entitlement.',
+  gandi:
+    "A personal access token of the organization that owns the domains, limited to them, that may see and change the domains' DNS records (LiveDNS). The older API key is not accepted. Gandi tokens expire: rotate the credentials on this account before the date you set.",
   cloudfront:
     'An access key of a dedicated IAM user. Its policy allows cloudfront:CreateDistribution, GetDistribution, GetDistributionConfig, UpdateDistribution, DeleteDistribution, ListDistributions, CreateOriginRequestPolicy, ListOriginRequestPolicies and ListDistributionsByOriginRequestPolicyId, and acm:RequestCertificate, DescribeCertificate, ListCertificates and DeleteCertificate in us-east-1. Nothing else: no IAM or Lambda permissions.',
 };

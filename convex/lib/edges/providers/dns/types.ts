@@ -1,12 +1,15 @@
 /**
  * The DNS writer an L7 adapter uses for records that live in ANOTHER provider's
  * zone (a Fastly edge's ACME validation CNAME and traffic CNAME live in a
- * Cloudflare zone). Implemented by ./cloudflareDns.ts; injected so the Fastly
- * adapter and its tests never depend on the Cloudflare SDK directly.
+ * Cloudflare or Gandi zone). Implemented by ./cloudflareDns.ts and
+ * ./gandiDns.ts, chosen by the DNS account's provider (./clients.ts); injected
+ * so the Fastly adapter and its tests never depend on either directly.
  *
  * Every record FCP writes carries a `comment` marker (the edge's provider-side
  * resource name) so discovery can prove ownership: a record with the right
- * name but a foreign comment/content is never adopted or deleted.
+ * name but a foreign comment/content is never adopted or deleted. Cloudflare
+ * stores it on the record; Gandi has no such field, so its client keeps it in
+ * FCP's own `dnsRecordMarks` table (`DnsMarkStore`), never in public DNS.
  */
 export type DnsRecordType = 'A' | 'AAAA' | 'CNAME';
 
@@ -33,6 +36,27 @@ export interface DnsCreateArgs {
   tags?: string[];
   /** Per-record settings: CNAME flattening, one address family for a proxied name. */
   settings?: { flatten_cname?: boolean; ipv4_only?: boolean; ipv6_only?: boolean };
+}
+
+/**
+ * FCP's private record of which record carries which ownership marker, for a
+ * DNS provider whose records cannot hold a comment (Gandi LiveDNS): the
+ * `dnsRecordMarks` table, read and written through the action that builds the
+ * client. A record is keyed by its zone, name, type and content (normalized).
+ */
+export interface DnsRecordMark {
+  type: DnsRecordType;
+  /** Fully qualified, lowercase. */
+  name: string;
+  content: string;
+  marker: string;
+}
+export interface DnsMarkStore {
+  forName(zone: string, name: string): Promise<DnsRecordMark[]>;
+  /** Upsert by (zone, name, type, content). */
+  set(zone: string, mark: DnsRecordMark): Promise<void>;
+  /** Idempotent. */
+  remove(zone: string, key: Omit<DnsRecordMark, 'marker'>): Promise<void>;
 }
 
 export interface DnsClient {
