@@ -201,7 +201,7 @@ describe('checks from inside a country', () => {
   });
 
   test('the switch says what runs right now', () => {
-    expect(vantageState(false, true, ['IR'])).toMatch(/Server names are off/);
+    expect(vantageState(false, true, ['IR'])).toMatch(/SNI lists are off/);
     expect(vantageState(true, true, [])).toMatch(/until at least one country/);
     expect(vantageState(true, false, ['IR', 'RU'])).toBe('Off. Turned on, it checks from IR, RU.');
     expect(vantageState(true, true, ['IR'])).toBe('Checking from IR.');

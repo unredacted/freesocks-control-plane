@@ -154,7 +154,7 @@
       <CodeNote
         issue={{
           code: unavailable.reason,
-          detail: 'Members on this relay get a temporary failure instead of a subscription.',
+          detail: 'Members on this origin get a temporary failure instead of a subscription.',
         }}
         tone="blocker"
       />

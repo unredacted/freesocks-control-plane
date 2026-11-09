@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Templates (`/admin/edges/templates`).
+   * Templates (`/admin/servers/providers/templates`).
    * URL state: `?template=<id>` opens the editor, `?template=new&provider=<id>`
    * starts a new one, `?provider=<id>` alone filters the list to one provider.
    */

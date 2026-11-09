@@ -168,7 +168,7 @@
               </Button>
               {#if s.config.type === 'remnawave'}
                 <Link
-                  href={serversPaths.home({ instance: s.slug })}
+                  href={serversPaths.nodes({ backend: s.slug })}
                   class="text-primary inline-flex min-h-11 items-center px-2 text-sm underline underline-offset-4 sm:min-h-0"
                 >
                   Its nodes

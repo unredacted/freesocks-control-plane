@@ -317,8 +317,8 @@
       bind:open={deleteOpen}
       title={`Delete edge ${name}?`}
       body={edge.managed
-        ? 'FCP destroys the provider resources of this edge and removes it from the relay. This cannot be undone.'
-        : 'FCP does not manage this edge, so nothing is destroyed at the provider. It is only removed from the relay.'}
+        ? 'FCP destroys the provider resources of this edge and removes it from the origin. This cannot be undone.'
+        : 'FCP does not manage this edge, so nothing is destroyed at the provider. It is only removed from the origin.'}
       typed={name}
       confirmLabel="Delete edge"
       danger

@@ -79,7 +79,7 @@
         <p class="font-medium">Countries</p>
         <p class="text-muted-foreground">
           {checkedIn.length > 0 ? `${checkedIn.join(', ')}.` : 'None.'}
-          These are the countries on the censored-country list with "Check names from inside" on.
+          These are the countries on the censored-country list with "Check SNIs from inside" on.
           <Link href="/admin/settings" class="underline underline-offset-2">
             Change them in Settings, Censored countries.
           </Link>

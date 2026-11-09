@@ -80,7 +80,7 @@
       {transport}
       switches={view.data?.switches}
       names={[]}
-      serversHref={serversPaths.home({ instance: binding.backendSlug })}
+      serversHref={serversPaths.nodes({ backend: binding.backendSlug })}
     />
     {#if !transport}
       <Skeleton class="mt-2 h-5 w-48" />
@@ -111,7 +111,7 @@
             {/if}
             {#if n.nodeUuid}
               <Link
-                href={serversPaths.node(n.nodeUuid, { instance: binding.backendSlug })}
+                href={serversPaths.node(n.nodeUuid, { backend: binding.backendSlug })}
                 class="text-primary underline underline-offset-4"
               >
                 Open the node

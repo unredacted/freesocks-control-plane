@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Admin -> Edges -> Countries -> Country lists (`/admin/edges/countries/lists`):
+   * Admin -> Servers -> Countries -> Country lists (`/admin/servers/countries/lists`):
    * every community list FCP follows, what it holds, whether a version waits
    * for a person, and whether its source still confirms it. Each row opens
    * the list (ListPage). A lookup box at the bottom.

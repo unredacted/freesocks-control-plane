@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One provider account (`/admin/edges/providers/:id`; URL state `?tab` =
+   * One provider account (`/admin/servers/providers/:id`; URL state `?tab` =
    * overview | inventory | templates). The overview's Countries card grades
    * each location from each checked country, with the location marks.
    */
@@ -72,7 +72,7 @@
   import { asParams, changedKeys, effectiveTemplate, qualificationState } from './templates/params';
 
   interface Props {
-    /** The provider account id from the route (`/admin/edges/providers/:id`). */
+    /** The provider account id from the route (`/admin/servers/providers/:id`). */
     id: string;
   }
   let { id }: Props = $props();
@@ -194,7 +194,7 @@
 {#if account.isPending}
   <SectionHeader
     title="Provider account"
-    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Providers' }}
   />
   <div class="space-y-3" role="status">
     <span class="sr-only">Loading the account</span>
@@ -204,7 +204,7 @@
 {:else if notFound}
   <SectionHeader
     title="Provider account"
-    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Providers' }}
   />
   <AdminListState
     emptyText="This account no longer exists. Go back to Providers to pick or add one."
@@ -212,7 +212,7 @@
 {:else if account.isError || !a}
   <SectionHeader
     title="Provider account"
-    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Providers' }}
   />
   <AdminListState error={account.error} onRetry={() => void account.refetch()} />
 {:else}
@@ -223,7 +223,7 @@
       : EDGE_PROVIDER_META[a.provider].role === 'dns'
         ? `${providerLabel(a.provider)} account: ${DNS_ACCOUNT_USES[useNow].label}. ${DNS_ACCOUNT_BLURB}`
         : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
-    back={{ href: edgesPaths.providers(), label: 'Edge providers' }}
+    back={{ href: edgesPaths.providers(), label: 'Providers' }}
   >
     {#snippet badges()}
       <FakeBadge fake={a.fake} />

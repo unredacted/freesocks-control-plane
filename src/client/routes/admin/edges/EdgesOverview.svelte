@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * All origins (`/admin/edges/advanced/origins`, under Advanced): the
+   * All origins (`/admin/servers/origins`, under Nodes): the
    * technical fleet dashboard.
    * URL state: `?filter` = all | attention | dark | quarantined | unpublished,
    *            `?layer`  = all | l4 | l7   (both filter the origin table client-side),
@@ -46,6 +46,7 @@
   import RelayTable from './overview/RelayTable.svelte';
   import NewRelayDialog from './forms/NewRelayDialog.svelte';
   import { edgesPaths } from './lib/routes';
+  import { serversPaths } from '../servers/lib/routes';
   import { edgeErrorMessage } from './lib/edgeErrors';
   import { runAttentionCall } from './lib/attentionCalls';
   import { attentionCallDeps, openRotationOf } from './lib/attentionCallDeps';
@@ -163,7 +164,7 @@
 <SectionHeader
   title="All origins"
   description="Every origin, the edges that front them, and what needs your attention."
-  back={{ href: edgesPaths.advanced(), label: 'Advanced' }}
+  back={{ href: serversPaths.nodes(), label: 'Nodes' }}
 >
   {#snippet actions()}
     <Button onclick={() => (newOpen = true)}>
@@ -332,7 +333,7 @@
 <ConfirmDialog
   bind:open={provisionOpen}
   title="Provision a new edge?"
-  body="Creates a billable resource at the provider and counts against today's account budget. The run opens on the relay page."
+  body="Creates a billable resource at the provider and counts against today's account budget. The run opens on the origin's page."
   confirmLabel="Provision"
   onConfirm={() => (provisionRow ? provision.mutateAsync(provisionRow) : undefined)}
 >

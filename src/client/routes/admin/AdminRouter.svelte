@@ -26,7 +26,7 @@
   import AdminTheme from './AdminTheme.svelte';
   import Link from '../../components/Link.svelte';
   import { adminAuthStatusQuery, adminStatusQuery } from '../../lib/queries';
-  import { legacyServersRedirect } from './servers/lib/routes';
+  import { legacyRedirect } from './servers/lib/legacyRoutes';
 
   // Routes that don't require an admin session: /admin (the smart entry point,
   // which shows login/bootstrap itself) and /admin/register (the invite landing,
@@ -51,28 +51,17 @@
   const popProbe = adminStatusQuery();
   let holdForPop = $derived(needsAuth && !!authStatus.data?.signedIn && popProbe.isPending);
 
-  // Admin -> Edges: one prefix branch, its own lazy chunk. EdgesRouter dispatches
-  // the sub-paths with matchRoute.
-  const EdgesSection = () => import('./edges/EdgesSection.svelte');
-  let onEdgesRoute = $derived(
-    router.pathname === '/admin/edges' || router.pathname.startsWith('/admin/edges/'),
-  );
-
-  // Admin -> Servers (what is on a backend): its own lazy chunk, like Edges.
+  // Admin -> Servers (nodes, countries, SNIs, probes, providers, settings): one
+  // prefix branch, its own lazy chunk.
   const ServersSection = () => import('./servers/ServersSection.svelte');
   let onServersRoute = $derived(
     router.pathname === '/admin/servers' || router.pathname.startsWith('/admin/servers/'),
   );
 
-  // Probes moved from Telemetry into the Edges section; keep old links working.
-  $effect(() => {
-    if (router.pathname === '/admin/telemetry/probes') {
-      router.navigate(`/admin/edges/probes${router.search}`, { replace: true });
-    }
-  });
-  // Backend servers and Remnawave became tabs of the one Servers leaf
-  // (servers/lib/routes.ts `legacyServersRedirect`); old links keep working.
-  let movedTo = $derived(legacyServersRedirect(router.pathname, router.search));
+  // Moved addresses (the old Edges section, Backend servers, Remnawave,
+  // Telemetry -> Probes, ...) are replaced by their Servers page
+  // (servers/lib/legacyRoutes.ts); old links keep working.
+  let movedTo = $derived(legacyRedirect(router.pathname, router.search));
   $effect(() => {
     if (movedTo) router.navigate(movedTo, { replace: true });
   });
@@ -111,7 +100,7 @@
 {:else if router.pathname === '/admin/tokens'}
   <AdminTokens />
 {:else if movedTo}
-  <!-- Moved: the $effect above is replacing the URL with its Servers tab. -->
+  <!-- Moved: the $effect above is replacing the URL with its Servers page. -->
   <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading…</div>
 {:else if router.pathname === '/admin/connection-modes'}
   <AdminConnectionModes />
@@ -124,24 +113,6 @@
   {:catch}
     <div class="text-center py-16 space-y-3">
       <h1 class="text-xl font-display font-bold">The Servers section did not load</h1>
-      <p class="text-sm text-muted-foreground">
-        The connection dropped or a new version was deployed. Reload to try again.
-      </p>
-      <button type="button" class="text-primary underline" onclick={() => window.location.reload()}>
-        Reload
-      </button>
-    </div>
-  {/await}
-{:else if onEdgesRoute}
-  <!-- Admin -> Edges is its own lazy chunk (section shell + every edges page). -->
-  {#await EdgesSection()}
-    <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading Edges…</div>
-  {:then mod}
-    {@const Edges = mod.default}
-    <Edges />
-  {:catch}
-    <div class="text-center py-16 space-y-3">
-      <h1 class="text-xl font-display font-bold">The Edges section did not load</h1>
       <p class="text-sm text-muted-foreground">
         The connection dropped or a new version was deployed. Reload to try again.
       </p>
@@ -164,9 +135,6 @@
   <AdminRateLimits />
 {:else if router.pathname === '/admin/telemetry'}
   <AdminTelemetry view="reports" />
-{:else if router.pathname === '/admin/telemetry/probes'}
-  <!-- Moved: the $effect above is replacing the URL with /admin/edges/probes. -->
-  <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading…</div>
 {:else if router.pathname === '/admin/audit'}
   <AdminAudit />
 {:else if router.pathname === '/admin/settings'}

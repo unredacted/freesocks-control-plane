@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One name list (`/admin/edges/names/:slug`; docs/edges.md "The page"): the
+   * One name list (`/admin/servers/snis/:slug`; docs/edges.md "The page"): the
    * ports it is used on, each with its status and next step (FamilyPort), then
    * ONE list of its names and the names found for it, each with one state on
    * the way to members (lib/listWords.ts): Suggested, Being checked, Waiting
@@ -313,7 +313,7 @@
 
 <p class="mb-2 text-sm">
   <Link href={edgesPaths.names()} class="text-muted-foreground underline underline-offset-4">
-    Server names
+    SNIs
   </Link>
 </p>
 

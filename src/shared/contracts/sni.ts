@@ -22,7 +22,7 @@ export type SniConfig = z.infer<typeof SniConfig>;
 /** Checks of names from inside opted-in countries (`edge.sni.vantage.*`; docs/edges.md). */
 export const SniVantageConfig = z.object({
   enabled: z.boolean(),
-  /** Read only: the listed countries with "Check names from inside" on. */
+  /** Read only: the listed countries with "Check SNIs from inside" on. */
   countries: z.array(z.string()),
   sources: z.object({ globalping: z.boolean(), ripeatlas: z.boolean() }),
   intervalHours: z.number(),

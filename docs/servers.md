@@ -1310,7 +1310,7 @@ From an empty machine to a member connecting through an edge, for an L4 mode
    Servers → Nodes (§ Changing a backend's setup); a mode it lacks is added there too, once its
    transport is in the profile.
 3. **A provider account for the edge**: added and its credentials tested (in the protect
-   sheet's account step, or on the provider pages under Edges → Advanced), with a daily
+   sheet's account step, or on the Providers pages), with a daily
    allocation budget (0, no limit, is refused outside development). An L4 account is trusted by
    its first ticked endpoint, an L7 account by its first passing front proof.
 4. **The role's token**: an `admin:edges:register` token bounded to the backend (and,
@@ -1384,19 +1384,32 @@ can share a backend type, and a uuid missing on this backend may live on another
 ### The page
 
 Admin -> **Servers** is ONE sidebar leaf (the Servers group has four: Servers, Connection
-modes, Storage mirrors, Status page) for both the Servers and the Edges pages, which share one
-tab bar, `Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced`
-(`components/ServersNav.svelte`; the Edges tabs are docs/edges.md "Admin section"). The
-Servers tabs, their paths spelled only in `src/client/routes/admin/servers/lib/routes.ts`:
+modes, Storage mirrors, Status page). Every Servers page lives under `/admin/servers`, with one
+tab bar, `Overview | Nodes | Countries | SNIs | Probes | Providers | Settings`
+(`components/ServersNav.svelte`; which tab a page lights is `tabOf` in `servers/lib/routes.ts`).
+The paths are spelled only in `src/client/routes/admin/servers/lib/routes.ts` (the section's own
+pages) and `src/client/routes/admin/edges/lib/routes.ts` (the pages that came from the old Edges
+section, docs/edges.md "Admin section"):
 
-| Tab        | Path                      | What                                                                                                                                    |
-| ---------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Backends   | `/admin/servers/backends` | The backend servers keys are issued on (add, edit, remove; a link to each Remnawave server's nodes) and the node logging privacy check. |
-| Nodes      | `/admin/servers`          | The default tab, below.                                                                                                                 |
-| Mode pools | `/admin/servers/pools`    | Which mode groups each connection mode issues new keys into (write-only uuids), and the node load per placement.                        |
+| Tab       | Path                                                                         | What                                                                                                                                            |
+| --------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview  | `/admin/servers`                                                             | The fronted nodes, what needs you, and the automatic replacement switch (`?protect=1` opens the protect sheet, `?run=<id>` its progress).       |
+| Nodes     | `/admin/servers/nodes[?backend=<slug>]`                                      | Below. **All origins** (`/admin/servers/origins`) is its technical view; an origin's details are at `/admin/servers/origins/<slug>/details`.    |
+| Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`          | Every censored country, one country in full, and the country lists.                                                                             |
+| SNIs      | `/admin/servers/snis[/lists/<slug>]`, `/admin/servers/snis/find[/<network>]` | The SNI lists, one list, and finding more SNIs.                                                                                                 |
+| Probes    | `/admin/servers/probes`                                                      | Outside reachability: the matrix, runs, probe now, custom targets.                                                                              |
+| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates`      | The provider accounts, one account, and every template.                                                                                         |
+| Settings  | `/admin/servers/settings[?section=]`                                         | Every edge setting. Its sub-views: **Backends** (`/admin/servers/settings/backends`) and **Mode pools** (`/admin/servers/settings/mode-pools`). |
 
-The old addresses redirect (`legacyServersRedirect`, pinned by a test): `/admin/backend-servers`
-to Backends and `/admin/remnawave` to Mode pools.
+**Backends** lists the backend servers keys are issued on (add, edit, remove; a link to each
+Remnawave server's nodes) and the node logging privacy check. **Mode pools** says which mode groups
+each connection mode issues new keys into (write-only uuids), and the node load per placement.
+
+Old addresses redirect through ONE table, `servers/lib/legacyRoutes.ts`, with a test for every
+rule: the whole old `/admin/edges/...` tree, `/admin/backend-servers`, `/admin/remnawave`,
+`/admin/telemetry/probes`, `/admin/servers/backends`, `/admin/servers/pools`, and the old
+`?instance=` (now `?backend=`). `/admin/servers?instance=X` (the root used to be Nodes) lands on
+`/admin/servers/nodes?backend=X`.
 
 **Nodes** is built like the simple Edges screens: one status sentence, an "Action needed" list only
 when something is broken, one row per node, and the leftovers as quiet one-line notes (a
@@ -1420,8 +1433,8 @@ transports with the addresses members get for each. The edges panel is the Edges
 (`edges/simple/NodeEdgesPanel.svelte`, loaded lazily): the origin's status from the server's one
 projection (docs/edges.md "Admin section"), Go live or Replace address, More (a spare address,
 **Front again**, Origin details, Remove fronting), the test card (`?test=<edgeId>`), the
-addresses in use, the per-node automatic switch and recent activity. `/admin/edges/nodes/<slug>`
-redirects here for a backend node. **Front again** (an enrolled node live behind edges) starts
+addresses in use, the per-node automatic switch and recent activity. An origin's page,
+`/admin/servers/origins/<slug>`, redirects here for a backend node. **Front again** (an enrolled node live behind edges) starts
 a re-protect run ("A fronted node's activation") and opens its progress in the protect sheet; it
 is the primary action while the node waits to be protected again.
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Origin details (`/admin/edges/relays/:slug`, under Advanced): one origin's
+   * Origin details (`/admin/servers/origins/:slug/details`): one origin's
    * technical page. URL state: `?tab` overview|edges|listeners|rotations|probes,
    * `?edge` (edge drawer), `?rotation` (rotation drawer), `?listener` (the
    * listener card to scroll to / edit). A backend node's day-to-day page is
@@ -45,7 +45,7 @@
   import FirstEdgeCard from './relay/FirstEdgeCard.svelte';
 
   interface Props {
-    /** The origin slug from the route (`/admin/edges/relays/:slug`). */
+    /** The origin slug from the route (`/admin/servers/origins/:slug/details`). */
     slug: string;
   }
   let { slug }: Props = $props();
@@ -165,7 +165,7 @@
         <LayerBadge {layer} />
       {/each}
       {#if !relay.autoRotate}
-        <Badge variant="muted" title="The block detector never rotates this relay on its own."
+        <Badge variant="muted" title="The block detector never rotates this origin on its own."
           >Auto rotate off</Badge
         >
       {/if}

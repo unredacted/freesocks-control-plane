@@ -31,8 +31,8 @@
   <Card.Header>
     <Card.Title>Reachability</Card.Title>
     <Card.Description>
-      Whether networks in each country can reach this relay's edges. Only published edges are probed
-      on a schedule and feed the block detector.
+      Whether networks in each country can reach this origin's edges. Only published edges are
+      probed on a schedule and feed the block detector.
       {#if !relay.probeNode}
         The origin itself is not probed. Turn that on under Actions, Edit.
       {/if}

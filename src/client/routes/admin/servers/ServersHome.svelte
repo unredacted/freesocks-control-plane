@@ -212,6 +212,10 @@
         Add a node
       </Button>
     {/if}
+    <!-- The technical view of every origin (the old Advanced -> All origins). -->
+    <Button variant="outline" size="sm" onclick={() => router.navigate(edgesPaths.overview())}>
+      All origins
+    </Button>
     <Button
       variant="outline"
       size="sm"
@@ -231,7 +235,7 @@
         <Button
           variant={i.slug === slug ? 'default' : 'outline'}
           size="sm"
-          onclick={() => router.navigate(serversPaths.home({ instance: i.slug }))}
+          onclick={() => router.navigate(serversPaths.nodes({ backend: i.slug }))}
           aria-current={i.slug === slug ? 'page' : undefined}
         >
           {i.name}
@@ -322,7 +326,7 @@
                 </Button>
               {:else if row.nodeUuid && slug}
                 <Link
-                  href={serversPaths.node(row.nodeUuid, { instance: slug })}
+                  href={serversPaths.node(row.nodeUuid, { backend: slug })}
                   class="text-primary text-sm underline underline-offset-4"
                 >
                   Open
@@ -337,7 +341,7 @@
               <span class="min-w-0 flex-1">{row.text}</span>
               {#if row.nodeUuid && slug}
                 <Link
-                  href={serversPaths.node(row.nodeUuid, { instance: slug })}
+                  href={serversPaths.node(row.nodeUuid, { backend: slug })}
                   class="text-primary text-sm underline underline-offset-4"
                 >
                   Open
@@ -394,7 +398,7 @@
             {@const machine = machineNameShown(node.name, intent?.machineName)}
             <li>
               <Link
-                href={serversPaths.node(node.nodeUuid, { instance: slug ?? undefined })}
+                href={serversPaths.node(node.nodeUuid, { backend: slug ?? undefined })}
                 class={ROW}
               >
                 <StatusDot dot={st && st.dot !== 'green' ? st.dot : w.dot} />
@@ -443,7 +447,7 @@
             <li>
               {#if intent.nodeUuid}
                 <Link
-                  href={serversPaths.node(intent.nodeUuid, { instance: slug ?? undefined })}
+                  href={serversPaths.node(intent.nodeUuid, { backend: slug ?? undefined })}
                   class={ROW}
                 >
                   <StatusDot dot={st.dot} />

@@ -16,6 +16,8 @@ export const SETTINGS_SECTIONS = [
   'lists',
   'maintenance',
   'freedom',
+  // The Edge-required places card (DeliveryBindingsCard, id settings-delivery).
+  'delivery',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const parseSection = (raw: string | null | undefined): SettingsSection =>
@@ -55,7 +57,7 @@ export const BASIC_SWITCHES: Field[] = [
     path: 'clientCheck.enabled',
     label: "Replace without a spare using FCP's client check",
     helper:
-      "On: nobody has to test an address by hand. A new address in a node's locations is checked with FCP's sing-box and Xray clients, and a pass counts as the test. Off: an address needs a person's test before it goes live, and the check is advice only.",
+      "On: nobody has to test an address by hand. A new address in a node's locations is checked with FCP's sing-box and Xray clients, and a pass counts as the test. Off: the check only advises, and a new address waits for a test with a real session before it goes live.",
   },
   {
     kind: 'switch',
@@ -321,7 +323,7 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
   {
     kind: 'number',
     path: 'render.namesPerEndpoint',
-    label: 'Server names per member',
+    label: 'SNIs per member',
     unit: 'SNIs',
     helper:
       'SNIs one member gets for their main address. Apps with an Auto group get them all and skip a blocked one. Plain lists get the first only. Only for listeners with growth-stable SNI selection.',
@@ -329,7 +331,7 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
   {
     kind: 'number',
     path: 'render.backupNames',
-    label: 'Server names on the backup address',
+    label: 'SNIs on the backup address',
     unit: 'SNIs',
     helper:
       'The same for the backup address, also only in apps with an Auto group. They differ from the main SNIs where possible.',
@@ -825,7 +827,7 @@ const pathsOf = (fields: readonly Field[]): string[] => fields.map((f) => f.path
 
 /** Every flat path a section owns (the rendering section adds its family rules at runtime). */
 export const SECTION_PATHS: Record<
-  Exclude<SettingsSection, 'maintenance' | 'freedom'>,
+  Exclude<SettingsSection, 'maintenance' | 'freedom' | 'delivery'>,
   string[]
 > = {
   basics: [...pathsOf(BASIC_SWITCHES), ...pathsOf(BASIC_NUMBERS), AUTO_PROVISION.path],

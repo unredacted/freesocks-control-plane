@@ -279,7 +279,7 @@
             FCP does not update the backend for this node. Change the address there right after, or
             members keep the old one.
           {:else if blockers.some((b) => b.code === 'hosts_operator_managed')}
-            FCP does not write this relay's panel Hosts. Apply the new Hosts plan right after, or
+            FCP does not write this origin's panel Hosts. Apply the new Hosts plan right after, or
             members keep using the old edge.
           {/if}
         </p>

@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * Edge settings (`/admin/edges/settings`).
-   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | names | lists | maintenance | freedom.
+   * Settings (`/admin/servers/settings`).
+   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | names | lists | maintenance | freedom | delivery.
    * Basics and Maintenance are always open. The advanced cards open and close in
    * place, any number at once, and nothing else on the page moves; `?section`
    * (a deep link from an attention item) opens its card and scrolls to it once.
@@ -151,7 +151,7 @@
 </script>
 
 <SectionHeader
-  title="Edge settings"
+  title="Settings"
   description="Fleet defaults, rotation limits, rendering, the detector, probes and the maintenance switch."
 />
 

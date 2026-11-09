@@ -67,7 +67,7 @@
   title={`Delete origin ${relay.slug}?`}
   body={`This retires every listener and destroys ${edgeCount === 1 ? 'the 1 edge' : `all ${edgeCount} edges`} of the origin at the provider. It cannot be undone.`}
   typed={relay.slug}
-  confirmLabel="Delete relay"
+  confirmLabel="Delete origin"
   danger
   disabled={disposition === null}
   {run}

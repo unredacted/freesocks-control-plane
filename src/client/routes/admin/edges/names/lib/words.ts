@@ -171,7 +171,7 @@ export function vantageState(
   checksOn: boolean,
   countries: readonly string[],
 ): string {
-  if (!familiesOn) return 'Server names are off, so nothing runs.';
+  if (!familiesOn) return 'SNI lists are off, so nothing runs.';
   if (countries.length === 0) return 'Nothing runs until at least one country below is turned on.';
   if (!checksOn) return `Off. Turned on, it checks from ${countries.join(', ')}.`;
   return `Checking from ${countries.join(', ')}.`;
@@ -256,7 +256,7 @@ export function importWords(r: SniImportResult): string[] {
 const ERROR_WORDS: Record<string, string> = {
   'edge.sni.bad_target': 'The cover site has to be a public hostname and a port.',
   'edge.sni.cap': 'This SNI list is full.',
-  'edge.sni.disabled': 'Server names are turned off. Turn them on first.',
+  'edge.sni.disabled': 'SNI lists are turned off. Turn them on first.',
   'edge.sni.family_in_use': 'A port still uses this SNI list. Stop managing it there first.',
   'edge.sni.target_mismatch': "The port's cover site is not this list's cover site.",
   'edge.sni.binding_changed': 'This port changed since the page loaded. Reload and look again.',

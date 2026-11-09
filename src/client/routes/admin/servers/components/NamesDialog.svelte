@@ -92,8 +92,7 @@
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Server names (SNI) of <span class="break-all">{inbound.tag}</span></Dialog.Title
-      >
+      <Dialog.Title>SNIs of <span class="break-all">{inbound.tag}</span></Dialog.Title>
       <Dialog.Description>The target site must really serve every SNI.</Dialog.Description>
     </Dialog.Header>
 

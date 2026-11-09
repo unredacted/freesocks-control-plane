@@ -3,7 +3,7 @@
    * One node (`/admin/servers/nodes/:uuid?instance=<slug>`), the node's ONE
    * page: its status in a sentence, its activation (enrolled nodes), its
    * edges when an origin protects it (the Edges panel, loaded lazily; the old
-   * `/admin/edges/nodes/<slug>` address redirects here, `?test=<edgeId>` opens
+   * `/admin/servers/origins/<slug>` address redirects here, `?test=<edgeId>` opens
    * its test card), the transports it serves with the addresses members get
    * for each (the operator's own fronts members no longer get are listed
    * apart), each REALITY transport's server names with their one next step
@@ -101,7 +101,7 @@
   // Each REALITY transport's names: where they stand and the next step.
   const sniTransports = transportsQuery(() => slug);
   let back = $derived({
-    href: serversPaths.home({ instance: slug ?? undefined }),
+    href: serversPaths.nodes({ backend: slug ?? undefined }),
     label: 'Nodes',
   });
 

@@ -12,6 +12,7 @@ const item = (over: Partial<AttentionItem>): AttentionItem => ({
   relayId: 'r1',
   edgeId: null,
   listenerKey: null,
+  listenerTag: null,
   accountId: null,
   rotationId: null,
   code: null,
@@ -114,7 +115,9 @@ describe('runAttentionCall', () => {
     const { deps, api } = fakes();
     await runAttentionCall(noEdge, deps);
     expect(api.publish).not.toHaveBeenCalled();
-    expect(deps.navigate).toHaveBeenCalledExactlyOnceWith('/admin/edges/relays/relay-a?tab=edges');
+    expect(deps.navigate).toHaveBeenCalledExactlyOnceWith(
+      '/admin/servers/origins/relay-a/details?tab=edges',
+    );
   });
 
   it('with no spare to publish, the item says open the node or create one, not publish', async () => {
@@ -134,9 +137,9 @@ describe('runAttentionCall', () => {
     expect(withHost.deps.navigate).not.toHaveBeenCalled();
     const bare = fakes().deps;
     await runAttentionCall(test, bare);
-    expect(bare.navigate).toHaveBeenCalledExactlyOnceWith('/admin/edges/nodes/relay-a?test=e1');
+    expect(bare.navigate).toHaveBeenCalledExactlyOnceWith('/admin/servers/origins/relay-a?test=e1');
     await runAttentionCall(item({ action: 'require_edges' }), bare);
-    expect(bare.navigate).toHaveBeenLastCalledWith('/admin/edges/nodes/relay-a');
+    expect(bare.navigate).toHaveBeenLastCalledWith('/admin/servers/origins/relay-a');
   });
 
   it('toasts a failed unconfirmed call; a confirmed one fails in its dialog', async () => {

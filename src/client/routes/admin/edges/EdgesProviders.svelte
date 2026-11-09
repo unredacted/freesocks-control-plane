@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Provider accounts (`/admin/edges/providers`) as cards: state, addresses
+   * Provider accounts (`/admin/servers/providers`) as cards: state, addresses
    * used, the trust line. A card opens the account page (the table with every
    * column lives there). `?edit=new` opens the add-account flow, on the
    * provider `?provider=` names when there is one (a DNS account first, say).
@@ -50,12 +50,16 @@
 </script>
 
 <SectionHeader
-  title="Edge providers"
+  title="Providers"
   description={used !== null && capacity !== null
     ? `${used} of ${capacity} addresses used across your accounts.`
     : 'The accounts FCP creates addresses in.'}
 >
   {#snippet actions()}
+    <!-- Every template in one list (the old Advanced -> Templates). -->
+    <Button size="sm" variant="outline" onclick={() => router.navigate(edgesPaths.templates())}>
+      All templates
+    </Button>
     <Button size="sm" onclick={() => (edit.value = 'new')}>Add account</Button>
   {/snippet}
 </SectionHeader>
