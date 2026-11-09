@@ -459,7 +459,7 @@
 
   <footer class="text-muted-foreground border-t pt-4 text-sm">
     <Link href={edgesPaths.overview()} class="hover:text-foreground underline underline-offset-4">
-      All origins
+      All fronted nodes
     </Link>
   </footer>
 </div>
