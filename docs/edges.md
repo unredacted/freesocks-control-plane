@@ -931,7 +931,7 @@ the configuration the address holds now. The service's health is read by every `
 
 **Where it shows.** "Check with FCP's client" on every L4 address and spare of a node page
 (`POST edges/{id}/client-check`, servers write scope, throttled like the test link), with the
-newest verdict on the line under the address. Edges settings, "FCP's own client check": set up or
+newest verdict on the line under the address. Settings, Client check, "FCP's own client check": set up or
 not, answering or not, the engines and their versions, the egress page's host, "Check now"
 (`GET client-check`, `POST client-check/refresh`). Attention `client_refused` (warning): an
 address in use whose newest check found a client that does not get through, named per client;
@@ -1401,7 +1401,7 @@ XHTTP`: the member's connection mode by its family and leaf names (their choice;
 
 ### Freedom modes only through edges
 
-One switch, `edge.freedom.edgesOnly` (Admin → Servers → Settings, the "Freedom modes only through
+One switch, `edge.freedom.edgesOnly` (Admin → Servers → Settings → Delivery, the "Freedom modes only through
 edges" card; `GET/POST /api/v1/admin/edges/freedom`). While it is on, a member on a
 freedom-family connection mode is never handed a node's own address: the node their key resolves
 to serves them only through a delivery binding (whose render hands out edges, never the origin),
@@ -1789,7 +1789,7 @@ blocking trusted addresses it was just handed loses its trust:
   The account then draws from the open lane, paid or not, until its strikes stop counting (its
   row is deleted then). A demotion renders every mirror again (one full pass), and the lane fence
   keeps a body rendered while it was trusted out of every cache.
-- **What the admin sees**: counts only (`GET trust`, the Rotation settings card: accounts
+- **What the admin sees**: counts only (`GET trust`, Settings, Trust and open addresses: accounts
   suspected now, with a strike, strikes and demotions today). No per-member view, no reset, nothing
   said to the member (it would tell the censor). No log line or audit row names an account, a mark
   or an address.
@@ -2467,10 +2467,30 @@ per-account page
 (`/admin/edges/providers/<id>`), **Templates**, **Probes** (the old `/admin/telemetry/probes`
 redirects; a **Sources** panel says whether each source brings back evidence, a failing one
 with its last failure in words; a target's run history is grouped by round, control vantages
-labelled "control", and for an edge each round's finding per country) and **Settings** (Basics, Advanced sections, maintenance, delivery places). Codes
+labelled "control", and for an edge each round's finding per country) and **Settings** (one searchable page, below). Codes
 are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies and
 `src/client/lib/edgeCodes.ts` the words. Section paths are spelled only in
 `src/client/routes/admin/edges/lib/routes.ts`; API paths only in `src/client/lib/edgesApi.ts`.
+
+**Settings** (`/admin/servers/settings`, `EdgesSettings`) is one page: a column of groups on the
+left (a select on a phone), a search box and "Show changed only". The groups, in order
+(`settings/groups.ts`): Automatic work, Replacement timing, Trust and open addresses, Block
+detection, Probes, Country checks, Subscriptions, CDN fronts, Address hostnames, Country lists,
+Delivery (Freedom modes only through edges, Edge-required places), Client check, and Maintenance
+(pause new work, plus the two backend panel switches `servers.manage.observe` and
+`servers.manage.enabled`, the same calls as the Nodes footer). Every knob is a row of the catalog
+`settings/fields.ts` with its `group` and search `keywords`; the cards that are not one knob are rows
+of their own (`settingEntries`). The search (`settings/search.ts`, pure and unit-tested) matches
+every word typed against the label, helper text, key (`edge.drainMinutes`), path, keywords and
+group name, in every group. A value off its server default says "Changed" beside its label; "Show
+changed only" keeps those. An unsaved edit never hides under the search, and the group column marks
+the groups that hold one. Each group saves only its own keys, as before. URL state: `?group=`,
+`?q=`, `?changed=1`, and `?field=<path>`, which opens the field's group, scrolls to it and marks
+it. The old `?section=` addresses are rewritten to the group that holds the card now
+(`servers/lib/legacyRoutes.ts`: basics → automatic, rotation → replacement, rendering →
+subscriptions, detector → detection, l7 → cdn-fronts, names → address-hostnames, lists →
+country-lists, freedom and delivery → delivery), and `edgesPaths.settings({ section })` builds the
+new address.
 
 A backend node is set up only with Autopilot (the protect sheet); the old step-by-step wizard
 is gone. Its addresses redirect (`servers/lib/legacyRoutes.ts`, pinned by a test):

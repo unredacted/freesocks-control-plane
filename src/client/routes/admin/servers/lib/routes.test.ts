@@ -34,6 +34,9 @@ describe('the Servers section', () => {
     expect(resolveServersRoute(serversPaths.nodes()).page).toBe('nodes');
     expect(resolveServersRoute(serversPaths.backends()).page).toBe('backends');
     expect(resolveServersRoute(serversPaths.pools()).page).toBe('pools');
+    expect(serversPaths.backends({ backend: 'panel a' })).toBe(
+      '/admin/servers/settings/backends?backend=panel%20a',
+    );
     const node = serversPaths.node('u/1', { backend: 'p' });
     expect(node).toBe('/admin/servers/nodes/u%2F1?backend=p');
     expect(resolveServersRoute(node.split('?')[0]!)).toEqual({ page: 'node', uuid: 'u/1' });

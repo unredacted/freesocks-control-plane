@@ -20,11 +20,13 @@
  *   /admin/edges/templates                 -> /admin/servers/providers/templates
  *   /admin/edges/probes                    -> /admin/servers/probes
  *   /admin/edges/settings                  -> /admin/servers/settings
+ *   .../settings?section=S                 -> /admin/servers/settings?group=<S's group> (an unknown S is dropped)
  *   /admin/edges/names[/:slug]             -> /admin/servers/snis[/:slug]
  *   /admin/edges/find-names[/:slug]        -> /admin/servers/snis/find[/:slug]
  *   /admin/edges/countries[/...]           -> /admin/servers/countries[/...]
  */
 import { edgesPaths } from '../../edges/lib/routes';
+import { groupOfSection } from '../../edges/settings/groups';
 import { serversPaths } from './routes';
 
 /** `search` with `from` renamed to `to` (other params kept, in order). */
@@ -33,6 +35,24 @@ function renameParam(search: string, from: string, to: string): string {
   if (!params.has(from)) return search;
   const out = new URLSearchParams();
   for (const [k, v] of params) out.append(k === from ? to : k, v);
+  const s = out.toString();
+  return s ? `?${s}` : '';
+}
+
+/**
+ * `search` with the old Settings card (`section`) made the group that holds it
+ * now (`group`, in its place). A `group` already there wins; an unknown card
+ * is dropped, which shows every group.
+ */
+function sectionToGroup(search: string): string {
+  const params = new URLSearchParams(search);
+  const section = params.get('section');
+  const group = groupOfSection(section);
+  const out = new URLSearchParams();
+  for (const [k, v] of params) {
+    if (k !== 'section') out.append(k, v);
+    else if (group && !params.has('group')) out.append('group', group);
+  }
   const s = out.toString();
   return s ? `?${s}` : '';
 }
@@ -60,6 +80,8 @@ export function legacyRedirect(pathname: string, search = ''): string | null {
   if (path === '/admin/servers/pools' || path === '/admin/remnawave')
     return `${serversPaths.pools()}${search}`;
   if (path === '/admin/telemetry/probes') return `${edgesPaths.probes()}${search}`;
+  if (path === '/admin/servers/settings' && new URLSearchParams(search).has('section'))
+    return `${edgesPaths.settings()}${sectionToGroup(search)}`;
 
   // The old Edges section, page by page.
   if (path !== '/admin/edges' && !path.startsWith('/admin/edges/')) return null;
@@ -75,7 +97,7 @@ export function legacyRedirect(pathname: string, search = ''): string | null {
   if (relay) return `/admin/servers/origins/${relay[1]}/details${search}`;
   if (path === '/admin/edges/templates') return `${edgesPaths.templates()}${search}`;
   if (path === '/admin/edges/probes') return `${edgesPaths.probes()}${search}`;
-  if (path === '/admin/edges/settings') return `${edgesPaths.settings()}${search}`;
+  if (path === '/admin/edges/settings') return `${edgesPaths.settings()}${sectionToGroup(search)}`;
   for (const [from, to] of PREFIXES) {
     if (path === from || path.startsWith(`${from}/`))
       return `${to}${path.slice(from.length)}${search}`;

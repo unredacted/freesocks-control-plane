@@ -17,7 +17,7 @@
  *   /admin/servers/probes                           Probes
  *   /admin/servers/providers[/:id]                  Providers, one account
  *   /admin/servers/providers/templates              Providers -> All templates
- *   /admin/servers/settings                         Settings (`?section=`)
+ *   /admin/servers/settings                         Settings (`?group=`, `?q=`, `?changed=1`, `?field=`)
  *
  * The old `/admin/edges/...` addresses redirect (../../servers/lib/legacyRoutes.ts).
  *
@@ -30,6 +30,11 @@
  */
 import { matchRoute } from '../../../../lib/matchRoute';
 import type { SetupStepId } from '../../../../../shared/contracts/edgeCodes';
+import {
+  groupOfSection,
+  type LegacySettingsSection,
+  type SettingsGroupId,
+} from '../settings/groups';
 
 export const RELAY_TABS = ['overview', 'edges', 'listeners', 'rotations', 'probes'] as const;
 export type RelayTab = (typeof RELAY_TABS)[number];
@@ -144,7 +149,21 @@ export const edgesPaths = {
   templates: (params?: { template?: string; provider?: string }) =>
     withSearch(`${R}/providers/templates`, params),
   probes: (params?: { target?: string; range?: string }) => withSearch(`${R}/probes`, params),
-  settings: (params?: { section?: string }) => withSearch(`${R}/settings`, params),
+  /**
+   * Settings: one `group`, a `field` to scroll to, or a search `q`. An old card
+   * name (`section`) opens the group that holds it now.
+   */
+  settings: (params?: {
+    group?: SettingsGroupId;
+    field?: string;
+    q?: string;
+    section?: LegacySettingsSection;
+  }) =>
+    withSearch(`${R}/settings`, {
+      group: params?.group ?? groupOfSection(params?.section),
+      field: params?.field,
+      q: params?.q,
+    }),
   /** SNI lists (the SNIs tab), and one list. */
   names: () => `${R}/snis`,
   family: (slug: string) => `${R}/snis/${enc(slug)}`,
@@ -181,8 +200,8 @@ export function setupStepTarget(step: SetupStepId, slug: string | null): string 
     case 'publish':
       return slug ? edgesPaths.relay(slug, { tab: 'edges' }) : edgesPaths.overview();
     case 'rendering':
-      return edgesPaths.settings({ section: 'rendering' });
+      return edgesPaths.settings({ group: 'subscriptions' });
     case 'automation':
-      return edgesPaths.settings({ section: 'rotation' });
+      return edgesPaths.settings({ group: 'replacement' });
   }
 }
