@@ -160,7 +160,7 @@ export const adminPaths = {
   relay: (slug: string, params?: Params) => withSearch(`${S}/origins/${enc(slug)}/details`, params),
   providers: () => `${S}/providers`,
   provider: (id: string) => `${S}/providers/${enc(id)}`,
-  /** Settings; `section` opens one card. */
+  /** Settings; `group` opens one group. */
   settings: (params?: Params) => withSearch(`${S}/settings`, params),
   probes: () => `${S}/probes`,
   family: (slug: string) => `${S}/snis/lists/${enc(slug)}`,
@@ -222,7 +222,7 @@ export function alertPath(s: AlertSource): string {
     case 'open_settings':
       return adminPaths.settings();
     case 'thaw':
-      return adminPaths.settings({ section: 'maintenance' });
+      return adminPaths.settings({ group: 'maintenance' });
     case 'protect_node':
       if (slug) return adminPaths.node(slug);
       return adminPaths.edges({
