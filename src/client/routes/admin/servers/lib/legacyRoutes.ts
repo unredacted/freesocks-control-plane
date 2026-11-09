@@ -21,7 +21,8 @@
  *   /admin/edges/probes                    -> /admin/servers/probes
  *   /admin/edges/settings                  -> /admin/servers/settings
  *   .../settings?section=S                 -> /admin/servers/settings?group=<S's group> (an unknown S is dropped)
- *   /admin/edges/names[/:slug]             -> /admin/servers/snis[/:slug]
+ *   /admin/edges/names                     -> /admin/servers/snis
+ *   /admin/edges/names/:slug               -> /admin/servers/snis/lists/:slug
  *   /admin/edges/find-names[/:slug]        -> /admin/servers/snis/find[/:slug]
  *   /admin/edges/countries[/...]           -> /admin/servers/countries[/...]
  */
@@ -98,6 +99,9 @@ export function legacyRedirect(pathname: string, search = ''): string | null {
   if (path === '/admin/edges/templates') return `${edgesPaths.templates()}${search}`;
   if (path === '/admin/edges/probes') return `${edgesPaths.probes()}${search}`;
   if (path === '/admin/edges/settings') return `${edgesPaths.settings()}${sectionToGroup(search)}`;
+  // One SNI list: its own namespace now, so a list called "find" stays a list.
+  const list = /^\/admin\/edges\/names\/([^/]+)$/.exec(path);
+  if (list) return `/admin/servers/snis/lists/${list[1]}${search}`;
   for (const [from, to] of PREFIXES) {
     if (path === from || path.startsWith(`${from}/`))
       return `${to}${path.slice(from.length)}${search}`;
