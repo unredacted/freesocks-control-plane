@@ -28,6 +28,7 @@
    *
    * Wording and checks live in ./lib/addList.ts (pure, unit-tested).
    */
+  import { transportName } from '@client/lib/transportName';
   import { untrack } from 'svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -185,7 +186,9 @@
       <Dialog.Title>Add an SNI list</Dialog.Title>
       <Dialog.Description>
         {#if from.kind === 'port'}
-          From {from.transport.tag}{from.transport.port ? `, port ${from.transport.port}` : ''}.
+          From {transportName(from.transport.tag)}{from.transport.port
+            ? `, port ${from.transport.port}`
+            : ''}.
         {:else}
           One cover site and the SNIs it serves. The cover site cannot be changed later.
         {/if}

@@ -2954,6 +2954,8 @@ export const AttentionItem = z.object({
   relayId: z.string().nullable(),
   edgeId: z.string().nullable().default(null),
   listenerKey: z.string().nullable().default(null),
+  /** The backend transport the listener is (its inbound tag); null: not a backend transport. */
+  listenerTag: z.string().nullable().default(null),
   accountId: z.string().nullable().default(null),
   rotationId: z.string().nullable().default(null),
   /** A short code the CMS maps to words (a veto, a failure code, a Host state); never free text from a provider. */

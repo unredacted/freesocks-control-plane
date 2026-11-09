@@ -101,14 +101,11 @@
 <Card {id}>
   <CardHeader>
     <CardTitle class="text-base">Delivery: where members connect from</CardTitle>
-    <CardDescription>
-      Off: the country the CDN reports is used for one response and stored nowhere. On: for members
-      of freedom modes left on Automatic, a country on the censored-country list is stored with
-      their key as a guess (shown to them and to admins, never logged, audited or sent to
-      analytics), forgotten the number of days below after it was last seen, and deleted with the
-      key. With ordering by distance on as well, the guess may be any country, and another country
-      replaces it only after a day. A member's own choice always wins, and members who opt out are
-      never ordered. Needs the deployment to be fronted by Cloudflare (CF_FRONTED).
+    <CardDescription class="space-y-1">
+      <span class="block">Where members connect from decides which addresses they get first.</span>
+      <span class="block">
+        A member's own choice always wins. Members who opt out are never ordered.
+      </span>
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-3 text-sm">
@@ -121,48 +118,69 @@
         <Skeleton class="h-32 w-full" />
       {/if}
     {:else}
-      <label class="flex items-center gap-3">
+      <label class="flex items-start gap-3">
         <Checkbox
+          class="mt-0.5"
           checked={draft.detect}
           disabled={save.isPending}
           onCheckedChange={(v) => draft && (draft.detect = v === true)}
         />
-        <span>Guess the country from the connection</span>
+        <span>
+          Guess the country from the connection
+          <span class="text-muted-foreground block text-xs">
+            Off: the country the CDN reports is used for one response and stored nowhere. On: for
+            freedom members on Automatic, a censored country is kept with their key as a guess
+            (shown to them and to admins, never logged, audited or sent to analytics), forgotten
+            after the days below, and deleted with the key. Needs Cloudflare in front (CF_FRONTED).
+          </span>
+        </span>
       </label>
-      <label class="flex items-center gap-3">
+      <label class="flex items-start gap-3">
         <Checkbox
+          class="mt-0.5"
           checked={draft.ask}
           disabled={save.isPending}
           onCheckedChange={(v) => draft && (draft.ask = v === true)}
         />
         <span>
-          Ask members where they connect from at sign-up and when they add a mirror link (a mirror
-          can't tell where its reader is, so it is shaped only by this answer). Their answer is the
-          same one as on the account page, and "Somewhere else, or I'd rather not say" is always an
-          answer. Needs a censored-country list.
+          Ask members where they connect from
+          <span class="text-muted-foreground block text-xs">
+            At sign-up and when they add a mirror link (a mirror can't tell where its reader is, so
+            only this answer shapes it). It is the same answer as on the account page, and
+            "Somewhere else, or I'd rather not say" is always allowed. Needs a censored-country
+            list.
+          </span>
         </span>
       </label>
-      <label class="flex items-center gap-3">
+      <label class="flex items-start gap-3">
         <Checkbox
+          class="mt-0.5"
           checked={draft.steer}
           disabled={save.isPending}
           onCheckedChange={(v) => draft && (draft.steer = v === true)}
         />
         <span>
-          Order each member's addresses by their country: addresses that work there first, blocked
-          ones only when nothing else is left (their own choice or a stored guess only)
+          Order addresses by country
+          <span class="text-muted-foreground block text-xs">
+            Addresses that work there first, blocked ones only when nothing else is left. Uses the
+            member's own choice or a kept guess only.
+          </span>
         </span>
       </label>
-      <label class="flex items-center gap-3">
+      <label class="flex items-start gap-3">
         <Checkbox
+          class="mt-0.5"
           checked={draft.latency}
           disabled={save.isPending}
           onCheckedChange={(v) => draft && (draft.latency = v === true)}
         />
         <span>
-          Also order them by distance: near addresses first, judged over the whole path from the
-          member's country through the address to the node (timed by probes where they run, else
-          from the map). Needs both switches above.
+          Also order by distance
+          <span class="text-muted-foreground block text-xs">
+            Near addresses first, over the whole path from the member's country through the address
+            to the node (timed by probes where they run, else from the map). The guess may then be
+            any country, and another replaces it only after a day. Needs both switches above.
+          </span>
         </span>
       </label>
       <div class="flex flex-wrap gap-6">

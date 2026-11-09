@@ -161,7 +161,7 @@ describe('Add an SNI list', () => {
       cert: null,
     } as unknown as Awaited<ReturnType<typeof manageTransport>>);
     show({ kind: 'port', backendSlug: 'panel-a', transport, nodeUuid: 'n-1' });
-    expect(text()).toContain('From REALITY_IN, port 443.');
+    expect(text()).toContain('From REALITY In, port 443.');
     await vi.waitFor(() => expect(text()).toContain('Keep SNIs on Network A.'));
     button('Add the list').click();
     await vi.waitFor(() => expect(onAdded).toHaveBeenCalledWith('reality-in'));

@@ -25,7 +25,7 @@ import { EDGES_ROUTES, edgesPaths, resolveEdgesRoute, setupStepTarget } from './
 import { SETUP_STEP_IDS } from '../../../../../shared/contracts/edgeCodes';
 import { resolveSectionRoute, resolveServersRoute } from '../../servers/lib/routes';
 import { addTags, normalizeHostname, splitTags } from './tags';
-import { actorLabel, subjectOf } from './timeline';
+import { actorLabel, nodeActivityEntries, subjectOf } from './timeline';
 import type { TimelineRow } from './types';
 
 const item = (over: Partial<AttentionItem>): AttentionItem => ({
@@ -36,6 +36,7 @@ const item = (over: Partial<AttentionItem>): AttentionItem => ({
   relayId: 'r1',
   edgeId: null,
   listenerKey: null,
+  listenerTag: null,
   accountId: null,
   rotationId: null,
   code: null,
@@ -329,6 +330,9 @@ describe('attention', () => {
     // A failed run's kind is its title, never a "Provision run" fact.
     expect(attentionFactsLine(item({ facts: { kind: 'provision', phase: 'failed' } }))).toBe('');
     expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');
+    expect(
+      attentionSubject(item({ listenerKey: 'freedomweb2hl30v', listenerTag: 'FREEDOM_WEBSOCKET' })),
+    ).toBe('Origin relay-a, transport Freedom WebSocket');
     expect(attentionSubject(item({ relaySlug: null }))).toBe('');
   });
 });
@@ -587,5 +591,19 @@ describe('a REALITY refusal row', () => {
   });
   it("falls back to the kind's words when it carries no verdict", () => {
     expect(attentionHeading(row({ count: 1 }), true)).toMatchObject({ final: false });
+  });
+});
+
+describe('nodeActivityEntries', () => {
+  it('leaves probe runs out of a node Activity, keeps a changed verdict', () => {
+    const rows = ['probe.requested', 'probe.run', 'probe.verdict', 'edge.rotated'].map(
+      (action) => ({
+        action,
+      }),
+    );
+    expect(nodeActivityEntries(rows).map((r) => r.action)).toEqual([
+      'probe.verdict',
+      'edge.rotated',
+    ]);
   });
 });

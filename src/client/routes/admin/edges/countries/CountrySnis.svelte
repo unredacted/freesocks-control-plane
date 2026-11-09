@@ -7,7 +7,7 @@
    * marks are made on the SNI list's page (the SNIs tab).
    *
    * First the country's own list (CountrySnisCard: each SNI once over every
-   * node, shared / only for it / not used), then the per-node lists.
+   * node, shared / only for it / not used) when it has any, then the per-node lists.
    *
    * Props:
    *   view: CountryViewResponse
@@ -21,7 +21,9 @@
   import CountrySnisCard from './CountrySnisCard.svelte';
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
+  import { protocolLine } from '../lib/format';
   import {
+    HANDED_SCOPE,
     STATE_WORDS,
     checksLine,
     listsLine,
@@ -46,7 +48,9 @@
 </script>
 
 <div class="space-y-6">
-  {#if v.curated}<CountrySnisCard code={v.country} snis={v.snis} />{/if}
+  <p class="text-muted-foreground text-sm">{HANDED_SCOPE}</p>
+  <!-- The country's own list when it has SNIs; empty, it would contradict the per-node lists below. -->
+  {#if v.curated && v.snis.length > 0}<CountrySnisCard code={v.country} snis={v.snis} />{/if}
 
   {#if poolLines.length > 0}
     <Card>
@@ -72,8 +76,8 @@
       </CardHeader>
       <CardContent class="space-y-6 text-sm">
         {#each listeners as l (l.listenerId)}
-          <section aria-label={`SNIs of transport ${l.key}`} class="space-y-2">
-            <p class="text-muted-foreground">Transport {l.key}</p>
+          <section aria-label={`SNIs of ${protocolLine(l)}`} class="space-y-2">
+            <p class="text-muted-foreground">{protocolLine(l)}</p>
             {#if namesOnListsLine(l)}
               <p class="text-muted-foreground">{namesOnListsLine(l)}</p>
             {/if}

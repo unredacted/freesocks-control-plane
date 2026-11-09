@@ -133,12 +133,12 @@ describe('the next step', () => {
     });
     expect(namesStatus(transport(), 'n-unprotected')).toEqual({
       dot: 'grey',
-      text: '4 SNIs on the port',
+      text: '4 SNIs on this port',
     });
     // A port nobody protects, on the SNI list's page.
     const bare = transport({ nodes: [] }, { inUse: 0, idle: 4 });
     expect(namesStep(bare, on, null)).toEqual({ kind: 'unprotected', here: false });
-    expect(namesStatus(bare, null).text).toBe('4 SNIs on the port');
+    expect(namesStatus(bare, null).text).toBe('4 SNIs on this port');
     expect(stepWords({ kind: 'unprotected', here: false }, bare)).toMatch(/^No node behind/);
   });
 
@@ -284,16 +284,16 @@ describe('Action needed', () => {
       transports: [t, transport({ transportUuid: 't-2', list: null })],
     };
     expect(namesNeedsYou(view).map((r) => r.text)).toEqual([
-      'VLESS_REALITY: 2 checked SNIs cannot reach the nodes: changes to the backend are off.',
-      'VLESS_REALITY: 5 suggested SNIs to add.',
-      'VLESS_REALITY: 1 SNI no longer served by the cover site.',
+      'VLESS REALITY: 2 checked SNIs cannot reach the nodes: changes to the backend are off.',
+      'VLESS REALITY: 5 suggested SNIs to add.',
+      'VLESS REALITY: 1 SNI no longer served by the cover site.',
     ]);
     const waiting = transport({}, { waitingTest: 1 });
     waiting.nodes[0]!.waitingTest = 1;
     expect(namesNeedsYou({ switches: on, transports: [waiting] })).toEqual([
       {
         key: 'names-test:t-1:node-one',
-        text: 'VLESS_REALITY on node-one: 1 SNI waits for a test.',
+        text: 'VLESS REALITY on node-one: 1 SNI waits for a test.',
         nodeUuid: NODE,
       },
     ]);
@@ -533,7 +533,7 @@ describe("FCP's own test of a send", () => {
     );
     const lines = namesNeedsYou({ switches: { ...on, autoTest: 'ready' }, transports: [t] });
     expect(lines.find((l) => l.key.startsWith('names-test'))?.text).toBe(
-      'VLESS_REALITY on node-one: 2 SNIs wait for a test. FCP is testing one now.',
+      'VLESS REALITY on node-one: 2 SNIs wait for a test. FCP is testing one now.',
     );
   });
 });
