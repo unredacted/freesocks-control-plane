@@ -131,7 +131,9 @@
                 {sniSummaryLine(c.snis, c.country) ?? ''}
                 {c.listed.nameChecksRun
                   ? 'SNIs are checked from inside.'
-                  : 'SNIs are not checked from inside.'}
+                  : c.listed.checkNamesInside
+                    ? 'SNI checks from inside are on, but none runs now.'
+                    : 'SNIs are not checked from inside.'}
                 {c.totals.lastEvidenceAt
                   ? `Newest evidence ${relativeTime(c.totals.lastEvidenceAt, now)}.`
                   : 'No evidence yet.'}

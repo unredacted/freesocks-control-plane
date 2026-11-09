@@ -487,12 +487,19 @@ export function meantForWords(l: CountryViewMeantFor): { state: string; detail: 
   return { state: `${state}${why}`, detail };
 }
 
-/** Said once per country page: who the "handed" lines describe. */
+/** Said above the handed lines (Addresses, SNIs): who they describe. */
 export const HANDED_SCOPE =
-  'The handed lines below are for freedom-mode members whose country is set to this one, estimated over a sample of keys. Members of other modes get SNIs and addresses chosen without a country.';
+  'What members are handed is for freedom-mode members whose country is set to this one, estimated over a sample of keys. Members of other modes get SNIs and addresses chosen without a country.';
+
+/** SNI checks from inside are on for the country but none runs (the Checks section says the same). */
+export const NAME_CHECKS_IDLE =
+  'SNI checks from inside are on, but none runs now: SNI checks are off, or no source can check from here.';
 
 /** What is switched off, and what the view lacks because of it. */
-export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | null): string[] {
+export function switchNotes(
+  s: CountryViewSwitches,
+  listed: { checkNamesInside: boolean; nameChecksRun: boolean } | null,
+): string[] {
   const out: string[] = [];
   if (!s.probes) out.push('Probes are off: nothing measures the addresses from outside.');
   if (!s.countryChecks)
@@ -503,9 +510,10 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
   if (s.render && !s.steering)
     out.push('Delivery by country is off: members are not steered away from blocked addresses.');
   if (!s.names) out.push('SNI lists are off, so SNIs are not judged per country.');
-  else if (nameChecksHere === false)
+  else if (listed && !listed.checkNamesInside)
     out.push('SNIs are not checked from inside this country. Turn it on under Checks from here.');
-  else if (nameChecksHere && !s.realHost)
+  else if (listed && !listed.nameChecksRun) out.push(NAME_CHECKS_IDLE);
+  else if (listed?.nameChecksRun && !s.realHost)
     out.push(
       'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under SNIs, Find more.',
     );

@@ -46,14 +46,7 @@
     snisDigest,
     type CountrySection,
   } from './sections';
-  import {
-    countryLabel,
-    coverageLines,
-    coverageNote,
-    switchNotes,
-    totalsLine,
-    HANDED_SCOPE,
-  } from './words';
+  import { countryLabel, coverageLines, coverageNote, switchNotes, totalsLine } from './words';
 
   interface Props {
     code: string;
@@ -92,7 +85,7 @@
       ...(v.listed
         ? []
         : ['This country is not on the censored-country list, so nothing is checked from here.']),
-      ...switchNotes(v.switches, v.listed?.nameChecksRun ?? false),
+      ...switchNotes(v.switches, v.listed),
     ]}
     {@const probesNote = coverageNote(v.probes, v.sources, v.switches.probes, now)}
     {@const digests = [
@@ -133,7 +126,6 @@
           {v.controls.length > 0 ? `Control countries: ${v.controls.join(', ')}.` : ''}
         </p>
         {#each notes as n (n)}<p class="text-muted-foreground">{n}</p>{/each}
-        <p class="text-muted-foreground">{HANDED_SCOPE}</p>
       </CardContent>
     </Card>
 
