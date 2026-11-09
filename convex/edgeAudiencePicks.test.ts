@@ -328,6 +328,7 @@ describe('upkeep keeps their count (step 5W)', () => {
     for (let i = 0; i < 20; i++) {
       const a = assignEndpoints(`seat-${i}`, published, {
         now: Date.now(),
+        preferDistinctProviders: true,
         includeBackup: true,
         edgePick: 'hrw1',
         edgeCountry: 'IR',
