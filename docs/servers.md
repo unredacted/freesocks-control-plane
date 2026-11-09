@@ -1461,16 +1461,49 @@ chosen transport, and what `placements/validate` says about every mode's pool (a
 mode group this backend does not have, a mode group with no transport). The create is the
 ledger's node create (`POST {slug}/nodes`, sent once).
 
-`/admin/servers/nodes/{uuid}` is the node's ONE page: its sentence, the profile it runs, its own
-notes, its activation (an enrolled node), its **edges** when an origin protects it, and its
-transports with the addresses members get for each. The edges panel is the Edges section's
-(`edges/simple/NodeEdgesPanel.svelte`, loaded lazily): the origin's status from the server's one
-projection (docs/edges.md "Admin section"), Go live or Replace address, More (a spare address,
-**Front again**, Origin details, Remove fronting), the test card (`?test=<edgeId>`), the
-addresses in use, the per-node automatic switch and recent activity. An origin's page,
-`/admin/servers/origins/<slug>`, redirects here for a backend node. **Front again** (an enrolled node live behind edges) starts
-a re-protect run ("A fronted node's activation") and opens its progress in the protect sheet; it
-is the primary action while the node waits to be protected again.
+`/admin/servers/nodes/{uuid}` is the node's ONE page (`servers/NodePage.svelte`). The header has
+its name, "machine · country · backend" (the backend only when there is more than one), its
+status sentence and the node actions. A sticky section bar (`components/SectionBar.svelte`, the
+rules in `servers/lib/nodeSections.ts`) jumps within one scroll and names the section in the
+address (`?section=summary|addresses|transports|snis|modes|activity|details`):
+
+- **Summary**: the profile it runs, a rename, its notes, what its origin says first (the
+  quarantine resolver, that it is being deleted, a running rotation with Watch it:
+  `edges/relay/OriginNotices.svelte`), a fronting run's progress **inline** (`?run=<id>`, the
+  protect sheet's own progress in a card: `components/RunProgress.svelte`), and its activation
+  and approval (an enrolled node).
+- **Addresses**: the edges panel when an origin fronts the node (`edges/simple/NodeEdgesPanel.svelte`,
+  loaded lazily): the origin's status from the server's one projection (docs/edges.md "Admin
+  section"), Go live or Replace address, More (a spare address, **Front again**, Technical
+  details, Remove fronting), the test card (`?test=<edgeId>`), the addresses per location, the
+  per-node automatic switch. A node nothing fronts gets "Front this node" instead, which opens the
+  protect sheet on this page (`?front=1`); its run then shows in Summary.
+- **Transports**: port changes, each transport with Change port and the addresses members get
+  (the operator's own fronts apart), and Add a transport.
+- **SNIs**: each REALITY transport's SNIs with their one next step (manage, add suggestions, send,
+  test).
+- **Modes**: its mode and whether members can pick it, the mode groups each transport is in, and
+  the modes it also serves.
+- **Activity**: the fronted node's recent activity (`edges/simple/NodeActivity.svelte`).
+- **Technical details**: closed by default (`components/DetailsFold.svelte`; `?section=details`,
+  and any of `?tab=`, `?edge=`, `?rotation=`, `?listener=` open it). It holds ALL of the old
+  origin page (`edges/relay/TechnicalDetails.svelte`): its badges and Actions menu, the first-edge
+  card, the Overview (origin overrides, pool, delivery preview, detector, timeline), Edges (table,
+  drawer, every action), Listeners (the Hosts plan, the L7 credential), Rotations (drawer) and
+  Probes tabs.
+
+An origin added by hand (a manual address or a whole server) gets the same layout at
+`/admin/servers/origins/<slug>` without Transports, SNIs and Modes; that address redirects to the
+node page for a backend node. The old origin details address
+(`/admin/servers/origins/<slug>/details`, and before it `/admin/edges/relays/<slug>`) redirects
+to the node page's Technical details: `?tab=overview` lands on Summary, any other tab on the fold
+at that tab, no tab on the fold (`detailsSearch`). Where the node lives depends on the origin's
+backend and node uuid (or, for an origin made before uuids were recorded, its node name in the
+backend's tree), so this redirect is done at runtime by the page component
+(`edges/RelayPage.svelte`), not by the pure legacy table; a backend node whose page cannot be
+found keeps its technical details there. **Front again** (an enrolled node live behind edges)
+starts a re-protect run ("A fronted node's activation") and shows its progress in Summary; it is
+the primary action while the node waits to be protected again.
 
 With changes allowed and the backend set up the node header carries Edit, Restart or Turn on,
 and a More menu with Turn off, **Stop and remove** (offered only once the node is off) and

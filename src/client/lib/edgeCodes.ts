@@ -645,7 +645,7 @@ const COPY = {
     label: 'No tested spare',
     explain:
       "Replacing this address needs a spare you have tested, unless FCP's own client check is on and can make and check one.",
-    fix: "Create and test a spare, or turn on FCP's client check in Edges settings.",
+    fix: "Create and test a spare, or turn on FCP's client check in Settings, Automatic work.",
   },
   no_assigned_location: {
     label: 'No location for it',
@@ -966,12 +966,13 @@ const COPY = {
   edge_unreachable: {
     label: 'Edge unreachable',
     explain: 'Probes cannot reach a published edge from at least one country.',
+    fix: 'Probe it again, or replace the address if it stays unreachable.',
   },
   probe_source_failing: {
     label: 'A probe source is failing',
     explain:
       'A reachability source has returned nothing for hours, so countries only it covers read as not known.',
-    fix: 'Check its credential and budget in Edges settings, Probes.',
+    fix: 'Check its credential and budget in Settings, Probes.',
   },
   country_wide_failure: {
     label: 'Failing from a whole country',

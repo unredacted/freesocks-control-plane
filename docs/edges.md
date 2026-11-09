@@ -2443,8 +2443,10 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   round found), the checks read every 4 s while the run is live.
 - **A node's edges** (`NodeEdgesPanel`, no tabs), part of the node's ONE page: a backend node's
   Servers node page embeds it (docs/servers.md "The page") and `/admin/servers/origins/<slug>`
-  redirects there (`nodeHomeOf`, keeping `?test=`); an origin that is not a backend node (manual,
-  a whole Outline server) keeps it at that address. The status sentence, then **Addresses**
+  redirects there (`nodeHomeOf`, keeping its query); an origin that is not a backend node (manual,
+  a whole Outline server) keeps it at that address, in the same section layout. On a node page
+  it sits in the Addresses section, a run's progress opens inline in Summary (`runHref`), and
+  its recent activity is the Activity section (`NodeActivity`). The status sentence, then **Addresses**
   (`NodeProvidersCard` + `AddressRow`, words in `simple/addressWords.ts`): one group per
   location of the node's provider set (its name and provider once, how many addresses are in
   use and spare there, the count it wants and its options with Change, Remove), each holding
@@ -2486,7 +2488,7 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   "Recent activity" (the
   timeline through `plainAuditActionLabel`), and More: add
   a spare address, **Front again** (an enrolled node live behind edges: a re-protect run, see
-  "Guided setup runs"; the primary action while the node waits to be fronted again), Origin
+  "Guided setup runs"; the primary action while the node waits to be fronted again), Technical
   details, **Remove fronting** (`restore-direct`; the restore workflow's phase is shown while it
   runs, and a removal held at the direct check says why and offers **Skip restoring direct**,
   § "Direct-Host hides and the restore workflow"). `?test=<edgeId>` opens the test card.
@@ -2514,10 +2516,10 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
 of the former dashboard's table (`overview/OriginCells.svelte`), and above and below it the fleet
 tiles, attention list, readiness whose steps link to where each is done (`setupStepTarget`) and
 probe chart (`overview/OriginsTechnical.svelte`); Nodes -> Add -> **Add an origin by hand**
-(`?add=origin`) opens `NewRelayDialog` for a manual address or a whole Outline server. **Origin details** (`/admin/edges/relays/<slug>`:
+(`?add=origin`) opens `NewRelayDialog` for a manual address or a whole Outline server. **Technical details**, the fold at the foot of a node's page (`relay/TechnicalDetails.svelte`; the old `/admin/servers/origins/<slug>/details` and `/admin/edges/relays/<slug>` redirect there, docs/servers.md "The page"):
 overview, edges (an edge being destroyed, or gone, shows no publication badge: it is neither in
 use nor a standby, `showsPublication`; the edge drawer likewise), listeners, rotations, probes;
-the quarantine resolver; an origin that is not a
+the quarantine resolver (shown in the node page's Summary, `relay/OriginNotices.svelte`); an origin that is not a
 backend node and has no edge yet shows the first-edge card: provision one, where a named, tested
 account is allowed before it is trusted and the edge waits unpublished, or import a front), the
 per-account page
@@ -5817,7 +5819,7 @@ deployment").
 `docs/servers.md`, from the role run to a member connection.
 
 **Bootstrap a manual or whole-Outline origin.** Nodes → Add → Add an origin by hand (`?add=origin`: a manual
-address or a whole Outline server only), then the first-edge card on its Origin details page:
+address or a whole Outline server only), then the first-edge card in its page's Technical details:
 provision an edge or import an existing front, publish it, enable rendering, preview each client
 family. Until the first publish with rendering on, members on that origin receive 503.
 
