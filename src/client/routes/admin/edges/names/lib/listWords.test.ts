@@ -245,7 +245,8 @@ describe('the SNIs page', () => {
   test('switch lines say what is true now', () => {
     expect(namesSwitchLine(true)).toMatch(/^On\./);
     expect(namesSwitchLine(false)).toMatch(/^Off\./);
-    expect(autoTestSwitchLine(false, 'ready')).toMatch(/^Off\. After a send, a person tests/);
+    expect(autoTestSwitchLine(false, 'ready')).toMatch(/^Off\. FCP doesn't test new SNIs/);
+    expect(autoTestSwitchLine(false, 'ready')).not.toMatch(/person/);
     expect(autoTestSwitchLine(true, 'ready')).toMatch(
       /^On\. After a send, FCP's own sing-box, Xray and Mihomo/,
     );

@@ -261,12 +261,12 @@ export function autoTestSwitchLine(
   service: 'ready' | 'not_configured' | 'unhealthy' | undefined,
 ): string {
   if (!on)
-    return 'Off. After a send, a person tests one SNI on each node. A pass hands the SNIs to its members.';
+    return "Off. FCP doesn't test new SNIs, so a send waits on each node until one of its SNIs passes a test there.";
   if (service === 'not_configured')
-    return "On, but FCP's client check is not set up here, so nothing is tested. See Edges, Settings.";
+    return "On, but FCP's client check is not set up here, so nothing is tested. See Settings, Client check.";
   if (service === 'unhealthy')
     return "On, but FCP's client check did not answer its last health check. Nothing is tested until it does.";
-  return "On. After a send, FCP's own sing-box, Xray and Mihomo connect with one new SNI through each node's tested address. A pass hands the SNIs to that node's members. Anything else waits for a person.";
+  return "On. After a send, FCP's own sing-box, Xray and Mihomo connect with one new SNI through each node's tested address. A pass hands the SNIs to that node's members. Anything else waits for a test.";
 }
 
 /** Under a list's "Use this list" switch: what is true now. */

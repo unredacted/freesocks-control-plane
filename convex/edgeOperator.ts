@@ -83,6 +83,7 @@ import {
   mapRelayAdmin,
 } from './relays';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
+import { tagListeners } from './lib/edges/listenerTags';
 import { mapEdgeAdmin } from './edges';
 import {
   REALITY_CLIENT_FAMILIES,
@@ -817,6 +818,8 @@ export interface AttentionItem {
   relayId: string | null;
   edgeId: string | null;
   listenerKey: string | null;
+  /** The backend transport the listener is (its inbound tag), so a row names it, never the role's key. */
+  listenerTag?: string | null;
   accountId: string | null;
   rotationId: string | null;
   code: string | null;
@@ -2649,6 +2652,8 @@ export const attention = internalQuery({
         since: isoN(maintenance.since),
       });
     }
+    // Each row's listener as the transport it is (its inbound tag), read once per node.
+    await tagListeners(items, (relayId) => listenersOf(ctx, relayId as Id<'relays'>));
     items.sort(
       (x, y) =>
         ATTENTION_RANK.indexOf(x.kind) - ATTENTION_RANK.indexOf(y.kind) ||

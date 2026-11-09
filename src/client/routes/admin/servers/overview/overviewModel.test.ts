@@ -27,6 +27,7 @@ const edge = (id: string, severity: AttentionItem['severity']): AttentionItem =>
   relayId: 'r1',
   edgeId: null,
   listenerKey: null,
+  listenerTag: null,
   accountId: null,
   rotationId: null,
   code: null,
