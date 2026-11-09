@@ -12,6 +12,9 @@ import {
   rowHref,
   rowMatches,
   searchMatches,
+  setupsStopped,
+  tableState,
+  waitsForWipe,
   type BackendInput,
   type OriginRow,
 } from './nodesTable';
@@ -438,5 +441,94 @@ describe('filters', () => {
     expect(c.direct).toBe(2);
     expect(c['by-hand']).toBe(1);
     expect(c.retiring).toBe(0);
+  });
+});
+
+describe('review fixes', () => {
+  test('an adopted node waiting at the wipe needs the admin, with or without its panel row', () => {
+    const retirement = { stage: 'ready_to_wipe' } as NodeIntentView['retirement'];
+    expect(waitsForWipe(intent({ adopted: true, retirement }))).toBe(true);
+    expect(waitsForWipe(intent({ adopted: false, retirement }))).toBe(false);
+    expect(waitsForWipe(null)).toBe(false);
+    const [withRow] = buildNodeRows({
+      backends: [backend({ intents: [intent({ adopted: true, retirement })] })],
+      origins: [],
+      statuses: new Map(),
+    });
+    expect(withRow!.dot).toBe('grey');
+    expect(withRow!.attention).toBe(true);
+    expect(rowMatches(withRow!, 'attention')).toBe(true);
+    const [rowless] = buildNodeRows({
+      backends: [backend({ nodes: [], intents: [intent({ adopted: true, retirement })] })],
+      origins: [],
+      statuses: new Map(),
+    });
+    expect(rowless!.kind).toBe('retiring');
+    expect(rowless!.attention).toBe(true);
+    // The role wipes a machine it runs: nothing waits for the admin.
+    const [byRole] = buildNodeRows({
+      backends: [backend({ nodes: [], intents: [intent({ adopted: false, retirement })] })],
+      origins: [],
+      statuses: new Map(),
+    });
+    expect(byRole!.attention).toBe(false);
+  });
+
+  test("a hidden backend's node origins are left out, not listed as stray origins", () => {
+    const rows = buildNodeRows({
+      backends: [backend()],
+      origins: [
+        origin('elsewhere', {
+          origin: { kind: 'panel-node', backendServerId: 'b-2', nodeName: 'x', nodeUuid: 'n-9' },
+        }),
+        origin('manual-a'),
+      ],
+      statuses: new Map(),
+      hiddenBackendIds: new Set(['b-2']),
+    });
+    expect(rows.map((r) => r.origin?.relay.slug ?? r.name)).toEqual(['node-one', 'manual-a']);
+  });
+
+  test('tableState: an error wins and names its query, then loading, then ready', () => {
+    const ok = { isPending: false, isError: false };
+    const pending = { isPending: true, isError: false };
+    const failed = { isPending: false, isError: true };
+    expect(
+      tableState([
+        ['edges', ok],
+        ['attention', ok],
+      ]),
+    ).toEqual({ kind: 'ready' });
+    expect(
+      tableState([
+        ['edges', pending],
+        ['attention', ok],
+      ]),
+    ).toEqual({ kind: 'loading' });
+    expect(
+      tableState([
+        ['edges', pending],
+        ['attention', failed],
+      ]),
+    ).toEqual({
+      kind: 'error',
+      failed: 'attention',
+    });
+  });
+
+  test('setupsStopped: each backend whose run stopped, even while another still runs', () => {
+    const before = new Map([
+      ['a', true],
+      ['b', true],
+      ['c', false],
+    ]);
+    const now = new Map([
+      ['a', false],
+      ['b', true],
+      ['c', false],
+    ]);
+    expect(setupsStopped(before, now)).toEqual(['a']);
+    expect(setupsStopped(before, new Map([['b', true]]))).toEqual(['a']);
+    expect(setupsStopped(new Map(), new Map([['a', false]]))).toEqual([]);
   });
 });

@@ -149,11 +149,18 @@ const ANSWERS: Record<string, unknown> = {
   '/api/v1/admin/edges/providers': { accounts: [] },
 };
 
+const asked: string[] = [];
+const failing = new Set<string>();
+
 vi.mock('@client/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@client/lib/api')>()),
   apiClient: {
-    get: (path: string) =>
-      path in ANSWERS ? Promise.resolve(ANSWERS[path]) : Promise.reject(new Error(`no ${path}`)),
+    get: (path: string) => {
+      asked.push(path);
+      return path in ANSWERS && !failing.has(path)
+        ? Promise.resolve(ANSWERS[path])
+        : Promise.reject(new Error(`no ${path}`));
+    },
     post: () => Promise.reject(new Error('no writes')),
     patch: () => Promise.reject(new Error('no writes')),
     put: () => Promise.reject(new Error('no writes')),
@@ -176,6 +183,8 @@ async function mount(url: string): Promise<string> {
 }
 
 afterEach(() => {
+  asked.length = 0;
+  failing.clear();
   if (app) unmount(app);
   app = null;
   document.body.innerHTML = '';
@@ -216,5 +225,21 @@ describe('Nodes', () => {
     expect(text).toContain('Qualification');
     expect(text).toContain('Members dark');
     expect(text).toContain('No origin: members connect directly.');
+  });
+
+  test('a failed origin status read is an error with Retry, not an empty status', async () => {
+    failing.add('/api/v1/admin/edges/attention');
+    const text = await mount('/admin/servers/nodes');
+    expect(text).not.toContain('3 fronted, 1 spare');
+    const buttons = [...document.querySelectorAll('button')].map((b) => b.textContent ?? '');
+    expect(buttons.some((b) => /Retry|Try again/.test(b))).toBe(true);
+  });
+
+  test('with one backend kept, only that backend is read', async () => {
+    const text = await mount('/admin/servers/nodes?backend=panel-b');
+    expect(text).toContain('node-b');
+    expect(asked.some((p) => p.startsWith('/api/v1/admin/servers/panel-a/'))).toBe(false);
+    // The other backend's fronted node is not listed as a stray origin.
+    expect(text).not.toContain('node-fronted');
   });
 });
