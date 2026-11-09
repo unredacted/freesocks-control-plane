@@ -23,7 +23,9 @@
    * its edges panel on the same page: protecting it again starts there
    * ("Protect again"), never in the protect sheet.
    *
-   * Props: slug, intent (NodeIntentView), origin (an Edges origin protects it)
+   * Props: slug, intent (NodeIntentView), origin (an Edges origin protects it),
+   *   onFront? (open the protect sheet for this node; default: on Overview),
+   *   onOpenRun? (a fronting run's progress; default: on Overview)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -56,7 +58,15 @@
     slug,
     intent,
     origin = false,
-  }: { slug: string; intent: NodeIntentView; origin?: boolean } = $props();
+    onFront,
+    onOpenRun,
+  }: {
+    slug: string;
+    intent: NodeIntentView;
+    origin?: boolean;
+    onFront?: () => void;
+    onOpenRun?: (runId: string) => void;
+  } = $props();
   const qc = useQueryClient();
 
   let busy = $state(false);
@@ -143,9 +153,13 @@
   // The approval card carries Finish maintenance itself: the row below leaves it out.
   let cardShown = $derived((direct && reviewable) || mirrorShown || !!atOnce);
   const protect = () =>
-    router.navigate(
-      edgesPaths.home({ protect: '1', server: slug, node: intent.nodeUuid ?? undefined }),
-    );
+    onFront
+      ? onFront()
+      : router.navigate(
+          edgesPaths.home({ protect: '1', server: slug, node: intent.nodeUuid ?? undefined }),
+        );
+  const openRun = (runId: string) =>
+    onOpenRun ? onOpenRun(runId) : router.navigate(edgesPaths.home({ run: runId }));
   let needsDecision = $derived(intent.retirement?.stage === 'needs_admin');
   // The role never runs an adopted machine, so nothing reports its wipe: the
   // retirement waits for whoever cleaned it up to say so.
@@ -280,13 +294,7 @@
       class="bg-card mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm"
     >
       <span>{protectionWords(p, intent.stage)}</span>
-      <Button
-        size="sm"
-        variant="outline"
-        onclick={() => router.navigate(edgesPaths.home({ run: p.runId }))}
-      >
-        Open progress
-      </Button>
+      <Button size="sm" variant="outline" onclick={() => openRun(p.runId)}>Open progress</Button>
     </div>
     {#if mirrorShown}
       <div class="mt-3">
