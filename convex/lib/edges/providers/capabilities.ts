@@ -44,6 +44,12 @@ export interface EdgeProviderCapabilities {
   needsDnsAccount: boolean;
   /** Cloudflare-style: can host DNS records for other providers' edges. */
   providesDns: boolean;
+  /**
+   * A DNS provider that can never front member traffic (Gandi LiveDNS: plain
+   * DNS, no proxy): `frontsTraffic` is refused on its accounts and
+   * `frontsAllowed` is always false. Absent = it can.
+   */
+  dnsOnly?: true;
   originPortMode: OriginPortMode;
   /** Mutations return a task/operation the adapter polls (`pollStep` present). */
   asyncOps: boolean;
@@ -248,6 +254,29 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     typicalProvisionMs: 10 * MIN,
     discoverySettleMs: 0,
   },
+  // LiveDNS: plain DNS, nothing proxied, so a DNS account and never a front
+  // (`dnsOnly`). Carries no transport and builds no edge; the layer only says
+  // its places are zones (one anycast place, like the CDNs).
+  gandi: {
+    layer: 'l7',
+    role: 'dns',
+    addressKind: 'hostname',
+    l7Transports: [],
+    needsDnsAccount: false,
+    providesDns: true,
+    dnsOnly: true,
+    originPortMode: 'fixed',
+    sharedCertificates: false,
+    asyncOps: false,
+    asyncDelete: false,
+    needsPrivateNetwork: false,
+    ipv6: false,
+    udp: false,
+    idleTimeoutConfigurable: false,
+    memberHealth: false,
+    typicalProvisionMs: 0,
+    discoverySettleMs: 0,
+  },
 };
 
 export function edgeLayerOf(id: EdgeProviderId | string | null | undefined): EdgeLayer {
@@ -277,7 +306,17 @@ export interface FrontingAccount {
  */
 export function frontsAllowed(account: FrontingAccount | null | undefined): boolean {
   if (!account) return false;
+  if (isDnsOnly(account.provider)) return false;
   return edgeRoleOf(account.provider) !== 'dns' || account.frontsTraffic === true;
+}
+
+/** Whether the provider can never front member traffic (`dnsOnly`). */
+export function isDnsOnly(id: EdgeProviderId | string | null | undefined): boolean {
+  return (
+    !!id &&
+    id in EDGE_PROVIDER_CAPABILITIES &&
+    EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].dnsOnly === true
+  );
 }
 
 export function edgeAddressKindOf(id: EdgeProviderId | string | null | undefined): EdgeAddressKind {

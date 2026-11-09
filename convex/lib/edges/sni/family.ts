@@ -82,7 +82,9 @@ export type QualificationCode =
   | 'q_no_h2'
   // A family on a network (lib/edges/networks.ts): the name, or the target, resolves off it.
   | 'q_off_network'
-  | 'q_target_off_network';
+  | 'q_target_off_network'
+  // A name of a family on a network that does not resolve at all (with or without "use anyway").
+  | 'q_name_unresolved';
 
 export interface Qualification {
   ok: boolean;
@@ -103,7 +105,8 @@ export function judgeHandshake(r: HandshakeResult, opts: { requireH2: boolean })
     if (e === 'timeout') return { ok: false, code: 'q_timeout' };
     if (e === 'private_address') return { ok: false, code: 'q_private_target' };
     // A family on a network (lib/edges/networks.ts `qualificationNetworkCode`).
-    if (e === 'q_off_network' || e === 'q_target_off_network') return { ok: false, code: e };
+    if (e === 'q_off_network' || e === 'q_target_off_network' || e === 'q_name_unresolved')
+      return { ok: false, code: e };
     if (e === 'no_address' || e.startsWith('resolve') || e === 'ENOTFOUND')
       return { ok: false, code: 'q_resolve' };
     if (e === 'cert_invalid' || e.startsWith('cert')) return { ok: false, code: 'q_cert' };

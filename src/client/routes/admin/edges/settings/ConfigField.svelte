@@ -2,7 +2,8 @@
   /**
    * One knob of the edge config, rendered from its descriptor (settings/fields.ts)
    * against the shared ConfigForm: a switch with its consequence, a NumberField
-   * with the server bounds and default, a select, or a short text.
+   * with the server bounds and default, a select, or a short text. A value off
+   * its default says "Changed" beside the label and offers the reset.
    *
    * Props:
    *   field: Field
@@ -14,6 +15,7 @@
   import { Label } from '@client/components/ui/label';
   import { Input } from '@client/components/ui/input';
   import { Button } from '@client/components/ui/button';
+  import { Badge } from '@client/components/ui/badge';
   import * as Select from '@client/components/ui/select';
   import NumberField from '../components/NumberField.svelte';
   import { sameValue } from './configDiff';
@@ -37,6 +39,12 @@
     return String(dflt);
   });
 </script>
+
+{#snippet changed()}
+  {#if offDefault}
+    <Badge variant="info" title={`Changed from the default, ${defaultWords}`}>Changed</Badge>
+  {/if}
+{/snippet}
 
 {#snippet resetButton()}
   {#if offDefault}
@@ -65,7 +73,10 @@
     />
     <div class="min-w-0 flex-1">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <Label for={`${uid}-sw`}>{field.label}</Label>
+        <span class="flex flex-wrap items-center gap-2">
+          <Label for={`${uid}-sw`}>{field.label}</Label>
+          {@render changed()}
+        </span>
         {@render resetButton()}
       </div>
       <p id={`${uid}-help`} class="text-muted-foreground mt-1 text-xs">{field.helper}</p>
@@ -82,11 +93,15 @@
     {disabled}
     bind:value={() => form.num(field.path), (v) => form.set(field.path, v)}
     bind:invalid={() => form.invalid[field.path] ?? false, (v) => form.setInvalid(field.path, v)}
+    labelExtra={changed}
   />
 {:else if field.kind === 'select'}
   <div class="space-y-1.5">
     <div class="flex items-center justify-between gap-2">
-      <Label for={`${uid}-sel`}>{field.label}</Label>
+      <span class="flex flex-wrap items-center gap-2">
+        <Label for={`${uid}-sel`}>{field.label}</Label>
+        {@render changed()}
+      </span>
       {@render resetButton()}
     </div>
     <Select.Root
@@ -108,7 +123,10 @@
 {:else}
   <div class="space-y-1.5">
     <div class="flex items-center justify-between gap-2">
-      <Label for={`${uid}-txt`}>{field.label}</Label>
+      <span class="flex flex-wrap items-center gap-2">
+        <Label for={`${uid}-txt`}>{field.label}</Label>
+        {@render changed()}
+      </span>
       {@render resetButton()}
     </div>
     <Input

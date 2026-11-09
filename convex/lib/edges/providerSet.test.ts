@@ -451,3 +451,55 @@ describe('addresses only for some countries in the requirement', () => {
     ]);
   });
 });
+
+describe('countries with their own addresses in the requirement (a pick’s audiences)', () => {
+  const both: SetListener[] = [{ listenerKey: 'a', carriers: ['x', 'y'] }];
+  const contained = (p: SetPick, audience: string[]): PublishedRef => ({
+    ...pub('a', p),
+    audience,
+  });
+  const forIran = { ...X, audiences: [{ codes: ['IR'], want: 1 }] };
+  const placeForIran = { ...Y, audiences: [{ codes: ['IR'] }] };
+
+  test('one count over every pick holding them, made at the first place; everyone’s cover unchanged', () => {
+    const req = requirementOf(both, [forIran, placeForIran]);
+    expect(req.audienceWants).toEqual([
+      { codes: ['IR'], listenerKey: 'a', want: 1, places: ['x', 'y'] },
+    ]);
+    // X still holds everyone's address too: it is a pick like any other.
+    expect(req.picks).toEqual(['x', 'y']);
+    const everyone = [pub('a', X), pub('a', Y)];
+    expect(coverTargets(req, everyone)).toEqual([
+      { listenerKey: 'a', locationId: 'x', coversListener: false, count: true, audience: ['IR'] },
+    ]);
+    expect(countDeficit(req, everyone)).toBe(1);
+    // An address of theirs anywhere meets it; one for other countries never does.
+    expect(coverTargets(req, [...everyone, contained(Y, ['IR'])])).toEqual([]);
+    expect(coverTargets(req, [...everyone, contained(X, ['IR', 'RU'])])).toHaveLength(1);
+  });
+
+  test('a cooling first place hands the count to the second; every place cooling asks for nothing now', () => {
+    const one = requirementOf(both, [forIran, placeForIran], new Set(['x']));
+    expect(one.audienceWants[0]!.places).toEqual(['y']);
+    expect(coverTargets(one, [pub('a', Y)]).filter((t) => t.audience)).toEqual([
+      { listenerKey: 'a', locationId: 'y', coversListener: false, count: true, audience: ['IR'] },
+    ]);
+    const all = requirementOf(both, [forIran, placeForIran], new Set(['x', 'y']));
+    expect(coverTargets(all, []).filter((t) => t.audience)).toEqual([]);
+  });
+
+  test('a pick serving its countries only carries no coverage and no count of everyone’s', () => {
+    const req = requirementOf(both, [{ ...forIran, audienceOnly: true, want: 2 }, Y]);
+    expect(req.picks).toEqual(['y']);
+    expect(req.wants).toEqual([]);
+    expect(coverTargets(req, [pub('a', Y), contained(X, ['IR'])])).toEqual([]);
+  });
+
+  test('a count of everyone’s at a pick never counts an address of theirs there', () => {
+    const req = requirementOf(both, [{ ...forIran, want: 1 }, Y]);
+    const published = [pub('a', Y), contained(X, ['IR'])];
+    expect(coverTargets(req, published)).toEqual([
+      { listenerKey: 'a', locationId: 'x', coversListener: true },
+    ]);
+  });
+});

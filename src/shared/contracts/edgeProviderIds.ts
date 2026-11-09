@@ -18,6 +18,7 @@ export const EDGE_PROVIDER_IDS = [
   'cloudflare',
   'fastly',
   'cloudfront',
+  'gandi',
 ] as const;
 export type EdgeProviderId = (typeof EDGE_PROVIDER_IDS)[number];
 

@@ -13,6 +13,11 @@
  *    regions), or the location when every carrier of the listener is one
  *    provider (two regions of one network still beat one);
  *  - every pick that carries a listener holds at least one published edge.
+ * A pick may also hold countries of its own (`SetPick.audiences`, docs/edges.md
+ * "Countries with their own addresses"): the node keeps, per transport, the
+ * count asked for them over every pick holding them, contained to exactly
+ * them (`Requirement.audienceWants`). A pick that serves its countries only
+ * (`audienceOnly`) carries no coverage and no count of everyone's.
  * A listener whose carriers make fewer than two groups is REDUCED
  * (`one_group`): reported, never hidden. A shortfall only a cooling pick could
  * fill is `cooling_only` and is not part of the deficit: automatic work never
@@ -52,6 +57,10 @@ export interface SetPick {
    * renews it in its own slot, so the pool never grows for that.
    */
   onlyCodes?: string[];
+  /** Countries this node keeps addresses of their own for here (`relays.providerSet[].audiences`). */
+  audiences?: ReadonlyArray<{ codes: readonly string[]; want?: number }>;
+  /** The pick serves its countries only: no coverage, no count of everyone's addresses. */
+  audienceOnly?: boolean;
 }
 
 export interface SetListener {
@@ -109,6 +118,19 @@ export interface Requirement {
     /** An only location's countries: only addresses contained to exactly these count. */
     onlyCodes?: string[];
   }>;
+  /**
+   * Per transport and per countries some picks hold (`SetPick.audiences`): the
+   * addresses contained to exactly them the node keeps (the sum of the
+   * entries' counts over the picks carrying it) and where they are made
+   * (`places`: those picks, not cooling, in set order; an entry with no count
+   * is a place too). Empty without such picks.
+   */
+  audienceWants: Array<{
+    codes: string[];
+    listenerKey: string;
+    want: number;
+    places: string[];
+  }>;
 }
 
 export interface Target {
@@ -119,6 +141,8 @@ export interface Target {
   coversListener: boolean;
   /** One more address a pick's count asks for (after the rest of the cover). */
   count?: true;
+  /** The count of some countries' own addresses asks for it: made for exactly these. */
+  audience?: string[];
 }
 
 /** A stored count as the requirement takes it: 1..`MAX_PICK_WANT`, else none. */
@@ -157,6 +181,7 @@ export function requirementOf(
       coolingOnly: [],
       uncarried: [],
       wants: [],
+      audienceWants: [],
     };
   }
   const out: ListenerRequirement[] = [];
@@ -168,8 +193,9 @@ export function requirementOf(
       new Set(all.map((p) => p.provider)).size <= 1 ? 'location' : 'provider';
     const groups = new Map<string, string[]>();
     for (const p of all) {
-      // An only location serves some members only: no carrier of coverage.
-      if (cooling.has(p.locationId) || p.onlyCodes?.length) continue;
+      // An only location (or a pick serving its countries only) serves some
+      // members only: no carrier of coverage.
+      if (cooling.has(p.locationId) || p.onlyCodes?.length || p.audienceOnly) continue;
       const g = groupBy === 'provider' ? p.provider : p.locationKey;
       groups.set(g, [...(groups.get(g) ?? []), p.locationId]);
       carrying.add(p.locationId);
@@ -192,7 +218,7 @@ export function requirementOf(
   const wants: Requirement['wants'] = [];
   for (const p of picks) {
     const want = pickWant(p.want);
-    if (want === undefined || cooling.has(p.locationId)) continue;
+    if (want === undefined || cooling.has(p.locationId) || p.audienceOnly) continue;
     const listenerKeys = listeners
       .filter((l) => l.carriers.includes(p.locationId))
       .map((l) => l.listenerKey);
@@ -212,7 +238,46 @@ export function requirementOf(
     coolingOnly: out.filter((l) => l.coolingOnly).map((l) => l.listenerKey),
     uncarried: out.filter((l) => l.uncarried).map((l) => l.listenerKey),
     wants,
+    audienceWants: audienceWantsOf(listeners, picks, cooling),
   };
+}
+
+const codesKey = (codes: readonly string[]) => [...new Set(codes)].sort().join(' ');
+
+/**
+ * The counts some countries' own addresses ask for (`Requirement.audienceWants`):
+ * per transport and per countries, the sum of the entries' counts over the
+ * picks carrying it (a cooling pick's count included: the addresses stay
+ * wanted while one place cools), made at the non-cooling ones.
+ */
+function audienceWantsOf(
+  listeners: readonly SetListener[],
+  picks: readonly SetPick[],
+  cooling: ReadonlySet<string>,
+): Requirement['audienceWants'] {
+  const out: Requirement['audienceWants'] = [];
+  for (const l of listeners) {
+    const byCodes = new Map<string, { codes: string[]; want: number; places: string[] }>();
+    for (const p of picks) {
+      if (!l.carriers.includes(p.locationId)) continue;
+      for (const a of p.audiences ?? []) {
+        if (a.codes.length === 0) continue;
+        const key = codesKey(a.codes);
+        const row = byCodes.get(key) ?? {
+          codes: [...new Set(a.codes)].sort(),
+          want: 0,
+          places: [],
+        };
+        row.want += pickWant(a.want) ?? 0;
+        if (!cooling.has(p.locationId) && !row.places.includes(p.locationId))
+          row.places.push(p.locationId);
+        byCodes.set(key, row);
+      }
+    }
+    for (const row of byCodes.values())
+      if (row.want > 0) out.push({ ...row, listenerKey: l.listenerKey });
+  }
+  return out;
 }
 
 /**
@@ -304,8 +369,10 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
     for (const listenerKey of w.listenerKeys) {
       const here = (t: { listenerKey: string; locationId: string | null }) =>
         t.listenerKey === listenerKey && t.locationId === w.locationId;
-      // At an only location, what is contained there counts (out of date or not).
-      const counts = (p: PublishedRef) => !w.onlyCodes || !forEveryone(p);
+      // At an only location, what is contained there counts (out of date or
+      // not); elsewhere, what everyone may be handed (a country's own
+      // addresses there count for its own count).
+      const counts = (p: PublishedRef) => (w.onlyCodes ? !forEveryone(p) : forEveryone(p));
       const have =
         published.filter((p) => here(p) && counts(p)).length +
         listenerTargets.filter(here).length +
@@ -318,6 +385,26 @@ export function coverTargets(req: Requirement, published: readonly PublishedRef[
           count: true,
         });
     }
+  // Some countries' own addresses: contained to exactly them, wherever they are.
+  for (const w of req.audienceWants) {
+    const have = published.filter(
+      (p) =>
+        p.listenerKey === w.listenerKey &&
+        !forEveryone(p) &&
+        codesKey(p.audience ?? []) === codesKey(w.codes),
+    ).length;
+    // Every place cools: nothing automatic can be done now (as a cooling pick).
+    const at = w.places[0];
+    if (!at) continue;
+    for (let k = have; k < w.want; k++)
+      countTargets.push({
+        listenerKey: w.listenerKey,
+        locationId: at,
+        coversListener: false,
+        count: true,
+        audience: w.codes,
+      });
+  }
   return [...listenerTargets, ...pickTargets, ...countTargets];
 }
 
@@ -328,7 +415,7 @@ export function coverageDeficit(req: Requirement, published: readonly PublishedR
 
 /** The targets only a pick's address count asks for (`Target.count`). */
 export function countDeficit(req: Requirement, published: readonly PublishedRef[]): number {
-  if (req.wants.length === 0) return 0;
+  if (req.wants.length === 0 && req.audienceWants.length === 0) return 0;
   return coverTargets(req, published).filter((t) => t.count).length;
 }
 
@@ -352,7 +439,7 @@ export function keepsCounts(
   // The addresses of its transport at its location, counted as they are: a
   // removal's gap may show up in the cover as another kind of target (the only
   // address of a pick with a count of one), so the count deficit cannot tell.
-  const counted = (p: PublishedRef) => !w.onlyCodes || !forEveryone(p);
+  const counted = (p: PublishedRef) => (w.onlyCodes ? !forEveryone(p) : forEveryone(p));
   if (!counted(e)) return true;
   const here = published.filter(
     (p) => p.listenerKey === e.listenerKey && p.locationId === e.locationId && counted(p),

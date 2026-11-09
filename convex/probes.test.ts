@@ -180,6 +180,67 @@ async function drainRuns(t: ReturnType<typeof convexTest>) {
 }
 
 describe('relayProbes', () => {
+  test('home networks first: a short country is topped up from the probe listing, read once an hour', async () => {
+    const gp = fakeGlobalping(() => 'ok');
+    let listed = 0;
+    const at = (cc: string, tags: string[]) => ({ location: { country: cc }, tags });
+    const client: GlobalpingLike = {
+      ...gp,
+      async listProbes() {
+        listed++;
+        return {
+          ok: true,
+          data: [
+            ...[1, 2].map(() => at('IR', ['eyeball-network'])),
+            ...[1, 2, 3, 4].map(() => at('IR', ['datacenter-network'])),
+            ...[1, 2, 3, 4, 5].map(() => at('RU', ['eyeball-network'])),
+          ],
+        };
+      },
+    };
+    __setGlobalpingFactory(() => client);
+    const { t, edgeId } = await seed();
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.networks', '"home_first"'));
+    for (let i = 0; i < 2; i++) {
+      await t.mutation(internal.probes.requestProbes, {
+        target: { kind: 'edge', ref: edgeId },
+        trigger: 'manual',
+      });
+      await drainRuns(t);
+    }
+    expect(listed).toBe(1);
+    expect(gp.requests).toHaveLength(2);
+    for (const req of gp.requests)
+      expect((req as { locations: unknown }).locations).toEqual([
+        { country: 'IR', limit: 2, tags: ['eyeball-network'] },
+        { country: 'IR', limit: 1, tags: ['datacenter-network'] },
+        { country: 'RU', limit: 3, tags: ['eyeball-network'] },
+      ]);
+  });
+
+  test('home networks only (the default): every checked country asks home networks; no listing read', async () => {
+    const gp = fakeGlobalping(() => 'ok');
+    let listed = 0;
+    __setGlobalpingFactory(() => ({
+      ...gp,
+      async listProbes() {
+        listed++;
+        return { ok: true, data: [] };
+      },
+    }));
+    const { t, edgeId } = await seed();
+    await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'manual',
+    });
+    await drainRuns(t);
+    expect(listed).toBe(0);
+    expect((gp.requests[0] as { locations: unknown }).locations).toEqual([
+      { country: 'IR', limit: 3, tags: ['eyeball-network'] },
+      { country: 'RU', limit: 3, tags: ['eyeball-network'] },
+    ]);
+  });
+
   test('requestProbes → executor → rollup: an edge unreachable from IR (two eyeball networks) and fine from RU', async () => {
     const gp = fakeGlobalping((c) => (c === 'IR' ? 'fail' : 'ok'));
     __setGlobalpingFactory(() => gp);

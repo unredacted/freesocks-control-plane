@@ -86,6 +86,13 @@ export const importNames = (slug: string, text: string) =>
 export type NameAction = 'retire' | 'reactivate' | 'burn' | 'recheck';
 export const actOnNames = (slug: string, action: NameAction, snis: string[]) =>
   apiClient.post(`${BASE}/families/${enc(slug)}/names/${action}`, { snis }, Loose);
+/** "Use anyway" on SNIs that resolve outside the list's network (on), or back to the normal check (off). */
+export const useNamesAnyway = (slug: string, snis: string[], on: boolean, reason?: string) =>
+  apiClient.post(
+    `${BASE}/families/${enc(slug)}/names/use-anyway`,
+    { snis, on, ...(reason ? { reason } : {}) },
+    Loose,
+  );
 export const judgeNames = (
   slug: string,
   snis: string[],

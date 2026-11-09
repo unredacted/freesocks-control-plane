@@ -44,6 +44,7 @@ import {
   type NamePool,
   type NameVantageResult,
 } from './lib/edges/probes/nameCheck';
+import type { ProbeNetworks } from './lib/edges/probes/networks';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const GLOBALPING_DEADLINE_MS = 75_000;
@@ -162,7 +163,7 @@ async function runGlobalping(
   c: {
     country: string;
     perCountryLimit: number;
-    preferEyeball: boolean;
+    networks: ProbeNetworks;
     minVantages: number;
     spacingMs: number;
   },
@@ -186,7 +187,7 @@ async function runGlobalping(
         {
           country: c.country,
           limit: c.perCountryLimit,
-          preferEyeball: c.preferEyeball,
+          networks: c.networks,
           minVantages: c.minVantages,
         },
         () => sleep(c.spacingMs),

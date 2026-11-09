@@ -23,7 +23,9 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
+import { MAX_DESIRED_PUBLISHED, resolveEdgeConfig } from './lib/edgeConfig';
+import { pickUsable } from './lib/edges/assignedLocation';
+import { clientCheckReadiness } from './edgeClientCheck';
 import { edgeLayerOf, frontsAllowed } from './lib/edges/providers/capabilities';
 import { L4_NOT_FOR_WEBSOCKET, l4BarredForAll, websocketNodeOf } from './lib/edges/websocketNode';
 import { assertAdmission } from './lib/edges/maintenance';
@@ -90,6 +92,8 @@ export const view = internalQuery({
     if (!relay) return null;
     const now = Date.now();
     const state = await setStateOf(ctx.db, relay, now);
+    const ccReady =
+      (await clientCheckReadiness(ctx.db, await resolveEdgeConfig(ctx.db), now)) === 'ready';
     const edges = await liveEdgesOfRelay(ctx.db, relayId);
     const cooling = coolingOf(relay, now);
     // Without a recorded set, the picks are the ones its published edges imply
@@ -232,8 +236,15 @@ export const view = internalQuery({
       return {
         label: p?.location.label ?? null,
         accountName: p?.account.name ?? null,
-        // Automatic work provisions only in a trusted location (`pickLocation`).
-        trusted: p ? p.location.qualified : true,
+        // Automatic work provisions only in a trusted location (`pickLocation`),
+        // or (FCP's own client check ready) in any L4 location of the set,
+        // where the check proves what is made (lib/edges/assignedLocation.ts).
+        trusted: p
+          ? pickUsable(p.location, {
+              l4: edgeLayerOf(p.account.provider) === 'l4',
+              clientCheckReady: ccReady,
+            })
+          : true,
       };
     };
     const missing = state.targets.map((t) => ({

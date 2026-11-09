@@ -135,6 +135,7 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
   v.object({ type: v.literal('cloudfront'), secretAccessKey: v.string() }),
+  v.object({ type: v.literal('gandi'), apiToken: v.string() }),
 );
 // Account settings: credential identifiers and intent defaults. WHERE an
 // account's edges live is never here: it is a location
@@ -184,6 +185,8 @@ const relayProviderSettings = v.union(
     type: v.literal('cloudfront'),
     accessKeyId: v.string(), // the IAM access key's public id; not a secret
   }),
+  // DNS only: the personal access token is all there is.
+  v.object({ type: v.literal('gandi') }),
 );
 // Where an edge's resources live (`lib/edges/accountSettings.ts`
 // EDGE_PLACEMENT_SCHEMAS validates every new one). A CDN front's keys are
@@ -231,6 +234,8 @@ const relayEdgePlacement = v.union(
     zoneId: v.optional(v.string()),
     zoneName: v.optional(v.string()),
   }),
+  // A Gandi LiveDNS domain (its id is its name).
+  v.object({ type: v.literal('gandi'), zoneId: v.string(), zoneName: v.string() }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
@@ -1807,9 +1812,44 @@ export default defineSchema({
           // carries. Absent = at least one address of any transport. Rollback:
           // `edgePickWants:clearPickWantsForRollback`.
           want: v.optional(v.number()),
+          // Addresses here only for some countries (docs/edges.md "Countries
+          // with their own addresses"): per entry, the countries an address
+          // made for it is handed to (`edges.audienceIntent`, then
+          // `edges.audience` at its first publication) and how many of each
+          // transport the pick carries the node keeps for them, counted over
+          // every pick holding the same countries (absent = a place for their
+          // addresses that asks for none of its own: where a replacement goes
+          // when the first place cannot take it). Rollback:
+          // `edgeAudiences:clearAudiencePicksForRollback`.
+          audiences: v.optional(
+            v.array(
+              v.object({
+                codes: v.array(v.string()),
+                want: v.optional(v.number()),
+                addedAt: v.number(),
+                // Written by a country's default picks (docs/edges.md "A
+                // country's default picks"), which keep it in step; absent =
+                // the node's own entry, which the defaults never touch.
+                fromDefault: v.optional(v.literal(true)),
+              }),
+            ),
+          ),
+          // The pick serves its countries only: no address everyone is handed
+          // is made here (no coverage, no count, no fill), as at a location
+          // only for some countries but for this node alone (a zone kept for
+          // one country).
+          audienceOnly: v.optional(v.literal(true)),
+          // Added by a country's default picks (the node did not pick the
+          // location): goes with its last entry once nothing is live there.
+          fromDefault: v.optional(v.literal(true)),
         }),
       ),
     ),
+    // Countries whose default picks this node does not take (docs/edges.md
+    // "A country's default picks"), and why the defaults wait on it (no
+    // rendezvous walk, a pool that would be too large), with when it was seen.
+    countryDefaultsOptOut: v.optional(v.array(v.string())),
+    countryDefaultsWaiting: v.optional(v.object({ code: v.string(), at: v.number() })),
     // Picks whose address the detector just burned here: no automatic work
     // allocates, provisions or publishes into them until `until`.
     cooling: v.optional(
@@ -1870,6 +1910,32 @@ export default defineSchema({
     // The open lane's own replacement count today (UTC day key): it never uses
     // the node's daily cap (`rotationsToday`), which stays whole for trusted ones.
     openReplaces: v.optional(v.object({ day: v.string(), count: v.number() })),
+    // Countries cut over to their own addresses on this node (docs/edges.md
+    // "A country on its own addresses", convex/edgeOwnPools.ts): their members are
+    // handed their own addresses first and for the backup (shared ones only as a
+    // fallback), and their evidence never replaces a shared address here once
+    // `since` plus the settle has passed. `stale`: the last hourly count of keys
+    // of that country whose last body still holds a shared address of this node.
+    ownPools: v.optional(
+      v.array(
+        v.object({
+          code: v.string(),
+          since: v.number(),
+          // The node's publication epoch the cutover moved it to: a key whose
+          // body (a fetch or a mirror refresh) was rendered at it or later has it.
+          epoch: v.optional(v.number()),
+          stale: v.optional(v.object({ at: v.number(), keys: v.number() })),
+        }),
+      ),
+    ),
+    // Replacements of a cut-over country's own addresses today, per (countries,
+    // transport) (`key` = "<codes space-joined>|<listenerId>"): their own budget,
+    // never the node's daily cap, the cooldown or the fleet's caps.
+    audienceReplaces: v.optional(
+      v.array(v.object({ key: v.string(), day: v.string(), count: v.number() })),
+    ),
+    // This node's override of the per-country daily budget (`edge.audience.replacesPerDay`).
+    audienceReplacesPerDay: v.optional(v.number()),
     // Per-origin OVERRIDES of the fleet knobs, one rule for all five
     // (`originPolicy` in lib/edgeConfig.ts): absent = follow `edge.*`.
     standbyPerRelay: v.optional(v.number()),
@@ -2463,6 +2529,12 @@ export default defineSchema({
     // then on. Absent = everyone. Cleared for good when its location stops being
     // only. Rollback: `edgeAudiences:retireAudiencesForRollback`.
     audience: v.optional(v.array(v.string())),
+    // Made for these countries (a node's pick for them, `relays.providerSet[]
+    // .audiences`): the audience its first publication gives it, wherever it
+    // is (lib/edges/audience.ts `audienceAtPublish`); never handed to anyone
+    // else before. Written when it is planned, never changed. Rollback:
+    // `edgeAudiences:clearAudiencePicksForRollback`.
+    audienceIntent: v.optional(v.array(v.string())),
     // Set with `audience` (and cleared with it): what the `by_contained` index
     // finds, so the rollback reaches every contained address however many
     // edges the fleet holds.
@@ -2493,6 +2565,16 @@ export default defineSchema({
   // because a name can MOVE to the address that replaces its own. Every record
   // carries the marker `fcp-name:<this id>`; each pass reads the name back
   // before it writes, so an answer lost mid-call is settled by discovery.
+  // FCP's private ownership marks for DNS records whose provider cannot hold a
+  // comment (Gandi LiveDNS): one row per record FCP wrote, removed with it.
+  // Never served (convex/dnsRecordMarks.ts).
+  dnsRecordMarks: defineTable({
+    zone: v.string(),
+    name: v.string(),
+    type: v.union(v.literal('A'), v.literal('AAAA'), v.literal('CNAME')),
+    content: v.string(),
+    marker: v.string(),
+  }).index('by_zone_name', ['zone', 'name']),
   edgeNames: defineTable({
     relayId: v.id('relays'),
     // The address the name serves (its records point there once `live`).
@@ -2560,12 +2642,25 @@ export default defineSchema({
   // reads the explicit row fields below, never the bounded `events[]` log
   // (display-only); rows created before those fields existed fall back to the
   // event inference in edgeRotations.ts.
+  // A country's default picks (docs/edges.md "A country's default picks",
+  // convex/edgeCountryDefaults.ts): per country (or a few together), the picks
+  // its own addresses go to on every freedom node; upkeep writes them onto each
+  // ready node. Rollback: `edgeCountryDefaults:clearCountryDefaultsForRollback`.
+  countryDefaults: defineTable({
+    codes: v.array(v.string()),
+    picks: v.array(v.object({ locationId: v.id('edgeLocations'), want: v.optional(v.number()) })),
+    updatedAt: v.number(),
+  }),
+
   edgeRotations: defineTable({
     relayId: v.id('relays'),
     kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),
     // A replace of an open address on a node with lanes (convex/edgeLanes.ts):
     // counted against the open lane's own budget, and it sets no cooldown.
     openLane: v.optional(v.boolean()),
+    // A replace of a cut-over country's own address (convex/edgeOwnPools.ts):
+    // counted against that country's own budget on the node, and it sets no cooldown.
+    ownPool: v.optional(v.literal(true)),
     trigger: v.union(
       v.literal('manual'),
       v.literal('detector'),
@@ -2603,6 +2698,10 @@ export default defineSchema({
     // Upkeep filling one pick's address count (edgePickWants.ts): the set's
     // usual selection, at this location only.
     onlyLocationId: v.optional(v.id('edgeLocations')),
+    // Upkeep filling the count a node keeps for some countries (the pick's
+    // `audiences`): the address is made at a pick holding exactly these and
+    // is theirs (`edges.audienceIntent`).
+    audience: v.optional(v.array(v.string())),
     // A replace's explicit spare (the operator named it).
     requestedSpareEdgeId: v.optional(v.id('edges')),
     // Options for the one edge this run builds (JSON), instead of its pick's:
@@ -3240,6 +3339,9 @@ export default defineSchema({
     name: v.string(),
     usersOnline: v.number(),
     online: v.boolean(),
+    // Disabled in the backend on purpose (`online` is false then too): an
+    // offline alert skips it. Absent on rows from before it was kept.
+    disabled: v.optional(v.boolean()),
     lastStatsAt: v.number(),
     // As the backend reports them (the origin picker pre-fills from these).
     address: v.optional(v.string()),
@@ -3306,7 +3408,22 @@ export default defineSchema({
       // A code word (`q_cert`, `q_tls12`, ...), never a handshake error string.
       code: v.optional(v.string()),
       consecutiveFails: v.number(),
+      // Under `networkOverride` only: the last check saw the name resolve
+      // outside its family's network (the page keeps it marked).
+      offNetwork: v.optional(v.boolean()),
     }),
+    // An operator's "use anyway" (docs/edges.md "Using a server name off the
+    // network anyway"): the name may qualify although it resolves outside its
+    // family's network. Every other check still applies. Only an operator sets
+    // it (never a hunt, a check or auto-confirm); a family's network change
+    // drops it.
+    networkOverride: v.optional(
+      v.object({
+        by: v.optional(v.id('adminUsers')),
+        at: v.number(),
+        reason: v.optional(v.string()),
+      }),
+    ),
     // 0 = never checked; the qualify cron takes the oldest first.
     checkedAt: v.number(),
     // What the country lists say about this name (lib/edges/lists/facts.ts):

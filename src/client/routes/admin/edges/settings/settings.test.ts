@@ -3,6 +3,7 @@ import {
   EDGE_CONFIG_BOUNDS,
   EDGE_DEFAULTS,
   EDGE_KEYS,
+  EDGE_OBJECT_PATHS,
   flattenEdgeConfig,
 } from '../../../../../../convex/lib/edgeConfig';
 import {
@@ -12,41 +13,11 @@ import {
   diffConfig,
   flattenConfig,
   formatConfigValue,
+  OBJECT_PATHS,
   pathCovers,
 } from './configDiff';
-import {
-  AUTO_PROVISION,
-  BASIC_NUMBERS,
-  BASIC_SWITCHES,
-  COUNTRY_FIELDS,
-  DETECTOR_FIELDS,
-  L7_FIELDS,
-  NAMES_FIELDS,
-  LIST_FIELDS,
-  PROBE_FIELDS,
-  PROBE_SOURCE_FIELDS,
-  RENDER_GLOBAL_FIELDS,
-  ROTATION_FIELDS,
-  RULE_FIELDS,
-  SECTION_PATHS,
-  parseSection,
-  type Field,
-} from './fields';
-
-const ALL_FIELDS: Field[] = [
-  ...BASIC_SWITCHES,
-  ...BASIC_NUMBERS,
-  AUTO_PROVISION,
-  ...ROTATION_FIELDS,
-  ...RENDER_GLOBAL_FIELDS,
-  ...DETECTOR_FIELDS,
-  ...PROBE_SOURCE_FIELDS,
-  ...PROBE_FIELDS,
-  ...COUNTRY_FIELDS,
-  ...L7_FIELDS,
-  ...NAMES_FIELDS,
-  ...LIST_FIELDS,
-];
+import { ALL_FIELDS, RULE_FIELDS, groupPaths } from './fields';
+import { SETTINGS_GROUPS } from './groups';
 
 describe('flattenConfig', () => {
   it('matches the server flattening (rules stay objects, arrays stay values)', () => {
@@ -71,7 +42,7 @@ describe('diffConfig / buildPatch', () => {
 
   it('limits the diff to the section paths', () => {
     const edits = { 'detect.windowMinutes': 15, enabled: true };
-    expect(buildPatch(diffConfig(base, edits, SECTION_PATHS.detector))).toEqual({
+    expect(buildPatch(diffConfig(base, edits, groupPaths('detection')))).toEqual({
       'detect.windowMinutes': 15,
     });
   });
@@ -123,11 +94,25 @@ describe('formatConfigValue / pathCovers', () => {
 });
 
 describe('settings fields', () => {
-  it('puts every server config path in exactly one section', () => {
-    const owned = Object.values(SECTION_PATHS).flat();
+  it('puts every server config path in exactly one group', () => {
+    const owned = SETTINGS_GROUPS.flatMap((g) => groupPaths(g.id));
     expect(new Set(owned).size).toBe(owned.length);
     // Everything the server has: no stored key without a control, no control without a key.
     expect([...owned].sort()).toEqual(Object.keys(EDGE_KEYS).sort());
+  });
+
+  it('keeps the same settings whole as the server does', () => {
+    expect([...OBJECT_PATHS]).toEqual([...EDGE_OBJECT_PATHS]);
+    expect(flattenConfig({ audience: { replacesPerDayByCountry: { IR: 2 } } })).toEqual({
+      'audience.replacesPerDayByCountry': { IR: 2 },
+    });
+  });
+
+  it('saves a map with one of its entries removed', () => {
+    const path = 'audience.replacesPerDayByCountry';
+    const changes = diffConfig({ [path]: { RU: 3 } }, { [path]: {} });
+    expect(changes).toEqual([{ path, display: `${path}.RU`, from: 3, to: undefined, send: {} }]);
+    expect(buildPatch(changes)).toEqual({ [path]: {} });
   });
 
   it('gives every bounded path a number field and every number field bounds', () => {
@@ -152,9 +137,10 @@ describe('settings fields', () => {
     }
   });
 
-  it('parses the section param', () => {
-    expect(parseSection('probes')).toBe('probes');
-    expect(parseSection('nope')).toBe('basics');
-    expect(parseSection(null)).toBe('basics');
+  it('gives the subscriptions group every client family rule', () => {
+    expect(groupPaths('subscriptions', ['singbox', 'other'])).toEqual(
+      expect.arrayContaining(['render.clients.singbox', 'render.clients.other']),
+    );
+    expect(groupPaths('maintenance')).toEqual([]);
   });
 });
