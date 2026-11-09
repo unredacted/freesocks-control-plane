@@ -73,6 +73,8 @@ describe('resolveEdgesRoute / edgesPaths', () => {
       page: 'family',
       slug: 'fam a',
     });
+    // An SNI list called "find" is still that list, never Find more.
+    expect(resolveEdgesRoute(edgesPaths.family('find'))).toEqual({ page: 'family', slug: 'find' });
     // Finding more SNIs: its own address, never an SNI list's slug.
     expect(resolveEdgesRoute(edgesPaths.findNames())).toEqual({ page: 'findNames' });
     expect(resolveEdgesRoute(edgesPaths.findNetwork('net a'))).toEqual({
