@@ -31,6 +31,7 @@
   import MaintenanceCard from './settings/MaintenanceCard.svelte';
   import FreedomDeliveryCard from './settings/FreedomDeliveryCard.svelte';
   import ClientCheckCard from './settings/ClientCheckCard.svelte';
+  import CountryBudgets from './settings/CountryBudgets.svelte';
   import TrustCounts from './settings/TrustCounts.svelte';
   import { ConfigForm } from './settings/form.svelte';
   import {
@@ -55,6 +56,9 @@
 
   const config = edgeConfigQuery();
   const form = new ConfigForm(() => config.data);
+
+  // A country's own replacement budget: one number per listed country, blank = the fleet's.
+  const censoredCountries = $derived(config.data?.censoredCountries ?? []);
 
   // Names for addresses: the zones of every DNS account, ticked when eligible.
   const nameZones = $derived(config.data?.nameZones ?? []);
@@ -202,6 +206,7 @@
           <ConfigField {field} {form} />
         {/each}
       </div>
+      <CountryBudgets codes={censoredCountries} {form} />
       <TrustCounts />
       {#each drainCodes as code (code)}
         <CodeNote issue={{ code }} tone="warning" class="mt-4" />

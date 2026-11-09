@@ -15,7 +15,7 @@ import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
+import { dnsClientForAccount } from './lib/edges/dnsAccountClient';
 import { CLAIM_LEASE_MS } from './lib/backend/fencing';
 import { blocksIdentity } from './lib/backend/obligations';
 import {
@@ -78,23 +78,14 @@ export const ensureOriginDns = internalAction({
       return { state: 'none' };
     }
     const z = zone!;
-    const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
-      id: z.accountId,
-    });
-    const apiToken = (acct?.credentials as { apiToken?: string } | undefined)?.apiToken;
-    if (!acct || !apiToken) {
+    const client = await dnsClientForAccount(ctx, z.accountId, z);
+    if (!client) {
       await ctx.runMutation(internal.nodeIntents.progress, {
         ...f,
         patch: { origin: { hostname: c.hostname, address: c.originAddress, dns: 'conflict' } },
       });
       return { state: 'conflict' };
     }
-    const client = cloudflareDnsClient({
-      apiToken,
-      zoneId: z.zoneId,
-      zoneName: z.zoneName,
-      accountId: z.accountId,
-    });
     if (desired.length === 0) return { state: 'none' };
 
     let created = false;
@@ -255,26 +246,13 @@ function ownsRecord(o: Obligation): boolean {
  */
 async function clientFor(ctx: ActionCtx, o: Obligation) {
   const d = o.dns!;
-  const tokenOf = async (id: string) =>
-    (
-      (
-        await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
-          id: id as Id<'edgeProviderAccounts'>,
-        })
-      )?.credentials as { apiToken?: string } | undefined
-    )?.apiToken;
-  let accountId: string = d.accountId;
-  let apiToken = await tokenOf(accountId);
-  if (!apiToken) {
-    const now = await ctx.runQuery(internal.nodeIntents.originZoneOf, {
-      backendServerId: o.backendServerId,
-    });
-    if (!now || now.zoneId !== d.zoneId) return null;
-    accountId = now.accountId;
-    apiToken = await tokenOf(accountId);
-  }
-  if (!apiToken) return null;
-  return cloudflareDnsClient({ apiToken, zoneId: d.zoneId, zoneName: d.zoneName, accountId });
+  const own = await dnsClientForAccount(ctx, d.accountId, d);
+  if (own) return own;
+  const now = await ctx.runQuery(internal.nodeIntents.originZoneOf, {
+    backendServerId: o.backendServerId,
+  });
+  if (!now || now.zoneId !== d.zoneId) return null;
+  return await dnsClientForAccount(ctx, now.accountId, d);
 }
 
 /**

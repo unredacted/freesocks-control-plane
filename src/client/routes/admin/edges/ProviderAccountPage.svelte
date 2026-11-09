@@ -25,6 +25,7 @@
   import {
     DNS_ACCOUNT_BLURB,
     DNS_ACCOUNT_USES,
+    DNS_ONLY_ACCOUNT_BLURB,
     EDGE_PROVIDER_META,
   } from '../../../lib/edgeProviderMeta';
   import { router } from '../../../stores/router.svelte';
@@ -163,7 +164,12 @@
   }
 
   // --- what a DNS account does (DNS only, or DNS and fronting) ------------------------------------------
-  const isDnsAccount = $derived(a ? EDGE_PROVIDER_META[a.provider].role === 'dns' : false);
+  // A DNS-only provider (Gandi) has no fronting choice to make.
+  const isDnsAccount = $derived(
+    a
+      ? EDGE_PROVIDER_META[a.provider].role === 'dns' && !EDGE_PROVIDER_META[a.provider].dnsOnly
+      : false,
+  );
   const useNow = $derived<'dns' | 'front'>(a?.frontsTraffic ? 'front' : 'dns');
   let useChoice = $state<'dns' | 'front' | null>(null);
   let useOpen = $state(false);
@@ -212,9 +218,11 @@
 {:else}
   <SectionHeader
     title={a.name}
-    description={EDGE_PROVIDER_META[a.provider].role === 'dns'
-      ? `${providerLabel(a.provider)} account: ${DNS_ACCOUNT_USES[useNow].label}. ${DNS_ACCOUNT_BLURB}`
-      : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
+    description={EDGE_PROVIDER_META[a.provider].dnsOnly
+      ? `${providerLabel(a.provider)} account. ${DNS_ONLY_ACCOUNT_BLURB}`
+      : EDGE_PROVIDER_META[a.provider].role === 'dns'
+        ? `${providerLabel(a.provider)} account: ${DNS_ACCOUNT_USES[useNow].label}. ${DNS_ACCOUNT_BLURB}`
+        : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
     back={{ href: edgesPaths.providers(), label: 'Providers' }}
   >
     {#snippet badges()}

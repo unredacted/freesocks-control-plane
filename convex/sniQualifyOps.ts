@@ -17,7 +17,7 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import { isPublicIpLiteral } from './lib/edges/ip';
 import { classifyHandshakeError, resolvePublic } from './lib/edges/probes/internal';
 import { judgeHandshake, type HandshakeResult } from './lib/edges/sni/family';
-import { qualificationNetworkCode } from './lib/edges/networks';
+import { qualificationNetworkVerdict } from './lib/edges/networks';
 
 const TIMEOUT_MS = 8000;
 const GAP_MS = 500;
@@ -135,13 +135,18 @@ export const run = internalAction({
         if (!dialled.has(n.address)) dialled.set(n.address, await dialAddress(n.address));
         const at = dialled.get(n.address)!;
         // A family on a network: the target and the name must both live on it
-        // (lib/edges/networks.ts), before any handshake is worth making.
+        // (lib/edges/networks.ts), before any handshake is worth making. An
+        // operator's "use anyway" lifts only the name's own network check.
         const net = n.network ? networks[n.network] : undefined;
-        const offNetwork =
-          net && at.ok ? qualificationNetworkCode(at.all, await answersOf(n.name), net) : null;
+        const network =
+          net && at.ok
+            ? qualificationNetworkVerdict(at.all, await answersOf(n.name), net, {
+                useAnyway: n.useAnyway === true,
+              })
+            : null;
         const shake: HandshakeResult = at.ok
-          ? offNetwork
-            ? { ok: false, error: offNetwork }
+          ? network?.code
+            ? { ok: false, error: network.code }
             : await tlsInspect({ host: at.host, port: n.port, servername: n.name })
           : { ok: false, error: at.error };
         const verdict = judgeHandshake(shake, { requireH2: n.requireH2 });
@@ -152,6 +157,11 @@ export const run = internalAction({
           code: verdict.code,
           tlsVersion: verdict.tlsVersion,
           alpn: verdict.alpn,
+          // Recorded only under "use anyway": the page keeps such a name marked.
+          ...(network?.offNetwork && n.useAnyway ? { offNetwork: true } : {}),
+          // What this verdict was judged under: an operator who turned "use
+          // anyway" on or off meanwhile gets the recheck they asked for instead.
+          ...(n.network ? { useAnyway: n.useAnyway === true } : {}),
         });
         await new Promise((r) => setTimeout(r, GAP_MS));
       }

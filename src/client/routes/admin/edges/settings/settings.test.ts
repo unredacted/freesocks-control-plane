@@ -3,6 +3,7 @@ import {
   EDGE_CONFIG_BOUNDS,
   EDGE_DEFAULTS,
   EDGE_KEYS,
+  EDGE_OBJECT_PATHS,
   flattenEdgeConfig,
 } from '../../../../../../convex/lib/edgeConfig';
 import {
@@ -12,6 +13,7 @@ import {
   diffConfig,
   flattenConfig,
   formatConfigValue,
+  OBJECT_PATHS,
   pathCovers,
 } from './configDiff';
 import {
@@ -128,6 +130,20 @@ describe('settings fields', () => {
     expect(new Set(owned).size).toBe(owned.length);
     // Everything the server has: no stored key without a control, no control without a key.
     expect([...owned].sort()).toEqual(Object.keys(EDGE_KEYS).sort());
+  });
+
+  it('keeps the same settings whole as the server does', () => {
+    expect([...OBJECT_PATHS]).toEqual([...EDGE_OBJECT_PATHS]);
+    expect(flattenConfig({ audience: { replacesPerDayByCountry: { IR: 2 } } })).toEqual({
+      'audience.replacesPerDayByCountry': { IR: 2 },
+    });
+  });
+
+  it('saves a map with one of its entries removed', () => {
+    const path = 'audience.replacesPerDayByCountry';
+    const changes = diffConfig({ [path]: { RU: 3 } }, { [path]: {} });
+    expect(changes).toEqual([{ path, display: `${path}.RU`, from: 3, to: undefined, send: {} }]);
+    expect(buildPatch(changes)).toEqual({ [path]: {} });
   });
 
   it('gives every bounded path a number field and every number field bounds', () => {

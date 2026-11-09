@@ -40,6 +40,8 @@ const EMPTY_TEMPLATE_HASHES: Record<string, string> = {
   fastly: '5cfb164e8072eb8e',
   // Its first schema (added with every option optional): pinned from the start.
   cloudfront: 'cc4939d2bf8fe80e',
+  // DNS only: nothing to tune, pinned from the start.
+  gandi: '08f44b07b5901a25',
 };
 
 type Node = {

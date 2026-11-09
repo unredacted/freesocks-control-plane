@@ -251,8 +251,9 @@ crons.interval('edge-block-detector', { minutes: 5 }, internal.edgeDetector.run,
 // Suspicion's retention (convex/edgeTrust.ts): strikes that stopped counting, and
 // first exposures of addresses that are gone or no longer trusted.
 crons.daily('edge-trust-sweep', { hourUTC: 4, minuteUTC: 55 }, internal.edgeTrust.sweep, {});
-// Operator alerts (opt-in, `alerts.*`): new alert-worthy attention items go to
-// the operator's webhook once, as kinds, codes and counts (convex/alerts.ts).
+// Operator alerts (opt-in, `alerts.*`): new alert-worthy attention items and
+// system signals go to the operator's webhook, with reminders and "Resolved"
+// (convex/alerts.ts).
 crons.interval('alerts-dispatch', { minutes: 5 }, internal.alerts.dispatch, {});
 // Destroyed edge rows (ledgers of what existed) and terminal rotation rows are
 // history: bounded daily deletes past their windows (30 / 90 days).

@@ -333,10 +333,11 @@ describe('code helpers', () => {
     expect(codeExplain('pool_empty')).toMatch(/published/);
     expect(codeFix('pool_empty')).toBe('Publish an edge.');
     expect(codeFix('not_found')).toBeUndefined();
-    // A rejected Cloudflare token says which token kinds FCP accepts, not a bare "1000".
+    // A rejected token says which token kinds FCP accepts, per provider, not a bare "1000".
     expect(codeLabel('token_rejected')).toBe('Token rejected');
-    expect(codeExplain('token_rejected')).toMatch(/^Cloudflare rejected this token/);
-    expect(codeFix('token_rejected')).toMatch(/user API tokens and account API tokens/);
+    expect(codeExplain('token_rejected')).toMatch(/^The provider rejected this token/);
+    expect(codeFix('token_rejected')).toMatch(/Cloudflare takes user and account API tokens/);
+    expect(codeFix('token_rejected')).toMatch(/Gandi takes personal access tokens only/);
   });
 
   test('unknown codes are humanised, never returned bare', () => {

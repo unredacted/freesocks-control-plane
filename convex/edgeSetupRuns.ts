@@ -315,6 +315,11 @@ export interface StageOps {
   reapplyEdge(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<ReapplyResult>;
   runFrontProof(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<{ ok: boolean; code: string | null }>;
   buildTestLink(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<TestLinkResult>;
+  /** FCP's own client check of one address, in place of a person's (edgeClientCheck.checkForSetup). */
+  clientConfirm(
+    ctx: ActionCtx,
+    edgeId: Id<'edges'>,
+  ): Promise<'confirmed' | 'unconfirmed' | 'failed' | 'unavailable' | 'skipped'>;
   /** Which clients the origin's REALITY listeners refuse, read now (edgeRealityClients.ts; never throws). */
   realityClients(
     ctx: ActionCtx,
@@ -365,6 +370,7 @@ const defaultOps: StageOps = {
   },
   runFrontProof: (ctx, edgeId) => ctx.runAction(internal.frontQualifyOps.run, { edgeId }),
   buildTestLink: (ctx, edgeId) => ctx.runAction(internal.edgeTestLinks.build, { edgeId }),
+  clientConfirm: (ctx, edgeId) => ctx.runAction(internal.edgeClientCheck.checkForSetup, { edgeId }),
   realityClients: (ctx, a) => ctx.runAction(internal.edgeRealityClients.forRelay, a),
   hideHosts: (ctx, a) => ctx.runAction(internal.edgeHostHides.hide, a),
   hideStatus: (ctx, relayId) => ctx.runQuery(internal.edgeHostHides.status, { relayId }),
@@ -1371,12 +1377,15 @@ async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Pr
 /**
  * The provider set a run leaves the node with: its picks in order, an `add`
  * re-protect's after the picks the node already had. A pick already in the
- * set keeps its `addedAt` and its address count (`want`).
+ * set keeps its `addedAt`, its address count (`want`) and its countries (`audiences`).
  */
 function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay['providerSet']> {
   const before = relay.providerSet ?? [];
   const add = parsePlan(r).reprotect?.mode === 'add';
-  const out: NonNullable<Relay['providerSet']> = add ? [...before] : [];
+  // A pick a country's default picks added stays (upkeep keeps it in step).
+  const out: NonNullable<Relay['providerSet']> = add
+    ? [...before]
+    : before.filter((p) => p.fromDefault);
   for (const p of runPicks(r)) {
     if (!p.locationId) continue;
     const kept = before.find((x) => x.locationId === p.locationId);
@@ -1388,6 +1397,9 @@ function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay[
       addedAt: kept?.addedAt ?? now,
       ...(options !== undefined ? { options } : {}),
       ...(kept?.want !== undefined ? { want: kept.want } : {}),
+      ...(kept?.audiences !== undefined ? { audiences: kept.audiences } : {}),
+      ...(kept?.audienceOnly ? { audienceOnly: kept.audienceOnly } : {}),
+      ...(kept?.fromDefault ? { fromDefault: kept.fromDefault } : {}),
     };
     const at = out.findIndex((x) => x.locationId === p.locationId);
     if (at >= 0) out[at] = entry;
@@ -2410,6 +2422,40 @@ function testAccountUsedUp(err: unknown): boolean {
   return errCode(err).code === 'edge.test_account_used_up';
 }
 
+/**
+ * Nobody tests by hand when FCP can (docs/edges.md § "Guided setup runs", Try
+ * it): before the card is shown, FCP's own client check takes the first L4
+ * address of the run that lacks a current confirmation and has no verdict yet
+ * for the configuration it holds now. A pass in a location the run picked
+ * confirms it. One address per pass (a check takes up to 90 s); the stage
+ * comes back to look again. Returns the detail to wait with, or null when no
+ * address is due (the check is off or not answering, or every one was checked:
+ * the card then offers the person's test for what is left).
+ */
+/** How many times one attempt asks FCP's client check again when it could not run. */
+const CLIENT_UNAVAILABLE_TRIES = 3;
+
+async function checkOneWithClient(
+  ctx: ActionCtx,
+  run: Run,
+  c: NonNullable<Awaited<ReturnType<typeof relayContextOf>>>,
+): Promise<string | null> {
+  for (const l of run.listeners) {
+    if (l.layer !== 'l4' || !l.edgeId || vOf(c, l)?.current) continue;
+    // A check that could not run (the service busy or down) is asked again on
+    // the next passes, at most CLIENT_UNAVAILABLE_TRIES times for this attempt;
+    // then the card offers the person's test (and "Try again" asks once more).
+    const tag = `client check ${l.listenerKey}: unavailable`;
+    const since = run.attemptStartedAt ?? run.startedAt;
+    const tries = run.events.filter((e) => e.at >= since && e.detail === tag).length;
+    if (tries >= CLIENT_UNAVAILABLE_TRIES) continue;
+    const res = await ops.clientConfirm(ctx, l.edgeId);
+    if (res === 'skipped') continue;
+    return `client check ${l.listenerKey}: ${res}`;
+  }
+  return null;
+}
+
 async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
   const c = await relayContextOf(ctx, run);
   if (!c)
@@ -2417,6 +2463,8 @@ async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
       state: 'failed',
       need: { code: 'provider_failed', detail: 'relay_missing' },
     });
+  const checked = await checkOneWithClient(ctx, run, c);
+  if (checked) return waitPoll(ctx, run, c.cfg, checked);
   let links: NonNullable<Run['testLinks']>;
   try {
     links = await pendingTestLinks(ctx, run, c);
@@ -2526,6 +2574,8 @@ async function stageHide(ctx: ActionCtx, run: Run): Promise<null> {
   // it to the card).
   const stale = run.listeners.filter((l) => l.layer === 'l4' && !vOf(c, l)?.current);
   if (stale.length > 0) {
+    const checked = await checkOneWithClient(ctx, run, c);
+    if (checked) return waitPoll(ctx, run, c.cfg, checked);
     let links: NonNullable<Run['testLinks']>;
     try {
       links = await pendingTestLinks(ctx, run, c);

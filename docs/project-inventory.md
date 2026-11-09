@@ -637,7 +637,9 @@ Convex runs these natively (no Workers triggers, no node-cron):
   verdicts; automatic rotation only with edge-level evidence and every gate open, held fleet-wide
   by the fleet brake (a mass block) and the fleet's daily cap.
 - `alerts-dispatch` (5 min): opt-in operator alerts (`alerts.*`): new alert-worthy edge attention
-  items posted once to the operator's webhook as ntfy-compatible JSON, kinds and counts only.
+  items and system signals (node offline, backend down, a job stopped, spend near cap) posted
+  to the operator's webhook as ntfy JSON: one per alert with labels, counts, a next step and a
+  link, a reminder for critical ones after 12 h, and "Resolved" once cleared.
 
 Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,
 stamped at start) surfaced as a freshness backend on the admin dashboard.

@@ -24,6 +24,7 @@
     switchNotes,
     totalsLine,
   } from './words';
+  import { sniSummaryLine } from './sniWords';
 
   const summary = countryViewSummaryQuery();
   let now = $derived(summary.data?.generatedAt ?? Date.now());
@@ -114,6 +115,7 @@
                     ? 'One location is set for it.'
                     : `${c.meantFor.locations} locations are set for it.`}
                 {/if}
+                {sniSummaryLine(c.snis, c.country) ?? ''}
                 {c.listed.nameChecksRun
                   ? 'SNIs are checked from inside.'
                   : 'SNIs are not checked from inside.'}

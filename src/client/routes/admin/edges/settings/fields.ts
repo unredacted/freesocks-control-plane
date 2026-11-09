@@ -57,7 +57,7 @@ export const BASIC_SWITCHES: Field[] = [
     path: 'clientCheck.enabled',
     label: "Replace without a spare using FCP's client check",
     helper:
-      "On: with no tested spare, a blocked address is replaced in a location you tested before, and FCP's sing-box and Xray clients test the new one for you. Off: a replacement needs a tested spare, and the check is advice only.",
+      "On: nobody has to test an address by hand. A new address in a node's locations is checked with FCP's sing-box and Xray clients, and a pass counts as the test. Off: an address needs a person's test before it goes live, and the check is advice only.",
   },
   {
     kind: 'switch',
@@ -253,6 +253,14 @@ export const ROTATION_FIELDS: Field[] = [
   },
   {
     kind: 'number',
+    path: 'audience.replacesPerDay',
+    label: "A country's own addresses replaced per node",
+    unit: 'a day',
+    helper:
+      "Replacements per day for a country on its own addresses on a node, per transport. Separate from the node's daily cap. 0 means by hand only.",
+  },
+  {
+    kind: 'number',
     path: 'trust.strikesToSuspect',
     label: 'Suspect an account after',
     unit: 'strikes',
@@ -303,6 +311,12 @@ const IPV6_GLOBAL = [
   { value: 'both', label: 'IPv4 and IPv6 entries' },
   { value: 'auto-group-only', label: 'IPv6 only inside the automatic group' },
   { value: 'off', label: 'No IPv6 entries' },
+] as const;
+
+const PROBE_NETWORK_OPTIONS = [
+  { value: 'home', label: 'Home networks only' },
+  { value: 'home_first', label: 'Home networks first, topped up with data centres' },
+  { value: 'any', label: 'Any network' },
 ] as const;
 
 export const RENDER_GLOBAL_FIELDS: Field[] = [
@@ -623,11 +637,12 @@ export const PROBE_FIELDS: Field[] = [
     helper: 'External probe runs allowed per hour. 0 stops external probing.',
   },
   {
-    kind: 'switch',
-    path: 'probe.preferEyeball',
-    label: 'Prefer residential networks',
+    kind: 'select',
+    path: 'probe.networks',
+    label: 'Globalping probe networks',
     helper:
-      'On: vantage points on consumer networks are asked for first, where the source can tell.',
+      'Which networks Globalping checks come from. Home networks see what members see, but a country with few of them gets fewer results. Control countries use any probe.',
+    options: PROBE_NETWORK_OPTIONS,
   },
   {
     kind: 'switch',
@@ -802,6 +817,9 @@ export const LIST_FIELDS: Field[] = [
   },
 ];
 
+/** The per-country budgets' own path (`{IR: 2}`; a country left out follows the line above). */
+export const AUDIENCE_BUDGETS_PATH = 'audience.replacesPerDayByCountry';
+
 /** The zone checklist's own path (a list of zone ids). */
 export const NAME_ZONES_PATH = 'names.zones';
 
@@ -813,7 +831,7 @@ export const SECTION_PATHS: Record<
   string[]
 > = {
   basics: [...pathsOf(BASIC_SWITCHES), ...pathsOf(BASIC_NUMBERS), AUTO_PROVISION.path],
-  rotation: pathsOf(ROTATION_FIELDS),
+  rotation: [...pathsOf(ROTATION_FIELDS), AUDIENCE_BUDGETS_PATH],
   rendering: pathsOf(RENDER_GLOBAL_FIELDS),
   detector: pathsOf(DETECTOR_FIELDS),
   probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS), ...pathsOf(COUNTRY_FIELDS)],
