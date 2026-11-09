@@ -22,7 +22,7 @@ const config: SniConfigView = {
     curatedCountries: [],
     ...dflt('lists'),
     qualifyPerTick: 60,
-  } as SniConfigView['config'],
+  } as unknown as SniConfigView['config'],
   vantage: {
     enabled: false,
     countries: [],
@@ -30,7 +30,7 @@ const config: SniConfigView = {
     autoApply: false,
     realHost: false,
     ...dflt('checks'),
-  } as SniConfigView['vantage'],
+  } as unknown as SniConfigView['vantage'],
   hunt: { enabled: false, ...dflt('find') } as SniConfigView['hunt'],
   vantageSources: { globalping: true, ripeatlas: false },
 };
