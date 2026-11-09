@@ -391,6 +391,7 @@ describe('links', () => {
           relayId: null,
           edgeId: s.edgeId,
           listenerKey: s.listenerKey,
+          listenerTag: null,
           accountId: s.accountId,
           rotationId: s.rotationId,
           code: null,

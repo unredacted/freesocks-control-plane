@@ -21,6 +21,7 @@ const item: AttentionItem = {
   relayId: 'r1',
   edgeId: 'e1',
   listenerKey: null,
+  listenerTag: null,
   accountId: null,
   rotationId: null,
   code: null,
