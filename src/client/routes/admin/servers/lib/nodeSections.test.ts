@@ -8,6 +8,7 @@ import {
   joinSearch,
   parseSection,
   patchSearch,
+  sectionToScroll,
 } from './nodeSections';
 
 describe('node page sections', () => {
@@ -73,5 +74,19 @@ describe('the old origin details query on the node page', () => {
       '/p?backend=a&run=r1',
     );
     expect(patchSearch('/p', '', { front: null })).toBe('/p');
+  });
+});
+
+describe('sectionToScroll', () => {
+  test('each change once; Summary and nothing never scroll', () => {
+    expect(sectionToScroll(undefined, null)).toBeNull();
+    expect(sectionToScroll(undefined, 'snis')).toBe('snis');
+    expect(sectionToScroll(undefined, 'summary')).toBeNull();
+    // Nothing named on load, then a link on the page names the fold.
+    expect(sectionToScroll(null, 'details')).toBe('details');
+    expect(sectionToScroll('details', 'details')).toBeNull();
+    expect(sectionToScroll('details', 'modes')).toBe('modes');
+    expect(sectionToScroll('modes', null)).toBeNull();
+    expect(sectionToScroll(null, 'modes')).toBe('modes');
   });
 });

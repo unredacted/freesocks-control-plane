@@ -44,6 +44,7 @@
   import { router } from '@client/stores/router.svelte';
   import { searchParam, setSearchParams } from '@client/lib/urlState.svelte';
   import type { AddressView, TransportView } from '../../../../shared/contracts/servers';
+  import AdminListState from '../AdminListState.svelte';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import { edgeSummaryQuery, invalidateOverview, relayLookupQuery } from '@client/lib/edgesApi';
   import { transportsQuery } from '@client/lib/sniApi';
@@ -120,6 +121,8 @@
         (r.relay.origin.nodeUuid === uuid || (!!node && r.relay.origin.nodeName === node.name)),
     )?.relay.slug ?? null,
   );
+  // No answer yet, or a failed read: whether an origin fronts it is unknown.
+  let frontingUnknown = $derived(!relaySlug && (edgeSummary.isPending || edgeSummary.isError));
   const relayQ = relayLookupQuery(() => relaySlug);
   const relay = $derived(relaySlug ? (relayQ.data ?? null) : null);
   const EdgesPanel = () => import('../edges/simple/NodeEdgesPanel.svelte');
@@ -301,6 +304,7 @@
           origin={!!relaySlug}
           onFront={openFront}
           onOpenRun={openRun}
+          inlineRunId={runParam.value || null}
         />
       {/if}
     </section>
@@ -330,6 +334,9 @@
             The edges of this node did not load. Reload the page to try again.
           </p>
         {/await}
+      {:else if edgeSummary.isError}
+        <!-- Not knowing whether an origin fronts it is not the same as none. -->
+        <AdminListState error={edgeSummary.error} onRetry={() => void edgeSummary.refetch()} />
       {:else if edgeSummary.isPending}
         <Skeleton class="h-16 w-full" />
       {:else}
@@ -556,7 +563,11 @@
       aria-labelledby={`${sectionId('activity')}-title`}
     >
       {@render sectionTitle('activity', 'Activity')}
-      {#if relaySlug}
+      {#if frontingUnknown}
+        <p class="text-muted-foreground text-sm">
+          Whether anything fronts this node could not be read yet.
+        </p>
+      {:else if relaySlug}
         <NodeActivity
           slug={relaySlug}
           heading={false}
@@ -576,7 +587,11 @@
     </section>
 
     <DetailsFold open={nav.detailsOpen} onToggle={nav.toggleDetails} id={sectionId('details')}>
-      {#if relaySlug}
+      {#if frontingUnknown}
+        <p class="text-muted-foreground text-sm">
+          Whether anything fronts this node could not be read yet.
+        </p>
+      {:else if relaySlug}
         {#await Details()}
           <Skeleton class="h-40 w-full" />
         {:then mod}

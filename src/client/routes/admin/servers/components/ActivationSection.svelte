@@ -25,7 +25,9 @@
    *
    * Props: slug, intent (NodeIntentView), origin (an Edges origin protects it),
    *   onFront? (open the protect sheet for this node; default: on Overview),
-   *   onOpenRun? (a fronting run's progress; default: on Overview)
+   *   onOpenRun? (a fronting run's progress; default: on Overview),
+   *   inlineRunId? (the run whose progress the page shows inline: its protection
+   *   then gets one line here, never a second approval card or "Open progress")
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -60,12 +62,14 @@
     origin = false,
     onFront,
     onOpenRun,
+    inlineRunId = null,
   }: {
     slug: string;
     intent: NodeIntentView;
     origin?: boolean;
     onFront?: () => void;
     onOpenRun?: (runId: string) => void;
+    inlineRunId?: string | null;
   } = $props();
   const qc = useQueryClient();
 
@@ -143,15 +147,19 @@
       : stageWords(intent),
   );
   // The fronted mirror of the approval card, while the protection waits for it.
-  let mirrorShown = $derived(
+  let mirrorWanted = $derived(
     !direct &&
       !intent.retirement &&
       intent.protection?.state === 'needs_you' &&
       intent.protection.need === 'node_not_approved' &&
       intent.stage !== 'activating',
   );
-  // The approval card carries Finish maintenance itself: the row below leaves it out.
-  let cardShown = $derived((direct && reviewable) || mirrorShown || !!atOnce);
+  // The page already shows this protection's progress (its approval card included).
+  let inlineRun = $derived(!!inlineRunId && intent.protection?.runId === inlineRunId);
+  let mirrorShown = $derived(mirrorWanted && !inlineRun);
+  // The approval card carries Finish maintenance itself (here or in the inline
+  // progress): the row below leaves it out.
+  let cardShown = $derived((direct && reviewable) || mirrorWanted || !!atOnce);
   const protect = () =>
     onFront
       ? onFront()
@@ -288,6 +296,10 @@
         maintenance={intent.maintenance}
       />
     </div>
+  {:else if !direct && intent.protection && !intent.retirement && inlineRun}
+    <p class="text-muted-foreground mt-3 text-sm">
+      Its fronting progress is shown above, with anything it needs from you.
+    </p>
   {:else if !direct && intent.protection && !intent.retirement}
     {@const p = intent.protection}
     <div

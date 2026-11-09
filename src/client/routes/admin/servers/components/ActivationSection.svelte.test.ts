@@ -64,7 +64,11 @@ function reviewWith(atOnce: 'kept' | 'external' | null) {
 let client: QueryClient;
 let app: ReturnType<typeof mountWithQuery> | null = null;
 
-function mount(atOnce: 'kept' | 'external' | null, intent = closedNode()) {
+function mount(
+  atOnce: 'kept' | 'external' | null,
+  intent = closedNode(),
+  extra: Record<string, unknown> = {},
+) {
   vi.mocked(reviewQuery)
     .mockClear()
     .mockReturnValue(reviewWith(atOnce) as never);
@@ -73,6 +77,7 @@ function mount(atOnce: 'kept' | 'external' | null, intent = closedNode()) {
     slug: 'panel',
     intent: intent as never,
     origin: true,
+    ...extra,
   });
   flushSync();
 }
@@ -113,5 +118,31 @@ describe('a fronted node closed with no fronting open', () => {
   test('a live node never reads the review here', () => {
     mount(null, closedNode({ stage: 'live', disposition: 'live' }));
     expect(vi.mocked(reviewQuery).mock.calls.every((c) => c[1]() === null)).toBe(true);
+  });
+});
+
+describe('a protection waiting for go-live approval', () => {
+  const waiting = closedNode({
+    stage: 'candidates_verified',
+    protection: { runId: 'run-1', stage: 'publish', state: 'needs_you', need: 'node_not_approved' },
+  });
+  const buttons = () => [...document.querySelectorAll('button')].map((b) => b.textContent?.trim());
+
+  test('mirrors the approval card and links to the progress', () => {
+    mount(null, waiting);
+    expect(buttons()).toContain('Open progress');
+    expect(document.body.textContent).toMatch(/What you approve/);
+  });
+
+  test('while the page shows that run inline, says so once: no second card, no Open progress', () => {
+    mount(null, waiting, { inlineRunId: 'run-1' });
+    expect(buttons()).not.toContain('Open progress');
+    expect(document.body.textContent).not.toMatch(/What you approve/);
+    expect(document.body.textContent).toMatch(/Its fronting progress is shown above/);
+  });
+
+  test('another run shown inline leaves the mirror alone', () => {
+    mount(null, waiting, { inlineRunId: 'run-other' });
+    expect(buttons()).toContain('Open progress');
   });
 });

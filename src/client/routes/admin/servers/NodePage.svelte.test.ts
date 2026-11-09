@@ -133,11 +133,16 @@ const ANSWERS: Record<string, unknown> = {
   '/api/v1/admin/edges/relays/lookup?slug=office-box': manual,
 };
 
+const failing = new Set<string>();
+
 vi.mock('@client/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@client/lib/api')>()),
   apiClient: {
     get: (path: string) =>
-      path in ANSWERS ? Promise.resolve(ANSWERS[path]) : Promise.reject(new Error(`no ${path}`)),
+      path in ANSWERS && !failing.has(path)
+        ? Promise.resolve(ANSWERS[path])
+        : // A failure takes a moment, as over the network.
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`no ${path}`)), 5)),
     post: () => Promise.reject(new Error('no writes')),
     patch: () => Promise.reject(new Error('no writes')),
     put: () => Promise.reject(new Error('no writes')),
@@ -160,6 +165,8 @@ async function mount(url: string, component: Component<never>, props: object): P
 }
 
 afterEach(() => {
+  failing.clear();
+  vi.restoreAllMocks();
   if (app) unmount(app);
   app = null;
   document.body.innerHTML = '';
@@ -199,6 +206,37 @@ describe('the node page', () => {
       b.textContent?.includes('Technical details'),
     )!;
     expect(fold.getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
+describe('review fixes', () => {
+  test('a failed edge summary read is an error with Retry, never "reach this node directly"', async () => {
+    failing.add('/api/v1/admin/edges/summary');
+    await mount('/admin/servers/nodes/n-1?backend=panel-a', NodePage as never, { uuid: 'n-1' });
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await tick();
+    }
+    const text = (document.body.textContent ?? '').replace(/\s+/g, ' ');
+    expect(text).toContain('Whether anything fronts this node could not be read yet.');
+    expect(text).not.toContain('Members reach this node directly');
+    expect(text).not.toContain('Front this node');
+    expect(text).not.toContain('Nothing fronts this node');
+    const buttons = [...document.querySelectorAll('button')].map((b) => b.textContent ?? '');
+    expect(buttons.some((b) => /Retry|Try again/.test(b))).toBe(true);
+  });
+
+  test('a link that names a section later still scrolls there', async () => {
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
+    await mount('/admin/servers/nodes/n-1?backend=panel-a', NodePage as never, { uuid: 'n-1' });
+    expect(scroll).not.toHaveBeenCalled();
+    router.navigate('/admin/servers/nodes/n-1?backend=panel-a&section=details');
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await tick();
+    }
+    expect(scroll).toHaveBeenCalled();
+    expect((scroll.mock.contexts.at(-1) as HTMLElement).id).toBe('node-details');
   });
 });
 

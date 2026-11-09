@@ -106,3 +106,17 @@ export function patchSearch(
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path;
 }
+
+/**
+ * The section to scroll to when the address names `current` and `last` was
+ * the one handled before: each change is handled once, a section named again
+ * after it was cleared is handled again, and Summary (the top) never scrolls.
+ * Null: nothing to do.
+ */
+export function sectionToScroll(
+  last: NodeSection | null | undefined,
+  current: NodeSection | null,
+): NodeSection | null {
+  if (current === last) return null;
+  return current && current !== 'summary' ? current : null;
+}

@@ -12,7 +12,7 @@
  */
 import { router } from '@client/stores/router.svelte';
 import { setSearchParams } from '@client/lib/urlState.svelte';
-import { detailsOpenFor, parseSection, type NodeSection } from './nodeSections';
+import { detailsOpenFor, parseSection, sectionToScroll, type NodeSection } from './nodeSections';
 
 export const sectionId = (id: NodeSection) => `node-${id}`;
 
@@ -28,13 +28,16 @@ export function nodeSectionState(ready: () => boolean) {
   $effect(() => {
     if (detailsOpenFor(router.search)) detailsOpen = true;
   });
-  // Once the page has drawn, go to the section the address names (once).
-  let scrolled = false;
+  // Once the page has drawn, go to the section the address names, and again
+  // each time it names another one (a link on the page that sets `?section=`).
+  // `undefined`: nothing handled yet.
+  let handled: NodeSection | null | undefined = undefined;
   $effect(() => {
-    if (scrolled || !ready()) return;
     const s = parseSection(router.searchParams.get('section'));
-    scrolled = true;
-    if (s && s !== 'summary') scrollTo(s);
+    if (!ready()) return;
+    const to = sectionToScroll(handled, s);
+    handled = s;
+    if (to) scrollTo(to);
   });
 
   return {
@@ -45,6 +48,8 @@ export function nodeSectionState(ready: () => boolean) {
       return detailsOpen;
     },
     pick(id: NodeSection): void {
+      // Scrolled here: the effect leaves this change alone.
+      handled = id === 'summary' ? null : id;
       setSearchParams({ section: id === 'summary' ? null : id });
       if (id === 'details') detailsOpen = true;
       scrollTo(id);
@@ -59,10 +64,15 @@ export function nodeSectionState(ready: () => boolean) {
           rotation: null,
           listener: null,
         };
-        if (router.searchParams.get('section') === 'details') patch.section = null;
+        if (router.searchParams.get('section') === 'details') {
+          patch.section = null;
+          handled = null;
+        }
         setSearchParams(patch);
       } else {
         detailsOpen = true;
+        // Its own button is in view: no scroll for this change.
+        handled = 'details';
         setSearchParams({ section: 'details' });
       }
     },
