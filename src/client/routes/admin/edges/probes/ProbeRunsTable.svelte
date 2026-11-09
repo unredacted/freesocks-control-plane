@@ -5,8 +5,9 @@
    * when it was asked, whether it is still out and which control countries it
    * asked; for an edge, the round that decided each checked country says what
    * it found there, in words. Control vantages (uncensored countries asked in
-   * the same measurement) are labelled "control" and counted apart. A failed
-   * run says why in words.
+   * the same measurement) are labelled "control" and counted apart. Per
+   * country, which networks the probes sat on (home or data centre) where the
+   * source says. A failed run says why in words.
    *
    * Props:
    *   targetKey: string      `edge:<id>` | `origin:<id>` | `custom:<id>`
@@ -27,6 +28,7 @@
     countryTally,
     familyLabel,
     groupRounds,
+    networkMix,
   } from './matrix';
 
   interface Props {
@@ -137,6 +139,11 @@
                   <span class={n.fail > 0 && n.ok === 0 ? 'text-destructive' : ''}
                     >{n.ok}/{n.fail}</span
                   >
+                  {#if networkMix(n)}
+                    <span class="text-muted-foreground" title="Where the probes sit"
+                      >({networkMix(n)})</span
+                    >
+                  {/if}
                 </span>
               {/each}
             </Table.Cell>

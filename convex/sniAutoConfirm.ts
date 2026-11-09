@@ -57,7 +57,7 @@ import {
   AUTO_STAGGER_MS,
   autoTestDue,
 } from './lib/edges/sni/autoTest';
-import { clientConfirmationStands } from './lib/edges/tickedLocation';
+import { clientConfirmationStands } from './lib/edges/assignedLocation';
 import { verificationCurrent } from './lib/edges/verification';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { resolveSniConfig } from './lib/sniConfig';

@@ -24,12 +24,14 @@
  *   /admin/edges/templates                 -> /admin/servers/providers/templates
  *   /admin/edges/probes                    -> /admin/servers/probes
  *   /admin/edges/settings                  -> /admin/servers/settings
+ *   .../settings?section=S                 -> /admin/servers/settings?group=<S's group> (an unknown S is dropped)
  *   /admin/edges/names                     -> /admin/servers/snis
  *   /admin/edges/names/:slug               -> /admin/servers/snis/lists/:slug
  *   /admin/edges/find-names[/:slug]        -> /admin/servers/snis/find[/:slug]
  *   /admin/edges/countries[/...]           -> /admin/servers/countries[/...]
  */
 import { edgesPaths, originsToNodesSearch } from '../../edges/lib/routes';
+import { groupOfSection } from '../../edges/settings/groups';
 import { serversPaths } from './routes';
 
 /** `search` with `from` renamed to `to` (other params kept, in order). */
@@ -60,6 +62,24 @@ function edgesHomeRedirect(search: string): string {
   return serversPaths.nodes({ show: 'fronted' });
 }
 
+/**
+ * `search` with the old Settings card (`section`) made the group that holds it
+ * now (`group`, in its place). A `group` already there wins; an unknown card
+ * is dropped, which shows every group.
+ */
+function sectionToGroup(search: string): string {
+  const params = new URLSearchParams(search);
+  const section = params.get('section');
+  const group = groupOfSection(section);
+  const out = new URLSearchParams();
+  for (const [k, v] of params) {
+    if (k !== 'section') out.append(k, v);
+    else if (group && !params.has('group')) out.append('group', group);
+  }
+  const s = out.toString();
+  return s ? `?${s}` : '';
+}
+
 /** Old Edges prefixes that only changed their prefix: old -> new, most specific first. */
 const PREFIXES: ReadonlyArray<readonly [string, string]> = [
   ['/admin/edges/find-names', '/admin/servers/snis/find'],
@@ -86,6 +106,8 @@ export function legacyRedirect(pathname: string, search = ''): string | null {
   // All origins is the Nodes table with its technical columns now.
   if (path === '/admin/servers/origins')
     return `${serversPaths.nodes()}${originsToNodesSearch(search)}`;
+  if (path === '/admin/servers/settings' && new URLSearchParams(search).has('section'))
+    return `${edgesPaths.settings()}${sectionToGroup(search)}`;
 
   // The old Edges section, page by page.
   if (path !== '/admin/edges' && !path.startsWith('/admin/edges/')) return null;
@@ -101,7 +123,7 @@ export function legacyRedirect(pathname: string, search = ''): string | null {
   if (relay) return `/admin/servers/origins/${relay[1]}/details${search}`;
   if (path === '/admin/edges/templates') return `${edgesPaths.templates()}${search}`;
   if (path === '/admin/edges/probes') return `${edgesPaths.probes()}${search}`;
-  if (path === '/admin/edges/settings') return `${edgesPaths.settings()}${search}`;
+  if (path === '/admin/edges/settings') return `${edgesPaths.settings()}${sectionToGroup(search)}`;
   // One SNI list: its own namespace now, so a list called "find" stays a list.
   const list = /^\/admin\/edges\/names\/([^/]+)$/.exec(path);
   if (list) return `/admin/servers/snis/lists/${list[1]}${search}`;

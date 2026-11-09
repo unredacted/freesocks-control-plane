@@ -20,6 +20,7 @@
   import type { CountryViewAddress, CountryViewOrigin } from '@shared/contracts/edges';
   import SectionHeader from '../components/SectionHeader.svelte';
   import CountryListsCard from './CountryListsCard.svelte';
+  import CountrySnisCard from './CountrySnisCard.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import ProtocolBadge from '../components/ProtocolBadge.svelte';
   import StatusDot from '../simple/StatusDot.svelte';
@@ -170,6 +171,8 @@
       </p>
     </CardContent>
   </Card>
+
+  {#if v.curated}<CountrySnisCard code={v.country} snis={v.snis} />{/if}
 
   <CountryListsCard {code} />
 

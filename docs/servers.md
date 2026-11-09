@@ -1391,19 +1391,25 @@ The paths are spelled only in `src/client/routes/admin/servers/lib/routes.ts` (t
 pages) and `src/client/routes/admin/edges/lib/routes.ts` (the pages that came from the old Edges
 section, docs/edges.md "Admin section"):
 
-| Tab       | Path                                                                         | What                                                                                                                                                               |
-| --------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Overview  | `/admin/servers`                                                             | The fronted nodes, what needs you, and the automatic replacement switch (`?protect=1` opens the protect sheet, `?run=<id>` its progress).                          |
-| Nodes     | `/admin/servers/nodes[?backend=<slug>][&show=][&columns=technical]`          | Below. Every node of every backend in one table; **Technical columns** is the old All origins. An origin's details are at `/admin/servers/origins/<slug>/details`. |
-| Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`          | Every censored country, one country in full, and the country lists.                                                                                                |
-| SNIs      | `/admin/servers/snis[/lists/<slug>]`, `/admin/servers/snis/find[/<network>]` | The SNI lists, one list, and finding more SNIs.                                                                                                                    |
-| Probes    | `/admin/servers/probes`                                                      | Outside reachability: the matrix, runs, probe now, custom targets.                                                                                                 |
-| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates`      | The provider accounts, one account, and every template.                                                                                                            |
-| Settings  | `/admin/servers/settings[?section=]`                                         | Every edge setting. Its sub-views: **Backends** (`/admin/servers/settings/backends`) and **Mode pools** (`/admin/servers/settings/mode-pools`).                    |
+| Tab       | Path                                                                         | What                                                                                                                                                                                                                  |
+| --------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview  | `/admin/servers`                                                             | Status, ONE Action needed list, Automatic work, tiles, readiness, fronted nodes, activity (`?protect=1`: protect sheet, `?run=<id>`: progress).                                                                       |
+| Nodes     | `/admin/servers/nodes[?backend=<slug>][&show=][&columns=technical]`          | Below. Every node of every backend in one table; **Technical columns** is the old All origins. An origin's details are at `/admin/servers/origins/<slug>/details`.                                                    |
+| Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`          | Every censored country, one country in full, and the country lists.                                                                                                                                                   |
+| SNIs      | `/admin/servers/snis[/lists/<slug>]`, `/admin/servers/snis/find[/<network>]` | The SNI lists, one list, and finding more SNIs.                                                                                                                                                                       |
+| Probes    | `/admin/servers/probes`                                                      | Outside reachability: the matrix, runs, probe now, custom targets.                                                                                                                                                    |
+| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates`      | The provider accounts, one account, and every template.                                                                                                                                                               |
+| Settings  | `/admin/servers/settings[?group=][&q=][&changed=1][&field=]`                 | Every setting, in groups, with a search (docs/edges.md "Admin section"). Its sub-views: **Backends** (`/admin/servers/settings/backends[?backend=<slug>]`) and **Mode pools** (`/admin/servers/settings/mode-pools`). |
 
 **Backends** lists the backend servers keys are issued on (add, edit, remove; a link to each
-Remnawave server's nodes) and the node logging privacy check. **Mode pools** says which mode groups
-each connection mode issues new keys into (write-only uuids), and the node load per placement.
+Remnawave server's nodes), each Remnawave server's **Mode groups** (the same card as on Nodes: add,
+change, remove, with changes from here on) and the node logging privacy check. `?backend=<slug>`
+brings one server's row into view. **Mode pools** says which mode groups each connection mode
+issues new keys into, and the node load per placement. The uuids a mode holds are write-only, so
+the page names groups from what the client knows (`servers/lib/modePools.ts`): each backend's pool
+check says how many of a mode's groups it holds (and which grant no transport), every typed uuid
+is named from the mode groups each backend reports, and so is each node load row. Each name links
+to its backend's row, and the page links to Connection modes.
 
 Old addresses redirect through ONE table, `servers/lib/legacyRoutes.ts`, with a test for every
 rule: the whole old `/admin/edges/...` tree, `/admin/backend-servers`, `/admin/remnawave`,
@@ -1444,7 +1450,7 @@ nodes is one line, not six), **Backend setup**, which says how a ready backend i
 modes, the generation, the zone for origin names) and, with changes from here allowed, carries
 **Change setup** ("Changing a backend's setup"), its mode groups and Recent changes
 (`BackendDetails.svelte`). The two switches (regular reading, changes from here) sit in the
-footer.
+footer, and in Settings, Maintenance.
 
 **Add a node** (with changes allowed and the backend set up) writes one node row by hand: name,
 where the backend reaches it, country, the profile it runs and the transports it serves. The

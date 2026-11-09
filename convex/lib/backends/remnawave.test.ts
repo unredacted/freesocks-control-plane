@@ -1020,9 +1020,10 @@ describe('hosts + node inventory (origin edges)', () => {
     );
     const rows = await remnawaveGetNodeInventory(cfg);
     expect(rows).toEqual([
-      { nodeUuid: 'n-1', name: 'node-a', usersOnline: 7, online: true },
-      { nodeUuid: 'n-2', name: 'n-2', usersOnline: 3, online: false },
-      { nodeUuid: 'n-3', name: 'node-c', usersOnline: 0, online: false },
+      { nodeUuid: 'n-1', name: 'node-a', usersOnline: 7, online: true, disabled: false },
+      // Disabled: offline on purpose, and said so (an offline alert skips it).
+      { nodeUuid: 'n-2', name: 'n-2', usersOnline: 3, online: false, disabled: true },
+      { nodeUuid: 'n-3', name: 'node-c', usersOnline: 0, online: false, disabled: false },
     ]);
   });
 });

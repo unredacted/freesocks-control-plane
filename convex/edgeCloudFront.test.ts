@@ -16,7 +16,15 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
+import {
+  jsonRes,
+  mockFetch,
+  routeFetch,
+  type Captured,
+  type PartialHandler,
+} from './lib/edges/testing/mockFetch';
+import { fakeGandiApi, gandiRows } from './lib/edges/testing/fakeGandi';
+import { __setGandiNsLookup } from './lib/edges/providers/dns/gandiDns';
 import { __setFrontChecker } from './frontQualifyOps';
 import { __setCloudFrontApiFactory } from './lib/edges/providers/cloudfront/sdk';
 import {
@@ -52,10 +60,11 @@ afterEach(() => {
   __setCloudFrontDnsClientFactory(null);
   __setCloudFrontCaaLookup(null);
   __setFrontChecker(null);
+  __setGandiNsLookup(null);
 });
 
-/** A backend panel holding the node's one Host. */
-function fakePanel() {
+/** A backend panel holding the node's one Host (`before`: a fake that answers its own host first). */
+function fakePanel(before?: PartialHandler) {
   const hosts = [
     {
       uuid: HOST_UUID,
@@ -67,7 +76,7 @@ function fakePanel() {
       inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: INBOUND },
     },
   ];
-  mockFetch((c) => {
+  const panel = (c: Captured): Response => {
     if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: hosts });
     if (c.path === '/api/hosts' && c.method === 'PATCH') {
       const b = c.body as {
@@ -82,12 +91,14 @@ function fakePanel() {
       return jsonRes({ response: h ?? null });
     }
     return jsonRes({ message: 'not found' }, 404);
-  });
+  };
+  mockFetch(before ? routeFetch(before, panel) : panel);
   return hosts;
 }
 
-async function seed() {
+async function seed(dns: 'cloudflare' | 'gandi' = 'cloudflare') {
   const t = convexTest(schema, modules);
+  const zoneId = dns === 'gandi' ? ZONE : ZONE_ID;
   await insertPanelServer(t);
   await t.run(async (ctx) => {
     for (const [key, value] of [
@@ -98,10 +109,10 @@ async function seed() {
   });
   // The DNS account the front writes its records through (DNS only).
   const { id: dnsAccountId } = await t.mutation(internal.edgeProviderAccounts.create, {
-    provider: 'cloudflare',
+    provider: dns,
     name: 'acct-dns',
-    settings: { zoneId: ZONE_ID, zoneName: ZONE },
-    credentials: { apiToken: 'SECRET_CF_TOKEN_0123' },
+    settings: { zoneId, zoneName: ZONE },
+    credentials: { apiToken: dns === 'gandi' ? 'SECRET_GANDI' : 'SECRET_CF_TOKEN_0123' },
   });
   const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
     provider: 'cloudfront',
@@ -109,7 +120,7 @@ async function seed() {
     settings: {
       accessKeyId: 'AKIAEXAMPLEEXAMPLE00',
       dnsAccountId,
-      zoneId: ZONE_ID,
+      zoneId,
       zoneName: ZONE,
     } as never,
     credentials: { secretAccessKey: 'SECRET-aws-0123456789abcdef' } as never,
@@ -252,6 +263,75 @@ describe('edgeRotations + edgeReconcile: a CloudFront front', () => {
     expect(zone.rows.some((x) => x.name === hostname)).toBe(false);
     expect(zone.rows.some((x) => x.name.startsWith('_'))).toBe(true);
     expect(aws.calls).not.toContain('deleteCertificate');
+  });
+});
+
+describe('edgeRotations + edgeReconcile: a CloudFront front whose names live in Gandi', () => {
+  test('its records go through LiveDNS with private marks, and leave with the front', async () => {
+    vi.useFakeTimers();
+    // The fake AWS and the REAL DNS client factory: the DNS account is a Gandi one.
+    const gandi = fakeGandiApi({ domains: [ZONE] });
+    const aws = new FakeCloudFrontAccount();
+    aws.dns = {
+      get rows() {
+        return gandiRows(gandi);
+      },
+    } as never;
+    aws.deployAfterReads = 3;
+    __setCloudFrontApiFactory((_cfg, diagnostic) => aws.api(diagnostic));
+    __setCloudFrontCaaLookup(async () => []);
+    __setGandiNsLookup(async () => ['ns-1-a.gandi.net']);
+    const hosts = fakePanel(gandi.handler);
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+
+    const { t, dnsAccountId, relayId, listenerId } = await seed('gandi');
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      listenerId,
+      publishOnDone: true,
+    });
+    await drain(t, rotationId);
+
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('done');
+    expect(r.outcome).toBe('published');
+    const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    const hostname = edge.addresses.hostname!;
+    expect(hostname.endsWith(`.${ZONE}`)).toBe(true);
+    expect(hosts[0]).toMatchObject({ address: hostname });
+    expect(JSON.parse(edge.provisionIntent!)).toMatchObject({ zoneId: ZONE, dnsAccountId });
+    // The traffic name and the certificate's validation record are in LiveDNS.
+    const d = aws.distributions[0]!;
+    expect(gandiRows(gandi)).toEqual(
+      expect.arrayContaining([
+        { name: hostname, type: 'CNAME', content: d.domainName },
+        expect.objectContaining({ type: 'CNAME', name: expect.stringMatching(/^_/) }),
+      ]),
+    );
+    // Their ownership is FCP's private record, one mark per record, never in DNS.
+    const marks = await t.run((ctx) => ctx.db.query('dnsRecordMarks').collect());
+    expect(marks.map((m) => m.name).sort()).toEqual(
+      gandiRows(gandi)
+        .map((x) => x.name)
+        .sort(),
+    );
+    expect(gandiRows(gandi).every((x) => x.type === 'CNAME')).toBe(true);
+
+    // Teardown: the traffic name goes with its mark; the shared certificate's record stays.
+    await t.run((ctx) => ctx.db.patch(edge._id, { publication: 'unpublished' }));
+    await t.mutation(internal.edgeReconcileMutations.retryDestroy, { edgeId: edge._id });
+    for (let i = 0; i < 20; i++) {
+      await t.action(internal.edgeReconcile.run, {});
+      if ((await t.query(internal.edges.get, { id: edge._id }))!.status === 'destroyed') break;
+    }
+    expect((await t.query(internal.edges.get, { id: edge._id }))!.status).toBe('destroyed');
+    expect(gandiRows(gandi).some((x) => x.name === hostname)).toBe(false);
+    expect(gandiRows(gandi).some((x) => x.name.startsWith('_'))).toBe(true);
+    const left = await t.run((ctx) => ctx.db.query('dnsRecordMarks').collect());
+    expect(left.some((m) => m.name === hostname)).toBe(false);
+    expect(left).toHaveLength(gandiRows(gandi).length);
   });
 });
 

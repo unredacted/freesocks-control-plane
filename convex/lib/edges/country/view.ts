@@ -164,6 +164,8 @@ export interface NameInput {
 /** What is known about a name from one country, read once per name. */
 export interface NameFacts {
   family: string | null;
+  /** The name list's (family's) own label, its cover site's list (null: not a family name). */
+  familyLabel?: string | null;
   qualified: boolean | null;
   mark: { state: 'proven' | 'blocked'; source: 'operator' | 'probe'; at: number } | null;
   checks: {
@@ -393,6 +395,8 @@ export interface OriginInput {
   edgePick?: EdgePickVersion;
   /** The node's address lanes are on (convex/edgeLanes.ts). */
   lanes?: boolean;
+  /** The countries cut over to their own addresses on this node (`relays.ownPools`). */
+  ownCountries?: readonly string[];
   /**
    * Latency ordering is on: what paths on this node are judged from
    * (edgeLatency.ts `latencyInputsFor`). Absent = no bands.
@@ -582,7 +586,7 @@ const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1
  * transport), the member's country as their stored one.
  */
 export function handedOn(
-  origin: Pick<OriginInput, 'enabled' | 'published' | 'edgePick' | 'latency'>,
+  origin: Pick<OriginInput, 'enabled' | 'published' | 'edgePick' | 'latency' | 'ownCountries'>,
   listener: Pick<ListenerInput, 'listenerId' | 'sniPick'>,
   s: ViewSettings,
   blockedEdges: ReadonlySet<string>,
@@ -641,6 +645,9 @@ export function handedOn(
       backupNames: s.rule.backupNames,
       where,
       edgeCountry: s.steering && listed ? s.country : null,
+      ...(s.steering && listed && origin.ownCountries?.includes(s.country)
+        ? { ownPool: true }
+        : {}),
       minProvenForExclusive: s.minProvenForExclusive,
       ...(pathMs ? { pathMs } : {}),
     });
@@ -719,6 +726,7 @@ export interface AddressView {
 export interface NameView {
   name: string;
   family: string | null;
+  familyLabel: string | null;
   status: 'active' | 'retired';
   drainUntil: number | null;
   qualified: boolean | null;
@@ -727,6 +735,8 @@ export interface NameView {
   markAt: number | null;
   /** A member in this country may be offered it (never a name blocked there on an `hrw1` listener). */
   offered: boolean;
+  /** The OTHER curated countries it is blocked in (the listener's copies), sorted. */
+  blockedElsewhere: string[];
   checks: NameFacts['checks'];
   reports: NameFacts['reports'];
   realHost: NameRealHost | null;
@@ -990,12 +1000,16 @@ export function buildCountryView(
         return {
           name: n.name,
           family: f?.family ?? null,
+          familyLabel: f?.familyLabel ?? null,
           status: n.status,
           drainUntil: n.drainUntil ?? null,
           qualified: f?.qualified ?? null,
           ...st,
           markAt: f?.mark?.at ?? null,
           offered,
+          blockedElsewhere: [
+            ...new Set(n.blockedIn.filter((c) => c !== s.country && s.curated.includes(c))),
+          ].sort(),
           checks: f?.checks ?? null,
           reports: f?.reports ?? null,
           realHost: f?.realHost ?? null,
@@ -1049,4 +1063,106 @@ export function buildCountryView(
   }
   for (const st of seenNames.values()) totals.names[st]++;
   return { origins: out, totals };
+}
+
+// --- the SNIs of one country --------------------------------------------------------------------
+
+/**
+ * Where a server name is used, seen from one curated country (from the marks
+ * copied on the listener, what selection reads: `countryTier`):
+ *  - `shared`: blocked in no other curated country, so every listed country
+ *    and members with no country get it;
+ *  - `some`: blocked in some other curated countries, so they never get it and
+ *    members with no country get it only as the last resort;
+ *  - `only_here`: blocked in every other curated country: only this one uses it;
+ *  - `not_here`: members here are never handed it (blocked here).
+ */
+export type SniScope = 'shared' | 'some' | 'only_here' | 'not_here';
+
+export interface CountrySni {
+  name: string;
+  family: string | null;
+  familyLabel: string | null;
+  state: ViewState;
+  basis: NameBasis;
+  scope: SniScope;
+  /** The other curated countries it is blocked in. */
+  blockedElsewhere: string[];
+  /** The largest share of sampled members here handed it, over the transports carrying it. */
+  handed: number;
+  /** Transports handed to members here that offer it. */
+  transports: number;
+}
+
+/**
+ * Members there present this transport's names: an address that carries them
+ * (an L4 one: an L7 front presents its own hostname instead, `sniFor`) is
+ * handed to some of them. Nothing rendered (render off, no published address,
+ * origin off) hands out no name at all.
+ */
+function presentsNames(l: ListenerView): boolean {
+  return (
+    l.members.computed &&
+    l.addresses.some((a) => a.layer === 'l4' && a.handed.primary + a.handed.backup > 0)
+  );
+}
+
+/**
+ * Every active server name of the transports members there are handed, once, with where it is
+ * used (`SniScope`), its state here and its list: built from the views
+ * already made, so it reads nothing. Used names first (most handed first),
+ * then names members here never get. Empty for a country off the list, which
+ * gets the shared names only (the transports' rows say so).
+ */
+export function countrySnis(
+  origins: readonly OriginView[],
+  country: string,
+  curated: readonly string[],
+): CountrySni[] {
+  if (!curated.includes(country)) return [];
+  const others = curated.filter((c) => c !== country).length;
+  const byName = new Map<string, CountrySni>();
+  for (const o of origins)
+    for (const l of o.listeners) {
+      if (!l.usable || !presentsNames(l)) continue;
+      for (const n of l.names) {
+        if (n.status !== 'active') continue;
+        let row = byName.get(n.name);
+        if (!row) {
+          row = {
+            name: n.name,
+            family: n.family,
+            familyLabel: n.familyLabel,
+            state: n.state,
+            basis: n.basis,
+            scope: 'not_here',
+            blockedElsewhere: n.blockedElsewhere,
+            handed: 0,
+            transports: 0,
+          };
+          byName.set(n.name, row);
+        }
+        if (!n.offered) continue;
+        row.transports++;
+        row.handed = Math.max(row.handed, n.handed);
+        row.scope =
+          n.blockedElsewhere.length === 0
+            ? 'shared'
+            : n.blockedElsewhere.length >= others
+              ? 'only_here'
+              : 'some';
+      }
+    }
+  return [...byName.values()].sort(
+    (a, b) =>
+      Number(a.scope === 'not_here') - Number(b.scope === 'not_here') ||
+      b.handed - a.handed ||
+      a.name.localeCompare(b.name),
+  );
+}
+
+/** The summary's count: SNIs members there may get, and how many of them only there. */
+export function sniCounts(snis: readonly CountrySni[]): { used: number; onlyHere: number } {
+  const used = snis.filter((s) => s.scope !== 'not_here');
+  return { used: used.length, onlyHere: used.filter((s) => s.scope === 'only_here').length };
 }
