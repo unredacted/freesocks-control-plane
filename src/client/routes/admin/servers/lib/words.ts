@@ -201,14 +201,18 @@ export function needsYou(
 export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): string[] {
   const out: string[] = [];
   // tag -> the nodes on which it has nobody to serve (no address, or no group).
-  const unused = new Map<string, { nodes: string[]; noAddress: boolean; noGroup: boolean }>();
+  const unused = new Map<
+    string,
+    { nodes: string[]; noAddress: boolean; noGroup: boolean; groups: string[] }
+  >();
   for (const n of tree.nodes)
     for (const i of n.transports) {
       const noAddress = splitAddresses(i.addresses).members.length === 0;
       const noGroup = i.modeGroups.length === 0;
       if (!noAddress && !noGroup) continue;
-      const at = unused.get(i.tag) ?? { nodes: [], noAddress: false, noGroup: false };
+      const at = unused.get(i.tag) ?? { nodes: [], noAddress: false, noGroup: false, groups: [] };
       at.nodes.push(n.name);
+      at.groups.push(...i.modeGroups.map((g) => g.name));
       at.noAddress ||= noAddress;
       at.noGroup ||= noGroup;
       unused.set(i.tag, at);
@@ -226,7 +230,8 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
         : u.nodes.length === 1
           ? u.nodes[0]!
           : `${u.nodes.length} nodes`;
-    out.push(`${tag} is unused on ${where}: ${why}.`);
+    // Named by its mode (FREEDOM_REALITY is Freedom-Reality), never its tag.
+    out.push(`${transportName(tag, u.groups)} is unused on ${where}: ${why}.`);
   }
   if (tree.unattached.profiles.length > 0)
     out.push(`No node runs ${list(tree.unattached.profiles)}.`);

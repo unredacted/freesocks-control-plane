@@ -465,7 +465,7 @@
       {#if relay && status}
         <p class="mt-1 flex flex-wrap items-center gap-x-2 text-sm font-medium" role="status">
           <StatusDot dot={status.dot} />
-          {originSentence(status)}
+          {originSentence(status, { onNode: true })}
           {#if runId}
             <Link
               href={runLink(runId)}

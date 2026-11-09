@@ -966,6 +966,7 @@ const COPY = {
   edge_unreachable: {
     label: 'Edge unreachable',
     explain: 'Probes cannot reach a published edge from at least one country.',
+    fix: 'Probe it again, or replace the address if it stays unreachable.',
   },
   probe_source_failing: {
     label: 'A probe source is failing',

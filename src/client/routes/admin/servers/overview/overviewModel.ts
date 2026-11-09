@@ -378,6 +378,23 @@ export function unadoptedCount(
   ).length;
 }
 
+/**
+ * Fronted nodes: origins with an address in use, whatever their warnings (a
+ * warning is "at risk" or Action needed, never "not fronted"). An origin being
+ * removed, switched off or with nothing in use is not counted.
+ */
+export function frontedCount(
+  origins: readonly { status: { kind: string; published: number } }[],
+): number {
+  return origins.filter(
+    (o) =>
+      o.status.published > 0 &&
+      o.status.kind !== 'removing' &&
+      o.status.kind !== 'off' &&
+      o.status.kind !== 'unprotected',
+  ).length;
+}
+
 /** Fronted nodes with no working address: a fronted origin whose status dot is red. */
 export function atRiskCount(
   origins: readonly { status: { fronted: boolean; dot: string } }[],
