@@ -72,7 +72,7 @@ describe('needButtons', () => {
 describe('TEST_PROFILE_NOTE', () => {
   it('says the profile is for a short test and is removed after, in plain words', () => {
     expect(TEST_PROFILE_NOTE).toMatch(/short test only/);
-    expect(TEST_PROFILE_NOTE).toMatch(/Remove this profile from the client/);
+    expect(TEST_PROFILE_NOTE).toMatch(/Remove the profile from the client/);
     expect(TEST_PROFILE_NOTE).not.toContain('—');
     expect(TEST_PROFILE_NOTE).not.toContain('/api/');
   });
@@ -83,8 +83,8 @@ describe('replaceWords', () => {
     const w = replaceWords({ name: 'REALITY in Region B', endpoint: '198.51.100.80:443' });
     expect(w.title).toBe('Replace 198.51.100.80:443?');
     expect(w.body).toContain('REALITY in Region B at 198.51.100.80:443 is removed');
-    expect(w.body).toContain('a new address is created in its place');
-    expect(w.body).toContain('cannot be brought back');
+    expect(w.body).toContain('a new address made in its place');
+    expect(w.body).toContain('cannot be undone');
     expect(w.body).toContain('nothing is removed');
     expect(replaceWords({ name: null, endpoint: '198.51.100.80:443' }).body).toMatch(
       /^198\.51\.100\.80:443 is removed/,
@@ -157,7 +157,7 @@ describe('automation state and words', () => {
   it('the Edges home says what is left to the operator under an ON switch', () => {
     expect(automationNote(automationState(on))).toBeNull();
     expect(automationNote(automationState({ ...on, enabled: false }))).toBeNull();
-    expect(automationNote(automationState(walk))).toMatch(/does not make new spares/);
+    expect(automationNote(automationState(walk))).toMatch(/makes no spares/);
     expect(automationNote(automationState({ ...on, probe: { enabled: false } }))).toMatch(
       /probes are off/,
     );
@@ -173,7 +173,7 @@ describe('automation state and words', () => {
     const w = nodeAutomationWords(walk, node);
     expect(w.line).toMatch(/switches members to a tested spare on its own/);
     expect(w.line).not.toMatch(/off/i);
-    expect(w.spares).toMatch(/does not make new spares on its own/);
+    expect(w.spares).toMatch(/makes no spares on its own/);
     expect(nodeAutomationWords(on, node)).toEqual({
       line: 'When an address looks blocked, FCP switches members to a tested spare on its own.',
       spares: null,
@@ -417,7 +417,7 @@ describe('planWords', () => {
     expect(moreDirectWords(3)).toMatch(/^3 more direct addresses on the backend use/);
     expect(w.renderGlobal).toMatch(/1 other node/);
     expect(w.formats).toBe(
-      'Works for link and Clash subscriptions; other formats keep the direct address.',
+      'Works for link and Clash subscriptions. Other formats keep the direct address.',
     );
   });
   it('judges the formats by the fronted transports only (a choice on a busy node)', () => {
@@ -548,9 +548,10 @@ describe('providerPickWords', () => {
     expect(w.picks[0]).toEqual({
       locationId: 'x',
       counts: '2 in use, 1 spare.',
-      cooling: 'An address here was just blocked: automatic work keeps away for about 30 minutes.',
+      cooling:
+        'An address here was just blocked. Automatic work skips this location for about 30 minutes.',
       refused:
-        'The provider refused to create an address here (a quota, or a setting it rejects): automatic work uses the other locations for about 3 hours. Adding an address here by hand lifts this once it is created.',
+        'The provider refused to create an address here. Check its quota and settings. Automatic work uses other locations for about 3 hours, or until you add an address here by hand.',
     });
     expect(w.notes).toEqual([
       'Members on REALITY have no backup at another provider.',
@@ -584,7 +585,7 @@ describe('providerPickWords', () => {
       {
         locationId: 'y',
         counts: '0 in use, 1 spare.',
-        why: expect.stringMatching(/a run that did not go live.*change only when a run goes live/),
+        why: expect.stringMatching(/A run that never went live.*Add this location to keep it/),
       },
     ]);
   });
@@ -611,12 +612,12 @@ describe('providerPickWords: who adds a missing address', () => {
       missing: [{ ...view.missing[0]!, trusted: false }],
     };
     expect(providerPickWords(untrusted, { upkeepAdds: true }).notes).toEqual([
-      '1 address is still missing (Region A). Automatic upkeep adds none in a location until an address there is tested: add a spare address in Region A and test it.',
+      '1 address is still missing (Region A). Automatic upkeep adds none in a location until an address there is tested. Add a spare in Region A and test it.',
     ]);
   });
   it('with upkeep off it says nothing adds it on its own, and points to a spare or removing the location', () => {
     expect(providerPickWords(view, { upkeepAdds: false }).notes).toEqual([
-      '1 address is still missing (Region A). Nothing adds it on its own: add a spare address there, or remove the location.',
+      '1 address is still missing (Region A). Nothing adds it on its own. Add a spare there, or remove the location.',
     ]);
     // The default is the safe one: never promise upkeep that does not run.
     expect(providerPickWords(view).notes[0]).toMatch(/Nothing adds it on its own/);
@@ -635,7 +636,7 @@ describe('providerPickWords: who adds a missing address', () => {
         { upkeepAdds: false },
       ).notes,
     ).toEqual([
-      '2 addresses are still missing (Region A, Region B). Nothing adds them on its own: add a spare address there, or remove those locations.',
+      '2 addresses are still missing (Region A, Region B). Nothing adds them on its own. Add a spare there, or remove those locations.',
     ]);
     expect(
       providerPickWords(
@@ -645,7 +646,7 @@ describe('providerPickWords: who adds a missing address', () => {
         },
         { upkeepAdds: false },
       ).notes,
-    ).toEqual(['1 address is still missing. Nothing adds it on its own: add a spare address.']);
+    ).toEqual(['1 address is still missing. Nothing adds it on its own. Add a spare address.']);
   });
 });
 
@@ -671,10 +672,10 @@ describe('spareInUseWords', () => {
   };
   it('a node that wants more addresses in use takes a kept or added spare at once', () => {
     expect(spareInUseWords(on, node)).toBe(
-      'It may be put in use at once: this node wants 2 addresses in use and has 1.',
+      'It may go in use right away. This node wants 2 addresses in use and has 1.',
     );
     expect(spareInUseWords(on, { ...node, desiredPublished: 1, publishedEdgeIds: [] })).toBe(
-      'It may be put in use at once: this node wants 1 address in use and has 0.',
+      'It may go in use right away. This node wants 1 address in use and has 0.',
     );
   });
   it('it stays a spare when the pool is full or nothing publishes on its own', () => {
@@ -693,15 +694,15 @@ describe('spareInUseWords', () => {
     // The beta case: 4 wanted, 3 in use, the free slot held for a location with nothing in use.
     const four = { ...node, desiredPublished: 4, publishedEdgeIds: ['e1', 'e2', 'e3'] };
     const words =
-      'It stays a spare: the free slot is held for an address in Region A (Acct A), which this node still lacks. To use this one, replace an address in use with it (Replace address), or remove that location from the node.';
+      'It stays a spare. The free slot is held for an address in Region A (Acct A), which this node still lacks. To use it, choose Replace address on an address in use, or remove that location from the node.';
     expect(spareInUseWords(on, four, held)).toBe(words);
-    // Never "may be put in use at once" for it, whatever the switches.
+    // Never "may go in use right away" for it, whatever the switches.
     expect(spareInUseWords({ ...on, autoPublishStandby: false }, four, held)).toBe(words);
     // A spare that does take the slot keeps the old sentence; unknown is not "held".
     expect(spareInUseWords(on, four, { ...held, takesSlot: true })).toBe(
-      'It may be put in use at once: this node wants 4 addresses in use and has 3.',
+      'It may go in use right away. This node wants 4 addresses in use and has 3.',
     );
-    expect(spareInUseWords(on, four, { ...held, takesSlot: null })).toMatch(/^It may be put/);
+    expect(spareInUseWords(on, four, { ...held, takesSlot: null })).toMatch(/^It may go in use/);
     // A full pool says nothing, held or not.
     expect(
       spareInUseWords(on, { ...four, publishedEdgeIds: ['a', 'b', 'c', 'd'] }, held),
@@ -718,12 +719,12 @@ describe('spareInUseWords', () => {
         held: 2,
       }),
     ).toBe(
-      'It stays a spare: the free slots are held for an address in Region A (Acct A) or Region B, which this node still lacks. To use this one, replace an address in use with it (Replace address), or remove those locations from the node.',
+      'It stays a spare. The free slots are held for an address in Region A (Acct A) or Region B, which this node still lacks. To use it, choose Replace address on an address in use, or remove those locations from the node.',
     );
     expect(
       heldSpareWords({ missing: [{ locationId: null, label: null, accountName: null }] }),
     ).toBe(
-      'It stays a spare: the free slot is held for an address this node still lacks. To use this one, replace an address in use with it (Replace address).',
+      'It stays a spare. The free slot is held for an address this node still lacks. To use it, choose Replace address on an address in use.',
     );
   });
 });

@@ -110,7 +110,7 @@ export function placementLines(c: PlacementCheck): PlacementLine[] {
     if (p.unknownHere > 0)
       out.push({
         ok: false,
-        text: `The ${p.modeSlug} pool names ${p.unknownHere} mode group${p.unknownHere === 1 ? '' : 's'} this backend does not have (it may be on another backend).`,
+        text: `The ${p.modeSlug} pool lists ${p.unknownHere} mode group${p.unknownHere === 1 ? '' : 's'} not on this backend. ${p.unknownHere === 1 ? 'It' : 'They'} may be on another backend.`,
       });
     if (p.withoutTransports.length > 0)
       out.push({

@@ -51,23 +51,20 @@
 >
   {#if target === 'operator'}
     <ul class="list-disc space-y-1 ps-5 text-muted-foreground">
+      <li>Existing Hosts stay in the backend as adopted. FCP never deletes them.</li>
       <li>
-        Every existing Host stays in the backend and is marked as adopted: FCP never deletes it.
+        After each publish or rotation, apply the Hosts plan on the Listeners tab yourself, or
+        members keep using the old edge.
       </li>
       <li>
-        After each publish or rotation you must apply the Hosts plan (Listeners tab) yourself, or
-        members keep dialling the old edge.
-      </li>
-      <li>
-        The block detector cannot rotate the first edge of a listener any more: those replacements
-        are refused unless an admin forces them.
+        The block detector can no longer rotate a listener's first edge unless an admin forces it.
       </li>
     </ul>
   {:else}
     <ul class="list-disc space-y-1 ps-5 text-muted-foreground">
       <li>
-        FCP must first adopt the Host of every listener, so it knows exactly which backend rows it
-        may rewrite. It never guesses by name.
+        FCP must first adopt the Host of every listener so it knows which backend rows it may
+        rewrite. It never guesses.
       </li>
       <li>Adopted Hosts are rewritten on rotations but never deleted by FCP.</li>
     </ul>
@@ -76,8 +73,8 @@
         class="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-amber-800 dark:text-amber-200"
       >
         {unadopted.length === 1 ? 'One listener has' : `${unadopted.length} listeners have`} no adopted
-        Host yet ({unadopted.map((l) => l.listenerKey).join(', ')}). The switch will be refused
-        until you use "Adopt a Host" on
+        Host yet ({unadopted.map((l) => l.listenerKey).join(', ')}). The switch is refused until you
+        use "Adopt a Host" on
         <Link
           href={edgesPaths.relay(relay.slug, { tab: 'listeners' })}
           class="font-medium underline"

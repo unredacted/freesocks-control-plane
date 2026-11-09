@@ -130,7 +130,7 @@
     try {
       await unbindFamily(t.list.bindingId);
       stopOpen = false;
-      toast.success('FCP no longer manages these names. They stay as they are.');
+      toast.success('FCP no longer manages these SNIs. They stay as they are.');
     } finally {
       invalidateSni(qc);
     }
@@ -166,7 +166,7 @@
               href={edgesPaths.family(transport.list.slug)}
               class="text-primary underline underline-offset-4"
             >
-              Open the name list
+              Open the SNI list
             </Link>
           {/if}
         </p>
@@ -187,7 +187,7 @@
           <DropdownMenu.Root>
             <DropdownMenu.Trigger>
               {#snippet child({ props })}
-                <Button {...props} variant="outline" aria-label="More name actions">
+                <Button {...props} variant="outline" aria-label="More SNI actions">
                   More <ChevronDown aria-hidden="true" />
                 </Button>
               {/snippet}
@@ -196,15 +196,15 @@
               {#if transport.list}
                 {@const list = transport.list}
                 <DropdownMenu.Item onSelect={() => router.navigate(edgesPaths.family(list.slug))}>
-                  Open the name list
+                  Open the SNI list
                 </DropdownMenu.Item>
                 <DropdownMenu.Item
                   disabled={busy || !switches.findNames}
                   onSelect={() => void lookForMore()}
                 >
                   {switches.findNames
-                    ? 'Look for more names'
-                    : 'Look for more names (finding names is off)'}
+                    ? 'Look for more SNIs'
+                    : 'Look for more SNIs (finding SNIs is off)'}
                 </DropdownMenu.Item>
                 {#if list.suggestions > 0 && step.kind !== 'add_suggestions'}
                   <DropdownMenu.Item onSelect={() => (addOpen = true)}>
@@ -216,7 +216,7 @@
                   Stop managing
                 </DropdownMenu.Item>
               {:else if onEditByHand}
-                <DropdownMenu.Item onSelect={onEditByHand}>Edit names by hand</DropdownMenu.Item>
+                <DropdownMenu.Item onSelect={onEditByHand}>Edit SNIs by hand</DropdownMenu.Item>
               {/if}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
@@ -226,7 +226,7 @@
     {#if names.length > 0}
       <details class="mt-2 min-w-0">
         <summary class="text-muted-foreground cursor-pointer">
-          The {names.length === 1 ? 'name' : `${names.length} names`} this port lists now
+          The {names.length === 1 ? 'SNI' : `${names.length} SNIs`} this port lists now
         </summary>
         <ul class="mt-1 columns-1 gap-x-6 sm:columns-2">
           {#each names as name (name)}
@@ -250,8 +250,8 @@
     {/if}
     <ConfirmDialog
       bind:open={stopOpen}
-      title="Stop managing these names?"
-      body="The names stay on the node and with members. FCP stops checking them and sending new ones, and they can be edited by hand again. The name list itself is kept."
+      title="Stop managing these SNIs?"
+      body="The SNIs stay on the node and with members. FCP stops checking and sending them, and you can edit them by hand again. The SNI list is kept."
       confirmLabel="Stop managing"
       danger
       onConfirm={stop}

@@ -163,16 +163,16 @@
           title: kind === 'burn' ? `Replace ${name} now?` : `Replace ${name}?`,
           body:
             kind === 'burn'
-              ? `Use this when the address looks blocked. FCP puts a tested spare (or a new address) in its place and members move over at their next refresh. This one keeps working ${drainFor} for members who have not refreshed yet, then it is deleted and its billing stops. A new address is billed by your provider.`
-              : `FCP puts a tested spare (or a new address) in its place and members move over at their next refresh. This one keeps working ${drainFor} for members who have not refreshed yet, then it is deleted and its billing stops. A new address is billed by your provider.`,
+              ? `Use this when the address looks blocked. A tested spare or a new address takes its place and members move at their next refresh. This one keeps working ${drainFor}, then it is deleted and its billing stops. A new address is billed by your provider.`
+              : `A tested spare or a new address takes its place and members move at their next refresh. This one keeps working ${drainFor}, then it is deleted and its billing stops. A new address is billed by your provider.`,
           confirm: kind === 'burn' ? 'Replace now' : 'Replace address',
         }
       : {
           title: kind === 'burn' ? `Burn ${name}?` : `Rotate ${name}?`,
           body:
             kind === 'burn'
-              ? `Use this when the address is believed blocked. A new edge takes its pool position, members are switched over, and the old edge drains ${drainFor} (the "burned" drain) before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.`
-              : `A new edge takes the pool position of this one, members are switched over, and the old edge drains ${drainFor} (this origin's drain time) before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.`,
+              ? `For an address you believe is blocked. A new edge takes its pool position and members switch over. The old edge drains ${drainFor}, then it is destroyed. A replacement costs provider budget unless a matching standby exists.`
+              : `A new edge takes its pool position and members switch over. The old edge drains ${drainFor}, then it is destroyed. A replacement costs provider budget unless a matching standby exists.`,
           confirm: kind === 'burn' ? 'Burn and replace' : 'Rotate',
         },
   );
@@ -276,18 +276,16 @@
         <p class="text-xs text-muted-foreground">
           The limits above protect budget and members. Overriding is recorded in the audit log.
           {#if blockers.some((b) => b.code === 'hosts_operator_managed') && plain}
-            FCP does not update the backend for this node: change the address there yourself right
-            after, or members keep the old one.
+            FCP does not update the backend for this node. Change the address there right after, or
+            members keep the old one.
           {:else if blockers.some((b) => b.code === 'hosts_operator_managed')}
-            FCP will not write the panel Hosts of this relay: you must apply the new Hosts plan
-            yourself right after, or members keep dialling the old edge.
+            FCP does not write this relay's panel Hosts. Apply the new Hosts plan right after, or
+            members keep using the old edge.
           {/if}
         </p>
       </div>
     </div>
   {:else if blocked}
-    <p class="mt-3 text-xs text-muted-foreground">
-      Confirm stays off until the blockers above are fixed.
-    </p>
+    <p class="mt-3 text-xs text-muted-foreground">Fix the blockers above to continue.</p>
   {/if}
 </ActionConfirm>

@@ -31,10 +31,10 @@
   <Card.Header>
     <Card.Title>Reachability</Card.Title>
     <Card.Description>
-      Whether outside networks in each country can reach the edges of this relay. Only published
-      edges are probed on a schedule, and only their results feed the block detector.
+      Whether networks in each country can reach this relay's edges. Only published edges are probed
+      on a schedule and feed the block detector.
       {#if !relay.probeNode}
-        The origin itself is not probed; turn that on under Actions, Edit.
+        The origin itself is not probed. Turn that on under Actions, Edit.
       {/if}
     </Card.Description>
     <Card.Action class="flex flex-wrap items-center gap-3">
@@ -48,8 +48,8 @@
             run: () => probeRelay(relay.id),
             success: (res: { runIds: string[]; skipped: string[] }) =>
               res.runIds.length > 0
-                ? `${res.runIds.length} probe run(s) requested${res.skipped.length > 0 ? `, ${res.skipped.length} target(s) skipped` : ''}. Results arrive within a minute or two.`
-                : 'No probe was started. Check that probes are on, a source is enabled and the hourly budget is not used up.',
+                ? `${res.runIds.length} probe run(s) requested${res.skipped.length > 0 ? `, ${res.skipped.length} target(s) skipped` : ''}. Results in a minute or two.`
+                : 'No probe started. Check that probes are on, a source is enabled and the hourly budget is not used up.',
             also: invalidateProbes,
           })}
       >
@@ -63,7 +63,7 @@
       compact
       {openTarget}
       onOpenTarget={(key) => (openTarget = key)}
-      emptyText="Nothing of this relay is probed yet. Publish an edge, or turn on probing of the origin under Actions, Edit."
+      emptyText="Nothing probed yet. Publish an edge, or turn on origin probing under Actions, Edit."
     />
   </Card.Content>
 </Card.Root>

@@ -179,8 +179,8 @@
             autocapitalize="off"
             spellcheck={false}></textarea>
           <p class="text-muted-foreground text-xs">
-            One name, wildcard, address or range per line. Lines starting with # are skipped. At
-            most 4 MB: a larger list needs an address.
+            One hostname, wildcard, address or range per line. Lines starting with # are skipped. At
+            most 4 MB. Give a larger list an address instead.
           </p>
           {#if pasteBytes > UPLOAD_MAX_BYTES}
             <p class="text-destructive text-xs">That is more than 4 MB.</p>

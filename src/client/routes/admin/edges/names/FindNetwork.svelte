@@ -68,7 +68,7 @@
         network: slug,
       });
       open = false;
-      toast.success('Name list made. Add its names from the list below: each is checked first.');
+      toast.success('SNI list made. Add its SNIs from the list below. Each is checked first.');
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
@@ -80,7 +80,7 @@
 
 <p class="mb-2 text-sm">
   <Link href={edgesPaths.findNames()} class="text-muted-foreground underline underline-offset-4">
-    Find names
+    Find SNIs
   </Link>
 </p>
 
@@ -91,8 +91,8 @@
 {:else if view.data}
   {@const v = view.data}
   <SectionHeader
-    title={`Names on ${v.scope.label}`}
-    description="Real sites whose every address is on this network. Each one is checked the way a name list would check it; adding one to a list checks it again there before it can be used."
+    title={`SNIs on ${v.scope.label}`}
+    description="Real sites whose every address is on this network. Each is checked as an SNI list would check it, and checked again when added to a list."
   />
 
   <Card>
@@ -101,8 +101,8 @@
     </CardHeader>
     <CardContent class="space-y-3 text-sm">
       <p class="text-muted-foreground">
-        Names that live on one address can share a cover site: make a name list with one of them as
-        its cover site, then add the others.
+        SNIs on one address can share a cover site. Make an SNI list with one of them as its cover
+        site, then add the others.
       </p>
       {#if v.groups.length === 0}
         <p class="text-muted-foreground">No site of this network has been found and checked yet.</p>
@@ -114,7 +114,7 @@
                 <p class="font-mono break-all">{g.address}</p>
                 <p class="text-muted-foreground">
                   {g.passing} of {g.names}
-                  {g.names === 1 ? 'name' : 'names'} usable, such as
+                  {g.names === 1 ? 'SNI' : 'SNIs'} usable, such as
                   <span class="font-mono">{g.best}</span>.
                 </p>
               </div>
@@ -125,7 +125,7 @@
                 disabled={g.passing === 0}
                 onclick={() => startFamily(g.best)}
               >
-                Make a name list with this cover site
+                Make an SNI list with this cover site
               </Button>
             </li>
           {/each}
@@ -138,9 +138,9 @@
       {/if}
       {#if v.families.length > 0}
         <div class="space-y-1">
-          <p class="font-medium">Found for the name lists on this network</p>
+          <p class="font-medium">Found for the SNI lists on this network</p>
           <p class="text-muted-foreground">
-            Each was checked against its list's cover site, so they are listed on the list's page.
+            Each was checked against its list's cover site and is shown on that list's page.
           </p>
           <ul>
             {#each v.families as f (f.slug)}
@@ -168,12 +168,12 @@
 
   <Card class="mt-6">
     <CardHeader>
-      <CardTitle class="text-base">Names</CardTitle>
+      <CardTitle class="text-base">SNIs</CardTitle>
     </CardHeader>
     <CardContent class="text-sm">
       {#if onNetwork.length === 0}
         <p class="text-muted-foreground mb-3">
-          No name list is on this network yet: make one above to add names to it.
+          No SNI list is on this network yet. Make one above to add SNIs to it.
         </p>
       {/if}
       <HuntTable kind="network" {slug} families={onNetwork} />
@@ -184,7 +184,7 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-md`}>
     <Dialog.Header>
-      <Dialog.Title>Make a name list with this cover site</Dialog.Title>
+      <Dialog.Title>Make an SNI list with this cover site</Dialog.Title>
       <Dialog.Description>
         Its cover site is <span class="font-mono">{target}</span> on port 443, over HTTP/2, on this network.
         A list's cover site never changes.

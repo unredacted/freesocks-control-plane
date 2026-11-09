@@ -58,8 +58,7 @@
 
   {#if relay.deleting}
     <div class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
-      This origin is being deleted. Its edges are destroyed in the background and the page
-      disappears once the last one is confirmed gone.
+      This origin is being deleted. The page disappears once its last edge is destroyed.
     </div>
   {/if}
 
@@ -70,7 +69,7 @@
     >
       <span>
         <span class="font-medium">A rotation is running.</span>
-        Other pool changes wait until it finishes. This page refreshes every ten seconds meanwhile.
+        Other pool changes wait until it finishes. This page refreshes every ten seconds.
       </span>
       <Button
         size="sm"
@@ -96,8 +95,7 @@
     <Card.Header>
       <Card.Title>Timeline</Card.Title>
       <Card.Description>
-        Everything that happened to this origin, its listeners, its edges and its rotations, newest
-        first.
+        Changes to this origin, its listeners, edges and rotations, newest first.
       </Card.Description>
     </Card.Header>
     <Card.Content>
@@ -109,7 +107,7 @@
         <Timeline
           entries={timelineQ.data?.entries ?? []}
           truncated={timelineQ.data?.truncated ?? false}
-          emptyText="Nothing has happened yet. Provision an edge from the Actions menu to get started."
+          emptyText="Nothing yet. Provision an edge from the Actions menu."
           {hrefFor}
           max={20}
         />

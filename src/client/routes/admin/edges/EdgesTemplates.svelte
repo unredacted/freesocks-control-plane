@@ -122,7 +122,7 @@
 
 <SectionHeader
   title="Templates"
-  description="The parameters an edge is created with at a provider: plan or size, timeouts, health checks. An account provisions from the template it names, or from the default of its provider."
+  description="The parameters an edge is created with at a provider, like plan, timeouts and health checks. An account uses the template it names, or its provider's default."
 >
   {#snippet actions()}
     <Button variant="outline" size="sm" disabled={seed.isPending} onclick={() => seed.mutate()}>
@@ -150,7 +150,7 @@
   <AdminListState error={templates.error} onRetry={() => void templates.refetch()} />
 {:else if all.length === 0}
   <AdminListState
-    emptyText="No templates yet. Use Seed defaults to create one default template per provider from the built-in parameters, then adjust them here."
+    emptyText="No templates yet. Use Seed defaults to create one per provider from the built-in parameters, then adjust them here."
   />
 {:else}
   <div class="space-y-6">
@@ -271,7 +271,7 @@
       </Sheet.Title>
       <Sheet.Description>
         {editorProvider
-          ? `${providerLabel(editorProvider)} parameters. Saving a change that moves an account's effective template clears that account's qualification.`
+          ? `${providerLabel(editorProvider)} parameters. A save that changes an account's template in use clears its qualification.`
           : 'Template parameters.'}
       </Sheet.Description>
     </Sheet.Header>
@@ -294,7 +294,7 @@
         {/key}
       {:else}
         <AdminListState
-          emptyText="This template no longer exists. Close this panel and pick one from the list."
+          emptyText="This template no longer exists. Close this panel and pick another."
         />
       {/if}
     </div>
@@ -305,7 +305,7 @@
   bind:open={deleteOpen}
   kind="template"
   name={deleting?.name ?? ''}
-  body="Edges that already exist keep the parameters they were created with. New edges use another template."
+  body="Existing edges keep their parameters. New edges use another template."
   run={() => deleteTemplate(deleting!.id)}
   ondeleted={afterDelete}
 >

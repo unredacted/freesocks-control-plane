@@ -41,15 +41,15 @@
   <Card.Header>
     <Card.Title>Give it its first edge</Card.Title>
     <Card.Description>
-      Members of this origin are only ever given an edge's address. Provision one at a provider (any
-      tested account; it waits unpublished so you can try it first, then publish it from the Edges
-      tab), or import a front that already forwards here.
+      Members of this origin only get edge addresses. Provision one with any tested account, or
+      import a front that already forwards here. A new edge waits unpublished so you can test it,
+      then publish it from the Edges tab.
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-3">
     {#if usable.length === 0}
       <p class="text-muted-foreground text-sm">
-        It has no deployed, enabled listener yet: add one on the Listeners tab first.
+        No deployed, enabled listener yet. Add one on the Listeners tab first.
       </p>
     {/if}
     {#if tested.length === 0}

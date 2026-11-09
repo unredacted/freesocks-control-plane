@@ -109,12 +109,12 @@ describe('ListPage', () => {
     const text = document.body.textContent ?? '';
     expect(text).toContain('A version waits for you');
     expect(text).toContain('This is the first version. Look it over before FCP uses it.');
-    expect(text).toContain('1 name, 1 wildcard, 1 IPv4 range (256 addresses).');
+    expect(text).toContain('1 hostname, 1 wildcard, 1 IPv4 range (256 addresses).');
     expect(text).toContain('Left out: 1 line that could not be read.');
     expect(text).toContain('not a name!');
     expect(text).toContain('Paste a new copy');
-    expect(text).toContain('Names into finding names');
-    expect(text).toContain('Its names go nowhere.');
+    expect(text).toContain('Hostnames as SNI candidates');
+    expect(text).toContain('Its hostnames go nowhere.');
     button('Use it')!.click();
     await vi.waitFor(() =>
       expect(decideCountryListVersion).toHaveBeenCalledWith('l1', 'v1', 'approve'),

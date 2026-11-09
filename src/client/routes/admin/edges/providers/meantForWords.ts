@@ -15,8 +15,8 @@ export function countryList(codes: readonly string[], nameOf: NameOf): string {
 /** The line under a location: what it is meant for, or nothing in particular. */
 export function meantForLine(codes: readonly string[], nameOf: NameOf): string {
   return codes.length === 0
-    ? 'Meant for no country in particular.'
-    : `Meant for ${countryList(codes, nameOf)}: members there get an address here first, unless it is blocked there.`;
+    ? 'Set for no country in particular.'
+    : `Set for ${countryList(codes, nameOf)}: members there get an address here first, unless it is blocked there.`;
 }
 
 const pct = (moved: number, sampled: number) =>
@@ -34,21 +34,21 @@ export function estimateLines(
   if (!e.valid)
     return [
       e.code === 'meant_for_too_many'
-        ? 'A location is meant for at most 8 countries.'
+        ? 'A location takes at most 8 countries.'
         : 'Only countries on the censored-country list can be chosen.',
     ];
   if (!e.steering)
     return [
-      'Addresses are not ordered by country now (Settings, Where members connect from), so nothing moves until that is on.',
+      'Addresses are not ordered by country, so nothing moves until that is on in Settings, Where members connect from.',
     ];
   if (e.countries.length === 0) return null;
   return e.countries.map(({ country, nodes }) => {
     const where = nameOf(country);
     if (nodes.length === 0) return `${where}: no node has an address in use here yet.`;
     const parts = nodes.map(
-      (n) => `about ${pct(n.moved, n.sampled)}% on ${n.label ?? n.relaySlug}`,
+      (n) => `about ${pct(n.moved, n.sampled)}% of members on ${n.label ?? n.relaySlug}`,
     );
-    return `${where}: ${parts.join(', ')} of members get a different first address.`;
+    return `${where}: ${parts.join(', ')} get a different first address.`;
   });
 }
 
@@ -66,9 +66,9 @@ export function onlyForWords(
       only
         ? `New addresses here are only for members in ${list}.`
         : 'Addresses here are for everyone.',
-    on: `Addresses made here from now on are handed only to members in ${list}. Addresses in use now stay for everyone, and spares made before now are never put in use here.`,
-    off: 'Every address here becomes everyone’s again, for good: members anywhere are handed them. Switching it on again starts from new addresses.',
+    on: `New addresses here go only to members in ${list}. Addresses in use now stay for everyone. Older spares are never put in use here.`,
+    off: 'Every address here goes back to everyone, for good. Switching it on again starts from new addresses.',
     caveat:
-      'This keeps other countries’ members, and members with no country, from ever being handed these addresses. It does not hide them from accounts in those countries: keep at least 4 addresses here where accounts try to collect them.',
+      'Members elsewhere or with no country never get these addresses. Accounts in those countries can still collect them, so keep at least 4 addresses here.',
   };
 }

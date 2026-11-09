@@ -118,10 +118,7 @@
   <Card.Root>
     <Card.Header>
       <Card.Title>There is no origin called "{slug}"</Card.Title>
-      <Card.Description>
-        It may have been deleted, or the address was mistyped. All origins lists every origin, and
-        New origin there adds one.
-      </Card.Description>
+      <Card.Description>It may have been deleted, or the address is mistyped.</Card.Description>
     </Card.Header>
     <Card.Content class="flex flex-wrap gap-4 text-sm">
       <Link href={edgesPaths.overview()} class="font-medium text-primary hover:underline">
@@ -154,7 +151,7 @@
 {:else}
   <SectionHeader
     title={relay.label ? `${relay.label} (${relay.slug})` : `Origin ${relay.slug}`}
-    description="Origin details: its pool, its listeners, its rotations and how reachable it is."
+    description="Pool, listeners, rotations and reachability of this origin."
     back={{ href: edgesPaths.overview(), label: 'All origins' }}
   >
     {#snippet badges()}

@@ -469,7 +469,7 @@
         </p>
         {#if relay.restore}
           <p class="text-muted-foreground mt-1 text-sm">
-            Removing protection: {restorePhaseWords(relay.restore.phase)}.
+            Removing fronting: {restorePhaseWords(relay.restore.phase)}.
           </p>
           {#if skipDirectOffered(relay.restore)}
             <p class="mt-1 max-w-prose text-sm">{skipDirectHeldWords(relay.restore.lastError)}</p>
@@ -828,7 +828,7 @@
       <ActionConfirm
         open={true}
         title={`Keep ${addressOf(e)} as a spare?`}
-        body={`It stops retiring and is not deleted. Members are not given it; it waits as a spare and can be put in use again later. Your provider keeps billing for it.${
+        body={`It stops retiring and waits as a spare that can go in use again later. Members are not given it, and your provider keeps billing for it.${
           keepNote ? ` ${keepNote}` : ''
         }`}
         confirmLabel="Keep as a spare"
@@ -889,7 +889,7 @@
   <ActionConfirm
     bind:open={againOpen}
     title={`Front ${name} again?`}
-    body="FCP makes a new address for each transport, you try each one from a real app, and you approve go-live if the node needs it. Members keep the addresses they have until the new ones go live, then the new ones take their places. Cancelling drops only the new addresses."
+    body="FCP makes a new address for each transport for you to test in a real app, then you approve go-live if the node needs it. Members keep their current addresses until the new ones go live. Cancelling drops only the new addresses."
     confirmLabel="Front again"
     run={async () => {
       const res = await reprotectRelay(relay.id);
@@ -901,7 +901,7 @@
   <ActionConfirm
     bind:open={removeOpen}
     title={`Remove fronting from ${name}?`}
-    body="Members get the node's own address back at their next refresh, the panel is restored one checked step at a time, and the provider addresses are destroyed afterwards. The node's own address becomes visible again."
+    body="Members get the node's own address back at their next refresh, which exposes it again. FCP restores the panel step by step, then destroys the provider addresses."
     typed={relay.slug}
     confirmLabel="Remove fronting"
     danger

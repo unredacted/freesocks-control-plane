@@ -154,7 +154,7 @@
   let retireOpen = $state(false);
   const edgeConfig = edgeConfigQuery();
   let nameDrain = $derived(
-    edgeConfig.data ? drainLength(edgeConfig.data.config.sniDrainMinutes) : 'the name drain time',
+    edgeConfig.data ? drainLength(edgeConfig.data.config.sniDrainMinutes) : 'the SNI drain time',
   );
   async function act(action: NameAction) {
     const names = [...picked];
@@ -325,7 +325,7 @@
   {@const f = family.data.family}
   <SectionHeader
     title={f.label}
-    description={`Names the cover site ${f.target.address}:${f.target.port} serves${f.requireH2 ? ', over HTTP/2' : ''}${f.network ? `, on ${f.network.label}` : ''}.`}
+    description={`SNIs the cover site ${f.target.address}:${f.target.port} serves${f.requireH2 ? ', over HTTP/2' : ''}${f.network ? `, on ${f.network.label}` : ''}.`}
   >
     {#snippet actions()}
       <Button size="sm" variant="outline" disabled={busy} onclick={() => (renameOpen = true)}>
@@ -345,7 +345,7 @@
       <FamilyPort binding={b} />
     {:else}
       <p class="text-muted-foreground text-sm">
-        Not used by any port yet. Open a node under Servers and choose "Manage these names with FCP"
+        Not used by any port yet. Open a node under Servers and choose "Manage these SNIs with FCP"
         on its REALITY transport, or use it on a port under Settings below.
       </p>
     {/each}
@@ -353,7 +353,7 @@
 
   <Card class="mt-6">
     <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-2">
-      <CardTitle class="text-base">Names</CardTitle>
+      <CardTitle class="text-base">SNIs</CardTitle>
       <div class="flex flex-wrap gap-2">
         <!-- A port using the list offers it as its next step already. -->
         {#if suggestionCount > 0 && family.data.bindings.length === 0}
@@ -365,10 +365,10 @@
           variant="outline"
           size="sm"
           disabled={busy || !config.data?.hunt?.enabled}
-          title={config.data?.hunt?.enabled ? undefined : 'Finding names is off'}
+          title={config.data?.hunt?.enabled ? undefined : 'Finding SNIs is off'}
           onclick={lookForMore}
         >
-          Look for more names
+          Look for more SNIs
         </Button>
       </div>
     </CardHeader>
@@ -467,7 +467,7 @@
 
       {#if (filter === 'all' ? everything : suggestions).isError}
         <p class="text-destructive">
-          The names found for this list could not be read: {sniErrorWords(
+          The SNIs found for this list could not be read: {sniErrorWords(
             codeOf((filter === 'all' ? everything : suggestions).error),
           )}
         </p>
@@ -479,8 +479,8 @@
           {filter === 'needs_you'
             ? 'Nothing to do here.'
             : filter === 'in_use'
-              ? 'No name of this list is in use yet.'
-              : 'No names yet.'}
+              ? 'No SNI from this list is in use yet.'
+              : 'No SNIs yet.'}
         </p>
       {:else}
         {#if pickable.length > 0}
@@ -491,11 +491,11 @@
               onCheckedChange={(v) => (picked = v === true ? [...pickable] : [])}
             />
             <Label for={`${uid}-all`} class="font-normal">
-              Pick the {pickable.length === 1 ? 'name' : `${pickable.length} names`} shown
+              Pick the {pickable.length === 1 ? 'SNI' : `${pickable.length} SNIs`} shown
             </Label>
           </div>
         {/if}
-        <ul class="divide-y" aria-label="Names">
+        <ul class="divide-y" aria-label="SNIs">
           {#each shown as r (r.key)}
             <li class="flex items-start gap-3 py-2">
               {#if r.row.kind === 'name'}
@@ -664,10 +664,10 @@
         class="size-4 transition-transform group-data-[state=open]:rotate-90"
         aria-hidden="true"
       />
-      Add names by hand
+      Add SNIs by hand
     </Collapsible.Trigger>
     <Collapsible.Content class="mt-3 space-y-3">
-      <Label for={`${uid}-import`}>One host name per line</Label>
+      <Label for={`${uid}-import`}>One hostname per line</Label>
       <textarea
         id={`${uid}-import`}
         bind:value={importText}
@@ -677,7 +677,7 @@
         class="border-input focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm outline-none focus-visible:ring-3"
       ></textarea>
       <p class="text-muted-foreground">
-        Each name is checked against the cover site before it can be used.
+        Each SNI is checked against the cover site before it can be used.
       </p>
       <Button size="sm" disabled={busy || importText.trim() === ''} onclick={doImport}>Add</Button>
     </Collapsible.Content>
@@ -728,8 +728,8 @@
         </label>
         <p id={`${uid}-network-help`} class="text-muted-foreground">
           {f.bindings > 0
-            ? 'A port uses this list. Stop managing its names on that port to change the network.'
-            : 'On a network, the cover site and every name must live inside it (every name is checked again when it changes), and a port using the list gets addresses from it only.'}
+            ? 'A port uses this list. Stop managing its SNIs on that port to change the network.'
+            : 'On a network, the cover site and every SNI must resolve inside it, and a port using the list gets addresses only from it. Changing it checks every SNI again.'}
         </p>
       </div>
 
@@ -741,8 +741,8 @@
           onCheckedChange={(v) => void setRequireH2(v === true)}
         />
         <span>
-          Only use names the cover site serves over HTTP/2
-          <span class="text-muted-foreground block">Changing it checks every name again.</span>
+          Only use SNIs the cover site serves over HTTP/2
+          <span class="text-muted-foreground block">Changing it checks every SNI again.</span>
         </span>
       </label>
 
@@ -750,7 +750,7 @@
         <p class="font-medium">Use it on a port</p>
         {#if !bindOpen}
           <p class="text-muted-foreground">
-            The node page's "Manage these names with FCP" is the usual way. Here you can pick any
+            Usually done with "Manage these SNIs with FCP" on a node's page. Here you can pick any
             REALITY port with the same cover site.
           </p>
           <Button variant="outline" size="sm" disabled={busy} onclick={startBind}>
@@ -787,15 +787,15 @@
             {#if backendSlug && !busy && transports.length === 0}
               <p class="basis-full rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
                 No REALITY port has been read from this server yet. Refresh it under Servers, then
-                come back here.
+                come back.
               </p>
             {/if}
             {#if chosen && chosen.names.length > 0}
               <div class="flex basis-full items-start gap-2">
                 <Checkbox id={`${uid}-take`} bind:checked={takeNames} />
                 <Label for={`${uid}-take`} class="leading-snug font-normal">
-                  Take the {chosen.names.length === 1 ? 'name' : `${chosen.names.length} names`} it lists
-                  now into this list. They are then checked against the cover site and stay on the port.
+                  Take the {chosen.names.length === 1 ? 'SNI' : `${chosen.names.length} SNIs`} it lists
+                  now into this list. They are checked against the cover site and stay on the port.
                 </Label>
               </div>
             {/if}
@@ -824,7 +824,7 @@
     bind:open={renameOpen}
     name={f.label}
     title={`Rename ${f.label}`}
-    description="Only admins see this name. The list keeps its names, the ports that use it and this page's link, and nothing is sent to a node."
+    description="Only admins see this name. Nothing else changes, and nothing is sent to a node."
     empty="Give the list a name."
     saved="List renamed"
     save={(label) => updateFamily(slug, { label }).then(() => invalidateSni(qc))}
@@ -834,8 +834,8 @@
 
 <ConfirmDialog
   bind:open={retireOpen}
-  title={`Retire ${picked.length} ${picked.length === 1 ? 'name' : 'names'}?`}
-  body={`New subscriptions stop presenting ${picked.length === 1 ? 'it' : 'them'} at once, on every origin that presents ${picked.length === 1 ? 'it' : 'them'}. Each node keeps accepting ${picked.length === 1 ? 'it' : 'them'} for ${nameDrain}, so members who already hold ${picked.length === 1 ? 'it' : 'one'} stay connected until their app refreshes. An origin keeps its last active name, and an origin that is busy (replacing an address, removing fronting, paused) is skipped. Bring ${picked.length === 1 ? 'it' : 'them'} back any time.`}
+  title={`Retire ${picked.length} ${picked.length === 1 ? 'SNI' : 'SNIs'}?`}
+  body={`New subscriptions stop presenting ${picked.length === 1 ? 'it' : 'them'} at once. Each node keeps accepting ${picked.length === 1 ? 'it' : 'them'} for ${nameDrain}, so members who hold ${picked.length === 1 ? 'it' : 'one'} stay connected until their app refreshes. An origin keeps its last active SNI, and a busy origin is skipped. Bring ${picked.length === 1 ? 'it' : 'them'} back any time.`}
   confirmLabel="Retire"
   danger
   onConfirm={() => {
@@ -845,8 +845,8 @@
 />
 <ConfirmDialog
   bind:open={burnOpen}
-  title={`Burn ${picked.length} ${picked.length === 1 ? 'name' : 'names'}?`}
-  body="A burned name leaves every member's list at once and can never be used again."
+  title={`Burn ${picked.length} ${picked.length === 1 ? 'SNI' : 'SNIs'}?`}
+  body="A burned SNI leaves every member's list at once and can never be used again."
   typed="burn"
   confirmLabel="Burn"
   danger
@@ -857,10 +857,10 @@
 />
 <ConfirmDialog
   bind:open={anywayOpen}
-  title={anywayOn ? 'Use this server name (SNI) anyway?' : 'Stop using it anyway?'}
+  title={anywayOn ? 'Use this SNI anyway?' : 'Stop using it anyway?'}
   body={anywayOn
-    ? 'It resolves outside the list’s network, so someone looking it up sees another network than the address it is shown to. Use it only when you know it works where members are. Every other check still applies, and it stays marked here. If it stops resolving at all, it is not used until it resolves again.'
-    : 'It is checked against the list’s network again, like any other server name (SNI). If it still resolves outside it, it fails the check and leaves members as a failing one does.'}
+    ? 'It resolves outside the list’s network, so it does not match the network of the address it is shown on. Use it only if you know it works where members are. Every other check still applies. If it stops resolving, it is not used until it resolves again.'
+    : 'It is checked against the list’s network again, like any other SNI. If it still resolves outside it, it fails and leaves members like any failing SNI.'}
   confirmLabel={anywayOn ? 'Use anyway' : 'Stop using anyway'}
   danger={!anywayOn}
   onConfirm={setUseAnyway}
@@ -881,7 +881,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title="Remove this list?"
-  body="Stop managing its names on every port first."
+  body="Stop managing its SNIs on every port first."
   confirmLabel="Remove"
   danger
   onConfirm={remove}

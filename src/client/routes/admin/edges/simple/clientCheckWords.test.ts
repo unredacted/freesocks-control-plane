@@ -45,7 +45,7 @@ describe('client check words', () => {
       current: false,
     });
     expect(line).toContain('sing-box: Refused by REALITY; Xray: Connected');
-    expect(line).toContain('check it again');
+    expect(line).toContain('Check it again');
     expect(line).not.toContain('—');
   });
 

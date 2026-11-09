@@ -88,8 +88,8 @@
 >
   <h2 id="paused-title" class="text-base font-semibold">Paused for safety</h2>
   <p>
-    Replacing an address stopped half way through updating the backend and could not undo it. FCP
-    stopped changing this node until you say which addresses members really get.
+    A replacement stopped half way through updating the backend and could not undo it. FCP will not
+    change this node until you choose which addresses to keep.
     {#if relay.quarantine}
       <span class="text-muted-foreground">Since {relativeTime(relay.quarantine.since)}.</span>
     {/if}
@@ -107,7 +107,7 @@
     <span class="text-muted-foreground text-xs">
       {view?.inspectedAt
         ? `Last checked ${relativeTime(view.inspectedAt)}.`
-        : 'Check first, so the choice rests on what members really get.'}
+        : 'Check first to see what members get now.'}
     </span>
   </div>
   {#if inspect.error}<InlineError message={edgeErrorMessage(inspect.error)} />{/if}
@@ -128,8 +128,8 @@
       <p class="text-muted-foreground">
         The backend also serves {view.extraHosts.length === 1
           ? 'one address'
-          : `${view.extraHosts.length} addresses`} under this node's names that FCP does not know. Remove
-        them in the backend if they should not exist.
+          : `${view.extraHosts.length} addresses`} for this node that FCP does not know. Remove them in
+        the backend if they should not exist.
       </p>
     {/if}
     <p>
@@ -175,8 +175,8 @@
     open={true}
     title={`Keep the ${which} addresses?`}
     body={keep === 'previous'
-      ? 'FCP records that members are still on the addresses from before the replacement: the old address stays in use and the new one becomes a spare. FCP does not change the backend here.'
-      : 'FCP records that the replacement did take effect: the new address stays in use and the old one is retired. FCP does not change the backend here.'}
+      ? 'FCP records that members are still on the old address. It stays in use and the new one becomes a spare. The backend is not changed.'
+      : 'FCP records that the replacement took effect. The new address stays in use and the old one retires. The backend is not changed.'}
     confirmLabel={`Keep the ${which} addresses`}
     danger={recommended !== null && recommended !== keep}
     onClose={() => (keep = null)}

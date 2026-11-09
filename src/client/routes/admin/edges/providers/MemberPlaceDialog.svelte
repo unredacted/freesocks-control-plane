@@ -77,10 +77,10 @@
     <Dialog.Header>
       <Dialog.Title>Name in apps for {location?.label ?? 'this location'}</Dialog.Title>
       <Dialog.Description>
-        Members see this in their apps for every address here. Anyone with a free account can read
-        it, so use a city or a country, never the provider's name for the region. Each name starts
-        with the node's own place, then this one: "Example Port via Example City". Leave the name
-        empty and members read "Example Port via relay A".
+        Members see this in their apps for every address here, and anyone with a free account can
+        read it. Use a city or a country, never the provider's region name. It follows the node's
+        own place, as in "Example Port via Example City". Left empty, members read "Example Port via
+        relay A".
       </Dialog.Description>
     </Dialog.Header>
     <form

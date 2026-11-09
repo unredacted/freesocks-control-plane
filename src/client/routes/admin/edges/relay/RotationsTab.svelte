@@ -40,17 +40,15 @@
 
 <div class="space-y-3">
   <p class="text-sm text-muted-foreground">
-    A rotation is one run of the machine that provisions, publishes or replaces an edge. Finished
-    runs are kept for 90 days.
+    A rotation is one run that provisions, publishes or replaces an edge. Finished runs are kept for
+    90 days.
   </p>
   {#if rotationsQ.isPending}
     <Skeleton class="h-40 w-full" />
   {:else if rotationsQ.error}
     <AdminListState error={rotationsQ.error} onRetry={() => void rotationsQ.refetch()} />
   {:else if rotations.length === 0}
-    <AdminListState
-      emptyText="No rotation has run for this relay yet. Provision an edge from the Actions menu to start the first one."
-    />
+    <AdminListState emptyText="No rotations yet. Provision an edge from the Actions menu." />
   {:else}
     <div class="overflow-x-auto rounded-lg border">
       <Table.Root>
@@ -121,7 +119,7 @@
   <ActionConfirm
     open={true}
     title="Cancel the running rotation?"
-    body="The run stops at its next safe point. If it already published an edge or switched a panel Host, it rolls that back first, so members end up where they were before it started. A half-built edge is destroyed."
+    body="The run stops at its next safe point. A published edge or switched panel Host is rolled back, so members end up where they were. A half-built edge is destroyed."
     confirmLabel="Cancel rotation"
     danger
     onClose={() => (cancelId = null)}

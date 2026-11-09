@@ -80,7 +80,7 @@ const COPY = {
   // --- origin --------------------------------------------------------------------------
   no_origin: {
     label: 'No origin chosen',
-    explain: 'The origin has no target yet: nothing tells FCP what the edges should dial.',
+    explain: 'The origin has no target, so FCP does not know what the edges should dial.',
     fix: 'Pick a backend node, a backend server or describe the address by hand.',
   },
   no_backend_server: {
@@ -96,9 +96,8 @@ const COPY = {
   },
   backend_no_host_management: {
     label: 'Backend cannot manage Hosts',
-    explain:
-      'This backend type has no client-facing Host objects, so FCP cannot flip them for members.',
-    fix: 'Members follow rotations through rendered subscriptions instead; nothing to change here.',
+    explain: 'This backend type has no Hosts for FCP to flip.',
+    fix: 'Nothing to change. Members follow rotations through their subscriptions.',
   },
   backend_no_node_inventory: {
     label: 'No node inventory',
@@ -130,8 +129,8 @@ const COPY = {
   token_rejected: {
     label: 'Token rejected',
     explain:
-      'The provider rejected this token. Cloudflare: both as a user API token and as an account API token. Gandi: as a personal access token, or one without the DNS permissions.',
-    fix: 'Check that the token is active, not expired, and has the permissions the account form lists for this provider. Cloudflare takes user and account API tokens; Gandi takes personal access tokens only.',
+      'The provider rejected this token. Cloudflare rejected it as both a user and an account API token. Gandi rejected it as a personal access token, or it lacks DNS permissions.',
+    fix: 'Check that the token is active, not expired, and has the permissions the account form lists. Cloudflare takes user and account API tokens. Gandi takes personal access tokens only.',
   },
   token_not_active: {
     label: 'Token not active',
@@ -140,35 +139,35 @@ const COPY = {
   },
   name_zone_unreachable: {
     label: 'Zone not reachable',
-    explain: "The DNS account that holds this name's zone is gone or has no token.",
-    fix: 'Restore the DNS account, or remove the records by hand and dismiss the name.',
+    explain: "The DNS account that holds this hostname's zone is gone or has no token.",
+    fix: 'Restore the DNS account, or remove the records by hand and press Dismiss.',
   },
   name_taken: {
-    label: 'Name used by someone else',
-    explain: 'A record FCP did not write sits at the name, so FCP leaves it alone.',
-    fix: 'Remove that record if it is stray, or give the address a new name.',
+    label: 'Hostname already taken',
+    explain: 'A record FCP did not write sits at this hostname, so FCP leaves it alone.',
+    fix: 'Remove that record if it is stray, or give the address a new hostname.',
   },
   name_dns_refused: {
     label: 'DNS provider refused',
     explain:
-      'The DNS provider refused to change the records, usually a token without edit rights for the zone.',
-    fix: 'Give the DNS account a token that may edit DNS in this zone; FCP tries again by itself.',
+      'The DNS provider refused to change the records, usually because the token cannot edit the zone.',
+    fix: 'Give the DNS account a token that can edit this zone. FCP retries by itself.',
   },
   name_dns_rate_limited: {
     label: 'DNS provider busy',
     explain: 'The DNS provider asked FCP to slow down.',
-    fix: 'Nothing to do: FCP tries again on its next pass.',
+    fix: 'Nothing to do. FCP retries on its next pass.',
   },
   name_dns_unreachable: {
     label: 'DNS provider did not answer',
     explain: 'The call to the DNS provider timed out or failed.',
-    fix: 'Nothing to do unless it lasts: FCP tries again on its next pass.',
+    fix: 'FCP retries on its next pass. Look into it only if it lasts.',
   },
   dns_account_missing: {
     label: 'DNS account missing',
     explain:
-      'This CDN front needs a DNS account to hold its records, and its location names none that still exists.',
-    fix: 'Add a location that names a DNS account, on the provider page.',
+      'This CDN front needs a DNS account for its records, and its location names none that still exists.',
+    fix: 'On the provider page, add a location that names a DNS account.',
   },
   no_zones: {
     label: 'No DNS zone reached',
@@ -177,14 +176,13 @@ const COPY = {
   },
   zone_mode_unknown: {
     label: 'Zone mode unknown',
-    explain: 'The zone facts (TLS mode, WebSocket setting) have not been observed yet.',
-    fix: 'Check the location again on the provider page so the zone can be read.',
+    explain: "FCP has not read the zone's TLS mode and WebSocket setting yet.",
+    fix: 'Check the location again on the provider page.',
   },
   zone_websockets_off: {
     label: 'Zone has WebSockets off',
-    explain:
-      'The CDN zone refuses WebSocket upgrades, so a WebSocket listener cannot be fronted there.',
-    fix: 'Turn WebSockets on in the zone at the provider, then re-test the account.',
+    explain: 'The CDN zone refuses WebSocket upgrades, so it cannot front a WebSocket listener.',
+    fix: 'Turn WebSockets on for the zone at the provider, then test the account again.',
   },
   // a CDN location's zone check (what the provider said about the zone)
   zone_unreadable: {
@@ -205,8 +203,8 @@ const COPY = {
   header_rule_forbidden: {
     label: 'Header rule refused',
     explain:
-      "Cloudflare refused the Transform Rule that removes the member's address for the front's name: the token may not edit Transform Rules, or the zone has no rules left.",
-    fix: 'Give the token Transform Rules: Edit on the zone, or free a rule there, then delete this front and build it again.',
+      "Cloudflare refused the Transform Rule that strips the member's address. Either the token cannot edit Transform Rules or the zone has no rules left.",
+    fix: 'Grant the token "Transform Rules: Edit" on the zone or free a rule, then delete this front and build it again.',
   },
   zone_paused: {
     label: 'Zone paused',
@@ -216,14 +214,14 @@ const COPY = {
   zone_not_active: {
     label: 'Zone not active yet',
     explain:
-      "The zone is not active at the provider yet, or (Gandi) the domain's name servers are not Gandi LiveDNS, so records written there would never be served.",
-    fix: "Finish setting up the zone at the provider (for Gandi, point the domain's name servers at LiveDNS), then check the location again.",
+      "The zone is not active at the provider yet, so records written there are never served. For Gandi, the domain's name servers must be Gandi LiveDNS.",
+    fix: "Finish setting up the zone at the provider, then check the location again. For Gandi, point the domain's name servers at LiveDNS.",
   },
   zone_flattens_cnames: {
     label: 'Zone flattens every CNAME',
     explain:
-      'The zone answers every CNAME with its target’s addresses (CNAME flattening set to all records), so the certificate authority never sees the validation record a front’s certificate needs.',
-    fix: 'Set CNAME flattening to the zone apex only at the DNS provider, then check the location again.',
+      "The zone flattens every CNAME, so the certificate authority never sees the validation record the front's certificate needs.",
+    fix: 'At the DNS provider, set CNAME flattening to the zone apex only, then check the location again.',
   },
   tls_configuration_missing: {
     label: 'TLS configuration not found',
@@ -238,7 +236,7 @@ const COPY = {
   // --- template ------------------------------------------------------------------------
   no_default_template: {
     label: 'No default template',
-    explain: 'The account has no default edge template, so provisioning has no parameters to use.',
+    explain: 'The account has no default edge template, so provisioning has no parameters.',
     fix: 'Create a template for the provider, or seed the compiled defaults under Templates.',
   },
   template_invalid: {
@@ -249,17 +247,16 @@ const COPY = {
   // --- origin and listener --------------------------------------------------------------
   no_relay: {
     label: 'No origin yet',
-    explain: 'The origin row does not exist: the origin has not been registered.',
+    explain: 'The origin has not been registered yet.',
     fix: 'Finish the origin step, or front the node from Edges.',
   },
   relay_deleting: {
     label: 'Origin is deleting',
-    explain: 'The origin is being torn down; new work on it is refused until the delete completes.',
+    explain: 'The origin is being deleted, so new work on it is refused.',
   },
   relay_without_listener: {
     label: 'No listener',
-    explain:
-      'The origin has no listener, so nothing says which port and protocol edges should carry.',
+    explain: 'The origin has no listener, so edges have no port or protocol to carry.',
     fix: 'Add a listener, or front the node from Edges.',
   },
   listener_not_deployed: {
@@ -278,9 +275,9 @@ const COPY = {
     fix: 'Set the REALITY target on the listener.',
   },
   needs_names: {
-    label: 'Server names missing',
-    explain: 'A listener that presents a name needs at least one active server name.',
-    fix: 'Add server names to the listener.',
+    label: 'SNIs missing',
+    explain: 'A listener that presents an SNI needs at least one active SNI.',
+    fix: 'Add SNIs to the listener.',
   },
   no_udp_provider: {
     label: 'No UDP-capable provider',
@@ -295,41 +292,41 @@ const COPY = {
   reality_refuses_clients: {
     label: 'REALITY refuses sing-box or Mihomo',
     explain:
-      'A REALITY transport here refuses members on sing-box-based clients (Hiddify, Karing), Mihomo-based ones (Clash Verge, FlClash) or both, while a test made with an Xray client passes. Each reason is named with the change that lifts it.',
-    fix: "Make the change its reason names, in the transport's realitySettings or on the node. The warning clears at the next look, within a few minutes.",
+      'A REALITY transport here refuses sing-box or Mihomo clients, while Xray clients get through.',
+    fix: 'Make the change each reason names. The warning clears within a few minutes.',
   },
   client_refused: {
     label: 'A client cannot get through',
     explain:
-      "FCP's own check, made with real sing-box and Xray clients, could not get one of them through an address in use. The row names each client and what it ran into.",
-    fix: 'When the same client is refused through every address of the transport, fix the transport (for REALITY, its minClientVer); otherwise replace the address. Then check it again.',
+      "FCP's check with real sing-box and Xray clients could not get one of them through an address in use.",
+    fix: 'If the same client fails through every address, fix the transport, such as its REALITY minClientVer. Otherwise replace the address and check again.',
   },
   // The verdicts an attention row names as its reason (`client_refused`): the
   // same words as CLIENT_CHECK_COPY, which the check's own line and toast use.
   passed_with_refusals: {
-    label: 'Works, as well as the others',
+    label: 'Works like the others',
     explain:
-      'At least one client connected. The ones that did not are refused through the other addresses of this transport too.',
+      'At least one client connected, and the ones that did not are refused through the other addresses too.',
   },
   address_failed: {
     label: 'Does not work',
     explain:
-      'A client did not get through this address, while it gets through the other addresses of this transport when there are any to compare with.',
+      "A client did not get through this address, though it gets through the transport's other addresses where there are any.",
   },
   egress_mismatch: {
     label: 'Reaches another node',
     explain:
-      'A client connected, but its traffic left from an address that is not this node: the load balancer forwards somewhere else.',
+      'A client connected, but its traffic left from another node, so the load balancer forwards somewhere else.',
   },
   node_unreachable: {
     label: 'Node not reached',
     explain: 'No client got through this address or through the other addresses of the transport.',
   },
   client_check_unavailable: {
-    label: "FCP's check client is not answering",
+    label: 'Check client not answering',
     explain:
-      'The client-check service is set up but did not answer its last health check, so no address can be checked with a real client until it does.',
-    fix: 'Make sure the edge-client-check container is running and holds the same EDGE_CLIENT_CHECK_SECRET as the deployment.',
+      'The client-check service did not answer its last health check, so no address can be checked with a real client.',
+    fix: 'Make sure the edge-client-check container is running with the same EDGE_CLIENT_CHECK_SECRET as the deployment.',
   },
   // Each reason (a setup-status warning's detail; the attention row words the verdict itself).
   reality_min_above: {
@@ -339,9 +336,9 @@ const COPY = {
     fix: 'Set "minClientVer" to "1.8.1" in the transport\'s realitySettings in the backend.',
   },
   reality_core_default: {
-    label: 'No minClientVer, Xray defaults to 26.3.27',
+    label: 'No minClientVer set',
     explain:
-      'The transport sets no minClientVer, and Xray 26.7.11 to 26.7.28 then let in only Xray clients from 26.3.27 on: sing-box and Mihomo are refused.',
+      'With no minClientVer, Xray 26.7.11 to 26.7.28 let in only Xray clients from 26.3.27 on, so sing-box and Mihomo are refused.',
     fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend.',
   },
   reality_max_below: {
@@ -351,38 +348,36 @@ const COPY = {
     fix: 'Remove "maxClientVer" from the transport\'s realitySettings in the backend, or raise it to 1.8.2 or above.',
   },
   reality_core_key_share: {
-    label: 'sing-box lacks the needed key share',
+    label: 'sing-box lacks a key share',
     explain:
-      'From Xray 26.9.8 on, a REALITY server refuses a Client Hello without an X25519MLKEM768 key share, and sing-box sends none, whatever the transport sets.',
-    fix: 'No setting of the transport lets sing-box in on this Xray: run the node on Xray 26.7.28 or earlier with "minClientVer": "1.8.1", or give sing-box members another node.',
+      'From Xray 26.9.8 on, REALITY refuses a Client Hello without an X25519MLKEM768 key share, which sing-box never sends, whatever the transport sets.',
+    fix: 'Run the node on Xray 26.7.28 or earlier with "minClientVer": "1.8.1", or give sing-box members another node.',
   },
   reality_core_unknown: {
-    label: "The node's Xray version is unknown",
+    label: 'Node Xray version unknown',
     explain:
-      "FCP could not read the node's Xray version. Xray 26.7.11 to 26.7.28 refuse sing-box and Mihomo when the transport sets no minClientVer, and from 26.9.8 on no setting lets sing-box in.",
+      "FCP could not read the node's Xray version, so it cannot tell whether sing-box and Mihomo get in.",
     fix: 'Check the node\'s Xray version in the backend, and set "minClientVer": "1.8.1" in the transport\'s realitySettings if it has none.',
   },
   members_dark: {
     label: 'Members get nothing',
-    explain:
-      'Subscriptions on this origin are edge-required but nothing can be served for them yet.',
+    explain: 'Members of this origin need an edge, and none can be served yet.',
     fix: 'Publish an edge and turn rendering on.',
   },
   binding_deferred: {
     label: 'Go-live pending',
-    explain:
-      'This origin was set up with its delivery binding deferred: members still receive the direct address until it goes live.',
-    fix: 'Finish the guided setup so the origin goes live.',
+    explain: 'This origin has not gone live, so members still get the direct address.',
+    fix: 'Finish the guided setup to go live.',
   },
   // --- first edge ----------------------------------------------------------------------
   no_edge: {
     label: 'No edge yet',
-    explain: 'The origin has no edge at all; nothing fronts the origin.',
+    explain: 'The origin has no edge, so nothing fronts it.',
     fix: 'Provision or import an edge.',
   },
   rotation_running: {
     label: 'Rotation running',
-    explain: 'A rotation is in progress on this origin; wait for it to finish.',
+    explain: 'A rotation is running on this origin. Wait for it to finish.',
   },
   account_budget_exhausted: {
     label: 'Daily budget spent',
@@ -437,8 +432,7 @@ const COPY = {
   },
   quarantined: {
     label: 'Quarantined',
-    explain:
-      'A rotation left the backend Hosts in an uncertain state; the origin is frozen until resolved.',
+    explain: 'A rotation left the backend Hosts in an unknown state, so the origin is frozen.',
     fix: 'Open the quarantine view and keep either the previous or the current binding.',
   },
   hosts_operator_managed: {
@@ -460,13 +454,13 @@ const COPY = {
   },
   relay_disabled: {
     label: 'Origin disabled',
-    explain: 'The origin is switched off; its members receive an unavailable response.',
+    explain: 'The origin is switched off, so its members get an unavailable response.',
     fix: 'Enable the origin.',
   },
   no_family_carries: {
-    label: 'No app can carry this node',
+    label: 'No app carries this node',
     explain:
-      'No app FCP serves can carry any live listener of this node, so no sample subscription could be checked.',
+      'No app FCP serves can carry a live listener of this node, so no sample subscription was checked.',
     fix: 'Check that the node has a deployed, enabled listener.',
   },
   preview_not_applied: {
@@ -487,7 +481,7 @@ const COPY = {
   // --- automation ----------------------------------------------------------------------
   probes_disabled: {
     label: 'Probes off',
-    explain: 'Reachability probes are disabled; the detector sees reports and load only.',
+    explain: 'Reachability probes are off, so the detector sees only reports and load.',
     fix: 'Turn probes on under Settings.',
   },
   probe_sources_none: {
@@ -502,7 +496,7 @@ const COPY = {
   },
   edge_layer_disabled: {
     label: 'Edges switched off',
-    explain: 'The edges master switch is off: the detector and the reconcile cron do nothing.',
+    explain: 'The edges master switch is off, so the detector and the reconcile cron do nothing.',
     fix: 'Turn edges on under Settings.',
   },
   auto_rotate_off: {
@@ -519,7 +513,8 @@ const COPY = {
   // --- preflight: start guards ----------------------------------------------------------
   maintenance: {
     label: 'Maintenance freeze',
-    explain: 'The maintenance switch is on: new edge work is not admitted.',
+    explain:
+      'The maintenance switch is on, so no new edge job starts. Jobs already running finish.',
     fix: 'Thaw under Settings when the maintenance is over.',
   },
   not_found: {
@@ -528,7 +523,7 @@ const COPY = {
   },
   deleting: {
     label: 'Deleting',
-    explain: 'The origin is being deleted; no new operation is accepted.',
+    explain: 'The origin is being deleted, so no new operation is accepted.',
   },
   busy: {
     label: 'Origin busy',
@@ -564,8 +559,7 @@ const COPY = {
   },
   panel_op_running: {
     label: 'A server change is running',
-    explain:
-      'Servers is updating the node this origin serves, and holds its listeners still meanwhile.',
+    explain: "Servers is updating this origin's node and holds its listeners until it finishes.",
     fix: 'Wait for the change under Servers to finish, then try again.',
   },
   listener_unusable: {
@@ -603,9 +597,9 @@ const COPY = {
     explain: 'The listener behind this edge is retired.',
   },
   listener_no_active_name: {
-    label: 'No active server name',
-    explain: 'The listener presents a name but every name is retired.',
-    fix: 'Reactivate or add a server name.',
+    label: 'No active SNI',
+    explain: 'Every SNI of this listener is retired.',
+    fix: 'Reactivate or add an SNI.',
   },
   provider_mismatch: {
     label: 'Provider mismatch',
@@ -644,46 +638,46 @@ const COPY = {
   unverified_endpoint: {
     label: 'Address not yet tested',
     explain:
-      'An address goes live only after you have tried it with a real session against its current configuration.',
+      'An address goes live only once you test its current configuration with a real session.',
     fix: 'Import the test link into a client, connect, then mark the address as working.',
   },
   no_verified_spare: {
     label: 'No tested spare',
     explain:
-      "Replacing this address needs a spare you have already tested; a new address cannot go live untested. With FCP's own client check on and answering, FCP can make and check one itself instead.",
-    fix: "Create a spare address and test it, or turn on FCP's own client check (Edges settings).",
+      "Replacing this address needs a spare you have tested, unless FCP's own client check is on and can make and check one.",
+    fix: "Create and test a spare, or turn on FCP's client check in Edges settings.",
   },
   no_assigned_location: {
     label: 'No location for it',
     explain:
-      'FCP makes and checks a replacement itself only in a location you added to this node, and none of them can take this one (switched off, untrusted by hand, full, or at its spending cap).',
-    fix: "Add a location to this node's locations, or free one up, then replace.",
+      "FCP makes and checks a replacement itself only in this node's locations, and none can take this one. Each is switched off, untrusted by hand, full or at its spending cap.",
+    fix: 'Add a location to this node, or free one up, then replace.',
   },
   // The code an older build stored for the same refusal (`relays.suspicion.lastRotateError`
   // keeps it until another rotation overwrites it): the same words.
   no_ticked_location: {
     label: 'No location for it',
     explain:
-      'FCP makes and checks a replacement itself only in a location you added to this node, and none of them can take this one (switched off, untrusted by hand, full, or at its spending cap).',
-    fix: "Add a location to this node's locations, or free one up, then replace.",
+      "FCP makes and checks a replacement itself only in this node's locations, and none can take this one. Each is switched off, untrusted by hand, full or at its spending cap.",
+    fix: 'Add a location to this node, or free one up, then replace.',
   },
   replacement_reblocked: {
     label: 'Replacement blocked again',
     explain:
-      'This address replaced a blocked one and looks blocked again soon after going into use, so FCP stopped replacing it automatically. Either an account that received it gave it away, or a network there now refuses every address of this provider.',
-    fix: 'Check whether other sites on the same provider fail from that country. If they do, it is the network and a new address will not help; if not, look at who receives this transport. Then resume automatic replacement on the node page.',
+      'This replacement looked blocked again soon after going into use, so FCP stopped replacing it. A member may have leaked it, or the network now blocks this whole provider.',
+    fix: 'Check whether other sites on this provider fail from that country too. If they do, a new address will not help; if not, check who receives this transport. Then resume automatic replacement on the node page.',
   },
   fresh_name_blocked: {
-    label: 'New name blocked before use',
+    label: 'New hostname blocked before use',
     explain:
-      "A replacement name on this CDN was blocked in a country before anyone received it, so the block is not about the name: a network there refuses every name on this CDN. FCP pauses automatic replacement for that country and keeps the address in use, so members' apps that never refresh are not cut off. Once the pause ends, FCP tries one new name.",
-    fix: 'Nothing to replace. Members in that country need another way in, such as a load balancer address or another mode, until the network lets the CDN through.',
+      'A new hostname on this CDN was blocked in a country before anyone got it, so the network there blocks the whole CDN. FCP pauses automatic replacement for that country, keeps the address in use, and tries one new hostname when the pause ends.',
+    fix: 'Nothing to replace. Members in that country need another way in, such as a load balancer address or another mode.',
   },
   cdn_refused: {
     label: 'CDN refused in a country',
     explain:
-      "The reference site for this CDN fails from that country too, while other countries reach it, so a network there refuses everything on the CDN. A new name would fail the same way, so FCP does not replace the address in use and members' apps that never refresh are not cut off. FCP checks again on every pass and replaces as usual once the reference site gets through.",
-    fix: 'Nothing to replace. Members in that country need another way in, such as a load balancer address or another mode, until the network lets the CDN through.',
+      "This CDN's reference site fails from that country but works elsewhere, so the network there blocks the whole CDN. FCP keeps the address in use until the reference site gets through.",
+    fix: 'Nothing to replace. Members in that country need another way in, such as a load balancer address or another mode.',
   },
   // --- FCP's own client check in a replacement (rotation events and outcomes) ---------------
   client_check: {
@@ -693,13 +687,13 @@ const COPY = {
   client_check_failed: {
     label: "Failed FCP's client check",
     explain:
-      "FCP's own clients did not get through the new address the way they get through the one in use, so it was not put in use. It is removed, and the next automatic try waits an hour.",
+      "FCP's clients did not get through the new address as they do through the one in use, so it was removed unused. The next automatic try waits an hour.",
     fix: 'Check the node and the provider location, or replace by hand.',
   },
   client_check_unconfirmed: {
     label: 'Checked but not confirmed',
     explain:
-      "FCP's own clients got through, but the check could not stand in for a test: the location is no longer one of this node's locations (or you untrusted it), or the client check was turned off.",
+      "FCP's clients got through, but the check cannot replace your test. The location is no longer one of this node's locations or you untrusted it, or the client check is off.",
     fix: 'Test the address yourself, then put it in use.',
   },
   // --- preflight: selection -------------------------------------------------------------
@@ -732,14 +726,14 @@ const COPY = {
   locations_refused: {
     label: 'Locations refused recently',
     explain:
-      'Every location that could take this refused to create an address for this node in the last few hours, so automatic work waits instead of being refused again.',
-    fix: 'Raise the quota or fix the setting the provider named, then add an address there by hand, or add another location to the node.',
+      'Every location that could take this refused to create an address for this node in the last few hours, so automatic work waits.',
+    fix: 'Fix the quota or setting the provider named and add an address there by hand, or add another location.',
   },
   // A rotation event: the run's create was refused for good, so the node's automatic work keeps out of the location.
   location_held: {
     label: 'Location held',
     explain:
-      "The provider refused to create this address for good, so this node's automatic work keeps out of the location for 6 hours and takes the next one.",
+      "The provider refused this create for good, so this node's automatic work skips the location for 6 hours.",
   },
   account_not_found: {
     label: 'Account not found',
@@ -785,7 +779,7 @@ const COPY = {
   dns_account_not_fronting: {
     label: 'DNS account, not a front',
     explain:
-      'The named account is a DNS account set to DNS only: it holds the records FCP writes for L7 fronts and carries no member traffic.',
+      'This is a DNS-only account. It holds the records for L7 fronts and carries no member traffic.',
     fix: 'Pick an edge provider account, or set this account to DNS and fronting on its page.',
   },
   template_not_found: {
@@ -811,85 +805,78 @@ const COPY = {
   origin_cert_not_public: {
     label: 'Origin certificate not public',
     explain:
-      'A front that dials the origin over TLS needs the origin to present a publicly trusted certificate.',
+      'A front that dials the origin over TLS needs a publicly trusted certificate on the origin.',
     fix: 'Give the origin a publicly trusted certificate, or let the front dial it over plain HTTP.',
   },
   origin_cert_name_uncovered: {
-    label: 'Origin name not on its certificate',
+    label: 'Origin hostname not on certificate',
     explain:
-      'Over TLS the front checks the origin by the address it dials, so that address must be a name the origin’s certificate covers. An IP address never is.',
-    fix: 'Address the origin by a name on its certificate, or add the name to the certificate.',
+      'Over TLS the front dials the origin by a hostname its certificate must cover, never by IP address.',
+    fix: 'Address the origin by a hostname on its certificate, or add the hostname to the certificate.',
   },
   origin_port_unsupported: {
     label: 'Origin port not supported',
     explain:
-      'This front cannot dial the origin on that port. A Fastly front reaches it only on the scheme’s own port (443 over TLS, 80 over plain HTTP), a CloudFront front on 80, 443 or any port from 1024.',
+      'This front cannot dial the origin on that port. Fastly dials only 443 over TLS or 80 over plain HTTP, CloudFront 80, 443 or 1024 and up.',
     fix: 'Move the origin listener to a port this front dials.',
   },
   origin_not_a_name: {
-    label: 'Origin is an address',
-    explain:
-      'A CloudFront front dials its origin by DNS name, never by IP address, so this origin cannot sit behind it.',
-    fix: 'Give the node a DNS name (its certificate name, over TLS) and register the origin by that name.',
+    label: 'Origin is an IP address',
+    explain: 'A CloudFront front dials its origin by hostname, never by IP address.',
+    fix: 'Give the node a hostname, the one on its certificate for TLS, and register the origin by it.',
   },
   retest_required: {
     label: 'Test again',
-    explain:
-      'A certificate setting of this account changed, and the last test checked the old one (the CAA records for one name say nothing about the shared wildcard).',
+    explain: 'A certificate setting of this account changed since the last test.',
     fix: 'Test the account again.',
   },
   // --- an L7 front's certificate (L7_CERTIFICATE_CODES) ---------------------------------
   caa_forbids_ca: {
     label: 'CAA forbids the CA',
-    explain:
-      'The zone’s CAA records do not let the account’s certificate authority issue. Certainly is named certainly.com, Let’s Encrypt letsencrypt.org and GlobalSign globalsign.com, under issue for one name and issuewild for the shared wildcard certificate. A Cloudflare zone’s certificate comes from letsencrypt.org, pki.goog or ssl.com, and the records must allow one of them for its wildcard.',
-    fix: 'Add a CAA record that allows the certificate authority, or pick one the records allow, then test the account again.',
+    explain: "The zone's CAA records do not allow the account's certificate authority to issue.",
+    fix: "Allow the authority under issue, or issuewild for the shared wildcard, then test again. Certainly is certainly.com, Let's Encrypt letsencrypt.org, GlobalSign globalsign.com, and a Cloudflare zone uses letsencrypt.org, pki.goog or ssl.com.",
   },
   edge_certificate_missing: {
     label: 'No edge certificate',
     explain:
-      'The zone has no certificate for its first-level names, active or on its way, so a front there cannot serve HTTPS.',
-    fix: 'Turn Universal SSL on for the zone at the provider (or order a certificate for its wildcard), then check the location again.',
+      'The zone has no certificate for its first-level subdomains, so a front there cannot serve HTTPS.',
+    fix: 'Turn on Universal SSL for the zone at the provider, or order a wildcard certificate, then check the location again.',
   },
   edge_certificate_pending: {
     label: 'Edge certificate on its way',
-    explain:
-      'The zone’s certificate for its first-level names is still being issued, so the front waits for it.',
-    fix: 'Nothing to do: the front carries on once the provider has issued it.',
+    explain: "The zone's certificate for its first-level subdomains is still being issued.",
+    fix: 'Nothing to do. The front carries on once it is issued.',
   },
   domain_not_activated: {
-    label: 'Name not activated yet',
+    label: 'Hostname not activated yet',
     explain:
-      'The certificate is issued, but the provider has not activated it for the front’s own name, and it routes no traffic for a name without one (it answers “unknown domain”).',
-    fix: 'Usually nothing: the front carries on once the provider activates it. If it times out, replace the front.',
+      'The certificate is issued, but the provider has not activated it for the front\'s hostname, so it answers "unknown domain".',
+    fix: 'Usually nothing, as the front carries on once it is activated. If it times out, replace the front.',
   },
   tls_caa_conflict: {
     label: 'Certificate blocked by CAA',
-    explain:
-      'The provider reports that the zone’s CAA records stop its certificate authority from issuing, so the certificate waits.',
-    fix: 'Allow the account’s certificate authority in the zone’s CAA records (certainly.com, letsencrypt.org or globalsign.com). Issuance carries on by itself.',
+    explain: "The zone's CAA records stop the provider's certificate authority from issuing.",
+    fix: "Allow the account's authority (certainly.com, letsencrypt.org or globalsign.com) in the zone's CAA records. Issuance resumes by itself.",
   },
   tls_challenge_conflict: {
     label: 'Validation record conflict',
     explain:
-      'Other records sit at the name the certificate is validated with, so the provider cannot validate it.',
-    fix: 'Remove the other records at that name in the DNS zone. Issuance carries on by itself.',
+      'Other records sit at the validation hostname, so the provider cannot validate the certificate.',
+    fix: 'Remove the other records at that hostname. Issuance resumes by itself.',
   },
   tls_challenge_missing: {
     label: 'Validation record missing',
-    explain:
-      'The DNS record the certificate is validated with is missing, or does not hold what the provider expects.',
+    explain: "The certificate's DNS validation record is missing or wrong.",
     fix: 'Check the validation record in the DNS zone, or replace the front so FCP writes it again.',
   },
   tls_authorization_failed: {
-    label: 'Name validation failed',
-    explain: 'The provider could not validate the name the certificate is for.',
+    label: 'Hostname validation failed',
+    explain: "The provider could not validate the certificate's hostname.",
     fix: 'Check the zone’s CAA records and the validation record, then replace the front.',
   },
   tls_authorization_warning: {
     label: 'Certificate warning',
-    explain:
-      'The provider reports a problem with the certificate’s validation that FCP has no words for.',
+    explain: 'The provider reports a certificate validation problem FCP does not recognise.',
     fix: 'Open the certificate at the provider to read the warning.',
   },
   tls_failed: {
@@ -900,25 +887,25 @@ const COPY = {
   certificate_expiring: {
     label: 'Certificate renewal late',
     explain:
-      'The wildcard certificate the account’s fronts share expires within a week, or already has, and the provider has not renewed it.',
-    fix: 'Check what the account page says it waits on, such as the CAA records or the validation record. The provider renews it once that is fixed.',
+      "The account's shared wildcard certificate expires within a week, or already has, and was not renewed.",
+    fix: 'Fix what the account page says it waits on, such as a CAA or validation record. The provider then renews it.',
   },
   shared_certificate_ambiguous: {
     label: 'Wildcard not reusable',
     explain:
-      'The zone’s wildcard is already covered by a certificate this account would not order (another certificate authority or TLS configuration, or several), so a new front cannot share it.',
-    fix: 'Remove that certificate at the provider, match the account’s settings to it, or switch the account to one certificate per front.',
+      "Another certificate this account would not order already covers the zone's wildcard, so a new front cannot share it.",
+    fix: "Remove that certificate at the provider, match the account's settings to it, or switch to one certificate per front.",
   },
   shared_certificate_failed: {
     label: 'Shared certificate failed',
     explain:
-      'The wildcard certificate the account’s fronts share failed to issue, so a new front cannot get one.',
-    fix: 'Fix what the account page says it waited on and retry it at the provider, or switch the account to one certificate per front.',
+      "The account's shared wildcard certificate failed to issue, so a new front cannot get one.",
+    fix: 'Fix what the account page says it waited on and retry at the provider, or switch to one certificate per front.',
   },
   // --- preflight warnings ---------------------------------------------------------------
   edge_disabled: {
     label: 'Edges switched off',
-    explain: 'The master switch is off; the operation runs, but nothing automatic follows.',
+    explain: 'The master switch is off, so this runs but nothing automatic follows.',
   },
   probe_disabled: {
     label: 'Probes off',
@@ -936,13 +923,13 @@ const COPY = {
   },
   l7_manual_only: {
     label: 'CDN fronts are manual',
-    explain: 'CDN auto-select is off; this front will never be picked automatically.',
+    explain: 'CDN auto-select is off, so this front is never picked automatically.',
   },
   // --- attention kinds ------------------------------------------------------------------
   quarantine: {
     label: 'Quarantine',
     explain:
-      'A rotation left the backend Hosts uncertain; the origin is frozen until you resolve it.',
+      'A rotation left the backend Hosts in an unknown state, so the origin is frozen until you resolve it.',
     fix: 'Inspect the live Hosts and keep the previous or the current binding.',
   },
   needs_operator: {
@@ -973,7 +960,7 @@ const COPY = {
   block_simulated: {
     label: 'Test block running',
     explain:
-      'Test block evidence is running on this deployment: the detector treats an address as blocked and can replace it for real.',
+      'A test block is running, and the detector may really replace the address it treats as blocked.',
     fix: 'End the test on the origin page when you are done.',
   },
   edge_unreachable: {
@@ -983,25 +970,25 @@ const COPY = {
   probe_source_failing: {
     label: 'A probe source is failing',
     explain:
-      'A reachability source has brought back nothing for hours. A failure is never read as a block, so the countries it alone covers read as not known.',
+      'A reachability source has returned nothing for hours, so countries only it covers read as not known.',
     fix: 'Check its credential and budget in Edges settings, Probes.',
   },
   country_wide_failure: {
     label: 'Failing from a whole country',
     explain:
-      'Most addresses checked from this country failed at once. A censor does not block every provider together, an outage or a probe problem does, so FCP holds these as not known instead of blocked.',
+      'Most addresses checked from this country failed at once, which points at an outage or a probe problem, so FCP reads them as not known.',
     fix: 'Look at the probe sources on the Probes page, then check again later.',
   },
   new_edge_blocked_in: {
-    label: 'New address blocked in a country',
+    label: 'Spare blocked in a country',
     explain:
-      'A spare address that was never in use is blocked from at least one censored country while it works from elsewhere. Members there could not use it.',
+      'A spare that was never in use is blocked from a censored country but works from elsewhere.',
     fix: 'Replace the spare, or mark the country if you know better.',
   },
   certificate_waiting: {
     label: 'Certificate waiting',
     explain:
-      'A front’s certificate cannot be issued until something outside FCP changes, such as a CAA record or the validation record in the DNS zone.',
+      "A front's certificate waits on a change outside FCP, such as a CAA or validation record in the DNS zone.",
     fix: 'Open it to see what the certificate waits on.',
   },
   setup_run_failed: {
@@ -1017,14 +1004,14 @@ const COPY = {
   go_live_pending: {
     label: 'Go-live pending',
     explain:
-      'An edge is published for this origin but its delivery binding is still deferred, so members keep the direct address.',
+      'An edge is published but this origin has not gone live, so members keep the direct address.',
     fix: 'Finish the guided setup to go live.',
   },
   pool_rebalance: {
-    label: 'Make room for what is missing',
+    label: 'Make room in the pool',
     explain:
-      'A transport or a provider of this node has no published address, every pool slot is taken and the pool is at its cap.',
-    fix: 'Rebalance: one redundant address goes back to standby so the missing one can be published.',
+      'A transport or provider of this node has no published address, and the pool is full at its cap.',
+    fix: 'Rebalance to send one redundant address back to standby and publish the missing one.',
   },
   pick_cooling: {
     label: 'A location is cooling',
@@ -1034,74 +1021,74 @@ const COPY = {
   reduced_resilience: {
     label: 'No backup elsewhere',
     explain:
-      'Members on these transports get no backup at another provider: every location that carries them is one provider.',
+      'Members on these transports have no backup at another provider, because every location carrying them is at one provider.',
     fix: 'Add a location of another provider to this node.',
   },
   needs_test: {
-    label: 'Blocked and the spare is untested',
+    label: 'Blocked, spare untested',
     explain:
-      "The address on this node looks blocked and automatic replacement has no tested spare, and FCP's own client check cannot make and check one (it is off or not answering, or none of this node's locations can take one).",
-    fix: "Turn on FCP's own client check and add a location to this node, or test the spare address with a real session, then replace.",
+      "This node's address looks blocked. Automatic replacement has no tested spare, and FCP's client check cannot make one because it is off or not answering, or no location of this node can take one.",
+    fix: "Turn on FCP's client check and add a location to this node, or test the spare with a real session, then replace.",
   },
   auto_replace_held: {
     label: 'Automatic replacement held',
     explain:
-      'A replacement address was blocked again soon after it went into use, so FCP stopped replacing this transport automatically instead of burning address after address. Either an account that received it gave it away, or a network there now refuses every address of this provider.',
-    fix: 'Check whether other sites on the same provider fail from that country. If they do, a new address will not help, so leave it held; if not, look at who receives this transport. Then resume automatic replacement on the node page.',
+      'A replacement was blocked again soon after going into use, so FCP stopped replacing this transport. A member may have leaked it, or the network now blocks this whole provider.',
+    fix: 'Check whether other sites on this provider fail from that country too. If they do, leave it held, since a new address will not help. If not, check who receives this transport, then resume automatic replacement on the node page.',
   },
   meant_for_blocked: {
     label: 'Location blocked for its country',
     explain:
-      'This location is meant for a country, but it is blocked from there: a mark on it, its grade, or every address of it in use there. Members in that country are handed other addresses until it works again.',
+      'This location is set for a country, but its checks show it blocked there, so members there get other addresses until it works again.',
     fix: 'Pick another location for that country on the account page, or mark this one if the checks are wrong.',
   },
   audience_only_left: {
     label: 'Only contained addresses left',
     explain:
-      'Every address this transport has in use is only for some countries, so members with no country, or in any other country, get none for it.',
-    fix: 'Put an address for everyone in use on this transport, in a location that is not only for some countries.',
+      'Every address this transport has in use is limited to some countries, so members elsewhere or with no country get none.',
+    fix: 'Put an address for everyone in use on this transport, in a location not limited to some countries.',
   },
   audience_idle: {
     label: 'Contained addresses unused',
     explain:
-      'This node has addresses only for some countries in use, and ordering by country is off, so nobody is handed them.',
+      'This node has country-only addresses in use, but ordering by country is off, so nobody gets them.',
     fix: 'Turn ordering by country back on under Settings, or switch those locations back to everyone.',
   },
   audience_pool_down: {
     label: 'Country on shared addresses',
     explain:
-      'This country is on its own addresses on this node, but every one of them for this transport is blocked there or cannot be handed out. Its members are handed shared addresses until one of theirs works again, and their reports still never replace a shared address.',
-    fix: "Replace the country's own address (Replace now, or wait for tomorrow's budget), or stop the country's own addresses on this node.",
+      "This country's own addresses for this transport on this node are all blocked there or cannot be handed out. Its members get shared addresses until one of theirs works, and their reports still never replace a shared address.",
+    fix: "Replace the country's own address now or wait for tomorrow's budget, or stop the country's own addresses on this node.",
   },
   country_defaults_waiting: {
     label: 'Country defaults waiting',
     explain:
-      "A country's default picks are not written on this node yet: it needs the rendezvous walk, ordering by country, room in its pool, or room for more locations (six at most) first. Its members there keep the shared addresses meanwhile.",
-    fix: 'Switch the node to the rendezvous walk on the node page (it moves members once), turn on ordering by country, or opt the node out of that country.',
+      "A country's default picks are not on this node yet. It first needs the rendezvous walk, ordering by country, room in its pool, or room for more locations (six at most). Members there keep the shared addresses meanwhile.",
+    fix: 'Switch the node to the rendezvous walk on its page (members move once), turn on ordering by country, or opt the node out of that country.',
   },
   audience_stale_keys: {
     label: 'Keys not moved to own addresses',
     explain:
-      "Keys of this country on this node still hold a body from before it moved to its own addresses. Their apps have not refreshed, so they keep the shared addresses, which are no longer replaced because of this country's reports.",
-    fix: 'Nothing to do for most: they move at their next refresh. Members who never refresh need to update their subscription in the app.',
+      "Some keys of this country on this node have not refreshed since it moved to its own addresses. They keep the shared addresses, which this country's reports no longer replace.",
+    fix: 'Most move at their next refresh. Members who never refresh need to update their subscription in the app.',
   },
   location_short: {
     label: 'Location short of addresses',
     explain:
-      'A location of this node is set to hold a number of addresses of each transport, and it holds fewer. Automatic upkeep publishes a spare there first, then buys one there, unless something below holds it back.',
+      'This location holds fewer addresses of a transport than it is set to. Upkeep publishes a spare there first, then buys one, unless something below holds it back.',
     fix: 'Clear what holds it back, add a spare address there, or lower the count on the node page.',
   },
   location_refused: {
     label: 'A location refused an address',
     explain:
-      "The provider refused to create an address for this node in this location (a quota, or a setting it rejects), so automatic work makes this node's next address in another location for a while.",
-    fix: "Read the provider's reason on the failed run, then raise the quota or fix the setting. Adding an address there by hand lifts the hold once it is created.",
+      "The provider refused to create an address here over a quota or a setting, so this node's automatic work uses another location for a while.",
+    fix: "Read the provider's reason on the failed run and fix the quota or setting. An address you add there by hand lifts the hold.",
   },
   open_lane_empty: {
     label: 'No open address',
     explain:
-      'This node hands its trusted addresses only to paid members and older accounts. Its open addresses, which new and suspected accounts get, are all gone, so those members get nothing until one is replaced.',
-    fix: 'Wait for the next open address (its own daily budget), add one, or raise the open addresses wanted on the node.',
+      "This node's open addresses, the ones new and suspected accounts get, are all gone, so those members get nothing until one is replaced.",
+    fix: 'Wait for the next open address, add one, or raise the open addresses wanted on the node.',
   },
   audience_budget: {
     label: 'Country budget used',
@@ -1112,24 +1099,24 @@ const COPY = {
   open_lane_budget: {
     label: 'Open address budget used',
     explain:
-      "The open addresses were replaced as often as today's budget allows. They are expected to be blocked, so they never use the replacements kept for trusted addresses.",
+      "Open addresses were replaced as often as today's budget allows. They never use the replacements kept for trusted addresses.",
     fix: 'They are replaced again tomorrow (UTC). Raise the budget under Settings if needed.',
   },
   lanes_need_spread: {
     label: 'Spread members first',
     explain:
-      'Trusted addresses only stay out of reach if the members of a blocked address scatter. Spread members over the addresses on this node first.',
+      "Trusted addresses stay out of reach only if members of a blocked address scatter, so spread members over this node's addresses first.",
   },
   single_address: {
     label: 'Only one address in use',
     explain:
-      'This node is set to keep more than one address in use, but only one is. If it is blocked, members have no other address to use while FCP replaces it, which takes about 10 to 15 minutes.',
-    fix: 'Put a second address in use. If one is enough for this node, set Published edges wanted to 1.',
+      'Only one address is in use where more are wanted, so a block leaves members with nothing for the 10 to 15 minutes a replacement takes.',
+    fix: 'Put a second address in use. If one is enough, set Published edges wanted to 1.',
   },
   spare_untested: {
     label: 'Spare address untested',
     explain: 'A spare address exists but has not been tried with a real session yet.',
-    fix: 'Test it once; automatic replacement can then use it.',
+    fix: 'Test it once, and automatic replacement can then use it.',
   },
   retest_needed: {
     label: 'Retest needed',
@@ -1138,10 +1125,10 @@ const COPY = {
     fix: 'Test the address again against its current configuration.',
   },
   address_name_stuck: {
-    label: 'Address name stuck',
+    label: 'Address hostname stuck',
     explain:
-      'FCP could not make, move or remove the name of a load balancer address after several tries. A name it was removing may still point at an address that went back to its provider.',
-    fix: 'Open the address. Remove its records in the DNS zone by hand if they are still there, then press Dismiss; or press New name.',
+      "FCP failed several times to create, move or remove a load balancer address's hostname, and one it was removing may still point at a released address.",
+    fix: 'Open the address and remove its records in the DNS zone by hand if they are still there, then press Dismiss, or press New hostname.',
   },
   test_key_cleanup: {
     label: 'Test key not removed',
@@ -1149,26 +1136,26 @@ const COPY = {
     fix: 'Check the server, remove the key by hand if it is still there, then retry the cleanup.',
   },
   direct_host_reappeared: {
-    label: 'Direct address back in the backend',
+    label: 'Direct address reappeared',
     explain:
-      'A backend Host on a fronted node hands out the node address itself, or an address FCP cannot tell apart from it, and was re-enabled or added. Until it is hidden, members on the node are refused a body, or get one without that entry.',
+      "A backend Host handing out a fronted node's own address was re-enabled or added. Until it is hidden, members get no body or one without that entry.",
     fix: 'Hide it in the backend, or add it to the fronted node so FCP hides it for you.',
   },
   front_host_unused: {
     label: 'Old front no longer used',
     explain:
-      'A backend Host on a fronted node dials a front FCP did not build, such as a load balancer made by hand. It is not the node, and members no longer get it in their subscriptions, but an app that has not fetched its subscription since the node went live still connects through it.',
-    fix: 'Once its traffic stops, delete that front at its provider, and its Host in the backend. A member whose app stops connecting then updates the subscription in the app.',
+      'A backend Host on a fronted node dials a front FCP did not build, such as a hand-made load balancer. Members no longer get it, but apps not refreshed since go-live still use it.',
+    fix: 'Once its traffic stops, delete the front at its provider and its Host in the backend. Members whose app stops connecting should update their subscription.',
   },
   restore_in_progress: {
     label: 'Restoring the direct address',
-    explain:
-      'FCP is settling its Host changes on this node, releasing edge-required delivery and putting the direct addresses back, one checked step at a time.',
-    fix: 'Nothing yet. Open the node to watch it finish; other changes to it wait until then.',
+    explain: 'FCP is putting the direct addresses back on this node, one checked step at a time.',
+    fix: 'Nothing yet. Open the node to watch it. Other changes to it wait until it finishes.',
   },
   maintenance_frozen: {
     label: 'Maintenance freeze on',
-    explain: 'No new edge work is admitted while the maintenance switch is on.',
+    explain:
+      'No new edge job starts while the maintenance switch is on. Jobs already running finish.',
     fix: 'Thaw when the maintenance is over.',
   },
   // --- layer exclusions -----------------------------------------------------------------
@@ -1183,8 +1170,8 @@ const COPY = {
   host_header_rejected: {
     label: 'Host header rejected',
     explain:
-      'The node accepts only its own names as the HTTP Host header, so the CDN hostname is refused.',
-    fix: 'Let the transport accept any Host header, or add the edge names to the certificate.',
+      'The node accepts only its own hostnames in the Host header, so the CDN hostname is refused.',
+    fix: 'Let the transport accept any Host header, or add the edge hostnames to the certificate.',
   },
   origin_plaintext: {
     label: 'Origin is plaintext',
@@ -1192,8 +1179,8 @@ const COPY = {
       'The origin speaks plaintext HTTP behind the CDN, so it cannot be reached directly on L4.',
   },
   no_server_names: {
-    label: 'No server names',
-    explain: 'The listener presents no certificate name, so a CDN front cannot dial it over TLS.',
+    label: 'No SNIs',
+    explain: 'The listener has no SNI, so a CDN front cannot dial it over TLS.',
   },
   cert_not_public: {
     label: 'Certificate not public',
@@ -1201,20 +1188,19 @@ const COPY = {
     fix: 'Use a publicly trusted certificate on the node.',
   },
   cert_name_uncovered: {
-    label: 'Name not on certificate',
-    explain: 'An active server name is not covered by the origin certificate.',
-    fix: 'Add the name to the certificate or retire it on the listener.',
+    label: 'SNI not on certificate',
+    explain: 'An active SNI is not covered by the origin certificate.',
+    fix: 'Add the SNI to the certificate or retire it on the listener.',
   },
   project_unresolved: {
     label: 'No project to create in',
     explain:
-      "This Scaleway location names no Project id, and the API key's default project could not be read, so nothing can be created there.",
+      "This Scaleway location has no Project id, and the API key's default project could not be read.",
     fix: 'Set the Project id on the location, or let the key read its own details in IAM and test the account again.',
   },
   size_not_multicloud: {
     label: 'Size takes Scaleway servers only',
-    explain:
-      'This size only accepts servers hosted at Scaleway. Pick a multi-cloud size (L or XL).',
+    explain: 'This size only accepts servers hosted at Scaleway.',
     fix: "Set the location's size, or the node's own size option, to a multi-cloud one such as LB-GP-L or LB-GP-XL.",
   },
   origin_not_public: {
@@ -1224,14 +1210,14 @@ const COPY = {
     fix: "Give the node's public IP address.",
   },
   origin_not_ip: {
-    label: 'Address is a name',
-    explain: 'A load balancer forwards to an IP address, never to a name.',
+    label: 'Address is a hostname',
+    explain: 'A load balancer forwards to an IP address, never to a hostname.',
     fix: "Give the node's public IP address.",
   },
   l4_not_for_websocket: {
     label: 'No load balancer for WebSocket',
     explain:
-      "A load balancer cannot front a WebSocket node: members would send the node's own name, which certificate logs list and one block takes out.",
+      "A load balancer cannot front a WebSocket node, because members would send the node's own hostname, which certificate logs expose.",
     fix: 'Use a CDN.',
   },
   // --- delivery unavailable -------------------------------------------------------------
@@ -1256,20 +1242,20 @@ const COPY = {
   no_entries: {
     label: 'App gets no connection',
     explain:
-      "The panel served this app no connection at all, because the app's format cannot carry the node's protocol. An old Clash app has no VLESS, and sing-box has no XHTTP. More addresses would not change it.",
-    fix: 'Members on such an app need one that supports the mode, such as a Mihomo (Clash Meta) app. Where FCP can tell the app is the reason, it sends the app a notice instead (App too old: notice sent).',
+      "The panel served this app no connection because its format cannot carry the node's protocol, such as VLESS on an old Clash app or XHTTP on sing-box.",
+    fix: 'Members need an app that supports the mode, such as a Mihomo (Clash Meta) app. Where FCP can tell, it sends the app a notice instead.',
   },
   // Counted beside the refusals: the app got the notice config in place of a connection.
   app_notice: {
     label: 'App too old: notice sent',
     explain:
-      "The panel served this app no connection, because the app cannot speak the mode (an old Clash app has no VLESS, and sing-box has no XHTTP). FCP answered with a small config whose only entries tell the member to install a current app, and the member's account page says so for a week. More addresses would not change it.",
+      'The app cannot speak this mode, so FCP served a config whose entries tell the member to install a current app, and their account page says so for a week.',
   },
   // A preview's per-listener note: the family's format has no way to carry the listener.
   family_cannot_carry: {
     label: 'App cannot carry this listener',
     explain:
-      'This app cannot speak what the listener speaks, so the panel gives it no entry for it. sing-box has no XHTTP, for one.',
+      'This app cannot speak what the listener speaks, such as XHTTP on sing-box, so the panel gives it no entry.',
     fix: 'Members on such an app need one that speaks it, such as a Mihomo (Clash Meta) app.',
   },
   no_match: {
@@ -1284,12 +1270,12 @@ const COPY = {
   },
   leak_detected: {
     label: 'Origin leak detected',
-    explain: 'An outgoing entry still carried the origin address; the body was withheld.',
+    explain: 'An outgoing entry still carried the origin address, so the body was withheld.',
   },
   render_failed: {
     label: 'Could not rewrite',
     explain:
-      'The body could not be rewritten in this format for a reason other than a missing or mismatched entry, so it was withheld.',
+      'The body could not be rewritten in this format for another reason, so it was withheld.',
   },
   // --- extra server codes the components may meet (vetoes, host states) ------------------
   node_offline: {
@@ -1304,29 +1290,29 @@ const COPY = {
   own_pool: {
     label: 'Country on its own addresses',
     explain:
-      'Every report of this block comes from countries on their own addresses on this node. Their members are handed their own addresses, so a shared address is not replaced for them.',
+      'Every report of this block comes from countries on their own addresses on this node, so the shared address is not replaced for them.',
   },
   outside_audience: {
     label: 'Blocked only outside its countries',
     explain:
-      'This address is only for some countries, and every report of a block comes from elsewhere, where nobody is handed it. It is not replaced.',
+      'This address is only for some countries, and every block report comes from elsewhere, so it is not replaced.',
   },
   country_scoped: {
     label: 'Routed around by country',
     explain:
-      'The address is blocked only where the reports come from, and members there already get another address that works, so it is not replaced for everyone.',
+      'Members where the reports come from already get another working address, so this one is not replaced for everyone.',
   },
   // Probe evidence for an address blocked since its first check (sustained unreachability).
   never_reached: {
     label: 'Never reached from there',
     explain:
-      'Checks from that country have never reached this address, from several networks over hours, while the node’s other addresses are reached from there, so it counts as blocked there.',
+      "Checks from several networks in that country have never reached this address over hours, while the node's other addresses get through, so it counts as blocked there.",
     fix: 'Replace it, or mark the country if you know better.',
   },
   country_wide: {
     label: 'Everything fails there at once',
     explain:
-      'Every address fails from the countries the reports come from at the same time, which points at an outage or a probe problem, so nothing is replaced.',
+      'Every address fails at once from the reporting countries, which points at an outage or a probe problem, so nothing is replaced.',
   },
   no_load_signal: {
     label: 'No load signal',
@@ -1341,7 +1327,7 @@ const COPY = {
   lb_unusable: {
     label: 'Load balancer unusable',
     explain:
-      'The load balancer is in a state it does not leave by itself (an error, a lock, stopped or being deleted), so it will not apply anything. What was built is kept.',
+      'The load balancer is stuck in an error, lock, stopped or deleting state and will not apply anything. What was built is kept.',
     fix: "Look at the load balancer in the provider's console, then delete this address and try again.",
   },
   lb_settle_timeout: {
@@ -1354,20 +1340,20 @@ const COPY = {
   reapplied: {
     label: 'Saved the address again',
     explain:
-      'The new address could not be reached from outside, so its configuration was saved again at the provider, unchanged, and it is being checked afresh.',
+      'The new address was unreachable from outside, so FCP saved its configuration again unchanged and is checking it afresh.',
   },
   // A provider refused a create for good (a 4xx such as a validation error): retrying cannot help.
   create_refused: {
     label: 'Create refused',
     explain:
-      "The provider refused to create this with the settings FCP sent (a quota, or a setting it rejects), so trying again would be refused the same way. Its own reason is shown with the failure, and this node's automatic work takes another location for a while.",
-    fix: "Read the provider's reason, then raise the quota or change the location or template setting it names. An address the provider built nothing for is removed by itself; delete any other one once you have read it.",
+      "The provider refused to create this with FCP's settings, so a retry would fail the same way, and this node's automatic work uses another location for a while.",
+    fix: "Read the provider's reason and fix the quota, location or template setting it names. Delete the address afterwards if FCP did not remove it.",
   },
   // A provider refused the arguments of an address allocation (a 400): retrying cannot help.
   ip_allocation_refused: {
     label: 'Address allocation refused',
     explain:
-      'The provider refused the request for a new address, so trying again would be refused the same way.',
+      'The provider refused the request for a new address, so a retry would fail the same way.',
     fix: "Check the location's Project id, and that the API key may create addresses in that project, then try again.",
   },
   // Why a node's transports have no backup at another provider (`reduced_resilience`).
@@ -1385,15 +1371,14 @@ const COPY = {
   version_invalid: {
     label: 'Configuration refused',
     explain:
-      'The provider refused the configuration FCP generated for this front, so it was never activated. Trying again would be refused the same way.',
-    fix: 'Open the front’s service at the provider: its draft version shows why. Then delete the front.',
+      'The provider refused the configuration FCP generated for this front, so it never went live and a retry would fail the same way.',
+    fix: "Open the front's service at the provider, where its draft version shows why, then delete the front.",
   },
   // CloudFront answers (the adapter's short codes and AWS exception names).
   alias_in_use: {
-    label: 'Front name taken',
-    explain:
-      'Another CloudFront distribution, in this AWS account or any other, already serves this front name, so CloudFront refused to create one more.',
-    fix: 'Delete this front and front the node again: the next front gets a new name.',
+    label: 'Front hostname taken',
+    explain: 'Another CloudFront distribution, in any AWS account, already serves this hostname.',
+    fix: 'Delete this front and front the node again to get a new hostname.',
   },
   distribution_disabled: {
     label: 'Distribution disabled',
@@ -1404,25 +1389,25 @@ const COPY = {
   origin_request_policies_full: {
     label: 'No room in the policies',
     explain:
-      'Every origin request policy FCP may use in this AWS account already serves 100 distributions, and the account holds no room for another policy (20 at most).',
+      'Every origin request policy FCP may use in this AWS account serves 100 distributions, and the account is at its limit of 20 policies.',
     fix: 'Delete fronts this account no longer needs, or remove custom origin request policies nothing uses.',
   },
   certificate_listing_truncated: {
     label: 'Too many certificates',
     explain:
-      'The AWS account holds more ACM certificates than FCP reads in one look, so it cannot tell whether the zone already has its wildcard and orders none.',
+      'The AWS account has more ACM certificates than FCP reads at once, so it cannot tell whether the zone has its wildcard and orders none.',
     fix: 'Delete certificates nothing uses in us-east-1, then try again.',
   },
   distribution_shared: {
-    label: 'Distribution serves other names',
+    label: 'Distribution serves other hostnames',
     explain:
-      'This CloudFront distribution also serves other names. FCP deletes what it imports, so it imports a distribution that serves the front name alone.',
-    fix: 'Import a distribution that serves only this front name.',
+      'This CloudFront distribution serves other hostnames too, and FCP deletes what it imports.',
+    fix: "Import a distribution that serves only this front's hostname.",
   },
   invalid_viewer_certificate: {
     label: 'Certificate refused',
     explain:
-      'CloudFront refused the front’s certificate: it is not issued yet, or it does not cover the front name.',
+      "CloudFront refused the front's certificate: it is not issued yet or does not cover the front's hostname.",
     fix: 'Check the zone’s shared certificate on the account page, then try again.',
   },
   invalid_client_token_id: {
@@ -1459,14 +1444,14 @@ const COPY = {
   pool_reserved: {
     label: 'Slot held',
     explain:
-      'The free pool slots are held for what this origin still lacks: a listener with no published edge, or a location of its provider set with nothing published. An edge that fills none of them stays a standby.',
+      'The free pool slots are held for a listener with no published edge, or a location in the provider set with nothing published, so this edge stays a standby.',
     fix: 'Replace a published edge with it, publish an edge where one is missing, or remove that location from the provider set.',
   },
   location_untrusted: {
     label: 'Missing location not trusted yet',
     explain:
-      'The free pool slots are held for a location of the node where no address was tested yet. Automatic upkeep adds none there, and an address anywhere else would stay a spare.',
-    fix: 'Add a spare address in that location and test it: it then goes in use.',
+      'The free pool slots are held for a location with no tested address, where upkeep adds none, so an address elsewhere stays a spare.',
+    fix: 'Add a spare in that location and test it, and it goes into use.',
   },
   pool_raised: {
     label: 'Pool size raised',
@@ -1476,19 +1461,19 @@ const COPY = {
   listener_cap: {
     label: 'Listener cap reached',
     explain:
-      'An origin can carry at most eight deployed, enabled listeners, each with its own slot in the pool; this one would be the ninth.',
+      'An origin can carry at most eight deployed, enabled listeners, and this would be the ninth.',
     fix: 'Retire or disable a listener you do not need, or register the listener on another origin.',
   },
   pool_below_coverage: {
     label: 'Pool below coverage',
     explain:
-      'The published edges wanted cannot go below the number of deployed, enabled listeners: each needs a slot of its own.',
+      'The published edges wanted cannot go below the number of deployed, enabled listeners.',
     fix: 'Retire or disable a listener first, then lower the published edges wanted.',
   },
   no_duplicate: {
     label: 'Nothing to rebalance',
     explain:
-      'Every published edge is the template edge of its listener; there is no duplicate to unpublish.',
+      "Every published edge is its listener's template edge, so there is no duplicate to unpublish.",
     fix: 'Raise the published edges wanted, or retire a listener you do not need.',
   },
   setup_owned: {
@@ -1512,7 +1497,7 @@ const COPY = {
   fleet_brake: {
     label: 'Automatic replacement held',
     explain:
-      'Many nodes look blocked at once, which points at a block on a whole provider or protocol, so FCP holds every automatic replacement instead of burning addresses.',
+      'Many nodes look blocked at once, which points at a provider or protocol block, so FCP holds all automatic replacement.',
     fix: 'Check the probes and the reports. It releases by itself once fewer nodes look blocked.',
   },
   fleet_rotation_cap: {
@@ -1535,13 +1520,13 @@ const COPY = {
   rotation_stuck: {
     label: 'Replacement stuck',
     explain:
-      'A rotation has been running for over an hour: a provider or the backend may not be answering.',
+      'A rotation has run for over an hour, so a provider or the backend may not be answering.',
     fix: 'Open the node to see the step it is waiting on.',
   },
   account_api_failing: {
     label: 'Provider not answering',
     explain:
-      'Several calls in a row to this provider account failed (timeouts, errors on its side or refused credentials), so new edges, health checks and clean-ups stall.',
+      'Several calls in a row to this provider account failed, so new edges, health checks and clean-ups stall.',
     fix: 'Check the provider status and the account credentials, then test them.',
   },
   health_stale: {
@@ -1553,14 +1538,14 @@ const COPY = {
   billable_idle: {
     label: 'Paid for, serving nobody',
     explain:
-      'Edges that cost money serve no member until you act: the node is paused for safety, or an edge waits for an operator.',
-    fix: 'Resolve the pause or the edge, so the resources are used or removed.',
+      'Paid edges serve no member until you act, because the node is paused for safety or an edge waits for you.',
+    fix: 'Resolve the pause or the edge so the resources are used or removed.',
   },
   delivery_refusals: {
     label: 'Members refused',
     explain:
-      'Members asked for their subscription in the last hour and got nothing usable. The reasons are counted.',
-    fix: 'Look at the reasons: a switch that is off, an empty pool or a node that is not live. An app that gets no connection needs another app, not another address.',
+      'Members fetched their subscription in the last hour and got nothing usable, counted by reason.',
+    fix: 'Check the reasons: a switch that is off, an empty pool or a node not live. An app with no connection needs another app, not another address.',
   },
   family_rule_disabled: {
     label: 'App family switched off',
@@ -1570,8 +1555,7 @@ const COPY = {
   },
   node_ready_to_protect: {
     label: 'Node ready to front',
-    explain:
-      'An enrolled node meant to sit behind an edge is ready, and nothing fronts it until you start.',
+    explain: 'An enrolled node is ready, and nothing fronts it until you start.',
     fix: 'Start fronting it.',
   },
   node_awaiting_approval: {
@@ -1599,8 +1583,7 @@ const COPY = {
   // --- freedom modes only through edges (a node held back from a freedom mode's members) ---
   freedom_node_withheld: {
     label: 'Freedom node held back',
-    explain:
-      'This node of a freedom mode has no live edge in front of it, and freedom members are only given fronted nodes, so they are not given this one.',
+    explain: 'This freedom-mode node has no live edge, and freedom members only get fronted nodes.',
   },
   withheld_unmanaged: {
     label: 'Not enrolled or fronted',
@@ -1643,39 +1626,39 @@ const COPY = {
   off_network: {
     label: 'Not on the transport’s network',
     explain:
-      'This transport’s server names are sites on one network, so only addresses from that network may front it. This place, or this address, is not on it, or its network is not known yet.',
+      "This transport's SNIs are sites on one network, so only addresses on that network may front it, and this one is not or its network is unknown.",
     fix: 'Pick a location on that network, or set the location’s network on its provider account.',
   },
   sni_family_thin: {
-    label: 'Few names in a name list',
+    label: 'Few SNIs in a list',
     explain:
-      'A name list on a network, used by a port, has fewer than three active names that pass their check against its cover site (retired and burned names do not count). A name blocked in one country is a last resort elsewhere, so a list this small runs out fast.',
-    fix: 'Open the list and look for more names: its cover site’s certificate, certificate logs, or sites on its network.',
+      'An SNI list a port uses has fewer than three active SNIs that pass their cover site check, so it runs out fast.',
+    fix: "Open the list and find more SNIs in its cover site's certificate, certificate logs or sites on its network.",
   },
   edge_off_network: {
     label: 'Address off its network',
     explain:
-      'An address in use on a transport scoped to a network is not on that network: whoever compares its server name with the address sees two networks.',
+      'An address in use on a network-scoped transport is not on that network, so its SNI and address point at two networks.',
     fix: 'Replace the address with one from a location on the network.',
   },
   list_address_left: {
     label: 'Address left a country list',
     explain:
-      'A list of what works in a country held this address and its newest version does not. Where that country lets through only listed addresses, members there may no longer reach it.',
-    fix: 'Open the address: replace it with one the list holds, or say you saw it if the list is wrong.',
+      "A country's list of what works held this address and its newest version does not, so members there may no longer reach it.",
+    fix: 'Open the address and replace it with one the list holds, or press Seen it if the list is wrong.',
   },
   network_no_ranges: {
     label: 'Network has no ranges',
     explain:
-      'The network this transport is scoped to has no address ranges now (its ASNs changed, or the last read found none), so no address in use can be shown to be on it.',
+      "The transport's network has no address ranges now, so no address in use can be shown to be on it.",
     fix: 'Read the network’s ranges again, check its ASNs, or add ranges by hand.',
   },
   // a price read (`plansError` on a location)
   plan_list_unreadable: {
     label: 'Plan list unreadable',
     explain:
-      "The provider's list of load balancer plans was not a list of named plans, so no size or price could be read.",
-    fix: 'Refresh prices again later; until then the location keeps the plans and prices it read before.',
+      "The provider's load balancer plan list could not be read, so no size or price was taken.",
+    fix: 'Refresh prices later. The location keeps the plans and prices it read before.',
   },
   schema_mismatch: {
     label: 'Answer not understood',
@@ -1684,13 +1667,13 @@ const COPY = {
   account_budget_unlimited: {
     label: 'No daily spending limit',
     explain:
-      'This provider account has a daily allocation budget of 0, which means no limit: a runaway loop could create billable resources without bound.',
+      'A daily allocation budget of 0 means no limit, so a runaway loop could create billable resources without bound.',
     fix: 'Set a daily allocation budget on the account.',
   },
   reality_key_changed: {
     label: 'Node key changed',
     explain:
-      'The node’s REALITY key (or its short ids or clock settings) changed since this address was tried, so nothing has proven the new key through it.',
+      "The node's REALITY key or its settings changed since this address was tried, so the new key is unproven through it.",
     fix: 'Try the address again from a client with the new key.',
   },
   family_disabled: {
@@ -1703,13 +1686,13 @@ const COPY = {
   drain_below_refresh: {
     label: 'Drain shorter than refreshes',
     explain:
-      'A replaced address is removed before apps that check for a new one at the refresh interval have had two chances to do so.',
+      'A replaced address is removed before apps that refresh at the interval get two chances to move.',
     fix: 'Keep the drain time at two refresh intervals or more, or shorten the refresh interval.',
   },
   burned_drain_below_refresh: {
     label: 'Burned drain too short',
     explain:
-      'A burned address is removed before apps outside the blocking country that refresh at the interval have moved to the new one.',
+      'A burned address is removed before apps outside the blocking country have refreshed to the new one.',
     fix: 'Keep the burned drain time at one refresh interval plus 30 minutes or more.',
   },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
@@ -1725,37 +1708,34 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
     fix: 'Enable it on the node in the backend if members should use it.',
   },
   loopback: {
-    label: 'Reached only from inside the node',
+    label: 'Reached only inside the node',
     explain:
-      'The transport listens on a loopback address, so a provider address cannot dial it directly. Something on the node (usually a TLS terminator) accepts outside connections and forwards to it.',
-    fix: 'Add the listener with the port and transport the terminator exposes (Add listener on the origin), or make the transport listen publicly with TLS of its own.',
+      'The transport listens on loopback, so a provider address cannot dial it. Something on the node, usually a TLS terminator, forwards outside connections to it.',
+    fix: 'Add the listener with the port and transport the terminator exposes, or make the transport listen publicly with its own TLS.',
   },
   tag: {
     label: 'Tag cannot be bound',
     explain:
-      'The transport tag uses characters a backend Host cannot bind to (letters, digits and underscores only).',
+      'The transport tag has characters a backend Host cannot bind to. Only letters, digits and underscores work.',
     fix: 'Rename the transport tag in the config profile.',
   },
   protocol: {
     label: 'Protocol not supported',
-    explain:
-      'Edges can carry VLESS, Trojan and Shadowsocks transports; this protocol is not one of them.',
+    explain: 'Edges carry only VLESS, Trojan and Shadowsocks.',
   },
   transport: {
     label: 'Transport not supported',
-    explain:
-      'Edges can carry raw TCP, WebSocket, HTTP Upgrade, gRPC and XHTTP streams; this transport is not one of them.',
+    explain: 'Edges carry only raw TCP, WebSocket, HTTP Upgrade, gRPC and XHTTP streams.',
   },
   security: {
     label: 'Security layer not supported',
-    explain:
-      'Edges can carry REALITY, TLS and plain transports; this security setting is not one of them.',
+    explain: 'Edges carry only REALITY, TLS and plain transports.',
   },
   invalid: {
     label: 'Transport cannot be described',
     explain:
-      'The transport looks supported but its settings could not be turned into a listener (the detail names what).',
-    fix: 'Check the port, the REALITY target and the server names in the config profile.',
+      'The transport looks supported, but its settings could not become a listener. The detail says why.',
+    fix: 'Check the port, the REALITY target and the SNIs in the config profile.',
   },
 };
 
@@ -1778,33 +1758,33 @@ export const CLIENT_CHECK_COPY: Record<
     explain: 'Every client connected through this address and came out of the node.',
   },
   passed_with_refusals: {
-    label: 'Works, as well as the others',
+    label: 'Works like the others',
     explain:
-      'At least one client connected through this address. The ones that did not are refused through the other addresses of this transport too, so the node refuses them, not this address.',
+      "At least one client connected, and the others are refused through the transport's other addresses too, so the node refuses them, not this address.",
   },
   address_failed: {
     label: 'Does not work',
     explain:
-      'A client did not get through this address, while it gets through the other addresses of this transport when there are any to compare with.',
+      "A client did not get through this address, though it gets through the transport's other addresses where there are any.",
     fix: 'Replace the address, or check it again in a few minutes if it was just created.',
   },
   egress_mismatch: {
     label: 'Reaches another node',
     explain:
-      'A client connected, but its traffic left from an address that is not this node: the load balancer forwards somewhere else.',
+      'A client connected, but its traffic left from another node, so the load balancer forwards somewhere else.',
     fix: "Check the address's forwarding target at the provider, then check it again.",
   },
   node_unreachable: {
     label: 'Node not reached',
     explain:
-      'No client got through this address or through the other addresses of the transport, so the check cannot tell the address from the node.',
+      "No client got through this address or the transport's other addresses, so the check cannot tell the address from the node.",
     fix: 'Check that the node is up and its transport answers, then check again.',
   },
   ok: { label: 'Connected', explain: 'The client connected and fetched the egress page.' },
   reality_refused: {
     label: 'Refused by REALITY',
     explain:
-      'The REALITY server handed this client to its target instead of letting it in: it refuses this client version, or the key or server name does not match.',
+      'REALITY sent this client to its target instead of letting it in. It refuses this client version, or the key or SNI does not match.',
     fix: 'For sing-box, set minClientVer to 1.8.1 in the transport and keep the node on Xray 26.7.28 or older.',
   },
   tls_failed: {
@@ -1836,7 +1816,7 @@ export const CLIENT_CHECK_COPY: Record<
     label: 'Secrets differ',
     explain: "The client-check service refused the request: its secret is not the deployment's.",
   },
-  busy: { label: 'Check client busy', explain: 'Another check was running; try again.' },
+  busy: { label: 'Check client busy', explain: 'Another check was running. Try again.' },
   link_unavailable: {
     label: 'No test link',
     explain: 'The test link of this address could not be built, so there was nothing to check.',
@@ -1852,7 +1832,7 @@ export const CLIENT_CHECK_COPY: Record<
   out_of_time: {
     label: 'Ran out of time',
     explain:
-      'The check took too long to run every client (slow sessions, or another check ahead of it).',
+      'The check took too long to run every client, from slow sessions or another check ahead of it.',
     fix: 'Check again in a minute.',
   },
 };
@@ -1880,7 +1860,7 @@ const REFUSAL_COPY = {
   host_adopt_required: {
     label: 'Hosts not adopted yet',
     explain: 'FCP can only take over the Hosts once it has adopted every one of them.',
-    fix: 'Open the Listeners tab and use "Adopt a Host" on each listener that has a Host in the backend, then switch again.',
+    fix: 'On the Listeners tab, use "Adopt a Host" on each listener with a backend Host, then switch again.',
   },
   host_adopt_mismatch: {
     label: 'Host does not fit',
@@ -1894,9 +1874,8 @@ const REFUSAL_COPY = {
   },
   needs_rotation: {
     label: 'Needs a rotation',
-    explain:
-      'Publishing this edge would make it the first edge of its listener, which means writing the backend Host.',
-    fix: 'Use Publish so the rotation machine does the switch.',
+    explain: "Publishing this as its listener's first edge means writing the backend Host.",
+    fix: 'Use Publish so the rotation does the switch.',
   },
   origin_address_locked: {
     label: 'Origin address locked',
@@ -1914,23 +1893,22 @@ const REFUSAL_COPY = {
   },
   mode_groups_unknown: {
     label: 'Mode groups not read yet',
-    explain:
-      "FCP could not read the panel's mode groups, so it does not yet know which one holds this node's transports, and makes no test account until it does.",
-    fix: 'It asks again by itself. If it keeps waiting, check that the panel answers.',
+    explain: "FCP could not read the panel's mode groups yet, so it makes no test account.",
+    fix: 'It retries by itself. If it keeps waiting, check that the panel answers.',
   },
   no_group_holds_transports: {
     label: 'A transport in no group',
     explain:
-      "A transport this node's fronting covers is in no mode group on the panel, so FCP's test account cannot reach it and it could never be tested. Transports in different groups are fine: the test account sits in each of them.",
+      "A transport this fronting covers is in no mode group on the panel, so FCP's test account cannot reach it.",
     fix: 'Put the transport in a mode group on the panel, or choose the mode whose group the test account should use.',
   },
   origin_deleting: {
     label: 'Old fronting still going',
     explain: "The node's earlier fronting is still being removed.",
-    fix: 'Wait until it is gone (the Edges page shows it), then front the node again.',
+    fix: 'Wait until it is gone from the Edges page, then front the node again.',
   },
   test_link_unavailable: {
-    label: 'New address could not be tested',
+    label: 'New address cannot be tested',
     explain:
       "No Host dials the node at its own address, and FCP cannot build this transport's entry from the node.",
     fix: "Add a Host at the node's own address for this transport, or pick a CDN location.",
@@ -1941,8 +1919,7 @@ const REFUSAL_COPY = {
   },
   throttled: {
     label: 'Asked too often',
-    explain:
-      'That was asked too often. This call reaches a backend or a provider, so it is limited.',
+    explain: 'That was asked too often, and this call is rate limited.',
     fix: 'Wait a minute and try again.',
   },
   verification_stale: {
@@ -1957,8 +1934,8 @@ const REFUSAL_COPY = {
   restore_in_progress: {
     label: 'Restore in progress',
     explain:
-      'This node is putting its direct addresses back, so a second workflow, a new hide and pool changes wait.',
-    fix: 'Let the restore finish (the node page shows its phase), then try again.',
+      'This node is putting its direct addresses back, so new workflows, hides and pool changes wait.',
+    fix: 'Let the restore finish, then try again.',
   },
   restore_not_running: {
     label: 'Nothing to skip',
@@ -1966,21 +1943,20 @@ const REFUSAL_COPY = {
     fix: 'Refresh the node page to see where it stands.',
   },
   restore_not_held_at_direct: {
-    label: 'Not held at the direct check',
-    explain:
-      'Only a removal held at the direct check can skip it: every earlier step keeps members from losing the node, and a restore that keeps the node needs its direct address.',
-    fix: 'Let the removal reach the direct check (the node page shows its step), then try again.',
+    label: 'Not at the direct check',
+    explain: 'Only a removal held at the direct check can skip it.',
+    fix: 'Wait until the node page shows the removal at the direct check, then try again.',
   },
   plan_changed: {
     label: 'Node changed since setup',
     explain:
-      'The transports on this node are not the ones the earlier setup created listeners for, so the run cannot resume safely.',
+      'The transports on this node differ from the ones the earlier setup made listeners for, so the run cannot resume safely.',
     fix: 'Remove fronting from the node, then front it again.',
   },
   consent_withdrawn_hidden: {
     label: 'Host already hidden',
     explain:
-      'A host you removed from the approval was already hidden; the run never re-enables a host on its own.',
+      'A host you removed from the approval was already hidden, and the run never re-enables a host by itself.',
     fix: 'Keep it approved, or remove fronting to put every host back.',
   },
   account_switch_late: {
@@ -1991,13 +1967,13 @@ const REFUSAL_COPY = {
   test_link_no_match: {
     label: 'No entry for this transport',
     explain:
-      'The test credential receives no single connection entry for this transport, so no test link can be built from it.',
+      'The test credential gets no single entry for this transport, so no test link can be built.',
     fix: 'Check that the node has exactly one enabled backend Host on this transport at its own address and port.',
   },
   test_link_render_failed: {
     label: 'Test link not rendered',
     explain: 'The candidate address could not be rendered into a connection for this transport.',
-    fix: 'Check the listener names and the address, then fetch the test link again.',
+    fix: 'Check the listener SNIs and the address, then fetch the test link again.',
   },
   use_manual_setup: {
     label: 'Set up by hand',
@@ -2018,7 +1994,7 @@ const REFUSAL_COPY = {
   credential_unresolved: {
     label: 'Credential still settling',
     explain:
-      'An earlier attempt to create the test credential may still land on the backend; FCP waits before creating another.',
+      'An earlier try to create the test credential may still land, so FCP waits before creating another.',
     fix: 'Try again in a couple of minutes.',
   },
   node_unknown: {
@@ -2034,7 +2010,7 @@ const REFUSAL_COPY = {
   keep_direct_enrolled: {
     label: 'Direct address not kept',
     explain:
-      'This node is enrolled in Servers, so it goes live behind its new addresses only. Members cannot stay on the direct one.',
+      'This node is enrolled in Servers, so it goes live behind its new addresses only and members cannot stay on the direct one.',
     fix: 'Front it and hide the hosts the addresses cannot carry.',
   },
   not_edge_required: {
@@ -2146,9 +2122,9 @@ const REFUSAL_COPY = {
     fix: 'Try again in a moment.',
   },
   location_options_needed: {
-    label: 'Choose the rest of the location',
+    label: 'Location options needed',
     explain:
-      'A region was picked, but what the account reaches names no project or private network to use there.',
+      'A region was picked, but the account names no project or private network to use there.',
     fix: 'Open Change options and choose them.',
   },
   location_in_use: {
@@ -2164,17 +2140,17 @@ const REFUSAL_COPY = {
   shared_certificate_present: {
     label: 'Shared certificate still there',
     explain:
-      'The account still has a shared certificate at the provider, which nothing could remove once the account is gone.',
-    fix: 'Remove it with its zone under Locations on the account page first, or delete it at the provider and test the account again.',
+      'The account still has a shared certificate at the provider, which nothing could remove after the account is gone.',
+    fix: 'Remove it with its zone under Locations on the account page, or delete it at the provider and test the account again.',
   },
   shared_certificate_not_ours: {
     label: 'Certificate not ordered by FCP',
     explain:
-      'FCP found this wildcard certificate already at the provider and reused it. It removes only certificates its own fronts ordered.',
+      'FCP found and reused this wildcard certificate, and removes only certificates its own fronts ordered.',
     fix: 'Remove it at the provider if nothing else uses it, then test the account again.',
   },
   template_value_required: {
-    label: 'Choose a value for this region',
+    label: 'Region value needed',
     explain: 'The template leaves a value empty that this provider needs per region.',
     fix: 'Pick it for this location, or set it in the template.',
   },
@@ -2205,7 +2181,7 @@ const REFUSAL_COPY = {
   replacement_cannot_start: {
     label: 'No new address now',
     explain: 'No new address can be created now, so this one was kept and nothing was removed.',
-    fix: "Check the account's daily budget and limits, and that new work is not paused, then try again.",
+    fix: "Check the account's daily budget and limits and that new work is not paused, then try again.",
     reasonFromServer: true,
   },
 } as const satisfies Record<string, CodeCopy>;
@@ -2509,7 +2485,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_modes: 'Open Connection modes',
   open_probes: 'See the checks',
   open_run: 'Open the run',
-  find_names: 'Find names',
+  find_names: 'Find SNIs',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
@@ -2535,7 +2511,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_modes: 'Connection modes',
   open_probes: 'Open probes',
   open_run: 'Open run',
-  find_names: 'Find names',
+  find_names: 'Find SNIs',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -2595,19 +2571,19 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   provider_failed: {
     label: 'Provider step failed',
-    explain: 'The provider could not create or publish the address (the detail names the step).',
+    explain: 'The provider could not create or publish the address. The detail names the step.',
     fix: 'Try again (Choose another account).',
   },
   address_unreachable: {
     label: 'Address unreachable',
     explain:
-      'The new address could not be reached from outside. Where its provider can take the same configuration again, FCP saved it again once and checked afresh.',
+      'The new address was unreachable from outside, even after FCP saved its configuration again where the provider allows.',
     fix: 'Check again (Try another address, Go live anyway).',
   },
   blocked_in: {
     label: 'Blocked in a country',
     explain:
-      'The new address is blocked from at least one censored country on its first check, while it works from elsewhere.',
+      'The new address is blocked from a censored country on its first check but works from elsewhere.',
     fix: 'Try another address (Use it anyway, Check again).',
   },
   coverage_incomplete: {
@@ -2618,13 +2594,13 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   try_it: {
     label: 'Try each address',
     explain:
-      'Import each test link into a client (it uses a test account of its own), connect, load a page, then answer Works or Doesn’t work.',
+      "Import each test link into a client, connect, load a page, then answer Works or Doesn't work.",
     fix: 'Works (Doesn’t work).',
   },
   test_account_used_up: {
     label: 'Test account used up',
     explain:
-      'The test account is used up and could not be reset, so a test link or check made with it would not connect. A test profile left connected in a client uses it up.',
+      'The test account is used up and could not be reset, so its test links will not connect. A test profile left connected in a client uses it up.',
     fix: 'Remove old test profiles from your clients, then try again.',
   },
   review_changed: {
@@ -2644,13 +2620,13 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   rehearsal_failed: {
     label: 'Rehearsal failed',
-    explain: 'A member body did not render through the new address (the detail names the case).',
+    explain: 'A member body did not render through the new address. The detail names the case.',
     fix: 'Try again.',
   },
   resilience_short: {
     label: 'No backup elsewhere',
     explain:
-      'A member would get the backup address from the same provider as the main one, although another provider is on offer.',
+      'A member would get a backup address from the same provider as the main one, though another provider is available.',
     fix: 'Try again. If it stays, check the render rules for that client family.',
   },
   node_not_approved: {
@@ -2677,16 +2653,16 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     explain: 'The account fronts at a layer one of the transports cannot use.',
   },
   origin_unreachable: {
-    label: "Couldn't reach the origin. Try again",
+    label: 'Could not reach the origin',
     explain:
-      'The node did not answer the check of its WebSocket or HTTP transport, so no CDN account can carry it yet. This is usually a passing network fault.',
+      'The node did not answer the check of its WebSocket or HTTP transport, which is usually a passing network fault.',
     fix: 'Check again in a moment.',
   },
   origin_not_public: {
     label: 'Origin address is not public',
     explain:
-      'The node’s address or name leads to no public address, so no CDN can reach its WebSocket or HTTP transport. Checking again gives the same answer.',
-    fix: 'Give the node a public address or point its name at one, then plan again.',
+      "The node's address or hostname leads to no public address, so no CDN can reach its WebSocket or HTTP transport.",
+    fix: 'Give the node a public address or point its hostname at one, then plan again.',
   },
   origin_private: {
     label: 'Node address is private',
@@ -2695,15 +2671,15 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     fix: "Give the node's public IP address on the first step.",
   },
   origin_name: {
-    label: 'Node address is a name',
+    label: 'Node address is a hostname',
     explain:
-      'The panel lists a name for this node, and a load balancer forwards to an IP address, never to a name.',
+      'The panel lists a hostname for this node, and a load balancer forwards only to an IP address.',
     fix: "Give the node's public IP address on the first step.",
   },
   test_link_unavailable: {
-    label: 'New address could not be tested',
+    label: 'New address cannot be tested',
     explain:
-      "No Host dials the node at its own address, and FCP cannot build this transport's entry from the node, so a new address here could not be tested before members get it.",
+      "No Host dials the node at its own address, and FCP cannot build this transport's entry from the node, so a new address here cannot be tested.",
     fix: "Add a Host at the node's own address for this transport, or pick a CDN location.",
   },
   origin_port_not_carried: {
@@ -2712,10 +2688,10 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     fix: 'Move the gRPC transport to port 443.',
   },
   host_header_rejected: {
-    label: 'Node takes only its own name',
+    label: 'Node takes only its hostname',
     explain:
-      "The node answers only to its own name as the Host, and this CDN's fronts send their own name instead.",
-    fix: "Pick a CDN that sends the node's name, or let the node answer any Host.",
+      "The node answers only to its own hostname as the Host, and this CDN's fronts send theirs instead.",
+    fix: "Pick a CDN that sends the node's hostname, or let the node answer any Host.",
   },
   account_capacity_reached: {
     label: 'No room',
@@ -2735,7 +2711,7 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   off_network: {
     label: 'Not on the transport’s network',
     explain:
-      'The transports this account would carry here have server names on one network, and this place is not on it, or its network is not known yet.',
+      "This account's transports here have SNIs on one network, and this place is not on it or its network is unknown.",
     fix: 'Pick a location on that network, or set this location’s network on its provider account.',
   },
   provider_mismatch: {
@@ -2805,14 +2781,13 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   },
   size_not_multicloud: {
     label: 'Size takes Scaleway servers only',
-    explain:
-      'This size only accepts servers hosted at Scaleway. Pick a multi-cloud size (L or XL).',
+    explain: 'This size only accepts servers hosted at Scaleway.',
     fix: "Set this location's size to a multi-cloud one, such as LB-GP-L or LB-GP-XL.",
   },
   l4_not_for_websocket: {
     label: 'Not for a WebSocket node',
     explain:
-      "A load balancer cannot front a WebSocket node: members would send the node's own name.",
+      "A load balancer cannot front a WebSocket node, because members would send the node's own hostname.",
     fix: 'Use a CDN account.',
   },
 };
@@ -2840,11 +2815,11 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.listener.upsert': 'Listener registered',
   'relay.listener.update': 'Listener changed',
   'relay.listener.retire': 'Listener retired',
-  'relay.listener.name.retire': 'Server name retired',
-  'relay.listener.name.reactivate': 'Server name reactivated',
-  'relay.listener.sni_pick': 'Server name selection changed',
-  'edge.sni.names.accepted': 'New server names proven on the node',
-  'edge.sni.names.tested': "New server names tested by FCP's client check",
+  'relay.listener.name.retire': 'SNI retired',
+  'relay.listener.name.reactivate': 'SNI reactivated',
+  'relay.listener.sni_pick': 'SNI selection changed',
+  'edge.sni.names.accepted': 'New SNIs proven on the node',
+  'edge.sni.names.tested': "New SNIs tested by FCP's client check",
   'relay.edge_pick': 'Address selection changed',
   'relay.lanes': 'Address lanes changed',
   'edge.lane_retired': 'Old open address retired',
@@ -3125,10 +3100,10 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.destroyed': 'Address destroyed',
   'edge.verified': 'Address tested with a real session',
   'edge.client_check': "Address checked with FCP's client",
-  'edge.sni.names.accepted': 'New server names given to members',
-  'edge.sni.names.tested': "FCP's client check tested new server names",
+  'edge.sni.names.accepted': 'New SNIs given to members',
+  'edge.sni.names.tested': "FCP's client check tested new SNIs",
   'edge.auto_replace_held': 'Automatic replacement held',
-  'edge.fresh_name_blocked': 'New name blocked before use',
+  'edge.fresh_name_blocked': 'New hostname blocked before use',
   'edge.cdn_refused': 'CDN refused in a country',
   'edge.auto_replace_resumed': 'Automatic replacement resumed',
   'edge.block_suspected': 'Address looks blocked',
@@ -3196,7 +3171,7 @@ export function skipDirectOffered(
 export const SKIP_DIRECT = {
   button: 'Skip restoring direct',
   title: 'Skip restoring direct?',
-  body: "The removal finishes without the node's direct address. Members on this node then keep no direct entry for it: their apps stop reaching this node until the backend gives them a direct address again. The node's provider addresses are retired as in any removal.",
+  body: "The removal finishes without the node's direct address. Members on this node then keep no direct entry, so their apps cannot reach it until the backend gives them one again. Its provider addresses are retired as usual.",
   confirm: 'Skip and finish removal',
   done: 'Direct check skipped. The removal finishes now.',
 } as const;
@@ -3207,7 +3182,7 @@ export function skipDirectHeldWords(lastError: string | null | undefined): strin
   const goneForGood =
     "It is checked again every few minutes. If the node's direct address is gone for good, skip restoring direct.";
   if (code === 'no_direct_entry')
-    return 'Held: the backend gives members of this node no direct address, so this check cannot pass. Put a direct address for the node back in the backend and the removal finishes by itself, or skip restoring direct.';
+    return 'Held: the backend gives members of this node no direct address, so this check cannot pass. Put one back in the backend and the removal finishes by itself, or skip restoring direct.';
   if (code === 'fetch_failed' || code === 'unreadable_body')
     return `Held: a member's subscription could not be read from the backend. ${goneForGood}`;
   return `Held: ${code ? humanizeCode(code) : 'the check did not pass'}. ${goneForGood}`;

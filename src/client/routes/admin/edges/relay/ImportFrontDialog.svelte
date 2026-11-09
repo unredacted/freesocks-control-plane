@@ -234,8 +234,8 @@
           <span>
             <span class="block text-sm font-medium">In a provider account FCP knows</span>
             <span class="block text-xs text-muted-foreground">
-              FCP checks that the resource really dials this origin, then manages it like an edge it
-              created, including destroying it when it is retired.
+              FCP checks that it forwards to this origin, then manages it like its own edges and
+              destroys it when it is retired.
               {accounts.length === 0 ? 'No provider account exists yet.' : ''}
             </span>
           </span>
@@ -256,7 +256,7 @@
           <span>
             <span class="block text-sm font-medium">Somewhere else, by address</span>
             <span class="block text-xs text-muted-foreground">
-              FCP only observes it: it is published and probed, but never changed or destroyed.
+              FCP publishes and probes it but never changes or destroys it.
             </span>
           </span>
         </label>
@@ -308,7 +308,7 @@
                 </Select.Content>
               </Select.Root>
               <p class="text-xs text-muted-foreground">
-                Where the resource lives: FCP acts on it there, including when it destroys it.
+                Where the resource lives. FCP manages and destroys it there.
               </p>
             </div>
           {/if}
@@ -359,7 +359,7 @@
             </Select.Root>
             {#if accountId && !inventoryQ.isPending && resources.length === 0}
               <p class="text-xs text-muted-foreground">
-                The last inventory of this account is empty. Refresh it to read the account again.
+                The last inventory is empty. Refresh to read the account again.
               </p>
             {:else if inventoryQ.data?.inventoryAt}
               <p class="text-xs text-muted-foreground">
@@ -413,8 +413,8 @@
         <div>
           <Label for="import-publish">Publish it right away</Label>
           <p class="text-xs text-muted-foreground">
-            An L7 front is only published once it passed the end-to-end check. If it has not, it is
-            imported unpublished and you can qualify and publish it from the table.
+            An L7 front is published only after it passes the end-to-end check. Otherwise it is
+            imported unpublished, and you can qualify and publish it from the table.
           </p>
         </div>
       </div>

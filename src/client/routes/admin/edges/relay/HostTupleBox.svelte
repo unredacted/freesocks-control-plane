@@ -51,7 +51,7 @@
     <dl class="space-y-0.5">
       <div class="font-mono text-xs break-all">{tupleLine(tuple)}</div>
       <div class="text-xs text-muted-foreground">
-        Server name: <span class="font-mono">{tuple.sni ?? 'none'}</span>
+        SNI: <span class="font-mono">{tuple.sni ?? 'none'}</span>
       </div>
       <div class="text-xs text-muted-foreground">
         Host header: <span class="font-mono">{tuple.host ?? 'none'}</span>

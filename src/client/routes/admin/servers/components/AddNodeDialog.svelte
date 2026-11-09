@@ -127,9 +127,8 @@
     <Dialog.Header>
       <Dialog.Title>Add a node</Dialog.Title>
       <Dialog.Description>
-        Most nodes arrive through the node role: run it on the new machine and the node enrolls
-        itself here, and FCP writes its row, its addresses and its approval. Add one by hand only
-        for a machine the node role does not run.
+        Most nodes enroll themselves when you run the node role on the new machine. Add one by hand
+        only for a machine the node role does not run.
       </Dialog.Description>
     </Dialog.Header>
     <form
@@ -151,7 +150,7 @@
           aria-describedby={`${uid}-name-hint`}
         />
         <p id={`${uid}-name-hint`} class="text-muted-foreground text-xs">
-          Members never see it. FCP finds the node by this name, so pick one and keep it.
+          Members never see it. FCP finds the node by this name, so keep it.
         </p>
       </div>
       <div class="grid grid-cols-3 gap-3">

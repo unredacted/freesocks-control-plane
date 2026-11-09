@@ -118,14 +118,14 @@ export function setupChangeWords(
   const toName = to ? zoneOf(view, to.zoneId, zones) : null;
   const lines: string[] = [];
   if (originMoved) {
-    if (!from) lines.push(`WebSocket nodes get their origin names under ${toName}.`);
+    if (!from) lines.push(`WebSocket nodes get their origin hostnames under ${toName}.`);
     else if (!to)
       lines.push(
-        `No zone for origin names any more: each WebSocket node enrolled from now on needs a hostname set by hand.`,
+        `No zone for origin hostnames any more. Each WebSocket node enrolled from now on needs a hostname set by hand.`,
       );
     else if (from.zoneId === to.zoneId)
-      lines.push(`Origin names stay under ${from.zoneName}, through another account.`);
-    else lines.push(`Origin names move from ${from.zoneName} to ${toName}.`);
+      lines.push(`Origin hostnames stay under ${from.zoneName}, through another account.`);
+    else lines.push(`Origin hostnames move from ${from.zoneName} to ${toName}.`);
   }
   for (const m of added)
     lines.push(`Adds the mode ${m.name || m.slug || 'without a name'} (${shapeWords(m.shape)}).`);
@@ -135,15 +135,14 @@ export function setupChangeWords(
       changed: true,
       lines,
       effect:
-        `The setup runs again as generation ${generation}. The modes already set up are only ` +
-        `looked at: their transports, groups and placements are not written, and the run stops ` +
-        `if one of them changed on the backend` +
+        `The setup runs again as generation ${generation}. Modes already set up keep their ` +
+        `transports, groups and placements, and the run stops if one changed on the backend. ` +
         (added.length === 0
-          ? '. '
-          : `, and ${
-              added.length === 1 ? 'the new mode gets its' : 'the new modes get their'
-            } group and placement. Its transport has to be in the profile already (Add a transport, on a node's page). `) +
-        `Until the run is done no node can enroll or be approved; members are not affected.`,
+          ? ''
+          : `${
+              added.length === 1 ? 'The new mode gets its' : 'The new modes get their'
+            } group and placement. Its transport must already be in the profile, from Add a transport on a node's page. `) +
+        `No node can enroll or be approved until the run is done. Members are not affected.`,
       done: 'The setup runs again.',
     };
   if (originMoved)
@@ -151,13 +150,13 @@ export function setupChangeWords(
       changed: true,
       lines,
       effect:
-        `Recorded at once as generation ${generation}. Nothing on the backend changes, and no ` +
-        `node that has a name or serves members is touched.` +
+        `Recorded at once as generation ${generation}. Nothing changes on the backend, or on ` +
+        `nodes that already have a hostname or serve members.` +
         (toName
-          ? ` A WebSocket node still waiting for a name gets one under ${toName}: a new machine ` +
-            `revision, which the node role applies on its next run.`
+          ? ` A WebSocket node still waiting for a hostname gets one under ${toName} in a new ` +
+            `machine revision, applied on the role's next run.`
           : ''),
-      done: 'Origin names changed. Nothing on the backend moved.',
+      done: 'Origin hostnames changed. Nothing on the backend moved.',
     };
   return { changed: false, lines, effect: 'Nothing is changed yet.', done: '' };
 }
@@ -168,8 +167,8 @@ export function setupSummary(view: BackendSetupView): string {
   const head = `${view.adopted ? 'Adopted and set up' : 'Set up'} for ${n} mode${
     n === 1 ? '' : 's'
   } (generation ${view.generation}).`;
-  if (view.originDns) return `${head} Origin names under ${view.originDns.zoneName}.`;
+  if (view.originDns) return `${head} Origin hostnames under ${view.originDns.zoneName}.`;
   return view.modes.some((m) => m.shape.transport === 'ws')
-    ? `${head} No zone for origin names, so each WebSocket node needs a hostname set by hand.`
-    : `${head} No zone for origin names.`;
+    ? `${head} No zone for origin hostnames, so each WebSocket node needs one set by hand.`
+    : `${head} No zone for origin hostnames.`;
 }

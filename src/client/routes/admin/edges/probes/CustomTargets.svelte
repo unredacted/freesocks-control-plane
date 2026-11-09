@@ -44,7 +44,7 @@
     { id: 'tcp', help: 'Opens a TCP connection. Reachable when the connection is accepted.' },
     {
       id: 'tls',
-      help: 'TLS handshake with the name as SNI. A certificate error counts as unreachable.',
+      help: 'TLS handshake with the hostname as SNI. A certificate error counts as unreachable.',
     },
     { id: 'https', help: 'HTTP GET over TLS. Any status code counts as reachable.' },
   ];
@@ -88,9 +88,9 @@
   const referenceProblem = $derived.by(() => {
     if (!editor?.referenceFor) return null;
     if (editor.address.trim() !== '' && isAddressLiteral(editor.address))
-      return 'A reference site needs a host name, not an IP address.';
+      return 'A reference site needs a hostname, not an IP address.';
     if (editor.probeProtocol === 'tcp')
-      return 'A reference site needs the TLS or HTTPS check: a network that refuses a CDN usually lets the connection open.';
+      return 'A reference site needs the TLS or HTTPS check. A network that refuses a CDN usually lets the TCP connection open.';
     return null;
   });
   const draftValid = $derived(
@@ -224,7 +224,7 @@
   bind:open={removeOpen}
   title="Remove this target?"
   body={removing?.referenceFor
-    ? `"${removing.label}" and its reachability history are removed. It is a reference site: without one, FCP can no longer tell a country that refuses this CDN outright, and replaces names there as before.`
+    ? `"${removing.label}" and its reachability history are removed. Without a reference site, FCP cannot tell when a country refuses this CDN outright, and replaces hostnames there as before.`
     : `"${removing?.label ?? ''}" and its reachability history are removed. Nothing else depends on a custom target.`}
   typed={removing?.label}
   confirmLabel="Remove target"
@@ -237,8 +237,8 @@
     <Dialog.Header>
       <Dialog.Title>{editor?.id ? 'Edit target' : 'New custom target'}</Dialog.Title>
       <Dialog.Description>
-        A public host name or IP address plus a TCP port. Changing the address or the port resets
-        the target's history.
+        A public hostname or IP address plus a TCP port. Changing either resets the target's
+        history.
       </Dialog.Description>
     </Dialog.Header>
     {#if editor}
@@ -308,9 +308,8 @@
             </Select.Content>
           </Select.Root>
           <p class="text-xs text-muted-foreground">
-            A well-known site this CDN serves. When it fails from a country that other countries
-            still reach, the network there refuses the whole CDN, so FCP does not spend a new name
-            replacing an address there.
+            A well-known site this CDN serves. If it fails from one country while others reach it,
+            that country refuses the whole CDN, so FCP does not spend a new hostname there.
           </p>
           {#if referenceProblem}
             <p class="text-xs text-destructive" role="alert">{referenceProblem}</p>
@@ -322,7 +321,7 @@
         </div>
         <label class="flex items-center gap-2 text-sm">
           <Switch bind:checked={editor.enabled} />
-          Probe on every scheduled round (off means on demand only)
+          Probe on every scheduled round. Off: on demand only.
         </label>
       </div>
     {/if}

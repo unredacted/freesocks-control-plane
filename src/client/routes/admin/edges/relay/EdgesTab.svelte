@@ -104,8 +104,7 @@
       return {
         label: 'Stale',
         tone: 'warning',
-        title:
-          'The listener or the front changed since the check, or the proof expired. Qualify again.',
+        title: 'The listener or front changed, or the proof expired. Qualify again.',
       };
     return {
       label: 'Proven',
@@ -118,8 +117,7 @@
 <div class="space-y-3">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <p class="text-sm text-muted-foreground">
-      Published edges are handed to members. Unpublished ones are standbys, ready for the next
-      rotation.
+      Members get published edges. Unpublished ones are standbys for the next rotation.
     </p>
     <div class="flex flex-wrap items-center gap-2">
       {#if goneCount > 0}
@@ -144,8 +142,8 @@
   {:else if rows.length === 0}
     <AdminListState
       emptyText={edges.length === 0
-        ? 'This relay has no edge yet. Use Provision to create one at a provider, or import a front you already run.'
-        : 'Every edge of this relay is destroyed. Use Provision to create a new one.'}
+        ? 'No edges yet. Provision one, or import a front you already run.'
+        : 'Every edge is destroyed. Provision a new one.'}
     />
   {:else}
     <div class="overflow-x-auto rounded-lg border">
@@ -200,7 +198,7 @@
                   {#if testBlocked.has(e.id)}
                     <Badge
                       variant="warning"
-                      title="Test block evidence is running on this address: the detector treats it as blocked."
+                      title="A test block is running on this address. The detector treats it as blocked."
                       >Test block</Badge
                     >
                   {/if}

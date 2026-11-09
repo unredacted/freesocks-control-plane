@@ -67,7 +67,7 @@ export const ATTENTION_ACTION_PLAN = {
     type: 'call',
     confirm: {
       title: 'Provision a new edge?',
-      body: 'This creates a billable resource at the provider and counts against the account budget for today.',
+      body: "Creates a billable resource at the provider and counts against today's account budget.",
       confirmLabel: 'Provision',
       danger: false,
     },
@@ -101,7 +101,7 @@ export const ATTENTION_ACTION_PLAN = {
     type: 'call',
     confirm: {
       title: 'Make room for the listener?',
-      body: 'One duplicate edge goes back to standby so the uncovered listener can be published. Members using that edge move to another one on their next subscription refresh.',
+      body: 'One duplicate edge goes back to standby to free a slot for the uncovered listener. Its members move on their next subscription refresh.',
       confirmLabel: 'Make room',
       danger: true,
     },
@@ -269,7 +269,7 @@ export function attentionFactsLine(item: AttentionItem): string {
   if (family !== null) out.push(`Family ${family}`);
   const qualifying = num('qualifying');
   if (qualifying !== null)
-    out.push(`${qualifying} ${qualifying === 1 ? 'name qualifies' : 'names qualify'}`);
+    out.push(`${qualifying} ${qualifying === 1 ? 'SNI qualifies' : 'SNIs qualify'}`);
   const op = str('op');
   if (op !== null) out.push(op === 'create' ? 'Creating the Host' : 'Deleting the Host');
   const published = num('published');
@@ -400,12 +400,12 @@ function frontUnusedWords(facts: AttentionItem['facts']): string | null {
   if (stale === null || keys === null) return null;
   const n = (x: number) => x.toLocaleString('en-US');
   const front =
-    'A backend Host on a fronted node dials a front FCP did not build, such as a load balancer made by hand. Members no longer get it in their subscriptions.';
+    'A backend Host on a fronted node dials a front FCP did not build, like a hand-made load balancer. Members no longer get it.';
   // A key counts once any app on it fetched: a zero is no proof that no app
   // still uses the front, so the traffic check stays.
   if (stale === 0)
-    return `${front} Every key on the node has fetched its subscription since the node went live, but an app sharing a key with one that fetched, or reading the backend's own subscription address, may still connect through it. Once its traffic stops, delete it at its provider, and its Host in the backend.`;
-  return `${front} ${n(stale)} of the node's ${n(keys)} ${keys === 1 ? 'key' : 'keys'} ${stale === 1 ? 'has' : 'have'} not fetched since the node went live, so those apps still connect through it until the member updates the subscription in the app. Once its traffic stops, delete it at its provider, and its Host in the backend.`;
+    return `${front} Every key on the node has fetched since go-live, but an app sharing a key may still connect through it. Once its traffic stops, delete it at its provider and its Host in the backend.`;
+  return `${front} ${n(stale)} of the node's ${n(keys)} ${keys === 1 ? 'key' : 'keys'} ${stale === 1 ? 'has' : 'have'} not fetched since go-live. Those apps use it until the member updates the subscription. Once its traffic stops, delete it at its provider and its Host in the backend.`;
 }
 
 /**

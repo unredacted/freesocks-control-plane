@@ -68,8 +68,8 @@
       {
         label: 'Baseline',
         value: s.baselineWarm
-          ? 'Warm: the usual load at this time of day is known'
-          : 'Still learning the usual load, so load drops do not count yet',
+          ? 'Warm, knows the usual load for this time of day'
+          : 'Still learning the usual load. Load drops do not count yet',
       },
       { label: 'Quiet evaluations', value: s.quietEvals > 0 ? s.quietEvals : '' },
       {
@@ -93,15 +93,14 @@
       {/if}
     </Card.Title>
     <Card.Description>
-      Watches member reports, user load and outside probes for signs that an edge address is
-      blocked.
+      Watches member reports, user load and outside probes for blocked edge addresses.
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-4 text-sm">
     {#if !s}
       <p class="text-muted-foreground">
-        The detector has not looked at this origin yet. It evaluates origins with a published edge
-        every few minutes once the edge layer is on in Settings.
+        Not evaluated yet. It checks origins with a published edge every few minutes once the edge
+        layer is on in Settings.
       </p>
     {:else}
       {#if s.veto}
@@ -114,8 +113,7 @@
       {/if}
       {#if s.state === 'suspected' && !s.veto && !relay.autoRotate}
         <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
-          Auto rotate is off for this origin, so nothing happens until you rotate or burn the edge
-          yourself.
+          Auto rotate is off for this origin. Rotate or burn the edge yourself.
         </p>
       {/if}
       <KeyValue {rows} hideEmpty />
@@ -155,8 +153,7 @@
       <h3 class="font-medium">Replace an edge by hand</h3>
       {#if published.length === 0}
         <p class="text-muted-foreground">
-          Nothing is published, so there is nothing to replace. Provision and publish an edge from
-          the Actions menu.
+          Nothing is published. Provision and publish an edge from the Actions menu.
         </p>
       {:else}
         <div class="space-y-1.5">
@@ -189,8 +186,8 @@
           </Button>
         </div>
         <p class="text-xs text-muted-foreground">
-          Rotate swaps the edge and lets the old one drain normally. Burn is for an address you
-          believe is blocked: the old edge drains only briefly.
+          Rotate swaps the edge and lets the old one drain normally. Burn is for a blocked address.
+          The old edge drains only briefly.
           {#if relay.activeRotationId}
             A rotation is already running.
           {:else if relay.quarantine}

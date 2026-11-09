@@ -51,7 +51,7 @@
     onWorks,
     onFails,
     confirmFails = false,
-    intro = 'Scan or copy each test link into a client on the device you test with (it uses a test account of its own), connect, and load a page.',
+    intro = 'Scan or copy each test link into a client on your test device, connect, and load a page. The links use a separate test account.',
   }: Props = $props();
 
   const waiting = $derived(busyId !== null || locked);

@@ -60,7 +60,7 @@
     {
       id: 'manual',
       label: 'Address',
-      hint: 'An address you describe by hand. Nothing FCP serves maps to it, so you wire clients yourself from the connection plan.',
+      hint: 'An address you enter by hand. FCP serves nothing for it, so you set up clients from the connection plan.',
     },
   ];
   const KINDS = $derived(ALL_KINDS.filter((k) => !kinds || kinds.includes(k.id)));
@@ -246,7 +246,7 @@
           </Combobox.Content>
         </Combobox.Root>
         <p class="text-muted-foreground text-xs">
-          One relay per node: nodes that already have a relay cannot be chosen.
+          One relay per node. Nodes that already have one cannot be chosen.
           {#if candidates.data?.fetchedAt}
             List fetched {relativeTime(candidates.data.fetchedAt)}.
           {/if}
@@ -272,7 +272,8 @@
       id={`${uid}-address-help`}
       class={cn('text-xs', addressProblem ? 'text-destructive' : 'text-muted-foreground')}
     >
-      {addressProblem ?? 'What edges dial. A public IP address or DNS name. Members never see it.'}
+      {addressProblem ??
+        'What edges connect to. A public IP address or hostname. Members never see it.'}
     </p>
   </div>
 </div>

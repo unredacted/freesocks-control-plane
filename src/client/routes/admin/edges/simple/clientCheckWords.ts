@@ -22,7 +22,7 @@ export function engineWords(engines: Engines): string | null {
 export function clientCheckLine(check: EdgeClientCheck | null): string | null {
   if (!check) return null;
   const engines = engineWords(check.engines);
-  const stale = check.current === false ? ' The address changed since, check it again.' : '';
+  const stale = check.current === false ? ' The address has changed. Check it again.' : '';
   return `FCP's client check: ${CLIENT_CHECK_COPY[check.verdict].label}${engines ? ` (${engines})` : ''}.${stale}`;
 }
 
@@ -40,7 +40,7 @@ export function clientCheckToast(outcome: EdgeClientCheckOutcome): {
   const engines = engineWords(outcome.engines);
   // In one of the node's locations (or one trusted by hand), with the switch on, a pass is the test.
   const confirmed = outcome.confirmed
-    ? "It now counts as tested: FCP's own clients got through in one of this node's locations."
+    ? "It now counts as tested, since FCP's clients got through in one of this node's locations."
     : '';
   return {
     tone: outcome.ok ? (engines ? 'warning' : 'success') : 'error',

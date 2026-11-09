@@ -122,7 +122,7 @@
     try {
       await retrySetupRun(runId, { tryAnotherAddress: true, edgeId: item.edgeId });
       void release();
-      toast.message('Replacing that address. The new one comes back here to test.');
+      toast.message('Replacing that address. Test the new one here.');
       invalidateOverview(qc);
       onRetried?.(runId);
     } catch (e) {

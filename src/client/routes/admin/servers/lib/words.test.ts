@@ -170,7 +170,7 @@ describe('what the page says', () => {
     expect(rows[0]!.nodeUuid).toBe('n-1');
     // The edit closes a managed node at its next check unless it is seen first.
     expect(rows[1]!.text).toBe(
-      'Default was changed on the backend, not from here. What this page shows of it may be out of date. Look at it, then press Seen it: until then, a node FCP manages is closed for maintenance the next time FCP checks it.',
+      'Default was edited on the backend, so this page may be out of date. Check it, then press Seen it. Until then, any node FCP manages on it closes for maintenance at its next check.',
     );
     expect(rows[2]!.text).toBe(
       'a, b, c and 2 more point at a transport no node serves. People given them cannot connect.',
@@ -221,17 +221,17 @@ describe('what the page says', () => {
       fronts: [a('lb-1', true), a('lb-2', true)],
     });
     expect(frontsHint(1)).toBe(
-      "Members get this node's edges instead. Once its traffic stops, delete this front at its provider, and its address here.",
+      "Members now get this node's edges. When its traffic stops, delete this front at the provider and its address here.",
     );
-    expect(frontsHint(2)).toMatch(/delete these fronts at their provider/);
+    expect(frontsHint(2)).toMatch(/delete these fronts at the provider/);
     // With the count of the node's keys that have not fetched since it went live.
     expect(frontsHint(3, { stale: 1204, total: 2050 })).toBe(
-      "Members get this node's edges instead. 1,204 of its 2,050 keys have not fetched since it went live: those apps still use these fronts until the member updates the subscription in the app. Once their traffic stops, delete these fronts at their provider, and their addresses here.",
+      "Members now get this node's edges. 1,204 of its 2,050 keys have not fetched since go-live, so their apps still use these fronts until updated. When their traffic stops, delete these fronts at the provider and their addresses here.",
     );
     expect(frontsHint(1, { stale: 1, total: 1 })).toMatch(/1 of its 1 key has not fetched/);
     // A zero keeps the traffic check: a shared key or a direct backend fetch is not counted.
     expect(frontsHint(1, { stale: 0, total: 9 })).toBe(
-      "Members get this node's edges instead, and every key on it has fetched since it went live. An app sharing a key with one that fetched, or reading the backend's own subscription address, may still use this front. Once its traffic stops, delete this front at its provider, and its address here.",
+      "Members now get this node's edges, and every key on it has fetched since go-live. An app sharing a key, or reading the backend's own subscription address, may still use this front. When its traffic stops, delete this front at the provider and its address here.",
     );
   });
 
@@ -440,7 +440,7 @@ describe('write wording', () => {
       'c.example',
     ]);
     expect(namesDelta(['a', 'b'], ['b', 'c', 'd'])).toBe('2 added, 1 removed');
-    expect(namesDelta(['a', 'b'], ['b', 'a'])).toBe('Same names, new order');
+    expect(namesDelta(['a', 'b'], ['b', 'a'])).toBe('Same SNIs, new order');
   });
 });
 
@@ -463,7 +463,7 @@ describe('retiring a node', () => {
     expect(fcp).toMatch(/^Members lose this node at once/);
     expect(fcp).toMatch(/every 5 minutes/);
     expect(fcp).toMatch(/node role wipes the machine/);
-    expect(retireConfirmWords({ adopted: true })).toMatch(/you confirm here/);
+    expect(retireConfirmWords({ adopted: true })).toMatch(/then confirm here/);
     for (const w of [fcp, retireConfirmWords({ adopted: true })]) expect(w).not.toMatch(/—/);
   });
 
@@ -727,7 +727,7 @@ describe('enrolled nodes', () => {
         accountName: 'CDN',
         locationLabel: 'Anycast',
       }),
-    ).toBe('ws: members get ws.example.org, a CDN name in CDN.');
+    ).toBe('ws: members get ws.example.org, a CDN hostname in CDN.');
     expect(
       standbyWords({ listenerKey: 'ws', layer: 'l7', endpoint: null, accountName: null }),
     ).toBe('ws: members get a new address.');

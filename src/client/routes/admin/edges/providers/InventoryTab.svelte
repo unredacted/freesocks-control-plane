@@ -106,9 +106,7 @@
   {:else if inventory.isError}
     <AdminListState error={inventory.error} onRetry={() => void inventory.refetch()} />
   {:else if !inv}
-    <AdminListState
-      emptyText="FCP has not read this account's inventory yet. Use Refresh to list what exists at the provider."
-    />
+    <AdminListState emptyText="Not read yet. Use Refresh to list what exists at the provider." />
   {:else}
     <section class="space-y-2">
       <h3 class="text-sm font-semibold">Load balancers and fronts</h3>

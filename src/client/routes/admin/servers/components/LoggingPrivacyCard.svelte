@@ -99,12 +99,11 @@
   <CardHeader>
     <CardTitle class="text-base">Node logging privacy</CardTitle>
     <CardDescription>
-      Enforce the no-client-IP-logging posture on every Remnawave config profile: sets the Xray
-      <code>log</code> to no access/error log and turns off the per-user online-IP tracker (<code
-        >statsUserOnline</code
-      >), preserving transports, Reality keys, and routing (a safe read-modify-write). See
-      docs/privacy.md §5. Applying restarts the affected nodes (a brief reconnect). FCP checks every
-      hour and turns logging off on its own wherever it finds it.
+      Keeps client IPs out of node logs on every Remnawave config profile. It turns off the Xray
+      <code>log</code> access and error logs and the per-user online-IP tracker,
+      <code>statsUserOnline</code>. Transports, REALITY keys and routing are kept. See
+      docs/privacy.md §5. Applying briefly restarts the affected nodes. FCP checks every hour and
+      turns logging off on its own wherever it finds it.
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-4 text-sm">

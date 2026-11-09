@@ -87,7 +87,7 @@ describe('Countries a location is meant for', () => {
     expect(box('Iran').getAttribute('aria-checked')).toBe('true');
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain(
-        'Iran: about 75% on node-a of members get a different first address.',
+        'Iran: about 75% of members on node-a get a different first address.',
       ),
     );
     expect(vi.mocked(estimateLocationCountries).mock.calls[0]).toEqual([

@@ -100,9 +100,9 @@ describe('what a change does, said before it runs', () => {
       zones,
     );
     expect(w.changed).toBe(true);
-    expect(w.lines).toEqual(['WebSocket nodes get their origin names under example.org.']);
+    expect(w.lines).toEqual(['WebSocket nodes get their origin hostnames under example.org.']);
     expect(w.effect).toBe(
-      'Recorded at once as generation 2. Nothing on the backend changes, and no node that has a name or serves members is touched. A WebSocket node still waiting for a name gets one under example.org: a new machine revision, which the node role applies on its next run.',
+      "Recorded at once as generation 2. Nothing changes on the backend, or on nodes that already have a hostname or serve members. A WebSocket node still waiting for a hostname gets one under example.org in a new machine revision, applied on the role's next run.",
     );
   });
 
@@ -111,15 +111,15 @@ describe('what a change does, said before it runs', () => {
     const to = (accountId: string, zoneId: string) =>
       setupChangeWords(current, { modes, origin: { accountId, zoneId } }, zones);
     expect(to('acct-2', 'zone-org').lines).toEqual([
-      'Origin names stay under example.org, through another account.',
+      'Origin hostnames stay under example.org, through another account.',
     ]);
     expect(to('acct-3', 'zone-net').lines).toEqual([
-      'Origin names move from example.org to example.net.',
+      'Origin hostnames move from example.org to example.net.',
     ]);
     const none = setupChangeWords(current, { modes, origin: null }, zones);
-    expect(none.lines[0]).toMatch(/^No zone for origin names any more/);
+    expect(none.lines[0]).toMatch(/^No zone for origin hostnames any more/);
     expect(none.effect).toBe(
-      'Recorded at once as generation 2. Nothing on the backend changes, and no node that has a name or serves members is touched.',
+      'Recorded at once as generation 2. Nothing changes on the backend, or on nodes that already have a hostname or serve members.',
     );
   });
 
@@ -131,16 +131,16 @@ describe('what a change does, said before it runs', () => {
       zones,
     );
     expect(w.changed).toBe(true);
-    expect(w.lines).toEqual(['Origin names move from example.org to example.net.']);
+    expect(w.lines).toEqual(['Origin hostnames move from example.org to example.net.']);
     expect(w.effect).toContain('gets one under example.net');
     // A zone the lists do not show is named from the view, else not named at all.
     const unlisted = (accountId: string, zoneId: string) =>
       setupChangeWords(current, { modes, origin: { accountId, zoneId } }, []).lines;
     expect(unlisted('acct-2', 'zone-org')).toEqual([
-      'Origin names stay under example.org, through another account.',
+      'Origin hostnames stay under example.org, through another account.',
     ]);
     expect(unlisted('acct-1', 'zone-net')).toEqual([
-      'Origin names move from example.org to another zone.',
+      'Origin hostnames move from example.org to another zone.',
     ]);
   });
 
@@ -182,8 +182,8 @@ describe('what a change does, said before it runs', () => {
     );
     expect(w.lines).toEqual(['Adds the mode Freedom-Extra (REALITY, fronted through an edge).']);
     expect(w.effect).toMatch(/^The setup runs again as generation 4\. /);
-    expect(w.effect).toContain('their transports, groups and placements are not written');
-    expect(w.effect).toContain('members are not affected');
+    expect(w.effect).toContain('keep their transports, groups and placements');
+    expect(w.effect).toContain('Members are not affected');
   });
 
   test('a mode a stopped run never set up can be taken out again', () => {
@@ -205,7 +205,7 @@ describe('what a change does, said before it runs', () => {
     );
     expect(w.lines).toEqual(['Takes out the mode Freedom-XHTTP, which was never set up.']);
     expect(w.effect).toBe(
-      'The setup runs again as generation 2. The modes already set up are only looked at: their transports, groups and placements are not written, and the run stops if one of them changed on the backend. Until the run is done no node can enroll or be approved; members are not affected.',
+      'The setup runs again as generation 2. Modes already set up keep their transports, groups and placements, and the run stops if one changed on the backend. No node can enroll or be approved until the run is done. Members are not affected.',
     );
   });
 
@@ -235,7 +235,7 @@ describe('what a change does, said before it runs', () => {
 describe('the setup line on the Servers home', () => {
   test('says the zone, or that WebSocket nodes need a hostname of their own', () => {
     expect(setupSummary(view())).toBe(
-      'Set up for 4 modes (generation 1). No zone for origin names, so each WebSocket node needs a hostname set by hand.',
+      'Set up for 4 modes (generation 1). No zone for origin hostnames, so each WebSocket node needs one set by hand.',
     );
     expect(
       setupSummary(
@@ -245,6 +245,6 @@ describe('the setup line on the Servers home', () => {
           originDns: inOrg,
         }),
       ),
-    ).toBe('Adopted and set up for 4 modes (generation 2). Origin names under example.org.');
+    ).toBe('Adopted and set up for 4 modes (generation 2). Origin hostnames under example.org.');
   });
 });

@@ -12,7 +12,7 @@ describe('the preview reason line', () => {
         backupWhy: { meantFor: false },
       }),
     ).toBe(
-      'Addresses ordered for a member in Iran: the primary works there, at a location meant for it, the backup not known there.',
+      'Addresses ordered for a member in Iran: the primary works there, at a location set for it, the backup not known there.',
     );
   });
 
@@ -23,14 +23,14 @@ describe('the preview reason line', () => {
     expect(
       endpointWhy(0, { meantFor: true, latency: { band: 'far', ms: 310, measured: true } }),
     ).toBe(
-      'works there, at a location meant for it, far (about 310 ms over the whole path, timed from there)',
+      'works there, at a location set for it, far (about 310 ms over the whole path, timed from there)',
     );
     expect(
       endpointWhy(1, { meantFor: false, latency: { band: 'near', ms: null, measured: false } }),
     ).toBe('not known there, near (no distance known)');
     expect(endpointWhy(null, null)).toBeNull();
     expect(endpointWhy(1, { meantFor: true, audience: ['IR', 'RU'] })).toBe(
-      'not known there, at a location meant for it, only for IR, RU',
+      'not known there, at a location set for it, only for IR, RU',
     );
   });
 

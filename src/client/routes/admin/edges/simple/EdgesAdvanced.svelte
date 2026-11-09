@@ -12,12 +12,12 @@
   const LINKS: Array<{ label: string; hint: string; href: string }> = [
     {
       label: 'All origins',
-      hint: 'The fleet dashboard: tiles, the attention list, readiness, every origin and its details, reachability.',
+      hint: 'The fleet dashboard with every origin, its details, readiness and reachability.',
       href: edgesPaths.overview(),
     },
     {
       label: 'New origin',
-      hint: 'An address described by hand or a whole Outline server, then its first edge. A backend node is fronted from Nodes instead.',
+      hint: 'An origin set up by hand or an Outline server, then its first edge. Front backend nodes from Nodes.',
       href: edgesPaths.overview({ new: '1' }),
     },
     {
@@ -27,17 +27,17 @@
     },
     {
       label: 'Probes',
-      hint: 'Reachability from outside: the matrix, run history, probe now, custom targets.',
+      hint: 'Outside reachability: the matrix, run history, probe now, custom targets.',
       href: edgesPaths.probes(),
     },
     {
       label: 'Server names',
-      hint: 'Pools of names a REALITY node answers to: checked, rolled out, proven per node, judged per country.',
+      hint: 'SNI pools for REALITY nodes, with checks, rollout and results per node and per country.',
       href: edgesPaths.names(),
     },
     {
       label: 'Settings',
-      hint: 'Every knob: pools, drains, the detector, rendering rules, probe budget.',
+      hint: 'All settings: pools, drains, the detector, rendering rules, probe budget.',
       href: edgesPaths.settings(),
     },
     {
@@ -55,7 +55,7 @@
 
 <SectionHeader
   title="Advanced"
-  description="The technical pages. Nothing here is needed day to day; Nodes and Edges cover the usual work."
+  description="Technical pages. Nodes and Edges cover day-to-day work."
 />
 
 <ul class="divide-border divide-y rounded-lg border" aria-label="Advanced pages">

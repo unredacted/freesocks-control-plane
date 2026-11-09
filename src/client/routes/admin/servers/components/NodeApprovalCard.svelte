@@ -186,14 +186,14 @@
   bind:open
   title={fronted ? `Approve go-live for ${nodeName}?` : `Release ${nodeName} to members?`}
   body={closesGate
-    ? `This closes ${nodeName} for members until it goes live, about a minute: members who refresh meanwhile are given another node, or keep their configuration. FCP then rehearses the real subscription bodies and opens it with the new addresses only if that passes.`
+    ? `This closes ${nodeName} to members for about a minute, until it goes live. Members who refresh meanwhile get another node or keep their configuration. FCP then rehearses the real subscriptions and opens it on the new addresses only if that passes.`
     : atOnce === 'kept'
-      ? `Members get ${nodeName} again at once, through the addresses it already has, each one tested and its test still current. Nothing new is bought.`
+      ? `Members get ${nodeName} again at once through the addresses it already has, all with current tests. Nothing new is bought.`
       : atOnce === 'external'
         ? `Members get ${nodeName} again at once, through the edge it already has.`
         : fronted
-          ? 'FCP rehearses the real subscription bodies first. Members get the new addresses only if that passes, and nothing changes for them until then.'
-          : 'The node is enabled for members only once its real subscription bodies rehearse correctly. Until then nobody sees it.'}
+          ? 'FCP rehearses the real subscriptions first. Members get the new addresses only if that passes.'
+          : 'FCP rehearses the real subscriptions first. Members see the node only if that passes.'}
   typed={fronted || closesGate ? nodeName : undefined}
   confirmLabel={label}
   danger={closesGate}

@@ -175,7 +175,7 @@ export function runTestLines(
  * a client, it keeps using the test account until the backend limits it.
  */
 export const TEST_PROFILE_NOTE =
-  'For a short test only. Remove this profile from the client once you have tried it: left connected, it uses up the test account.';
+  'For a short test only. Remove the profile from the client afterwards, or it uses up the test account.';
 
 /**
  * The "Doesn't work" confirmation of one test line: it names the address (and
@@ -188,7 +188,7 @@ export function replaceWords(item: Pick<TestItem, 'name' | 'endpoint'>): {
   const what = item.name ? `${item.name} at ${item.endpoint}` : item.endpoint;
   return {
     title: `Replace ${item.endpoint}?`,
-    body: `${what} is removed at the provider and a new address is created in its place, to test here again. A removed address cannot be brought back. If no new address can be created now, nothing is removed.`,
+    body: `${what} is removed at the provider and a new address made in its place to test. This cannot be undone. If no new address can be made now, nothing is removed.`,
   };
 }
 
@@ -271,7 +271,7 @@ export function needButtons(code: string): NeedButtons {
       return {
         primary: B('Works', 'continue'),
         secondary: B('Doesn’t work', 'retry_another_address'),
-        hint: 'Each tick is saved right away. The run carries on by itself once every address works.',
+        hint: 'Each tick saves at once. The run continues by itself when every address works.',
       };
     case 'review_changed':
       return { primary: B('Review the change', 'review') };
@@ -289,7 +289,7 @@ export function needButtons(code: string): NeedButtons {
       // park here again, and it carries on by itself once the node is approved.
       return {
         primary: B('Approve go-live', 'approve'),
-        hint: 'The run carries on by itself once you approve.',
+        hint: 'The run continues by itself once you approve.',
       };
     case 'coverage_incomplete':
     case 'rehearsal_failed':
@@ -345,8 +345,8 @@ export function heldSpareWords(slot: Pick<SpareSlot, 'missing' | 'held'>): strin
   const places = missingPlaces(slot.missing);
   const slots = (slot.held ?? 1) > 1 ? 'free slots are' : 'free slot is';
   if (places.length === 0)
-    return `It stays a spare: the ${slots} held for an address this node still lacks. To use this one, replace an address in use with it (Replace address).`;
-  return `It stays a spare: the ${slots} held for an address in ${orList(places)}, which this node still lacks. To use this one, replace an address in use with it (Replace address), or remove ${places.length === 1 ? 'that location' : 'those locations'} from the node.`;
+    return `It stays a spare. The ${slots} held for an address this node still lacks. To use it, choose Replace address on an address in use.`;
+  return `It stays a spare. The ${slots} held for an address in ${orList(places)}, which this node still lacks. To use it, choose Replace address on an address in use, or remove ${places.length === 1 ? 'that location' : 'those locations'} from the node.`;
 }
 
 /**
@@ -374,7 +374,7 @@ export function spareInUseWords(
   if (wanted <= published) return null;
   if (slot?.takesSlot === false) return heldSpareWords(slot);
   if (!config.enabled || !config.autoPublishStandby) return null;
-  return `It may be put in use at once: this node wants ${wanted} ${wanted === 1 ? 'address' : 'addresses'} in use and has ${published}.`;
+  return `It may go in use right away. This node wants ${wanted} ${wanted === 1 ? 'address' : 'addresses'} in use and has ${published}.`;
 }
 
 /**
@@ -428,13 +428,12 @@ export function automationNote(state: AutomationState): string | null {
   if (state.checksItself)
     return state.probes
       ? null
-      : 'Reachability probes are off, so the detector only has member reports to go on.';
+      : 'Reachability probes are off. Only member reports can flag a block.';
   if (!state.makesSpares && !state.probes)
-    return 'FCP does not make new spares on its own, and reachability probes are off.';
+    return 'FCP makes no spares on its own, and reachability probes are off.';
   if (!state.makesSpares)
-    return 'FCP does not make new spares on its own: each replacement uses a spare you added and tested.';
-  if (!state.probes)
-    return 'Reachability probes are off, so the detector only has member reports to go on.';
+    return 'FCP makes no spares on its own. Each replacement uses a spare you added and tested.';
+  if (!state.probes) return 'Reachability probes are off. Only member reports can flag a block.';
   return null;
 }
 
@@ -452,15 +451,15 @@ export function nodeAutomationWords(
 ): { line: string; spares: string | null } {
   const spares = config.autoProvisionToDesired
     ? null
-    : 'FCP does not make new spares on its own (Edges, Settings). Each replacement uses one tested spare; add and test the next one yourself.';
+    : 'FCP makes no spares on its own (Edges, Settings). After each replacement, add and test the next spare yourself.';
   if (!config.enabled)
     return {
-      line: 'Edge automation is off for every node. Turn on automatic replacement from the Edges page for this to act.',
+      line: 'Edge automation is off for every node. Turn on automatic replacement on the Edges page.',
       spares: null,
     };
   if (!config.autoRotate)
     return {
-      line: 'Automatic rotation is off for every node (Edges, Settings). This switch acts once it is on.',
+      line: 'Automatic rotation is off for every node (Edges, Settings). This switch does nothing until it is on.',
       spares: null,
     };
   if (node.setupOwned && node.runLive === false)
@@ -475,7 +474,7 @@ export function nodeAutomationWords(
     };
   if (!node.autoRotate)
     return {
-      line: 'Off for this node: an address that looks blocked shows under Action needed and waits for you to replace it.',
+      line: 'Off for this node. A blocked address shows under Action needed for you to replace.',
       spares: null,
     };
   if (config.clientCheck?.enabled)
@@ -532,7 +531,7 @@ export function planWords(
           count: unc.length,
           remarks: unc.map((h) => h.remark),
           uuids: unc.map((h) => h.uuid),
-          statement: `${direct(unc.length)} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the new address cannot carry. Fronting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
+          statement: `${direct(unc.length)} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the new address cannot carry. Fronting hides ${unc.length === 1 ? 'it' : 'them'}, and members on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported transport.`,
         };
   const others = plan.renderGlobal.affectedRelays;
   const renderGlobal = !plan.renderGlobal.willEnable
@@ -558,7 +557,7 @@ export function planWords(
       ? 'Works for every subscription format.'
       : names.length === 0
         ? 'No subscription format is fully covered yet.'
-        : `Works for ${names.join(' and ')} subscriptions; other formats keep the direct address.`;
+        : `Works for ${names.join(' and ')} subscriptions. Other formats keep the direct address.`;
   return { sentence, uncovered, renderGlobal, button, formats };
 }
 
@@ -674,11 +673,11 @@ export function providerPickWords(
       counts: `${p.inUse} in use, ${p.spare} spare.`,
       cooling:
         left > 0
-          ? `An address here was just blocked: automatic work keeps away for about ${plural(left, 'minute', 'minutes')}.`
+          ? `An address here was just blocked. Automatic work skips this location for about ${plural(left, 'minute', 'minutes')}.`
           : null,
       refused:
         refusedLeft > 0
-          ? `The provider refused to create an address here (a quota, or a setting it rejects): automatic work uses the other locations for about ${plural(refusedLeft, 'hour', 'hours')}. Adding an address here by hand lifts this once it is created.`
+          ? `The provider refused to create an address here. Check its quota and settings. Automatic work uses other locations for about ${plural(refusedLeft, 'hour', 'hours')}, or until you add an address here by hand.`
           : null,
     };
   });
@@ -687,8 +686,8 @@ export function providerPickWords(
     counts: `${o.inUse} in use, ${o.spare} spare.`,
     why:
       o.inUse > 0
-        ? "Not one of this node's locations, though members are given its address here. The node's locations change only when a run goes live."
-        : "Not one of this node's locations: a run that did not go live, or a spare added by hand, left it here. The node's locations change only when a run goes live: add this location to keep it, or delete the spare.",
+        ? "Not one of this node's locations, but members get its address here. Locations change only when a run goes live."
+        : "Not one of this node's locations. A run that never went live, or a hand-added spare, left it here. Add this location to keep it, or delete the spare.",
   }));
   const names = (keys: string[]) => [...new Set(keys)].map(nameOf).join(', ');
   const notes: string[] = [];
@@ -716,12 +715,12 @@ export function providerPickWords(
     const it = view.deficit === 1 ? 'it' : 'them';
     notes.push(
       opts.upkeepAdds && untrusted.length > 0
-        ? `${what}. Automatic upkeep adds none in a location until an address there is tested: add a spare address in ${untrusted.join(', ')} and test it.`
+        ? `${what}. Automatic upkeep adds none in a location until an address there is tested. Add a spare in ${untrusted.join(', ')} and test it.`
         : opts.upkeepAdds
           ? `${what}; automatic upkeep adds ${it}.`
           : places.length > 0
-            ? `${what}. Nothing adds ${it} on its own: add a spare address there, or remove ${places.length === 1 ? 'the location' : 'those locations'}.`
-            : `${what}. Nothing adds ${it} on its own: add a spare address.`,
+            ? `${what}. Nothing adds ${it} on its own. Add a spare there, or remove ${places.length === 1 ? 'the location' : 'those locations'}.`
+            : `${what}. Nothing adds ${it} on its own. Add a spare address.`,
     );
   }
   return { picks, outside, notes };

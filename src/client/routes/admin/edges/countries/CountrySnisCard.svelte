@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * The server names (SNIs) of one country, once over every node and
+   * The SNIs of one country, once over every node and
    * transport in use (`CountryViewResponse.snis`): each with its name list,
    * what it counts as there, how many members there are handed it, and
    * whether it is shared, only for this country, or not used there.
@@ -42,7 +42,7 @@
     {#if snis.length === 0}
       <p class="text-muted-foreground">{SNI_CARD_EMPTY}</p>
     {:else}
-      <ul class="divide-y rounded-md border" aria-label="Server names (SNIs)">
+      <ul class="divide-y rounded-md border" aria-label="SNIs">
         {#each snis as s (s.name)}
           {@const words = STATE_WORDS[s.state]}
           {@const badge = sniScopeBadge(s, code)}

@@ -3,12 +3,12 @@
    * The Servers tab bar: one quiet row of plain links at the top of every
    * Servers AND Edges page (the sidebar has a single "Servers" leaf for both):
    *
-   *   Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced
+   *   Nodes | Edges | Probes | Countries | Backends | Mode pools | Edge providers | Advanced
    *
    * Nodes, Backends and Mode pools are the Servers section (lib/routes.ts); Edges,
    * Countries, Edge providers and Advanced are the Edges section
    * (../../edges/lib/routes.ts). A node page counts as Nodes, an Edges origin's
-   * page as Edges, every technical Edges page (templates, probes, settings, an
+   * page as Edges, the probes page as Probes, every other technical Edges page (templates, settings, an
    * origin's details) as Advanced. The Nodes link keeps the selected backend server.
    *
    * Props:
@@ -29,6 +29,7 @@
   const links = $derived<Array<{ id: ServersTab | SectionTab; label: string; href: string }>>([
     { id: 'nodes', label: 'Nodes', href: serversPaths.home({ instance }) },
     { id: 'edges', label: 'Edges', href: edgesPaths.home() },
+    { id: 'probes', label: 'Probes', href: edgesPaths.probes() },
     { id: 'countries', label: 'Countries', href: edgesPaths.countries() },
     { id: 'backends', label: 'Backends', href: serversPaths.backends() },
     { id: 'pools', label: 'Mode pools', href: serversPaths.pools() },

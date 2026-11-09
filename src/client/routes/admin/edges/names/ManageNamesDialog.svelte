@@ -96,32 +96,31 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-lg`}>
     <Dialog.Header>
-      <Dialog.Title>Manage these names with FCP</Dialog.Title>
+      <Dialog.Title>Manage these SNIs with FCP</Dialog.Title>
       <Dialog.Description>
         {transport.tag}{transport.port ? `, port ${transport.port}` : ''}
       </Dialog.Description>
     </Dialog.Header>
     <div class="space-y-4 text-sm">
       <p>
-        FCP takes over the {transport.listed === 1 ? 'name' : `${transport.listed} names`} this port lists
-        now. It checks each one against the cover site
-        <span class="font-mono break-all">{transport.coverSite}</span>, the real site this port
-        shows anyone without a member's key, suggests more names that site serves, and from then on
-        is the only one that changes this port's names.
+        FCP takes over the {transport.listed === 1 ? 'SNI' : `${transport.listed} SNIs`} this port lists
+        now and checks them against the cover site
+        <span class="font-mono break-all">{transport.coverSite}</span>. It suggests more SNIs that
+        site serves and, from then on, is the only one that changes this port's SNIs.
       </p>
       <p class="text-muted-foreground">
-        Nothing is sent to the node yet. Members keep the names they have.
+        Nothing is sent to the node yet. Members keep the SNIs they have.
       </p>
 
       {#if transport.sameCoverSite.length > 0}
         <fieldset class="space-y-2">
-          <legend class="font-medium">Name list</legend>
+          <legend class="font-medium">SNI list</legend>
           {#each transport.sameCoverSite as f (f.slug)}
             <label class="flex items-start gap-2">
               <input type="radio" class="mt-1" bind:group={existing} value={f.slug} />
               <span
                 >Use {f.label}, which has the same cover site ({f.names}
-                {f.names === 1 ? 'name' : 'names'})</span
+                {f.names === 1 ? 'SNI' : 'SNIs'})</span
               >
             </label>
           {/each}
@@ -143,8 +142,8 @@
             <label class="flex items-start gap-2">
               <Checkbox id={`${uid}-net`} bind:checked={useNetwork} class="mt-0.5" />
               <span>
-                Keep names on {preview.network.label}. The cover site and every address of this port
-                are on it, so only names that live there are used.
+                Keep SNIs on {preview.network.label}. The cover site and every address of this port
+                are on it, so only SNIs that resolve there are used.
               </span>
             </label>
           {:else}
@@ -169,7 +168,7 @@
             </div>
             <label class="flex items-start gap-2">
               <Checkbox bind:checked={requireH2} class="mt-0.5" />
-              <span>Only use names the cover site serves over HTTP/2</span>
+              <span>Only use SNIs the cover site serves over HTTP/2</span>
             </label>
           </Collapsible.Content>
         </Collapsible.Root>
@@ -178,7 +177,7 @@
     <Dialog.Footer class={STICKY_FOOTER}>
       <Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
       <Button disabled={busy || (!existing && !preview && !previewError)} onclick={manage}>
-        {busy ? 'Working…' : 'Manage names'}
+        {busy ? 'Working…' : 'Manage SNIs'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

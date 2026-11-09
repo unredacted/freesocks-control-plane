@@ -75,7 +75,7 @@ export function retiringWords(
     return {
       word: 'Being deleted',
       line: e.managed
-        ? 'FCP removes it at the provider; billing stops once it is gone.'
+        ? 'FCP removes it at the provider, then billing stops.'
         : 'FCP stops tracking it at its next check.',
       left: null,
       canDelete: false,
@@ -137,22 +137,22 @@ export function endNowWords(
       label: 'Stop tracking',
       title: `Stop tracking ${address} now?`,
       body:
-        'FCP did not create this address, so it calls nothing at your provider: it only stops tracking it now. ' +
-        'The address keeps working, and your provider keeps billing for it, until you delete it there. ' +
-        'Members who have not refreshed their app since it was replaced use it until then.',
+        'FCP did not create this address, so it only stops tracking it. ' +
+        'The address keeps working, and keeps billing, until you delete it at your provider. ' +
+        'Members whose app has not refreshed keep using it until then.',
       done: `FCP no longer tracks ${address}. Delete it at your provider.`,
     };
   return {
     label: 'Delete now',
     title: `Delete ${address} now?`,
     body:
-      'Members who have not refreshed their app since it was replaced still connect through it, and they lose it now; their app connects again once it refreshes.' +
+      'Members whose app has not refreshed since the replace lose it now. Their app reconnects once it refreshes.' +
       (r.held
         ? ` Left alone it stays up ${left}.`
         : left
           ? ` Left alone it would be deleted in ${left}.`
           : '') +
-      ' FCP deletes it at the provider at its next check, within 5 minutes, and billing stops.',
+      ' FCP deletes it at the provider within 5 minutes, and billing stops.',
     done: `Deleting ${address}.`,
   };
 }

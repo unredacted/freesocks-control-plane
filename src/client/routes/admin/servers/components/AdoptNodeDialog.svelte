@@ -122,8 +122,8 @@
     <Dialog.Header>
       <Dialog.Title>Adopt {node?.name ?? 'this node'}</Dialog.Title>
       <Dialog.Description>
-        It already serves members: it is live at once with the addresses it has, and nothing a
-        member holds changes. The role is never run for it.
+        It already serves members. It goes live at once on its current addresses, and nothing
+        members hold changes. The node role never runs on it.
       </Dialog.Description>
     </Dialog.Header>
     <form
@@ -161,8 +161,8 @@
         <fieldset class="space-y-1.5">
           <legend class="text-sm font-medium">Its addresses</legend>
           <p class="text-muted-foreground text-sm">
-            Leave these unticked and FCP takes the ones that carry the node's name or address. Tick
-            them when they carry neither.
+            Left unticked, FCP takes the ones that carry the node's name or address. Tick the right
+            ones if none do.
           </p>
           <ul class="space-y-1">
             {#each candidates as a (a.addressUuid)}
@@ -182,7 +182,7 @@
       {/if}
       {#if websocket}
         <div class="space-y-1.5">
-          <Label for={`${uid}-origin`}>Origin name</Label>
+          <Label for={`${uid}-origin`}>Origin hostname</Label>
           <Input
             id={`${uid}-origin`}
             bind:value={originHostname}
@@ -191,8 +191,8 @@
             spellcheck="false"
           />
           <p class="text-muted-foreground text-sm">
-            Needed. The name its CDN fronts dial, the one its certificate is for. Fronts FCP builds
-            for it dial the same name. It cannot be changed once the node is adopted.
+            Required. The hostname its CDN fronts dial and its certificate is for. FCP's fronts use
+            it too. It cannot change after adoption.
           </p>
         </div>
       {/if}

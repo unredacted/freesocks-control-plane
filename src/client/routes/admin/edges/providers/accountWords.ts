@@ -78,7 +78,7 @@ const SETTING_VALUE_WORDS: Record<string, Record<string, string>> = {
     forbids: 'Forbid the certificate authority',
     unchecked: 'Not checked: the lookup failed',
   },
-  caaCertificate: { wildcard: 'The shared wildcard', per_host: 'One name per front' },
+  caaCertificate: { wildcard: 'The shared wildcard', per_host: 'One hostname per front' },
 };
 
 export function settingLabel(key: string): string {
@@ -203,7 +203,7 @@ export function sharedCertificateWords(
       return {
         label: 'Not reusable',
         tone: 'warning',
-        detail: `The wildcard is covered by a certificate this account would not order (another authority, or several). ${checked}`,
+        detail: `The wildcard is covered by a certificate this account would not order, from another authority or several. ${checked}`,
       };
     default:
       return {

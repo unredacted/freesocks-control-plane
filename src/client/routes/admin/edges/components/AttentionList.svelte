@@ -72,7 +72,7 @@
     items,
     onAction,
     max,
-    emptyText = 'Nothing needs your attention. New items appear here as soon as the fleet needs a decision.',
+    emptyText = 'Nothing needs your attention.',
     plain = false,
     class: className,
   }: Props = $props();

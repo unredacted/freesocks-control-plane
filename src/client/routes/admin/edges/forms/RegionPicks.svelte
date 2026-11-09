@@ -105,8 +105,8 @@
 <div class="space-y-1.5">
   {#if regions.length > 0}
     <p class="text-muted-foreground text-xs">
-      Other regions this account reaches. Picking one adds it as a location, not trusted until its
-      first tested address.
+      Other regions this account reaches. Picking one adds it as a location, trusted after its first
+      tested address.
     </p>
   {:else}
     <p class="text-muted-foreground text-xs">No region of this account is listed yet.</p>
@@ -155,8 +155,8 @@
             {#if asked && mine}
               <p class="mb-2 text-sm" role="status">
                 {askCode === 'template_value_required'
-                  ? 'Choose the balancer size for this region: the template names none.'
-                  : 'Choose the rest of this location: FCP could not pick it from what the key lists.'}
+                  ? 'The template sets no balancer size. Choose one for this region.'
+                  : 'FCP could not fill in the rest from what the key lists. Choose it here.'}
               </p>
             {/if}
             {#key r.id}

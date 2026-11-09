@@ -24,14 +24,14 @@ export function accountDeleteRefusal(err: unknown): string | null {
     return 'Another provider account writes its DNS records through this one. Point that account at a different DNS account, or remove it, then delete this one.';
   }
   if (code === 'edge.account_in_use') {
-    return 'Edges still live in this account. Destroy or move them first (open the account to see them), then delete it. Disabling the account stops new edges without touching the existing ones.';
+    return 'Edges still live in this account. Destroy or move them first, then delete it. Disabling the account stops new edges and keeps the existing ones.';
   }
   return null;
 }
 
 export function templateDeleteRefusal(err: unknown): string | null {
   if (errorCode(err) === 'edge.template_last_of_provider') {
-    return 'This is the last template of its provider, and a provider keeps at least one. Create another template first, then delete this one.';
+    return 'This is the last template of its provider, and a provider needs one. Create another first.';
   }
   return null;
 }

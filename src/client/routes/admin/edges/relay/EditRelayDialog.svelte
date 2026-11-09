@@ -61,7 +61,7 @@
     value === current ? undefined : value === fleetValue ? null : value;
   const knobHelper = (field: keyof typeof fleet, text: string): string =>
     own(field)
-      ? `${text} Set for this origin; the fleet setting is ${fleet[field] ?? 'not loaded'}.`
+      ? `${text} Set for this origin. The fleet setting is ${fleet[field] ?? 'not loaded'}.`
       : `${text} Follows the fleet setting.`;
 
   let label = $state('');
@@ -173,9 +173,9 @@
     <Dialog.Header>
       <Dialog.Title>Edit relay {relay.slug}</Dialog.Title>
       <Dialog.Description>
-        The slug, the origin and its address are fixed once edges dial them. Everything here applies
-        to this origin only. A value you change here overrides the fleet setting in Settings; set it
-        back to the fleet value to follow the fleet again.
+        These apply to this origin only and override the fleet settings. Set a value back to the
+        fleet value to follow the fleet again. The slug and origin address are fixed once edges use
+        them.
       </Dialog.Description>
     </Dialog.Header>
     <form
@@ -203,7 +203,7 @@
             placeholder="ABC"
           />
           <p class="text-xs text-muted-foreground">
-            The member-facing location this origin belongs to. Leave empty for none.
+            The location members see for this origin. Leave empty for none.
           </p>
         </div>
       </div>
@@ -217,7 +217,7 @@
           min={1}
           max={MAX_DESIRED_PUBLISHED}
           defaultValue={num(defaults['desiredPublishedDefault'])}
-          helper="How many edges members are spread over. More edges cost more and survive a block better."
+          helper="Members are spread over this many edges. More cost more but survive a block better."
         />
         <NumberField
           bind:value={standbyPerRelay}
@@ -230,7 +230,7 @@
           defaultValue={fleet.standbyPerRelay}
           helper={knobHelper(
             'standbyPerRelay',
-            'Provisioned but unpublished edges. A rotation that finds one skips the slow provisioning.',
+            'Unpublished edges kept ready. A rotation that uses one skips provisioning.',
           )}
         />
         <NumberField
@@ -254,7 +254,7 @@
           defaultValue={fleet.maxRotationsPerDay}
           helper={knobHelper(
             'maxRotationsPerDay',
-            'The daily cap that keeps a confused detector from burning through budget.',
+            'Stops a misfiring detector from burning through budget.',
           )}
         />
         <NumberField
@@ -268,7 +268,7 @@
           defaultValue={fleet.drainMinutes}
           helper={knobHelper(
             'drainMinutes',
-            'How long a replaced edge keeps forwarding before it is destroyed, so members who have not refreshed stay connected.',
+            'How long a replaced edge keeps forwarding before it is destroyed. Members who have not refreshed stay connected.',
           )}
         />
         {#if drainShort}
@@ -295,10 +295,10 @@
             </Select.Content>
           </Select.Root>
           <p class="text-xs text-muted-foreground">
-            Proving a CDN front needs a test user on this backend. It is created on the placement of
-            the mode chosen here, which must include this origin's node, or the proof fails although
-            the front works. Backend default suits a backend with one placement. It takes effect the
-            next time the qualification credential is created.
+            The test user that proves CDN fronts is created on this mode's placement. It must
+            include this origin's node, or the proof fails even when the front works. Backend
+            default is fine with one placement. Applies the next time the qualification credential
+            is created.
           </p>
           {#if modes.isError}
             <p class="text-xs text-destructive">
@@ -312,8 +312,8 @@
           <div>
             <Label for="relay-probe-node">Probe the origin itself</Label>
             <p class="text-xs text-muted-foreground">
-              Also measures the origin address from outside, as operator evidence. It costs probe
-              budget and tells probe networks the origin address. The detector never reads it.
+              Also probes the origin address from outside, for your information only. It costs probe
+              budget and reveals the origin address to probe networks. The detector ignores it.
             </p>
           </div>
           <Switch id="relay-probe-node" bind:checked={probeNode} />

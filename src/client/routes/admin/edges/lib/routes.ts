@@ -110,15 +110,17 @@ export function legacyEdgesRedirect(pathname: string, search = ''): string | nul
 
 /**
  * The tab an Edges page lights in the Servers tab bar (servers/components/ServersNav.svelte):
- * Edges (the home and an origin's node page), Countries, Edge providers, or Advanced.
+ * Edges (the home and an origin's node page), Probes, Countries, Edge providers, or Advanced.
  */
-export type SectionTab = 'edges' | 'countries' | 'providers' | 'advanced';
+export type SectionTab = 'edges' | 'probes' | 'countries' | 'providers' | 'advanced';
 export function sectionTabOf(route: EdgesRoute): SectionTab {
   switch (route.page) {
     case 'home':
     case 'node':
     case 'not-found':
       return 'edges';
+    case 'probes':
+      return 'probes';
     case 'countries':
     case 'country':
     case 'lists':

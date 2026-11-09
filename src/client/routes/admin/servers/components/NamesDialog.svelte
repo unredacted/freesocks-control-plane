@@ -92,14 +92,15 @@
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Server names of <span class="break-all">{inbound.tag}</span></Dialog.Title>
-      <Dialog.Description>Every name must be one the target site really serves.</Dialog.Description>
+      <Dialog.Title>Server names (SNI) of <span class="break-all">{inbound.tag}</span></Dialog.Title
+      >
+      <Dialog.Description>The target site must really serve every SNI.</Dialog.Description>
     </Dialog.Header>
 
     {#if !preview}
       <div class="space-y-3">
         <div class="space-y-1.5">
-          <Label for={`${uid}-names`}>Server names, one per line</Label>
+          <Label for={`${uid}-names`}>SNIs, one per line</Label>
           <textarea
             id={`${uid}-names`}
             bind:value={namesText}
@@ -110,7 +111,7 @@
           ></textarea>
           <p class="text-muted-foreground text-sm">
             {names.length}
-            {names.length === 1 ? 'name' : 'names'}{namesChanged
+            {names.length === 1 ? 'SNI' : 'SNIs'}{namesChanged
               ? ` · ${namesDelta(before, names)}`
               : ''}
           </p>
@@ -143,7 +144,7 @@
                 {#if c.field === 'serverNames'}
                   {@const was = Array.isArray(c.before) ? c.before : []}
                   {@const now = Array.isArray(c.after) ? c.after : []}
-                  <p class="font-medium">Server names: {namesDelta(was, now)}</p>
+                  <p class="font-medium">SNIs: {namesDelta(was, now)}</p>
                   {#each now.filter((n) => !was.includes(n)) as n (n)}
                     <p class="break-all text-emerald-700 dark:text-emerald-400">+ {n}</p>
                   {/each}
@@ -171,13 +172,13 @@
             <p class="text-muted-foreground">
               {preview.affectedRelays.map((r) => r.relaySlug).join(', ')}
               {preview.affectedRelays.length === 1 ? 'forwards' : 'forward'} to this inbound{targetChanged
-                ? ', and a new target means its addresses are due a fresh test'
+                ? ', and its addresses need a new test for the new target'
                 : ''}.
             </p>
           {/if}
           {#if namesChanged}
             <p class="text-muted-foreground">
-              New names reach members only after a node has proven it accepts them.
+              New SNIs reach members only after a node proves it accepts them.
             </p>
           {/if}
           {#if preview.restartsNodes.length > 0}
@@ -192,7 +193,7 @@
                 <option value="acknowledge">They change in place; I acknowledge that</option>
               </select>
               <p class="text-muted-foreground text-xs">
-                Enrolled nodes close on their own and come back once verified and approved again.
+                Enrolled nodes close by themselves and reopen once verified and approved.
               </p>
             </div>
           {/if}

@@ -98,7 +98,7 @@
         {/each}
       </fieldset>
       <p class="text-muted-foreground text-xs">
-        Changing the plan clears this location's trust: its next tested address trusts it again.
+        Changing the plan clears this location's trust until its next tested address.
       </p>
     {/if}
     {#if save.error}<InlineError message={edgeErrorMessage(save.error)} />{/if}

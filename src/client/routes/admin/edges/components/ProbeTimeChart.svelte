@@ -82,8 +82,8 @@
       <div>
         <CardTitle class="text-base">Probe outcomes</CardTitle>
         <CardDescription>
-          Vantage results from finished runs, by request time. A country whose failing bar grows is
-          where our addresses stopped answering; "FCP" is the internal connect check.
+          Vantage results from finished runs, by request time. A growing failing bar shows where our
+          addresses stopped answering. "FCP" is the internal connect check.
         </CardDescription>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -186,8 +186,7 @@
       {/if}
       {#if s.truncated}
         <p class="text-xs text-amber-600">
-          The range holds more runs than one summary reads (5k); the oldest were left out. Narrow
-          the range for exact numbers.
+          Only the newest 5k runs are counted. Narrow the range for exact numbers.
         </p>
       {/if}
     {/if}

@@ -206,7 +206,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove ${node.name}?`}
-  body="It is off, so nobody is on it. The panel forgets it, and the node role will not add it back unless you say so."
+  body="It is off, so nobody is on it. The panel forgets it, and the node role does not add it back unless you ask."
   typed={node.name}
   confirmLabel="Remove"
   danger
@@ -218,7 +218,7 @@
 <ConfirmDialog
   bind:open={removeOnlyOpen}
   title={`Remove ${node.name} from the backend only?`}
-  body="The panel forgets it, but the node keeps running and serving people until someone stops it on the machine. To stop it first, turn it off and choose Stop and remove."
+  body="The panel forgets it, but the node keeps serving people until it is stopped on the machine. To stop it first, turn it off and choose Stop and remove."
   typed={node.name}
   confirmLabel="Remove from the panel"
   danger
@@ -284,8 +284,8 @@
       {/if}
       {#if name.trim() !== node.name}
         <p class="text-muted-foreground text-sm">
-          A new name is carried over to everything that refers to the node, its addresses included.
-          Members keep connecting, and the old name keeps working for the node role.
+          The new name carries over to everything that refers to the node, addresses included.
+          Members keep connecting, and the node role can still use the old name.
         </p>
       {/if}
       <Dialog.Footer>

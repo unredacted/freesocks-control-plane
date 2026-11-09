@@ -83,21 +83,21 @@
   > = {
     destroy: {
       title: 'Destroy this edge at the provider?',
-      body: 'FCP trusts its record of what it created and walks the destroy path again, from the start. Choose this when the resources below still exist and should go.',
+      body: 'FCP runs the destroy again from the start, using its record of what it created. Choose this when the resources below still exist and should go.',
       confirm: 'Destroy',
       danger: true,
       done: 'Destroy restarted.',
     },
     reactivate: {
       title: 'Put this edge back into service?',
-      body: 'Choose this when you checked the provider and the resource is fine. The edge becomes an unpublished standby again. Nothing is called at the provider.',
+      body: 'Choose this when you checked the provider and the resource is fine. The edge becomes an unpublished standby. No provider call is made.',
       confirm: 'Reactivate',
       danger: false,
       done: 'Edge reactivated as a standby.',
     },
     forget: {
       title: 'Forget this edge without calling the provider?',
-      body: 'Choose this only after you removed the resources below at the provider by hand. FCP marks the edge destroyed and makes no call. Anything still there keeps running, and billing, without FCP knowing about it.',
+      body: 'Choose this only after removing the resources below at the provider by hand. FCP marks the edge destroyed and makes no call. Anything left keeps running and billing without FCP knowing.',
       confirm: 'Forget',
       danger: true,
       done: 'Edge forgotten.',
@@ -116,8 +116,8 @@
       run: () => probeEdge(edge.id),
       success: (res: { runIds: string[] }) =>
         res.runIds.length > 0
-          ? `${res.runIds.length} probe run(s) requested. Results arrive within a minute or two.`
-          : 'No probe was started. Check that a probe source is on and the hourly budget is not used up.',
+          ? `${res.runIds.length} probe run(s) requested. Results in a minute or two.`
+          : 'No probe started. Check that a probe source is on and the hourly budget is not used up.',
       also: invalidateProbes,
     });
   }
@@ -256,7 +256,7 @@
     <ActionConfirm
       bind:open={unpublishOpen}
       title={`Unpublish ${name}?`}
-      body="New subscriptions stop selecting this edge right away. Members who already hold it keep working until their client refreshes. If it is the last published edge of the relay, members on this origin go dark until another edge is published."
+      body="New subscriptions stop using this edge at once. Members who have it keep working until their app refreshes. If it is the last published edge, members on this origin lose service until another is published."
       confirmLabel="Unpublish"
       danger
       run={() =>
@@ -274,8 +274,8 @@
         <div>
           <Label for={`keep-${edge.id}`}>Keep it as a standby</Label>
           <p class="text-xs text-muted-foreground">
-            On: the edge stays provisioned and can be published again at once. Off: it drains for
-            the origin's drain time and is then destroyed at the provider.
+            If on, the edge stays provisioned and can be published again at once. If off, it drains
+            for the origin's drain time and is then destroyed.
           </p>
         </div>
       </div>
@@ -304,7 +304,7 @@
         title="What FCP saw"
         description={edge.failure?.code
           ? `FCP stopped because: ${codeLabel(edge.failure.code)}.`
-          : 'FCP could not tell whether its last call took effect, so it stopped instead of guessing.'}
+          : 'FCP could not tell if its last call worked, so it stopped.'}
         rows={operatorFactsRows(edge)}
         columns={1}
       />
@@ -318,7 +318,7 @@
       title={`Delete edge ${name}?`}
       body={edge.managed
         ? 'FCP destroys the provider resources of this edge and removes it from the relay. This cannot be undone.'
-        : 'FCP only observes this edge, so nothing is destroyed at the provider. The edge is removed from the relay.'}
+        : 'FCP does not manage this edge, so nothing is destroyed at the provider. It is only removed from the relay.'}
       typed={name}
       confirmLabel="Delete edge"
       danger

@@ -159,8 +159,8 @@
     <Dialog.Header>
       <Dialog.Title>New origin</Dialog.Title>
       <Dialog.Description>
-        An origin is one place that sits behind edges. Members covered by it are served through a
-        published edge, never the origin itself.
+        A server that sits behind edges. Its members only get published edges, never the origin
+        address.
       </Dialog.Description>
     </Dialog.Header>
     <form class="space-y-6" onsubmit={submit}>
@@ -221,8 +221,8 @@
           <div>
             <h3 class="text-sm font-semibold">Listeners</h3>
             <p class="text-muted-foreground text-xs">
-              Optional here: you can add them later from the Listeners tab. Without a deployed
-              listener no edge can be provisioned.
+              Optional now. Add them later on the Listeners tab. No edge can be provisioned without
+              a deployed listener.
             </p>
           </div>
           <Button type="button" size="sm" variant="outline" onclick={addListener}>

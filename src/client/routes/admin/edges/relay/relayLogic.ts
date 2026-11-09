@@ -228,28 +228,27 @@ export const HOST_MODE_WORDS: Record<HostMode, { label: string; explain: string 
   fcp: {
     label: 'FCP writes the Hosts',
     explain:
-      'FCP creates, switches and deletes the client-facing backend Hosts itself. Rotations switch members over without anyone touching the backend.',
+      'FCP creates, switches and deletes the backend Hosts members use. Rotations need no backend work from you.',
   },
   operator: {
     label: 'You write the Hosts',
     explain:
-      'FCP never writes to the backend. You apply the Hosts plan in the backend yourself. Replacing the first edge of a listener is refused unless forced, because FCP cannot switch members over.',
+      "FCP never writes to the backend. You apply the Hosts plan yourself. Replacing a listener's first edge is refused unless forced, since FCP cannot switch members over.",
   },
   none: {
     label: 'No Hosts',
-    explain:
-      'This origin has no backend Host. Subscriptions are rewritten when they are served, nothing is written anywhere else.',
+    explain: 'No backend Host. Subscriptions are rewritten as they are served.',
   },
 };
 
 export function matchRuleWords(rule: ListenerMatchRule, remark: string | null): string {
   switch (rule.kind) {
     case 'remark':
-      return `By name: the subscription entry whose remark is "${rule.remark || remark || ''}".`;
+      return `By remark: the entry with remark "${rule.remark || remark || ''}".`;
     case 'address':
-      return 'By address: the subscription entry that dials the origin address and this port.';
+      return 'By address: the entry that dials the origin address and this port.';
     case 'whole-body':
-      return 'Whole body: the subscription holds a single entry, and it is this one.';
+      return 'Whole body: the subscription has only this entry.';
   }
 }
 
@@ -257,10 +256,10 @@ export function originTransportWords(t: ListenerOriginTransport | null): string 
   if (!t) return 'Not declared. Edges forward raw TCP to the port (L4 only).';
   if (t.scheme === 'http') return 'Plain HTTP behind the front. Only an L7 front can carry it.';
   const cert = t.certPublic
-    ? `a publicly trusted certificate for ${t.certNames.join(', ') || 'no names'}`
+    ? `a publicly trusted certificate for ${t.certNames.join(', ') || 'no hostnames'}`
     : 'a certificate that is not publicly trusted';
-  const host = t.acceptsHostHeader === 'any' ? 'any Host header' : 'only its own names as Host';
-  return `HTTPS with ${cert}; the node accepts ${host}.`;
+  const host = t.acceptsHostHeader === 'any' ? 'any Host header' : 'only its own hostnames as Host';
+  return `HTTPS with ${cert}. The node accepts ${host}.`;
 }
 
 // --- timeline links --------------------------------------------------------------------------------

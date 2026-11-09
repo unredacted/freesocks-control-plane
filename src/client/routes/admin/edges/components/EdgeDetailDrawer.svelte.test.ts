@@ -104,10 +104,10 @@ const button = (label: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label);
 
 describe('An address with no name', () => {
-  test('names on: Give it a name asks the server for its first name', async () => {
+  test('hostnames on: Give it a hostname asks the server for its first hostname', async () => {
     mount(true);
     expect(document.body.textContent).toContain('It has none, so members get its IPs.');
-    button('Give it a name')!.click();
+    button('Give it a hostname')!.click();
     await vi.waitFor(() => expect(renewEdgeName).toHaveBeenCalledWith('e1'));
   });
 
@@ -116,16 +116,16 @@ describe('An address with no name', () => {
     vi.mocked(renewEdgeName).mockRejectedValue(
       new ApiCallError(409, { error: { code: 'edge.names_off', message: 'off' } }),
     );
-    button('Give it a name')!.click();
+    button('Give it a hostname')!.click();
     await vi.waitFor(() =>
-      expect(document.body.textContent).toContain('No chosen zone can take a name now.'),
+      expect(document.body.textContent).toContain('No chosen zone can take a hostname now.'),
     );
-    expect(button('Give it a name')).toBeDefined();
+    expect(button('Give it a hostname')).toBeDefined();
   });
 
   test('names off: says why in place of the button', () => {
     mount(false);
-    expect(button('Give it a name')).toBeUndefined();
-    expect(document.body.textContent).toContain('Names for load balancer addresses are off.');
+    expect(button('Give it a hostname')).toBeUndefined();
+    expect(document.body.textContent).toContain('Hostnames for load balancer addresses are off.');
   });
 });

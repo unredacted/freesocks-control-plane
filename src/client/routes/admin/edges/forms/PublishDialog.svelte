@@ -67,8 +67,8 @@
     <Dialog.Header>
       <Dialog.Title>Publish edge {shortId(edgeId)}</Dialog.Title>
       <Dialog.Description>
-        Publishing puts the edge in the pool of relay {relaySlug}. The client-facing Host is pointed
-        at it and members start dialing it on their next subscription refresh.
+        Adds the edge to the pool of relay {relaySlug}. Members start using it at their next
+        subscription refresh.
       </Dialog.Description>
     </Dialog.Header>
     <PreflightPanel

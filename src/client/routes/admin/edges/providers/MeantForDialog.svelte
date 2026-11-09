@@ -100,18 +100,17 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-lg`}>
     <Dialog.Header>
-      <Dialog.Title>Countries {location?.label ?? 'this location'} is meant for</Dialog.Title>
+      <Dialog.Title>Countries {location?.label ?? 'this location'} is set for</Dialog.Title>
       <Dialog.Description>
-        Members in these countries get an address here first, as long as it is not blocked there.
-        Proof that it is blocked always wins. Only members whose country is known and stored are
-        ordered this way.
+        Members in these countries get an address here first, unless it is blocked there. Only
+        members with a stored country are ordered this way.
       </Dialog.Description>
     </Dialog.Header>
     {#if location?.onlyForMeant}
       <p class="text-muted-foreground text-xs">
-        This location is only for its countries. Addresses made for the old list keep serving the
-        members they were handed to until upkeep replaces them, one at a time, each in its own
-        place: the node keeps the same number of addresses.
+        This location is only for its countries. Addresses made for the old list keep serving their
+        members until upkeep replaces them one at a time. The node keeps the same number of
+        addresses.
       </p>
     {/if}
     {#if list.isPending}

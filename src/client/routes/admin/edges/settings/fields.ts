@@ -41,35 +41,35 @@ export const BASIC_SWITCHES: Field[] = [
     path: 'enabled',
     label: 'Edge automation',
     helper:
-      'On: the block detector runs and automatic actions are allowed. Off: nothing happens unless you start it by hand.',
+      'On: the block detector runs and automatic actions may happen. Off: only what you start by hand.',
   },
   {
     kind: 'switch',
     path: 'autoRotate',
     label: 'Automatic rotation',
     helper:
-      'On: an origin that also opted in gets its suspected edge replaced without asking. Off: suspicions only show up as attention items.',
+      'On: a suspected edge is replaced without asking, on origins that opted in. Off: suspicions only show as attention items.',
   },
   {
     kind: 'switch',
     path: 'clientCheck.enabled',
-    label: "Replace without a spare (FCP's own client check)",
+    label: "Replace without a spare using FCP's client check",
     helper:
-      "On: nobody has to test an address by hand. A new address in one of a node's locations (a replacement, upkeep, a guided setup's Try it) is checked with FCP's own sing-box and Xray clients, and a pass counts as the test. Off: an address needs a person's test before it goes live, and the check is advice only.",
+      "On: nobody has to test an address by hand. A new address in a node's locations is checked with FCP's sing-box and Xray clients, and a pass counts as the test. Off: an address needs a person's test before it goes live, and the check is advice only.",
   },
   {
     kind: 'switch',
     path: 'render.enabled',
     label: 'Render edge addresses into subscriptions',
     helper:
-      'On: members of an edge-required origin receive edge addresses. Off: those members get no subscription at all, because the origin is never handed out.',
+      'On: members of an edge-required origin get edge addresses. Off: those members get no subscription.',
   },
   {
     kind: 'switch',
     path: 'probe.enabled',
     label: 'Reachability probes',
     helper:
-      'On: published addresses are checked from the watched countries on a schedule. Off: the detector only has member reports to go on.',
+      'On: published addresses are checked from the watched countries on a schedule. Off: the detector has only member reports.',
   },
   {
     kind: 'switch',
@@ -101,7 +101,7 @@ export const BASIC_NUMBERS: Field[] = [
     label: 'Standbys per listener',
     unit: 'edges',
     helper:
-      'Ready edges kept in reserve for each deployed listener, on top of the per-origin standbys. Automatic replacement sets this to one. Each one is billed.',
+      'Ready edges per deployed listener, on top of the per-origin standbys. Automatic replacement sets this to 1. Each one is billed.',
   },
   {
     kind: 'number',
@@ -123,7 +123,7 @@ export const BASIC_NUMBERS: Field[] = [
     label: 'Drain time',
     unit: 'min',
     helper:
-      'How long a replaced edge keeps serving connected members before it is destroyed. It is billed while it drains.',
+      'How long a replaced edge keeps serving members before it is destroyed. Billed while it drains.',
   },
 ];
 
@@ -132,7 +132,7 @@ export const AUTO_PROVISION: Field = {
   path: 'autoProvisionToDesired',
   label: 'Provision up to the desired pool size automatically',
   helper:
-    'On: the control plane creates edges on its own until every origin reaches its pool size. This spends provider budget without asking, though never while a spare waits for the slot, nor for an edge that could only be a spare. Off: you provision each edge yourself.',
+    'On: edges are bought without asking until every origin reaches its pool size. Never while a spare waits for the slot, and never for an edge that could only be a spare. Off: you provision each edge yourself.',
 };
 
 export const ROTATION_FIELDS: Field[] = [
@@ -148,7 +148,7 @@ export const ROTATION_FIELDS: Field[] = [
     path: 'requireProviderHealth',
     label: 'Wait for the provider health check',
     helper:
-      'On: an edge is only verified once the provider reports its origin member healthy (where the provider can tell). Off: a successful connect is enough.',
+      'On: an edge is verified only once the provider reports its origin member healthy, where the provider can tell. Off: a successful connect is enough.',
   },
   {
     kind: 'switch',
@@ -163,7 +163,7 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Drain time of a burned edge',
     unit: 'min',
     helper:
-      'A burned edge is known to be blocked, so it is kept only this long, for members outside the blocking country who have not refreshed yet. 0 destroys it at once.',
+      'A burned edge is known to be blocked. It stays this long for members outside the blocking country who have not refreshed. 0 destroys it at once.',
   },
   {
     kind: 'number',
@@ -171,14 +171,14 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'How often apps check for a new address',
     unit: 'hours',
     helper:
-      'Sent with the subscription of a fronted node. Apps that honour it fetch their configuration this often, so a replaced address reaches them in time.',
+      "Sent with a fronted node's subscription. Apps that honour it refetch this often and pick up a replaced address.",
   },
   {
     kind: 'switch',
     path: 'drainHold.enabled',
     label: 'Keep replaced CDN fronts up for apps that have not refreshed',
     helper:
-      'Most apps never refresh on their own. On: a replaced or blocked CDN front stays up after its drain until the apps that were handed it have refreshed, or until the limit below. Keeping a front up costs next to nothing. Load balancer addresses are never kept.',
+      'Most apps never refresh on their own. On: a replaced or blocked CDN front stays up after its drain until its apps refresh, or until the limit below. It costs next to nothing. Load balancer addresses are never kept.',
   },
   {
     kind: 'number',
@@ -194,14 +194,14 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Let it go when this few apps may still use it',
     unit: 'apps',
     helper:
-      'Counted hourly: keys that fetched while the front was in use and not since. A key nobody uses never refreshes, so this is rarely 0.',
+      'Counted hourly: keys that fetched while the front was in use and not since. Unused keys never refresh, so this is rarely 0.',
   },
   {
     kind: 'number',
     path: 'sniDrainMinutes',
     label: 'Drain time of a retired server name',
     unit: 'min',
-    helper: 'How long a retired name stays valid on the origin for members who still hold it.',
+    helper: 'How long a retired SNI stays valid on the origin for members who still hold it.',
   },
   {
     kind: 'number',
@@ -216,15 +216,15 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Hold when a replacement is blocked again within',
     unit: 'hours',
     helper:
-      'A replacement that looks blocked again this soon after going into use stops automatic replacement of its transport on that node until you resume it. 0 never holds.',
+      'If a replacement looks blocked this soon after going into use, automatic replacement of that transport on that node stops until you resume it. 0 never holds.',
   },
   {
     kind: 'number',
     path: 'replacement.freshBlockHours',
-    label: 'Pause when a new name is blocked before use for',
+    label: 'Pause when a new hostname is blocked before use for',
     unit: 'hours',
     helper:
-      'When a replacement name on a CDN is blocked in a country before anyone received it, a network there is refusing every name on that CDN, so another name would not help. Automatic replacement for that country pauses this long, the address in use stays, then one new name is tried. 0 never pauses.',
+      'A new CDN hostname blocked in a country before anyone got it means the whole CDN is refused there. Automatic replacement for that country pauses this long and the address in use stays. Then one new hostname is tried. 0 never pauses.',
   },
   {
     kind: 'number',
@@ -240,7 +240,7 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Open addresses replaced per node',
     unit: 'a day',
     helper:
-      'Open addresses are expected to be blocked. This is their own budget: it never uses the daily cap meant for trusted addresses.',
+      'Open addresses are expected to be blocked. They have their own budget, apart from the daily cap for trusted addresses.',
   },
   {
     kind: 'number',
@@ -255,7 +255,7 @@ export const ROTATION_FIELDS: Field[] = [
     label: "A country's own addresses replaced per node",
     unit: 'a day',
     helper:
-      "For a country on its own addresses on a node: their own budget, per transport. It never uses the node's daily cap. 0: only by hand.",
+      "Replacements per day for a country on its own addresses on a node, per transport. Separate from the node's daily cap. 0 means by hand only.",
   },
   {
     kind: 'number',
@@ -263,7 +263,7 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Suspect an account after',
     unit: 'strikes',
     helper:
-      'A strike: a trusted address blocked soon after it was first handed to the account, with few others handed it then. A suspected account gets open addresses only.',
+      'A strike is a trusted address blocked soon after the account first got it, while few others had it. A suspected account gets open addresses only.',
   },
   {
     kind: 'number',
@@ -277,7 +277,7 @@ export const ROTATION_FIELDS: Field[] = [
     path: 'trust.strikeSpacingHours',
     label: 'At most one strike per account every',
     unit: 'hours',
-    helper: 'So one mass block never counts as several strikes.',
+    helper: 'One mass block never counts as several strikes.',
   },
   {
     kind: 'number',
@@ -285,7 +285,7 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Handed out recently means within',
     unit: 'days',
     helper:
-      'Only accounts first handed the address this long before it was blocked can get a strike. Records of who was handed which trusted address live as long as the address.',
+      'Only accounts that first got the address within this long before the block can get a strike. Records of who got which trusted address last as long as the address.',
   },
   {
     kind: 'number',
@@ -293,7 +293,7 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Not counted in an address\u2019s first',
     unit: 'hours',
     helper:
-      'Accounts handed an address when it is new got it because it outranks theirs, so a block then strikes none of them.',
+      'Accounts get a new address because it outranks theirs. A block in this window strikes none of them.',
   },
   {
     kind: 'number',
@@ -322,17 +322,17 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
     kind: 'number',
     path: 'render.namesPerEndpoint',
     label: 'Server names per member',
-    unit: 'names',
+    unit: 'SNIs',
     helper:
-      'How many server names one member gets for their main address, so a blocked name does not cut them off. Only in apps with an Auto group, which switch past a blocked name by themselves; apps that show a plain list get the first name only. Only for listeners that use the growth-stable name selection.',
+      'SNIs one member gets for their main address. Apps with an Auto group get them all and skip a blocked one. Plain lists get the first only. Only for listeners with growth-stable SNI selection.',
   },
   {
     kind: 'number',
     path: 'render.backupNames',
     label: 'Server names on the backup address',
-    unit: 'names',
+    unit: 'SNIs',
     helper:
-      'The same, for the backup address, also only in apps with an Auto group. They differ from the main ones where possible.',
+      'The same for the backup address, also only in apps with an Auto group. They differ from the main SNIs where possible.',
   },
   {
     kind: 'select',
@@ -449,7 +449,7 @@ export const DETECTOR_FIELDS: Field[] = [
     path: 'detect.minEdgeReporters',
     label: 'Reporters needed per edge',
     unit: 'members',
-    helper: 'Distinct members on one edge before that edge is named as the blocked one.',
+    helper: 'Distinct members on one edge before that edge counts as the blocked one.',
   },
   {
     kind: 'number',
@@ -537,7 +537,7 @@ export const DETECTOR_FIELDS: Field[] = [
     label: 'Fleet brake',
     unit: '%',
     helper:
-      'When more than this share of the nodes looks blocked at once (and at least three do), every automatic replacement is held. 100 turns the brake off.',
+      'When more than this share of nodes, and at least three, look blocked at once, every automatic replacement is held. 100 turns the brake off.',
   },
   {
     kind: 'number',
@@ -552,7 +552,7 @@ export const DETECTOR_FIELDS: Field[] = [
     label: 'Failed checks for an address never reached',
     unit: 'checks',
     helper:
-      'An address no check from a listed country has ever reached counts as blocked there after this many failed checks, while the node’s other addresses are reached from there.',
+      'An address never reached from a listed country counts as blocked there after this many failed checks, if the node’s other addresses are reached from there.',
   },
   {
     kind: 'number',
@@ -654,7 +654,7 @@ export const PROBE_FIELDS: Field[] = [
     label: 'Globalping tests per hour',
     unit: 'tests per hour',
     helper:
-      "Every Globalping test FCP asks per hour: probe rounds, checks of names from inside countries and name timing. The name checks keep their share; a probe round that would pass the rest runs without Globalping. Past Globalping's free tests (500 an hour with a token) each test costs a credit.",
+      'All Globalping tests per hour, for probe rounds, in-country SNI checks and SNI timing. SNI checks keep their share. A probe round over the rest runs without Globalping. Past the free 500 an hour with a token, each test costs a credit.',
   },
 ];
 
@@ -665,7 +665,7 @@ export const COUNTRY_FIELDS: Field[] = [
     path: 'country.enabled',
     label: 'Check edges from each country',
     helper:
-      'On: every round also asks a few uncensored control countries, spares are checked too, and each edge gets a result per country. Off: probes work as before.',
+      'On: each edge and spare gets a result per country, with a few uncensored control countries asked too. Off: probes work as before.',
   },
   {
     kind: 'text',
@@ -695,7 +695,7 @@ export const COUNTRY_FIELDS: Field[] = [
     label: 'Controls that must work',
     unit: 'controls',
     helper:
-      'Blocked needs this many controls to reach the edge in the same round (the control plane counts as one). Otherwise the edge is down, not blocked.',
+      'Blocked needs this many controls to reach the edge in the same round. The control plane counts as one. Otherwise the edge is down, not blocked.',
   },
   {
     kind: 'number',
@@ -732,7 +732,7 @@ export const COUNTRY_FIELDS: Field[] = [
     label: 'Working addresses before they are used alone',
     unit: 'addresses',
     helper:
-      'When members are ordered by country: with fewer addresses known to work there, those and the not yet known ones are shared out together.',
+      'With members ordered by country and fewer working addresses than this, working and not yet known addresses are shared out together.',
   },
 ];
 
@@ -752,17 +752,17 @@ export const NAMES_FIELDS: Field[] = [
   {
     kind: 'switch',
     path: 'names.enabled',
-    label: 'Give load balancer addresses a name',
+    label: 'Give load balancer addresses a hostname',
     helper:
-      'On: an address made from now on gets a name in one of the zones below, and members dial the name. Apps that switch by themselves also get the IP as a fallback. Off: every member gets IPs again; names already made stay until their address goes.',
+      'On: each new address gets a hostname in one of the zones below, and members dial it. Apps with an Auto group also get the IP as a fallback. Off: members get IPs again. Existing hostnames stay until their address goes.',
   },
   {
     kind: 'number',
     path: 'names.moveQuietDays',
-    label: 'Move a name to its replacement at most every',
+    label: 'Move a hostname to its replacement at most every',
     unit: 'days',
     helper:
-      'When an address is replaced, its name points at the new one, so members keep working without updating. A name whose new address is blocked within this window is likely known to the censor, so the next address gets a new name. 0: never move a name.',
+      'A replaced address passes its hostname to the new one, so members need no update. If the new address is blocked within this window, the next one gets a new hostname. 0 never moves one.',
   },
 ];
 
@@ -773,15 +773,14 @@ export const LIST_FIELDS: Field[] = [
     path: 'lists.enabled',
     label: 'Use country lists',
     helper:
-      'On: lists are fetched on their schedule, and what they say counts as evidence. Off: nothing is fetched and nothing reads them; you can still add and read lists by hand.',
+      'On: lists are fetched on schedule and count as evidence. Off: nothing fetches or reads them. You can still add and read lists by hand.',
   },
   {
     kind: 'number',
     path: 'lists.jumpFactor',
     label: 'Hold a version that grew or shrank by more than',
     unit: 'times',
-    helper:
-      'A list that changes this much is likely broken or a different list, so it waits for you.',
+    helper: 'A list that changes this much is likely broken. It waits for you.',
   },
   {
     kind: 'number',
@@ -790,7 +789,7 @@ export const LIST_FIELDS: Field[] = [
     unit: 'share (0 to 1)',
     step: 0.05,
     helper:
-      'What a new version must have in common with the one in use. Less, and it waits for you, even at the same size.',
+      'How much a new version must share with the one in use. Below this it waits for you, even at the same size.',
   },
   {
     kind: 'number',

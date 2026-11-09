@@ -96,7 +96,7 @@ function nameRow(n: SniNameRow, bound: boolean): ListRow {
       row,
       state: 'burned',
       dot: 'red',
-      sentence: 'Burned: never used again, in this list or any other.',
+      sentence: 'Burned. Never used again, in any list.',
     };
   if (n.status === 'retired')
     return {
@@ -104,7 +104,7 @@ function nameRow(n: SniNameRow, bound: boolean): ListRow {
       row,
       state: 'retired',
       dot: 'grey',
-      sentence: 'Retired: no longer given out.',
+      sentence: 'Retired. No longer given out.',
     };
   const make = (state: ListRowState, dot: Dot, sentence: string): ListRow => ({
     ...base,
@@ -120,7 +120,7 @@ function nameRow(n: SniNameRow, bound: boolean): ListRow {
         'failing',
         'red',
         n.status === 'suspended'
-          ? `Suspended: the cover site kept failing it.${reason ? ` ${reason}` : ''}`
+          ? `Suspended. It kept failing against the cover site.${reason ? ` ${reason}` : ''}`
           : (reason ?? 'Its last check against the cover site failed.'),
       );
     case 'checking':
@@ -225,7 +225,7 @@ export function matchesListFilter(r: ListRow, f: ListFilter): boolean {
 export function listLine(f: SniFamilySummary): string {
   const d = f.delivery;
   const parts: string[] = [];
-  if (d.inUse) parts.push(`${plural(d.inUse, 'name')} in use`);
+  if (d.inUse) parts.push(`${plural(d.inUse, 'SNI')} in use`);
   if (d.waitingTest) parts.push(`${d.waitingTest} waiting for a test`);
   if (d.toSend) parts.push(`${d.toSend} to send`);
   if (d.checking) parts.push(`${d.checking} being checked`);
@@ -233,7 +233,7 @@ export function listLine(f: SniFamilySummary): string {
   if (d.failing) parts.push(`${d.failing} failing`);
   if (f.suggestions) parts.push(plural(f.suggestions, 'suggestion'));
   if (parts.length === 0)
-    parts.push(d.off > 0 ? `No name in use (${d.off} retired or burned)` : 'No names yet');
+    parts.push(d.off > 0 ? `No SNI in use (${d.off} retired or burned)` : 'No SNIs yet');
   parts.push(f.bindings === 0 ? 'not used by any port' : `used by ${plural(f.bindings, 'port')}`);
   return parts.join(' · ');
 }
@@ -248,8 +248,8 @@ export function listDot(f: SniFamilySummary): Dot {
 /** Under the Server names switch: what is true now. */
 export function namesSwitchLine(on: boolean): string {
   return on
-    ? 'On. FCP checks the names of every name list and can send them to nodes.'
-    : 'Off. Nothing is checked or sent. Members keep the names they have.';
+    ? 'On. FCP checks the SNIs of every SNI list and can send them to nodes.'
+    : 'Off. Nothing is checked or sent. Members keep the SNIs they have.';
 }
 
 /**
@@ -261,19 +261,19 @@ export function autoTestSwitchLine(
   service: 'ready' | 'not_configured' | 'unhealthy' | undefined,
 ): string {
   if (!on)
-    return 'Off. After a send, a person tests one name on each node, and that test hands the names to its members.';
+    return 'Off. After a send, a person tests one SNI on each node. A pass hands the SNIs to its members.';
   if (service === 'not_configured')
     return "On, but FCP's client check is not set up here, so nothing is tested. See Edges, Settings.";
   if (service === 'unhealthy')
-    return "On, but FCP's client check did not answer its last health check, so nothing is tested until it does.";
-  return "On. After a send, FCP's own sing-box, Xray and Mihomo connect with one new name through each node's tested address. A pass hands the names to that node's members; anything else waits for a person.";
+    return "On, but FCP's client check did not answer its last health check. Nothing is tested until it does.";
+  return "On. After a send, FCP's own sing-box, Xray and Mihomo connect with one new SNI through each node's tested address. A pass hands the SNIs to that node's members. Anything else waits for a person.";
 }
 
 /** Under a list's "Use this list" switch: what is true now. */
 export function listSwitchLine(on: boolean): string {
   return on
-    ? 'On. Its names are checked and can be sent to the node.'
-    : 'Off. Nothing new is checked or sent. Members keep the names they have.';
+    ? 'On. Its SNIs are checked and can be sent to the node.'
+    : 'Off. Nothing new is checked or sent. Members keep the SNIs they have.';
 }
 
 /** What an action on picked names did (`POST sni/families/{slug}/names/{action}`). */
@@ -290,17 +290,17 @@ export function nameActionWords(
     burn: 'burned',
     recheck: 'checked again soon',
   }[action];
-  const parts = [`${plural(r.count, 'name')} ${done}.`];
+  const parts = [`${plural(r.count, 'SNI')} ${done}.`];
   const relays = r.relays;
   if (relays?.kept)
     parts.push(
-      `${plural(relays.kept, 'node')} ${relays.kept === 1 ? 'keeps' : 'keep'} handing out its last name.`,
+      `${plural(relays.kept, 'node')} ${relays.kept === 1 ? 'keeps' : 'keep'} handing out its last SNI.`,
     );
   // A node a send, a replacement or a removal is still changing is left alone:
   // it hands the names out until the action is made again.
   if (relays?.skipped)
     parts.push(
-      `${plural(relays.skipped, 'node')} ${relays.skipped === 1 ? 'was' : 'were'} busy and still ${relays.skipped === 1 ? 'hands' : 'hand'} ${r.count === 1 ? 'it' : 'them'} out: ${action === 'burn' ? 'burn' : 'retire'} ${r.count === 1 ? 'it' : 'them'} again in a few minutes.`,
+      `${plural(relays.skipped, 'node')} ${relays.skipped === 1 ? 'was' : 'were'} busy and still ${relays.skipped === 1 ? 'hands' : 'hand'} ${r.count === 1 ? 'it' : 'them'} out. ${action === 'burn' ? 'Burn' : 'Retire'} ${r.count === 1 ? 'it' : 'them'} again in a few minutes.`,
     );
   return parts.join(' ');
 }
@@ -319,6 +319,6 @@ export function checksWantWords(n: SniNameRow): string | null {
   if (blocked.length) parts.push(`suggest it is blocked in ${blocked.join(', ')}`);
   if (conflict.length) parts.push(`disagree with your mark in ${conflict.join(', ')}`);
   return parts.length
-    ? `The checks from inside a country ${parts.join(' and ')}: see Details.`
+    ? `The checks from inside a country ${parts.join(' and ')}. See Details.`
     : null;
 }

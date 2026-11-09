@@ -291,8 +291,8 @@
               <span class="min-w-0 flex-1">
                 {h.heldNodeNames.join(', ')}
                 {h.heldNodeNames.length === 1 ? 'is' : 'are'} held closed since a profile change
-                {ago(Date.now() - Date.parse(h.since))}. They are not enrolled, so nothing re-checks
-                them: release the hold once you have.
+                {ago(Date.now() - Date.parse(h.since))}. Nothing re-checks nodes that are not
+                enrolled. Check them yourself, then release the hold.
               </span>
               {#if canWrite}
                 <Button variant="outline" size="sm" onclick={() => release(h.id)}>Release</Button>
@@ -308,8 +308,7 @@
             </li>
           {:else if manageOn && instance && !instance.setUp}
             <li class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm">
-              Changes are allowed, but this backend is not set up yet, so they are refused. Set it
-              up first.
+              Changes are on but refused until this backend is set up. Set it up first.
             </li>
           {/if}
           {#each attention as row (row.key)}
@@ -348,7 +347,7 @@
                   href={edgesPaths.family(row.family)}
                   class="text-primary text-sm underline underline-offset-4"
                 >
-                  Open the name list
+                  Open the SNI list
                 </Link>
               {/if}
             </li>
@@ -364,8 +363,8 @@
     <section aria-label="Nodes">
       {#if t.nodes.length === 0}
         <p class="text-muted-foreground text-sm">
-          A node appears here once the node role has enrolled it. A machine the role does not run
-          can be added by hand with Add a node.
+          Nodes appear here once the node role enrolls them. For a machine the role does not run,
+          use Add a node.
         </p>
       {:else}
         {@const shown = t.nodes.filter((n) =>

@@ -8,7 +8,7 @@ import type { LanesView } from '@shared/contracts/edges';
 export const LANES_CARD = {
   title: 'Trusted addresses',
   off: (days: number) =>
-    `Every member of this node may be handed every address, so an account a censor signs up sees them all. With trusted addresses, new free accounts get only a few open addresses, which are expected to be blocked; the trusted ones go only to paid members and accounts older than ${days} days.`,
+    `Every member can get every address, so a censor's account sees them all. With trusted addresses, new free accounts get only a few open addresses. Trusted ones go to paid members and accounts older than ${days} days.`,
   setUp: 'Set up trusted addresses',
   change: 'Change',
   turnOff: 'Turn off',
@@ -21,7 +21,7 @@ export const LANES_DIALOG = {
   trusted: 'Trusted addresses per transport',
   trustedHelp: 'Handed only to paid members and older accounts. Each one is a load balancer.',
   onBody:
-    'Every address in use now has been handed to everyone, so it becomes open. FCP makes new trusted addresses and takes the old open ones out of use once those are in. While no open address works, new free accounts get nothing.',
+    'Addresses in use now become open, since everyone has them. FCP makes new trusted addresses and retires the old open ones once those are in. While no open address works, new free accounts get nothing.',
   changeBody: 'The new numbers apply from the next automatic pass.',
   turnOn: 'Turn on',
   save: 'Save',
@@ -29,7 +29,7 @@ export const LANES_DIALOG = {
 
 export const LANES_OFF = {
   title: 'Turn trusted addresses off?',
-  body: 'Every member may then be handed every address, so the trusted ones become open for good. Turning them on again starts with new addresses.',
+  body: 'Every member can then get every address, so trusted ones become open for good. Turning this on again starts with new addresses.',
   label: 'Turn off',
 } as const;
 

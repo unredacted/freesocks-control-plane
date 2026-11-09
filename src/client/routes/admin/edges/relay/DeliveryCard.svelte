@@ -52,7 +52,7 @@
     await serveRelayDirect(relay.id);
     void qc.invalidateQueries({ queryKey: edgeKeys.all });
     toast.success('Putting the direct address back', {
-      description: 'Each step is checked first; the node page shows where it is.',
+      description: 'Each step is checked first. The node page shows progress.',
     });
   }
 </script>
@@ -64,8 +64,7 @@
       {#if delivery}<Badge variant={delivery.tone}>{delivery.headline}</Badge>{/if}
     </Card.Title>
     <Card.Description>
-      Delivery is edge-required: members on this origin get edge addresses or nothing, never the
-      origin address.
+      Edge-required. Members on this origin get edge addresses or nothing, never the origin address.
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-3 text-sm">
@@ -113,7 +112,7 @@
       <div class="border-t pt-3">
         <p class="text-muted-foreground">
           {relay.quarantine
-            ? 'Members can be served this node directly again once the quarantine is resolved.'
+            ? 'Resolve the quarantine first to serve this node directly again.'
             : 'To stop using edges for this node, serve members its own address again.'}
         </p>
         <Button
@@ -133,7 +132,7 @@
 <ConfirmDialog
   bind:open={directOpen}
   title="Serve this node directly again?"
-  body="Members stop receiving edge addresses for this node and get its own address back. FCP first checks that every member is served, releases edge-required delivery, and only then re-enables the direct addresses it hid. The edges stay, so the node can be fronted again later."
+  body="Members get this node's own address instead of edge addresses. FCP checks every member is served, lifts edge-required delivery, then re-enables the direct addresses it hid. The edges stay, so the node can be fronted again later."
   confirmLabel="Serve directly"
   danger
   onConfirm={serveDirect}

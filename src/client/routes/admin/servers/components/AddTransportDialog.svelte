@@ -125,7 +125,7 @@
     <Dialog.Header>
       <Dialog.Title>Add a transport to <span class="break-all">{profileName}</span></Dialog.Title>
       <Dialog.Description>
-        Built the way setup builds one. No node serves it until one is assigned to it.
+        Built the way setup builds one. No node serves it until it is assigned.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -161,8 +161,7 @@
           </div>
         </div>
         <p class="text-muted-foreground text-xs">
-          Setting the backend up with a mode adopts the transport whose tag is the mode group's name
-          in capitals.
+          A mode added at setup takes the transport tagged with its group name in capitals.
         </p>
         {#if kind === 'ws'}
           <div class="space-y-1.5">
@@ -171,7 +170,7 @@
           </div>
         {:else if kind === 'hysteria'}
           <div class="space-y-1.5">
-            <Label for={`${uid}-sni`}>Server name</Label>
+            <Label for={`${uid}-sni`}>Server name (SNI)</Label>
             <Input
               id={`${uid}-sni`}
               bind:value={serverName}
@@ -180,8 +179,8 @@
               spellcheck={false}
             />
             <p class="text-muted-foreground text-xs">
-              The name its certificate is made for and apps present when they connect. Apps check
-              the certificate by its fingerprint, never by a certificate authority.
+              The SNI its certificate is for and apps send. Apps check the certificate by its
+              fingerprint, not by a certificate authority.
             </p>
           </div>
           <div class="flex items-center gap-2">
@@ -192,19 +191,19 @@
           </div>
         {:else}
           <div class="space-y-1.5">
-            <Label for={`${uid}-family`}>Server-name family</Label>
+            <Label for={`${uid}-family`}>SNI list</Label>
             <select
               id={`${uid}-family`}
               class="bg-background w-full rounded-md border px-3 py-2 text-sm"
               bind:value={familySlug}
             >
-              <option value="" disabled>Pick a family</option>
+              <option value="" disabled>Pick an SNI list</option>
               {#each familyRows as f (f.id)}
                 <option value={f.slug}>{f.label}</option>
               {/each}
             </select>
             <p class="text-muted-foreground text-xs">
-              Its target and the names usable today become the transport's.
+              The transport takes its target and its SNIs usable today.
             </p>
           </div>
           <div class="flex items-center gap-2">
@@ -229,14 +228,14 @@
             <p>{templateWords(added.kind)}, port {added.port}</p>
             {#if added.kind === 'hysteria'}
               <p class="text-muted-foreground break-all">
-                UDP port {added.port}, server name {added.serverName}{added.salamander
+                UDP port {added.port}, SNI {added.serverName}{added.salamander
                   ? ', Salamander on'
                   : ''}
               </p>
             {:else if added.kind !== 'ws'}
               <p class="text-muted-foreground break-all">
                 {added.serverNames?.length ?? 0}
-                {added.serverNames?.length === 1 ? 'server name' : 'server names'}, from {added.target}
+                {added.serverNames?.length === 1 ? 'SNI' : 'SNIs'}, from {added.target}
               </p>
             {:else}
               <p class="text-muted-foreground break-all">Path {added.path}</p>
@@ -258,7 +257,7 @@
             No node runs this profile, so nothing restarts.
           {:else}
             The panel pushes the profile to {preview.restartsNodes.join(', ')}. People connected
-            there are cut off for a few seconds; none of them is moved to the new transport.
+            there are cut off for a few seconds. Nobody is moved to the new transport.
           {/if}
         </p>
       </div>

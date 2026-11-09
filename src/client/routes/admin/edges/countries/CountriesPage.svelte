@@ -32,7 +32,7 @@
 
 <SectionHeader
   title="Countries"
-  description="For each censored country: which of your addresses and server names work there, why FCP thinks so, and what a member there is handed today."
+  description="For each censored country: which addresses and SNIs work there, why FCP thinks so, and what members there are handed today."
 >
   {#snippet actions()}
     <Link
@@ -107,13 +107,13 @@
                 {#if c.meantFor.blocked > 0}
                   <span class="text-destructive font-medium">
                     {c.meantFor.blocked === 1
-                      ? 'A location meant for it is blocked there.'
-                      : `${c.meantFor.blocked} locations meant for it are blocked there.`}
+                      ? 'A location set for it is blocked there.'
+                      : `${c.meantFor.blocked} locations set for it are blocked there.`}
                   </span>
                 {:else if c.meantFor.locations > 0}
                   {c.meantFor.locations === 1
-                    ? 'One location is meant for it.'
-                    : `${c.meantFor.locations} locations are meant for it.`}
+                    ? 'One location is set for it.'
+                    : `${c.meantFor.locations} locations are set for it.`}
                 {/if}
                 {sniSummaryLine(c.snis, c.country) ?? ''}
                 {c.listed.nameChecksRun

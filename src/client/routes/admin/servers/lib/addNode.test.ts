@@ -98,7 +98,7 @@ describe('placementCheck', () => {
       { ok: true, text: 'The freedom-reality pool has 2 mode groups.' },
       {
         ok: false,
-        text: 'The freedom-ws pool names 1 mode group this backend does not have (it may be on another backend).',
+        text: 'The freedom-ws pool lists 1 mode group not on this backend. It may be on another backend.',
       },
       { ok: false, text: 'In the freedom-ws pool, ws lists no transport.' },
       { ok: false, text: 'The privacy pool is empty: that mode issues no keys here.' },

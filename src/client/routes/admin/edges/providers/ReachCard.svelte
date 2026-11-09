@@ -77,14 +77,14 @@
     <CardTitle class="text-base">What this account reaches</CardTitle>
     <CardDescription>
       {meta.layer === 'l7' || meta.providesDns
-        ? 'The zones and configurations these credentials reach. Any of them can be picked when you front a node; a zone becomes a location the first time it is picked.'
-        : 'What these credentials can use at the provider. A region becomes a location the first time it is picked for a node, or when you add it here.'}
+        ? 'The zones and configurations these credentials reach. Pick any when you front a node. A zone becomes a location the first time it is picked.'
+        : 'What these credentials can use at the provider. A region becomes a location when first picked for a node or added here.'}
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-3">
     {#if meta.needsDnsAccount && !dnsAccountsExist}
       <p class="text-sm">
-        Its fronts write their names into a zone of a DNS account, and none exists yet.
+        Its fronts write their hostnames into a DNS account's zone, and there is no DNS account yet.
         <Link
           href={edgesPaths.providers({ edit: 'new', provider: firstDnsProvider })}
           class="text-primary underline underline-offset-4">Add a DNS account</Link
@@ -124,7 +124,7 @@
           issue={{
             code: entry.error!,
             subject: LABELS[kind] ?? kind,
-            detail: 'The last listing failed; the list above is from before.',
+            detail: 'The last listing failed. The list above is from before.',
           }}
         />
         <ProviderAnswer detail={entry.errorDetail ?? undefined} />

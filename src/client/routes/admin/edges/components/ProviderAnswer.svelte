@@ -24,8 +24,8 @@
       class="bg-muted mt-2 max-h-48 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap">{detail}</pre>
     <p class="text-muted-foreground mt-1 text-xs">
       {names
-        ? "Addresses, the credential and this edge's names are replaced before this is shown."
-        : 'Addresses and the credential are replaced before this is shown.'}
+        ? "Addresses, the credential and this edge's hostnames are hidden."
+        : 'Addresses and the credential are hidden.'}
     </p>
   </details>
 {/if}

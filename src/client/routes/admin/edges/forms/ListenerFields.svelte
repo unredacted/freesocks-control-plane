@@ -59,7 +59,7 @@
     remark: 'By the entry remark',
   };
   const MATCH_HINTS: Record<MatchRuleChoice, string> = {
-    auto: 'The remark of the backend Host when the transport is bound, the origin address and port otherwise.',
+    auto: 'The backend Host remark if the transport is bound, otherwise the origin address and port.',
     address: 'Entries that dial the origin address on this port are rewritten.',
     'whole-body':
       'Every entry is rewritten. Only valid when this is the only listener of the origin.',
@@ -106,12 +106,11 @@
       </Select.Root>
       {#if combo.transport === 'udp'}
         <p class="text-xs text-amber-700 dark:text-amber-300">
-          This listener can be saved, but no provider forwards UDP today, so no edge can front it
-          yet.
+          You can save it, but no provider forwards UDP yet, so no edge can front it.
         </p>
       {:else if combo.l7Proof === 'vless'}
         <p class="text-muted-foreground text-xs">
-          Can sit behind a CDN front (L7) when you describe how the front reaches it below.
+          Can use a CDN front (L7) if you describe below how the front reaches it.
         </p>
       {:else}
         <p class="text-muted-foreground text-xs">Fronted by load balancers (L4) only.</p>
@@ -134,13 +133,13 @@
   {#if combo.usesSni}
     <TagInput
       bind:value={form.tlsNames}
-      label={combo.security === 'reality' ? 'Server names (REALITY)' : 'Server names'}
+      label={combo.security === 'reality' ? 'SNIs (REALITY)' : 'SNIs'}
       normalize={normalizeHostname}
       placeholder="cdn.example"
       helper={combo.security === 'reality'
-        ? 'Names the inbound accepts. Members are spread across them, and a blocked name can be retired later.'
-        : 'Names the certificate covers. Members present one of them.'}
-      invalidText="Not a valid DNS name."
+        ? 'SNIs the inbound accepts. Members are spread across them, and a blocked one can be retired later.'
+        : 'SNIs the certificate covers. Members use one of them.'}
+      invalidText="Not a valid hostname."
       max={32}
       mono
       {disabled}
@@ -226,8 +225,8 @@
                 </Select.Content>
               </Select.Root>
               <p class="text-muted-foreground text-xs">
-                As the transport declares it. A CDN front is only checked against packet-up and
-                auto; the stream modes need a front that streams request bodies.
+                As the transport declares it. CDN fronts are only checked with packet-up and auto.
+                Stream modes need a front that streams request bodies.
               </p>
             </div>
           {/if}
@@ -240,8 +239,8 @@
         <div>
           <Label for={`${uid}-frontable`}>A CDN front can reach this transport</Label>
           <p class="text-muted-foreground text-xs">
-            Off: only load balancers (L4) front it. On: describe how a front dials the origin, and
-            the server decides whether L7 is allowed.
+            If off, only load balancers (L4) front it. If on, describe how a front reaches the
+            origin and the server decides if L7 is allowed.
           </p>
         </div>
         <Switch id={`${uid}-frontable`} bind:checked={form.frontable} {disabled} />
@@ -266,7 +265,7 @@
             </Select.Root>
             {#if form.scheme === 'http'}
               <p class="text-muted-foreground text-xs">
-                A plain HTTP origin can only sit behind a CDN front (L7 only).
+                A plain HTTP origin can only use a CDN front (L7).
               </p>
             {/if}
           </div>
@@ -280,12 +279,12 @@
               {disabled}
             >
               <Select.Trigger id={`${uid}-hosthdr`} class="w-full">
-                {form.acceptsHostHeader === 'any' ? 'Any name' : 'Only its own names'}
+                {form.acceptsHostHeader === 'any' ? 'Any hostname' : 'Only its own hostnames'}
               </Select.Trigger>
               <Select.Content>
-                <Select.Item value="any" label="Any name">Any name</Select.Item>
-                <Select.Item value="names" label="Only its own names"
-                  >Only its own names</Select.Item
+                <Select.Item value="any" label="Any hostname">Any hostname</Select.Item>
+                <Select.Item value="names" label="Only its own hostnames"
+                  >Only its own hostnames</Select.Item
                 >
               </Select.Content>
             </Select.Root>
@@ -303,11 +302,11 @@
           </div>
           <TagInput
             bind:value={form.certNames}
-            label="Names on the origin certificate"
+            label="Hostnames on the origin certificate"
             normalize={normalizeCertName}
             placeholder="origin.example"
-            helper="Every active server name must be covered by one of these (a leading wildcard label is allowed)."
-            invalidText="Not a valid certificate name."
+            helper="Must cover every active SNI. A leading wildcard is allowed."
+            invalidText="Not a valid hostname or wildcard."
             max={16}
             mono
             {disabled}
@@ -335,8 +334,8 @@
               <div>
                 <Label for={`${uid}-bind`}>Bind the backend transport</Label>
                 <p class="text-muted-foreground text-xs">
-                  Needed for FCP to create and flip the backend Host itself. Fronting the node from
-                  Edges fills this in.
+                  FCP needs this to create and switch the backend Host. Fronting the node from Edges
+                  fills it in.
                 </p>
               </div>
               <Switch id={`${uid}-bind`} bind:checked={form.bindPanel} {disabled} />
@@ -432,8 +431,8 @@
           <div>
             <Label for={`${uid}-deployed`}>The transport is deployed on the origin</Label>
             <p class="text-muted-foreground text-xs">
-              Off while the node is still being prepared. No edge is provisioned for a listener that
-              is not deployed.
+              Leave off while the node is being prepared. No edge is provisioned until it is
+              deployed.
             </p>
           </div>
           <Switch id={`${uid}-deployed`} bind:checked={form.deployed} {disabled} />

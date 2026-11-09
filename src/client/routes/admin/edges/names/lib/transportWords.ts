@@ -97,10 +97,10 @@ export function namesStep(
 
 /** The button for a step, or null when the step is waiting or done. */
 export const STEP_BUTTON: Partial<Record<NamesStep['kind'], string>> = {
-  manage: 'Manage these names with FCP',
+  manage: 'Manage these SNIs with FCP',
   send: 'Send to the node',
   send_again: 'Send again',
-  test: 'Test one name',
+  test: 'Test one SNI',
   add_suggestions: 'Add suggestions',
 };
 
@@ -109,7 +109,7 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   if (!t.list) {
     return {
       dot: 'grey',
-      text: t.listed === 0 ? 'No server names yet' : `${plural(t.listed, 'name')} set by hand`,
+      text: t.listed === 0 ? 'No SNIs yet' : `${plural(t.listed, 'SNI')} set by hand`,
     };
   }
   const c = t.list.counts;
@@ -119,7 +119,7 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   const inUse = node ? node.inUse : c.inUse;
   const waiting = node ? node.waitingTest : c.waitingTest;
   const parts = [
-    unprotected ? `${plural(t.listed, 'name')} on the port` : `${plural(inUse, 'name')} in use`,
+    unprotected ? `${plural(t.listed, 'SNI')} on the port` : `${plural(inUse, 'SNI')} in use`,
   ];
   if (waiting) parts.push(`${waiting} waiting for a test`);
   if (c.toSend) parts.push(`${c.toSend} to send`);
@@ -140,7 +140,7 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
 
 /** One node behind a port, on the name list's page. */
 export function nodeLineWords(n: SniTransportNode): { dot: Dot; text: string } {
-  const parts = [`${plural(n.inUse, 'name')} in use`];
+  const parts = [`${plural(n.inUse, 'SNI')} in use`];
   if (n.waitingTest)
     parts.push(
       n.testable.length > 0
@@ -159,42 +159,42 @@ export function nodeLineWords(n: SniTransportNode): { dot: Dot; text: string } {
 export function stepWords(step: NamesStep, t: SniTransport): string {
   const nodes = t.profileNodes.length;
   const shared =
-    nodes > 1 ? ` The ${nodes} nodes on the profile ${t.profileName} share these names.` : '';
+    nodes > 1 ? ` The ${nodes} nodes on the profile ${t.profileName} share these SNIs.` : '';
   switch (step.kind) {
     case 'names_off':
-      return 'Server names are off, so FCP does not manage these names.';
+      return 'Server names are off, so FCP does not manage these SNIs.';
     case 'manage':
-      return `Its names are set by hand. FCP can check each one against the cover site, suggest more that site serves, and get them to members.${shared}`;
+      return `Its SNIs are set by hand. FCP can check them against the cover site, suggest more, and get them to members.${shared}`;
     case 'list_off':
-      return 'Its name list is off, so nothing new is sent. Members keep the names they have.';
+      return 'Its SNI list is off, so nothing new is sent. Members keep the SNIs they have.';
     case 'sending':
-      return 'Sending the names to the backend. The node restarts Xray once to take them.';
+      return 'Sending the SNIs to the backend. The node restarts Xray once to take them.';
     case 'send':
-      return `${plural(t.list?.counts.toSend ?? 0, 'checked name')} ${(t.list?.counts.toSend ?? 0) === 1 ? 'is' : 'are'} not on the node yet.${shared}`;
+      return `${plural(t.list?.counts.toSend ?? 0, 'checked SNI')} ${(t.list?.counts.toSend ?? 0) === 1 ? 'is' : 'are'} not on the node yet.${shared}`;
     case 'send_again':
       return 'The last send did not go through. See Servers, Recent changes, then send again.';
     case 'send_blocked':
       return step.why === 'backend_changes_off'
-        ? 'Changes to the backend are off, so these names cannot reach the node.'
-        : 'This backend is not set up yet, so these names cannot reach the node.';
+        ? 'Changes to the backend are off, so these SNIs cannot reach the node.'
+        : 'This backend is not set up yet, so these SNIs cannot reach the node.';
     case 'test':
-      return 'The node has the new names. Members get them once one test proves the node accepts them.';
+      return 'The node has the new SNIs. Members get them after one test passes.';
     case 'test_nodes':
-      return `The new names are on the node. Members get them once a test proves the node accepts them: test one on ${step.nodes === 1 ? 'the node' : `each of the ${step.nodes} nodes`} below.`;
+      return `The new SNIs are on the node. Members get them after a test passes. Test one on ${step.nodes === 1 ? 'the node' : `each of the ${step.nodes} nodes`} below.`;
     case 'unprotected':
       return step.here
-        ? "This node is not fronted, so FCP hands its members none of these names: they get the one name on each of the node's own addresses. Front it to hand them out."
-        : 'No node behind this port is fronted, so FCP hands these names to no member yet: members get names only through fronted addresses.';
+        ? 'This node is not fronted, so its members get only the SNI on each of its own addresses. Front it to hand these out.'
+        : 'No node behind this port is fronted, so no member gets these SNIs yet. SNIs reach members only through fronted addresses.';
     case 'test_needs_address':
-      return 'The node has the new names, but none of its addresses has been tried yet. Try one on its Edges first: a name is tested through an address that already works.';
+      return 'The node has the new SNIs, but none of its addresses has been tried yet. Try one on its Edges first. A test needs an address that already works.';
     case 'add_suggestions':
-      return `FCP found ${plural(step.count, 'more name')} the cover site serves.`;
+      return `FCP found ${plural(step.count, 'more SNI')} the cover site serves.`;
     case 'checking':
-      return `Checking ${plural(step.count, 'name')} against the cover site. This takes a few minutes.`;
+      return `Checking ${plural(step.count, 'SNI')} against the cover site. This takes a few minutes.`;
     case 'done':
       return t.list
-        ? 'Every name this list can use is in use.'
-        : 'This port lists no names to manage.';
+        ? 'Every SNI this list can use is in use.'
+        : 'This port lists no SNIs to manage.';
   }
 }
 
@@ -203,13 +203,13 @@ export function managedWords(done: SniManaged): string {
   const taken = done.imported.added;
   const parts = [
     taken > 0
-      ? `FCP manages these names now: ${plural(taken, 'name')} taken in, each checked against the cover site first.`
-      : 'FCP manages these names now.',
+      ? `FCP manages these SNIs now. ${plural(taken, 'SNI')} taken in, each checked against the cover site first.`
+      : 'FCP manages these SNIs now.',
   ];
   // An existing list already holds the port's names: they are in it, not left out.
   const already = done.imported.lines.filter((l) => l.verdict === 'duplicate').length;
   if (already)
-    parts.push(`${plural(already, 'name')} ${already === 1 ? 'was' : 'were'} already in the list.`);
+    parts.push(`${plural(already, 'SNI')} ${already === 1 ? 'was' : 'were'} already in the list.`);
   const left = leftOutWords({
     ...done.imported,
     lines: done.imported.lines.filter((l) => l.verdict !== 'duplicate'),
@@ -217,27 +217,27 @@ export function managedWords(done: SniManaged): string {
   if (left) parts.push(left);
   if (done.cert?.ok)
     parts.push(
-      `The cover site's certificate lists ${plural(done.cert.listed, 'name')}: new ones show up as suggestions once checked.`,
+      `The cover site's certificate lists ${plural(done.cert.listed, 'hostname')}. New ones show up as suggestions once checked.`,
     );
   return parts.join(' ');
 }
 
 /** What "Send to the node" does, read from the plan before the write. */
 export function sendPlanWords(p: SniRolloutPlan, t: SniTransport): string[] {
-  if (!p.changed) return ['The backend already lists exactly these names. Nothing to send.'];
+  if (!p.changed) return ['The backend already lists exactly these SNIs. Nothing to send.'];
   const out: string[] = [];
-  if (p.added.length) out.push(`${plural(p.added.length, 'name')} will be added.`);
+  if (p.added.length) out.push(`${plural(p.added.length, 'SNI')} will be added.`);
   if (p.removed.length)
     out.push(
-      `${plural(p.removed.length, 'name')} will be removed. No member is given ${p.removed.length === 1 ? 'it' : 'any of them'} any more.`,
+      `${plural(p.removed.length, 'SNI')} will be removed. No member is given ${p.removed.length === 1 ? 'it' : 'any of them'} any more.`,
     );
   const held = p.held?.length ?? 0;
   if (held)
     out.push(
-      `${plural(held, 'name')} the list no longer gives ${held === 1 ? 'stays' : 'stay'}: an address members hold presents ${held === 1 ? 'it' : 'them'}, and they could not connect without ${held === 1 ? 'it' : 'them'}. Point that address at another name first to drop ${held === 1 ? 'it' : 'them'}.`,
+      `${plural(held, 'SNI')} the list no longer gives ${held === 1 ? 'stays' : 'stay'}, because an address members hold still presents ${held === 1 ? 'it' : 'them'}. Point that address at another SNI to remove ${held === 1 ? 'it' : 'them'}.`,
     );
   if (p.overflow)
-    out.push(`${plural(p.overflow, 'checked name')} will wait: the port's list is full for now.`);
+    out.push(`${plural(p.overflow, 'checked SNI')} will wait. The port's list is full for now.`);
   const nodes = t.profileNodes.length;
   out.push(
     nodes > 1
@@ -247,13 +247,13 @@ export function sendPlanWords(p: SniRolloutPlan, t: SniTransport): string[] {
   if (p.added.length)
     out.push(
       p.witness
-        ? 'Members get the new names once a test on the node proves it accepts them. One test proves all of them.'
-        : 'Members get the new names once a test on the node proves it accepts them. Each has been on this port before, so each needs its own test.',
+        ? 'Members get the new SNIs once a test on the node passes. One test proves all of them.'
+        : 'Members get the new SNIs once a test on the node passes. Each was on this port before, so each needs its own test.',
     );
   const checking = t.list?.counts.checking ?? 0;
   if (checking)
     out.push(
-      `${plural(checking, 'name')} still being checked ${checking === 1 ? 'waits' : 'wait'} for the next send.`,
+      `${plural(checking, 'SNI')} still being checked ${checking === 1 ? 'waits' : 'wait'} for the next send.`,
     );
   return out;
 }
@@ -287,9 +287,9 @@ const VOID_WORDS: Record<string, string> = {
   'edge.sni.profile_moved': 'the profile changed on the backend',
   'edge.sni.superseded': 'a newer send replaced this one',
   'edge.sni.receipt_expired': 'it ran too long',
-  already_proven: 'a test by hand proved the names first',
+  already_proven: 'a test by hand proved the SNIs first',
   switched_off: 'testing by FCP was switched off while it ran',
-  list_off: 'its name list was switched off while it ran',
+  list_off: 'its SNI list was switched off while it ran',
 };
 
 /** The clients that did not get in with the name: `sing-box: Refused by REALITY; Xray: Timed out`. */
@@ -305,7 +305,7 @@ function refusedWords(t: SniAutoTest): string {
 
 /** Why a test learned nothing, in a few words. */
 function couldNotWords(t: SniAutoTest): string {
-  if (t.verdict === 'node_unreachable') return 'no client got through with any name';
+  if (t.verdict === 'node_unreachable') return 'no client got through with any SNI';
   if (t.code === 'lapsed') return 'the test did not finish';
   const code = (t.code ?? '').split(':')[0]!;
   const copy = (CLIENT_CHECK_COPY as Record<string, { label: string }>)[code];
@@ -325,7 +325,7 @@ export function autoTestWords(
 ): string | null {
   if (service === 'off') return null;
   if (step.kind === 'test_needs_address')
-    return 'FCP tests names by itself only through an address that already works, so its test waits for one too.';
+    return 'FCP also tests only through an address that already works, so its test waits too.';
   if (step.kind !== 'test') return null;
   const t = step.node.autoTest;
   if (t?.state === 'testing')
@@ -334,20 +334,20 @@ export function autoTestWords(
     return "Testing by FCP is on, but FCP's client check is not set up here, so it tests nothing.";
   if (service === 'unhealthy')
     return "Testing by FCP is on, but FCP's client check is not answering, so it is not testing now.";
-  if (!t) return 'FCP tests one name here by itself within a few minutes. You can test one now.';
+  if (!t) return 'FCP tests one SNI here by itself within a few minutes. You can test one now.';
   switch (t.state) {
     case 'passed':
-      return `FCP's test proved ${t.sni}. It tests the next name shortly.`;
+      return `FCP's test proved ${t.sni}. It tests the next SNI shortly.`;
     case 'failed':
       return t.verdict === 'egress_mismatch'
         ? `FCP's test with ${t.sni} came out of another node, not this one. Nothing changed for members. ${AGAIN}`
         : `FCP's test did not pass: the node did not accept ${t.sni}${refusedWords(t) ? ` (${refusedWords(t)})` : ''}. Nothing changed for members. ${AGAIN}`;
     case 'could_not_check':
-      return `FCP could not test a name here: ${couldNotWords(t)}. ${AGAIN}`;
+      return `FCP could not test an SNI here: ${couldNotWords(t)}. ${AGAIN}`;
     case 'voided':
       return `FCP set its last test aside: ${VOID_WORDS[t.code ?? ''] ?? 'something it was bound to changed'}. ${AGAIN}`;
     case 'stopped':
-      return `FCP's test did not pass ${plural(t.failures, 'time')}, so it stopped trying for this send. Test one name yourself.`;
+      return `FCP's test did not pass ${plural(t.failures, 'time')}, so it stopped trying for this send. Test one SNI yourself.`;
   }
 }
 
@@ -355,7 +355,7 @@ export function autoTestWords(
 export function provenWords(activated: number, nodeName: string): string {
   return activated === 0
     ? `Recorded. ${nodeName} had nothing new to hand out.`
-    : `${plural(activated, 'name')} ${activated === 1 ? 'is' : 'are'} now given to members on ${nodeName}.`;
+    : `${plural(activated, 'SNI')} ${activated === 1 ? 'is' : 'are'} now given to members on ${nodeName}.`;
 }
 
 /** After "Look for more names": the cover site's certificate, and certificate logs. */
@@ -364,7 +364,7 @@ export function lookedWords(
   ct: { queued: number } | null,
 ): string {
   const parts = [
-    `The cover site's certificate lists ${plural(cert.listed, 'name')}, ${cert.added} new.`,
+    `The cover site's certificate lists ${plural(cert.listed, 'hostname')}, ${cert.added} new.`,
   ];
   if (ct)
     parts.push(
@@ -372,7 +372,7 @@ export function lookedWords(
         ? 'Certificate logs are being read too.'
         : 'Certificate logs were read in full this week.',
     );
-  parts.push('New names show up as suggestions once checked.');
+  parts.push('New ones show up as suggestions once checked.');
   return parts.join(' ');
 }
 
@@ -384,7 +384,7 @@ export function addedWords(r: SniImportResult, onPort = true): string {
   const next = onPort
     ? 'Each is checked against the cover site, then goes to the node with the next send.'
     : 'Each is checked against the cover site first.';
-  return `${plural(r.added, 'name')} added. ${next}${leftOutWords(r)}`;
+  return `${plural(r.added, 'SNI')} added. ${next}${leftOutWords(r)}`;
 }
 
 /** Why lines of an import were not added, each reason with its count (empty when none was). */
@@ -395,7 +395,7 @@ export function leftOutWords(r: SniImportResult): string {
     [count('duplicate'), 'already listed'],
     [count('in_other_family'), 'in another list'],
     [count('burned'), 'burned'],
-    [count('invalid'), 'not a host name'],
+    [count('invalid'), 'not a hostname'],
   ]
     .filter(([n]) => (n as number) > 0)
     .map(([n, what]) => `${n} ${what}`);
@@ -451,7 +451,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     if (c.toSend > 0 && (!view.switches.backendChanges || !view.switches.backendSetUp))
       out.push({
         key: `names-blocked:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(c.toSend, 'checked name')} cannot reach the nodes: ${
+        text: `${t.tag}: ${plural(c.toSend, 'checked SNI')} cannot reach the nodes: ${
           view.switches.backendChanges
             ? 'this backend is not set up yet'
             : 'changes to the backend are off'
@@ -461,7 +461,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     else if (c.toSend > 0 && t.send?.phase !== 'writing')
       out.push({
         key: `names-send:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(c.toSend, 'checked name')} to send to the node.`,
+        text: `${t.tag}: ${plural(c.toSend, 'checked SNI')} to send to the node.`,
         ...(first ? { nodeUuid: first } : {}),
       });
     if (t.send?.phase === 'panel_confirmed')
@@ -469,19 +469,19 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
         if (n.waitingTest > 0)
           out.push({
             key: `names-test:${t.transportUuid}:${n.relaySlug}`,
-            text: `${t.tag} on ${n.nodeName}: ${plural(n.waitingTest, 'name')} ${n.waitingTest === 1 ? 'waits' : 'wait'} for a test.${n.autoTest?.state === 'testing' ? ' FCP is testing one now.' : ''}`,
+            text: `${t.tag} on ${n.nodeName}: ${plural(n.waitingTest, 'SNI')} ${n.waitingTest === 1 ? 'waits' : 'wait'} for a test.${n.autoTest?.state === 'testing' ? ' FCP is testing one now.' : ''}`,
             ...(n.nodeUuid ? { nodeUuid: n.nodeUuid } : {}),
           });
     if (t.list.suggestions > 0)
       out.push({
         key: `names-suggest:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(t.list.suggestions, 'suggested name')} to add.`,
+        text: `${t.tag}: ${plural(t.list.suggestions, 'suggested SNI')} to add.`,
         ...(first ? { nodeUuid: first } : {}),
       });
     if (c.failing > 0)
       out.push({
         key: `names-failing:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(c.failing, 'name')} no longer served by the cover site.`,
+        text: `${t.tag}: ${plural(c.failing, 'SNI')} no longer served by the cover site.`,
         family: t.list.slug,
       });
   }

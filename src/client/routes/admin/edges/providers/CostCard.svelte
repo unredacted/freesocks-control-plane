@@ -125,8 +125,8 @@
     <CardTitle class="text-base">Cost</CardTitle>
     <CardDescription>
       {cdn
-        ? 'What this CDN account costs you. FCP never prices a CDN on its own: say what you pay, or that it is free.'
-        : "What this account's edges cost you. FCP reads each location's list prices from the provider; say here when you pay something else."}
+        ? 'What this CDN account costs you. FCP does not price CDNs, so say what you pay or that it is free.'
+        : "What this account's edges cost you. FCP reads list prices from the provider. Set it here if you pay something else."}
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-4">
@@ -198,8 +198,8 @@
           <div>
             <p class="text-sm font-medium">Monthly spend cap</p>
             <p class="text-muted-foreground text-xs">
-              When on, FCP creates no new edge here once the account's monthly estimate would pass
-              the cap. Edges whose price is not known count for nothing.
+              On: no new edge is created here once the monthly estimate would pass the cap. Edges
+              with no known price count as zero.
             </p>
           </div>
           <Switch checked={capOn} onCheckedChange={(v) => (capOn = v === true)} />

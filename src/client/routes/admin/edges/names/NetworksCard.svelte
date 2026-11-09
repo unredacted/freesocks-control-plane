@@ -112,9 +112,9 @@
       <div class="min-w-0 flex-1">
         <h2 class="text-base font-medium">Networks</h2>
         <p class="text-muted-foreground mt-1">
-          Where a name list's cover site and names live, by the ASNs that announce their addresses.
-          A port using a list on a network gets addresses only from that network, so a name and the
-          address it is shown to belong together.
+          Where an SNI list's cover site and SNIs resolve, by the ASNs that announce them. A port
+          using a list on a network gets addresses only from that network, so each SNI matches its
+          address.
         </p>
       </div>
       <Button size="sm" onclick={startAdd}>Add a network</Button>
@@ -123,7 +123,7 @@
       <p class="text-destructive">{sniErrorWords(codeOf(networks.error))}</p>
     {:else if (networks.data?.networks.length ?? 0) === 0}
       <p class="text-muted-foreground">
-        No network yet. Name lists without one may use any address.
+        No network yet. SNI lists without one may use any address.
       </p>
     {:else}
       <ul class="divide-y rounded-md border" aria-label="Networks">
@@ -157,7 +157,7 @@
                 variant="ghost"
                 class="text-destructive h-11 sm:h-8"
                 disabled={busy || n.families.length > 0}
-                title={n.families.length > 0 ? 'A name list is on this network' : undefined}
+                title={n.families.length > 0 ? 'An SNI list is on this network' : undefined}
                 onclick={() => {
                   removing = n;
                   removeOpen = true;
@@ -237,7 +237,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove the network ${removing?.label ?? ''}?`}
-  body="Locations set to it go back to no network. A name list or a port on it must be changed first."
+  body="Locations set to it go back to no network. Change any SNI list or port on it first."
   confirmLabel="Remove network"
   danger
   onConfirm={async () => {

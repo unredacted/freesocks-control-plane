@@ -87,7 +87,7 @@
     <Card.Header>
       <Card.Title>Page not found</Card.Title>
       <Card.Description>
-        There is no Edges page at this address. It may have been renamed, or the link is incomplete.
+        No Edges page at this address. It may have been renamed, or the link is incomplete.
       </Card.Description>
     </Card.Header>
     <Card.Content>

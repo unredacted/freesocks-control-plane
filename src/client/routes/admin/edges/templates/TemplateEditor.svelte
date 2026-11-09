@@ -185,9 +185,8 @@
     <span>
       <span class="font-medium">Default template</span>
       <span class="block text-xs text-muted-foreground">
-        Accounts in its scope that name no template of their own provision from this one. Making it
-        the default replaces the current default of the same scope, and accounts whose effective
-        template changes lose their qualification.
+        Accounts in its scope with no template of their own use this one. It replaces the current
+        default of the same scope, and accounts whose template changes lose their qualification.
       </span>
     </span>
   </label>
@@ -240,8 +239,8 @@
         value={jsonText}
         oninput={(e) => onJsonInput(e.currentTarget.value)}></textarea>
       <p class="text-xs text-muted-foreground">
-        The same parameters the form edits, including any the form has no field for. Text values may
-        use the placeholders {'{{name}}'}, {'{{originAddress}}'}, {'{{originPort}}'} and
+        The form's parameters, plus any it has no field for. Text values may use the placeholders {'{{name}}'},
+        {'{{originAddress}}'}, {'{{originPort}}'} and
         {'{{edgePort}}'}.
       </p>
       {#if jsonError}<InlineError message={jsonError} />{/if}

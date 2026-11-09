@@ -73,9 +73,8 @@
     <Dialog.Header>
       <Dialog.Title>Addresses at {pick?.label ?? 'this location'}</Dialog.Title>
       <Dialog.Description>
-        How many addresses this node keeps in use here, of each transport the location carries.
-        Upkeep publishes a spare here first, then adds new ones here, within the account's monthly
-        cap.
+        How many addresses of each transport this node keeps in use here. Upkeep uses a spare here
+        first, then adds new ones within the account's monthly cap.
       </Dialog.Description>
     </Dialog.Header>
     <div class="space-y-1">

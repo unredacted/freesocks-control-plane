@@ -200,8 +200,8 @@
       {#if families.length > 0}
         <label class="flex items-center gap-2">
           <span class="text-muted-foreground">Add to</span>
-          <select bind:value={family} class={SELECT} aria-label="Name list">
-            <option value="" disabled>name list</option>
+          <select bind:value={family} class={SELECT} aria-label="SNI list">
+            <option value="" disabled>SNI list</option>
             {#each families as f (f.slug)}
               <option value={f.slug}>{f.label}</option>
             {/each}
@@ -243,11 +243,11 @@
       <Checkbox
         checked={allPicked}
         onCheckedChange={(v) => toggleAll(v === true)}
-        aria-label="Pick every name shown"
+        aria-label="Pick every SNI shown"
       />
       <span class="text-muted-foreground">{shown.length} shown, best first</span>
     </div>
-    <ul class="divide-y rounded-md border" aria-label="Found names">
+    <ul class="divide-y rounded-md border" aria-label="Found SNIs">
       {#each sites as names (names[0]!.site)}
         {@const more = names.length - 1}
         {@const open = opened.includes(names[0]!.site)}
@@ -309,8 +309,8 @@
                   : [...opened, names[0]!.site])}
             >
               {open
-                ? `Fold the names of ${names[0]!.site}`
-                : `And ${more} more ${more === 1 ? 'name' : 'names'} of ${names[0]!.site}`}
+                ? `Fold the SNIs of ${names[0]!.site}`
+                : `And ${more} more ${more === 1 ? 'SNI' : 'SNIs'} of ${names[0]!.site}`}
             </Button>
           </li>
         {/if}

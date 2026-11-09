@@ -38,6 +38,6 @@ export function stepStateTone(state: string): Tone {
  */
 export function standbyResultWords(code: NonNullable<EdgeRotationAdmin['standbyReason']>): string {
   return code === 'pool_full'
-    ? 'The edge stayed a standby: every pool slot is taken. Replace a published edge with it, or raise the published edges wanted.'
-    : 'The edge stayed a standby: the free pool slot is held for an edge this origin still lacks (a listener, or a location of its provider set, with nothing published). Replace a published edge with it, or remove that location from the provider set.';
+    ? 'The edge stayed a standby because every pool slot is taken. Replace a published edge with it, or raise the published edges wanted.'
+    : 'The edge stayed a standby. The free slot is held for a listener or provider-set location with nothing published. Replace a published edge with it, or remove that location from the provider set.';
 }

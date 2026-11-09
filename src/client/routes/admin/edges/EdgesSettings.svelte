@@ -222,7 +222,7 @@
       collapsible
       open={isOpen('rendering')}
       onToggle={toggle('rendering')}
-      note="A rendering change alters what every member receives: cached subscriptions are renewed and stored mirrors are rebuilt once."
+      note="A rendering change alters what every member gets. Cached subscriptions renew and stored mirrors are rebuilt once."
     >
       <div class="grid gap-5 sm:grid-cols-2">
         {#each RENDER_GLOBAL_FIELDS as field (field.path)}
@@ -293,7 +293,7 @@
             bind:value={globalpingToken}
           />
           <p class="text-muted-foreground text-xs">
-            Write only. The stored token is never shown; leave this empty to keep it.
+            Write only. Leave empty to keep the stored token.
           </p>
         </div>
         <div class="space-y-1.5">
@@ -313,7 +313,7 @@
             bind:value={ripeAtlasKey}
           />
           <p class="text-muted-foreground text-xs">
-            Write only. The stored key is never shown; leave this empty to keep it.
+            Write only. Leave empty to keep the stored key.
           </p>
         </div>
       </div>
@@ -325,7 +325,7 @@
           {form.list('probe.countries').length > 0
             ? `${form.list('probe.countries').join(', ')}.`
             : 'None.'}
-          These are the countries on the censored-country list with "Check edges from here" on.
+          The censored countries with "Check edges from here" on.
           <Link href="/admin/settings" class="underline underline-offset-2">
             Change them in Settings, Censored countries.
           </Link>
@@ -343,7 +343,7 @@
           'probe.countries',
         ).length} countries, {form.num('probe.perCountryLimit')} each{form.bool('country.enabled')
           ? `, plus ${controlCount} controls`
-          : ''}). A source that fails gives no evidence; it never reads as a block.
+          : ''}). A failing source gives no evidence and never reads as a block.
       </p>
       <div class="grid gap-5 sm:grid-cols-2">
         {#each COUNTRY_FIELDS as field (field.path)}
@@ -355,7 +355,7 @@
     <SettingsSectionCard
       id="l7"
       title="CDN fronts (L7)"
-      description="Limits of hostname fronts, and whether a DNS account may be one. Whether automation may pick them is in Basics."
+      description="Limits of hostname fronts. Whether automation may pick them is in Basics."
       {form}
       paths={SECTION_PATHS.l7}
       collapsible
@@ -371,8 +371,8 @@
 
     <SettingsSectionCard
       id="names"
-      title="Names for load balancer addresses"
-      description="Hand members a name instead of a load balancer's IP. FCP writes the records in the zones you pick."
+      title="Hostnames for load balancer addresses"
+      description="Hand members a hostname instead of a load balancer's IP. FCP writes the records in the zones you pick."
       {form}
       paths={SECTION_PATHS.names}
       collapsible
@@ -380,17 +380,16 @@
       onToggle={toggle('names')}
     >
       <p class="text-muted-foreground mb-4 text-sm">
-        A name needs a DNS lookup, which a censor can see and answer falsely, and blocking one zone
-        stops every name in it. So a node's addresses are spread over the zones you pick, and apps
-        that switch by themselves keep the IP as a fallback. Addresses made before this is on keep
-        their IPs until you open one and press Give it a name.
+        A censor can see and fake DNS answers, and blocking a zone stops every hostname in it.
+        Addresses are spread over the zones you pick, and apps with an Auto group keep the IP as a
+        fallback. Older addresses keep their IPs until you open one and press Give it a hostname.
       </p>
       <div class="grid gap-5 sm:grid-cols-2">
         {#each NAMES_FIELDS as field (field.path)}
           <ConfigField {field} {form} />
         {/each}
       </div>
-      <h3 class="mt-6 mb-2 text-sm font-medium">Zones names go in</h3>
+      <h3 class="mt-6 mb-2 text-sm font-medium">Zones for hostnames</h3>
       {#if nameZones.length === 0}
         <p class="text-muted-foreground text-sm">
           No DNS account has a zone yet. Add one under Providers, DNS providers.
@@ -411,8 +410,8 @@
           {/each}
         </ul>
         <p class="text-muted-foreground mt-2 text-xs">
-          Use two or more zones you use for nothing else: a blocked zone then takes out only part of
-          a node's addresses.
+          Use two or more zones kept for nothing else, so a blocked zone takes out only part of a
+          node's addresses.
         </p>
       {/if}
     </SettingsSectionCard>
@@ -420,7 +419,7 @@
     <SettingsSectionCard
       id="lists"
       title="Country lists"
-      description="Community lists of names and addresses that work, or are blocked, in a country. They are evidence only."
+      description="Community lists of SNIs and addresses that work, or are blocked, in a country. Evidence only."
       {form}
       paths={SECTION_PATHS.lists}
       collapsible
