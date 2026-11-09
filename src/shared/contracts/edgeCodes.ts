@@ -146,9 +146,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'unverified_endpoint',
   'edge_unhealthy',
   // replace: no tested spare on the listener (L4), or (FCP's own client check on)
-  // no location where an address was tested
+  // no location assigned to the node
   'no_verified_spare',
-  'no_ticked_location',
+  'no_assigned_location',
   // automatic replace: held for the transport, or a replacement blocked again soon,
   // or paused for some countries (a new name was blocked there before use), or
   // the CDN refused outright there (its reference site fails too)
@@ -192,6 +192,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   // the open lane's own replacement budget is used up for today (docs/edges.md "Address
   // enumeration"); it never takes the node's or the fleet's caps
   'open_lane_budget',
+  // a cut-over country's own addresses used today's replacement budget on the node
+  // (docs/edges.md "A country on its own addresses"); never the node's or fleet's caps
+  'audience_budget',
   // selection on an enrolled node: nothing fits the shape it was approved for
   'outside_approved_shape',
   // a load balancer for a WebSocket node's transport (lib/edges/websocketNode.ts)
@@ -375,6 +378,14 @@ export const ATTENTION_KINDS = [
   // too, while other countries reach it), so automatic replacement there spends
   // no name (`relays.autoReplaceHolds` code `cdn_refused`).
   'cdn_refused',
+  // A country on its own addresses (docs/edges.md "A country on its own addresses"): a
+  // transport whose own addresses for it are all blocked there or cannot be handed out
+  // (its members are on shared ones), and keys still on a body from before the cutover.
+  'audience_pool_down',
+  'audience_stale_keys',
+  // A country's default picks wait on a node (docs/edges.md "A country's default picks"):
+  // it needs the rendezvous walk, ordering by country, room in its pool or for more locations first.
+  'country_defaults_waiting',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

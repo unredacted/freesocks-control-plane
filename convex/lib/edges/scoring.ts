@@ -364,7 +364,13 @@ export type AutoRotateVeto =
   | 'outside_audience'
   // Lanes (convex/edgeLanes.ts): only open addresses look blocked, and the open
   // lane's own replacement budget is used up for today.
-  | 'open_lane_budget';
+  | 'open_lane_budget'
+  // A country on its own addresses (convex/edgeOwnPools.ts): every country the
+  // block of a shared address was seen from is cut over on the node, where its
+  // members are handed their own addresses; and a cut-over country's own
+  // address whose daily budget is used up.
+  | 'own_pool'
+  | 'audience_budget';
 
 /** The vetoes that describe who owns the origin's pool (a guided setup), not the evidence. */
 const SETUP_VETOES: ReadonlySet<string> = new Set(['setup_owned', 'not_live']);
@@ -407,6 +413,13 @@ export interface SteeringInput {
   freedomListeners: string[];
   /** The node's lanes are on: the way around an open address must be open too. */
   lanes?: boolean;
+  /**
+   * Countries cut over to their own addresses on this node whose cutover has
+   * settled (lib/edges/ownPools.ts `settledOwnCodes`) and that are still on
+   * the censored-country list: no evidence of theirs replaces a shared
+   * address. Absent = none.
+   */
+  own?: string[];
 }
 
 /**
@@ -418,15 +431,21 @@ export interface SteeringInput {
 export function steeringVeto(
   chosen: Pick<EdgeEvidence, 'edgeId' | 'countries'>,
   s: SteeringInput,
-): 'country_scoped' | 'country_wide' | 'outside_audience' | null {
+): 'country_scoped' | 'country_wide' | 'outside_audience' | 'own_pool' | null {
   const edge = s.published.find((e) => e.edgeId === chosen.edgeId);
   // A contained address is handed only to members in its audience: a block
   // seen only from elsewhere touches nobody it serves. Evidence naming no
   // country (down everywhere) rotates as before.
   const audience = edge?.audience?.length ? edge.audience : null;
-  const named = [...new Set(chosen.countries)];
-  if (audience && named.length > 0 && named.every((c) => !audience.includes(c)))
+  const seen = [...new Set(chosen.countries)];
+  if (audience && seen.length > 0 && seen.every((c) => !audience.includes(c)))
     return 'outside_audience';
+  // A shared address: the countries on their own addresses here are no reason
+  // to replace it (their members are handed their own). Seen only from them:
+  // veto; in mixed evidence the rest is judged below.
+  const own = !audience ? (s.own ?? []) : [];
+  const named = seen.filter((c) => !own.includes(c));
+  if (seen.length > 0 && named.length === 0) return 'own_pool';
   // In mixed evidence the countries outside the audience are no reason either:
   // only those it serves are judged below.
   const countries = named.filter(
@@ -491,6 +510,11 @@ export function autoRotateDecision(args: {
    * Absent = no lanes.
    */
   lanes?: { openEdgeIds: string[]; openBudgetLeft: boolean };
+  /**
+   * The addresses of countries cut over on this node (convex/edgeOwnPools.ts),
+   * and those whose own daily budget has a replacement left. Absent = none.
+   */
+  own?: { edgeIds: string[]; budgetLeft: string[] };
 }): { edgeId: string; source: 'reports' | 'probes' } | { veto: AutoRotateVeto } {
   const { evaluation: ev, cfg, origin } = args;
   // 1. enabled  2. autoRotate (global, then the origin's own opt-in)  2b. not setup-owned
@@ -528,11 +552,17 @@ export function autoRotateDecision(args: {
         : []
     : candidates;
   if (tier.length === 0) return { veto: 'open_lane_budget' };
-  const reportBacked = tier.find((c) => c.source === 'reports');
-  const chosen = reportBacked ?? tier[0]!;
-  // An open address has its own budget: none of the caps, cooldown or fleet
-  // cap below that keep the trusted lane's replacements whole.
-  const openChosen = open.has(chosen.edgeId);
+  // 5''. a cut-over country's own address only while its own budget has one left today.
+  const ownIds = new Set(args.own?.edgeIds ?? []);
+  const ownLeft = new Set(args.own?.budgetLeft ?? []);
+  const budgeted = tier.filter((c) => !ownIds.has(c.edgeId) || ownLeft.has(c.edgeId));
+  if (budgeted.length === 0) return { veto: 'audience_budget' };
+  const reportBacked = budgeted.find((c) => c.source === 'reports');
+  const chosen = reportBacked ?? budgeted[0]!;
+  // An open address, and a cut-over country's own one, have their own budget:
+  // none of the caps, cooldown or fleet cap below that keep the node's
+  // replacements of everyone's addresses whole.
+  const openChosen = open.has(chosen.edgeId) || ownIds.has(chosen.edgeId);
   if (chosen.source === 'probes' && !reportBacked) {
     if (!cfg.detect.allowProbeOnlyAutoRotate) return { veto: 'probe_only_disallowed' };
     if (ev.probeSourcesDown) return { veto: 'probe_sources_down' };
@@ -590,6 +620,7 @@ export function replacementHeldBack(args: Parameters<typeof autoRotateDecision>[
     },
     ...(args.fleet ? { fleet: { ...args.fleet, rotationsToday: 0 } } : {}),
     ...(args.lanes ? { lanes: { ...args.lanes, openBudgetLeft: true } } : {}),
+    ...(args.own ? { own: { ...args.own, budgetLeft: args.own.edgeIds } } : {}),
   });
   return !('veto' in lifted);
 }

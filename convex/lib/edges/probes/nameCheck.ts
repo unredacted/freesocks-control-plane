@@ -19,6 +19,18 @@
  * name and the address.
  */
 import { normalizeCountry, shortError, type VantageClass } from './types';
+import {
+  DATACENTRE_TAG,
+  HOME_TAG,
+  countProbesIn,
+  homeFirstSplit,
+  isNoProbesError,
+  vantageClassOf,
+  type CountryProbeCounts,
+  type ProbeNetworks,
+} from './networks';
+
+export { countProbesIn, isNoProbesError, type CountryProbeCounts };
 
 /** What one vantage saw. See the table in docs/edges.md. */
 export type NameOutcome =
@@ -134,7 +146,8 @@ export function vantageKeyOf(parts: readonly unknown[]): string {
 // --- Globalping ----------------------------------------------------------------------------------
 
 export type GlobalpingLocations =
-  | { country: string; limit: number; preferEyeball?: boolean }
+  /** `home`: home-network probes only; otherwise any probe. */
+  | { country: string; limit: number; home?: boolean }
   /** The `eyeball` home-network probes a country has, topped up with data-centre ones to `limit`. */
   | { country: string; limit: number; eyeball: number }
   | { reuse: string };
@@ -151,17 +164,15 @@ export function globalpingNameRequest(t: NameCheckTarget, where: GlobalpingLocat
     const limit = clampLimit(where.limit);
     const eyeball = Math.max(0, Math.min(Math.floor(where.eyeball), limit - 1));
     locations = [
-      ...(eyeball > 0
-        ? [{ country: where.country, limit: eyeball, tags: ['eyeball-network'] }]
-        : []),
-      { country: where.country, limit: limit - eyeball, tags: ['datacenter-network'] },
+      ...(eyeball > 0 ? [{ country: where.country, limit: eyeball, tags: [HOME_TAG] }] : []),
+      { country: where.country, limit: limit - eyeball, tags: [DATACENTRE_TAG] },
     ];
   } else
     locations = [
       {
         country: where.country,
         limit: clampLimit(where.limit),
-        ...(where.preferEyeball ? { tags: ['eyeball-network'] } : {}),
+        ...(where.home ? { tags: [HOME_TAG] } : {}),
       },
     ];
   return {
@@ -196,14 +207,6 @@ interface GlobalpingItem {
     timings?: { total?: unknown; tcp?: unknown; tls?: unknown };
     tls?: { authorized?: unknown; error?: unknown } | null;
   };
-}
-
-function vantageClassOf(tags: unknown): VantageClass {
-  if (!Array.isArray(tags)) return 'unknown';
-  const t = tags.map((x) => String(x).toLowerCase());
-  if (t.includes('eyeball-network')) return 'eyeball';
-  if (t.includes('datacenter-network')) return 'datacenter';
-  return 'unknown';
 }
 
 /**
@@ -280,54 +283,16 @@ export function parseGlobalpingNameResults(
   return out;
 }
 
-/** A Globalping refusal that means "no probe matched": worth one retry without the eyeball tag. */
-export function isNoProbesError(status: number | undefined, body: unknown): boolean {
-  if (status !== 422) return false;
-  const text = JSON.stringify(body ?? '').toLowerCase();
-  return text.includes('no_probes_found') || text.includes('no suitable probes');
-}
-
-/**
- * A country's Globalping probes, by network tag, from the free probe listing
- * (`GET /v1/probes`): home-network (`eyeball-network`), data-centre
- * (`datacenter-network`) and all of them.
- */
-export interface CountryProbeCounts {
-  eyeball: number;
-  datacenter: number;
-  total: number;
-}
-
-/**
- * The listing counted for one country. Null when the listing cannot be read,
- * or when it carries no network tag anywhere (then it cannot tell a country
- * with no home-network probe from a listing without tags, and nothing is
- * planned from it).
- */
-export function countProbesIn(listing: unknown, country: string): CountryProbeCounts | null {
-  if (!Array.isArray(listing)) return null;
-  const counts: CountryProbeCounts = { eyeball: 0, datacenter: 0, total: 0 };
-  let tagged = false;
-  for (const p of listing as Array<{ location?: { country?: unknown }; tags?: unknown }>) {
-    const cls = vantageClassOf(p?.tags);
-    if (cls !== 'unknown') tagged = true;
-    if (normalizeCountry(p?.location?.country) !== country) continue;
-    counts.total++;
-    if (cls === 'eyeball') counts.eyeball++;
-    else if (cls === 'datacenter') counts.datacenter++;
-  }
-  return tagged ? counts : null;
-}
-
 /**
  * Which probes a batch asked for in a country, and what the listing said
  * about the country then (noted for the country page, `sniVantage.noteNamePool`):
  * `eyeball` = home-network probes only; `topped_up` = every home-network
  * probe plus data-centre ones (too few home-network probes for a verdict);
- * `any` = any probe (the preference is off, or home-network and data-centre
- * probes together are too few). `eyeball` / `total` = the country's
- * home-network / all probes in the listing, `limit` = asked for, `needs` =
- * the vantages a verdict needs, `preferEyeball` = the preference then.
+ * `any` = any probe (the setting is `any`, or under `home_first` home-network
+ * and data-centre probes together are too few). `eyeball` / `total` = the
+ * country's home-network / all probes in the listing, `limit` = asked for,
+ * `needs` = the vantages a verdict needs, `networks` = the setting then
+ * (`edge.probe.networks`).
  */
 export interface NamePool {
   mode: 'eyeball' | 'topped_up' | 'any';
@@ -335,40 +300,43 @@ export interface NamePool {
   total: number;
   limit: number;
   needs: number;
-  preferEyeball: boolean;
+  networks: ProbeNetworks;
 }
 
 /**
- * The first measurement's probes from the country's counts. A country with
- * at least as many home-network probes as a verdict needs (`minVantages`, or
- * the limit when that is lower) asks for those only, as before. Fewer: every
- * home-network probe plus data-centre ones up to the limit (one ask, the two
- * tags never sit on one probe). Too few of both: any probe.
+ * The first measurement's probes from the country's counts, by the setting
+ * (lib/edges/probes/networks.ts). `home`: home-network probes only, however
+ * few. `any`: any probe. `home_first`: a country with at least as many
+ * home-network probes as a verdict needs (`minVantages`, or the limit when
+ * that is lower) asks for those only; fewer: every home-network probe plus
+ * data-centre ones up to the limit (one ask, the two tags never sit on one
+ * probe); too few of both: any probe.
  */
 export function planNameProbes(
   counts: CountryProbeCounts,
-  c: { country: string; limit: number; preferEyeball: boolean; minVantages: number },
+  c: { country: string; limit: number; networks: ProbeNetworks; minVantages: number },
 ): { where: Exclude<GlobalpingLocations, { reuse: string }>; pool: NamePool } {
   const limit = clampLimit(c.limit);
   const needs = Math.max(1, Math.floor(c.minVantages));
-  const floor = Math.min(needs, limit);
   const base = {
     eyeball: counts.eyeball,
     total: counts.total,
     limit,
     needs,
-    preferEyeball: c.preferEyeball,
+    networks: c.networks,
   };
   const any = { where: { country: c.country, limit }, pool: { mode: 'any' as const, ...base } };
-  if (!c.preferEyeball) return any;
-  if (counts.eyeball >= floor)
+  const home = {
+    where: { country: c.country, limit, home: true },
+    pool: { mode: 'eyeball' as const, ...base },
+  };
+  if (c.networks === 'any') return any;
+  if (c.networks === 'home') return home;
+  const split = homeFirstSplit(counts, limit, needs);
+  if (split.mode === 'eyeball') return home;
+  if (split.mode === 'topped_up')
     return {
-      where: { country: c.country, limit, preferEyeball: true },
-      pool: { mode: 'eyeball', ...base },
-    };
-  if (counts.eyeball > 0 && counts.eyeball + counts.datacenter >= floor)
-    return {
-      where: { country: c.country, limit, eyeball: counts.eyeball },
+      where: { country: c.country, limit, eyeball: split.eyeball },
       pool: { mode: 'topped_up', ...base },
     };
   return any;
@@ -384,19 +352,20 @@ export interface NameMeasurementClient {
 
 /**
  * A batch's FIRST Globalping measurement (the later ones reuse its probes),
- * one ask shaped by the country's probes (`planNameProbes`), read from the
- * free listing first: a country short of home-network probes is topped up
- * with data-centre ones in that same ask, so it costs the `limit` tests every
- * measurement is budgeted at, never more. Probes that went away since the
- * listing (Globalping refuses the ask): `wait` (the source spacing), then any
- * probe, once. Without a usable listing: home-network probes first, then any
- * probe when none matched, as before, and no pool is noted (nothing was
- * counted).
+ * one ask shaped by the setting and the country's probes (`planNameProbes`),
+ * read from the free listing first: under `home_first` a country short of
+ * home-network probes is topped up with data-centre ones in that same ask, so
+ * it costs the `limit` tests every measurement is budgeted at, never more.
+ * Under `home_first`, probes that went away since the listing (Globalping
+ * refuses the ask): `wait` (the source spacing), then any probe, once.
+ * Without a usable listing: home-network probes (any probe under `any`), and
+ * under `home_first` any probe when none matched; no pool is noted (nothing
+ * was counted). Under `home` a refusal stands: no other network is asked.
  */
 export async function createFirstNameMeasurement(
   client: NameMeasurementClient,
   t: NameCheckTarget,
-  c: { country: string; limit: number; preferEyeball: boolean; minVantages: number },
+  c: { country: string; limit: number; networks: ProbeNetworks; minVantages: number },
   wait: () => Promise<void> = async () => undefined,
 ): Promise<{ res: CreateResult; pool: NamePool | null }> {
   let counts: CountryProbeCounts | null = null;
@@ -412,11 +381,16 @@ export async function createFirstNameMeasurement(
   const where = planned?.where ?? {
     country: c.country,
     limit: c.limit,
-    preferEyeball: c.preferEyeball,
+    home: c.networks !== 'any',
   };
   let res = await client.createMeasurement(globalpingNameRequest(t, where));
-  const tagged = 'eyeball' in where || ('preferEyeball' in where && !!where.preferEyeball);
-  if (!res.ok && tagged && isNoProbesError(res.response?.status, res.data)) {
+  const tagged = 'eyeball' in where || ('home' in where && !!where.home);
+  if (
+    !res.ok &&
+    c.networks === 'home_first' &&
+    tagged &&
+    isNoProbesError(res.response?.status, res.data)
+  ) {
     await wait();
     res = await client.createMeasurement(
       globalpingNameRequest(t, { country: c.country, limit: c.limit }),

@@ -1,9 +1,12 @@
 <script lang="ts">
   /**
-   * Servers -> Backends (`/admin/servers/backends`): the backend servers FCP
-   * issues keys on (add, edit, remove), each with a link to its nodes, and the
+   * Settings -> Backends (`/admin/servers/settings/backends[?backend=<slug>]`):
+   * the backend servers FCP issues keys on (add, edit, remove), each with a
+   * link to its nodes and, for a Remnawave server, its mode groups; then the
    * node logging privacy check for every Remnawave config profile.
+   * `?backend=` (Mode pools links here) brings that server's row into view.
    */
+  import { tick } from 'svelte';
   import type { z } from 'zod';
   import BackendServerEditor from '../BackendServerEditor.svelte';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
@@ -23,11 +26,29 @@
   import { z as zod } from 'zod';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import LoggingPrivacyCard from './components/LoggingPrivacyCard.svelte';
+  import { cn } from '@client/lib/utils';
+  import { searchParam } from '@client/lib/urlState.svelte';
+  import BackendModeGroups from './components/BackendModeGroups.svelte';
   import { serversPaths } from './lib/routes';
 
   type Server = z.infer<typeof BackendServerAdmin>;
   const servers = adminBackendServersQuery();
   const qc = useQueryClient();
+
+  // `?backend=<slug>`: scroll to that row once the list is there, and mark it.
+  const wanted = searchParam('backend', '');
+  let scrolledTo: string | null = null;
+  $effect(() => {
+    const slug = wanted.value;
+    if (!slug || !servers.data || scrolledTo === slug) return;
+    scrolledTo = slug;
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    void tick().then(() =>
+      document
+        .getElementById(`backend-${slug}`)
+        ?.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' }),
+    );
+  });
 
   let editing = $state<Server | null>(null);
   let creating = $state(false);
@@ -100,7 +121,10 @@
     <div class="space-y-3">
       {#each servers.data ?? [] as s (s.id)}
         {@const health = healthBadge(s.lastHealthOkAt)}
-        <Card>
+        <Card
+          id={`backend-${s.slug}`}
+          class={cn('scroll-mt-20', wanted.value === s.slug && 'ring-ring/60 ring-2')}
+        >
           <CardHeader>
             <CardTitle class="text-lg flex items-center justify-between flex-wrap gap-2">
               <span>
@@ -175,6 +199,11 @@
                 </Link>
               {/if}
             </div>
+            {#if s.config.type === 'remnawave'}
+              <div class="mt-3 border-t pt-4">
+                <BackendModeGroups slug={s.slug} />
+              </div>
+            {/if}
           </CardContent>
         </Card>
       {/each}

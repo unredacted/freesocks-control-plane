@@ -23,7 +23,9 @@ describe('edge provider meta', () => {
       const m = EDGE_PROVIDER_META[id];
       if (m.layer === 'l7') {
         expect(m.addressKind).toBe('hostname');
-        expect(m.l7Transports.length).toBeGreaterThan(0);
+        // A DNS-only provider carries nothing; every other L7 provider carries something.
+        if (m.dnsOnly) expect(m.l7Transports).toEqual([]);
+        else expect(m.l7Transports.length).toBeGreaterThan(0);
       } else {
         expect(m.addressKind).toBe('ip');
         expect(m.l7Transports).toEqual([]);
@@ -69,14 +71,15 @@ describe('edge provider meta', () => {
     ]);
     expect(groups.find((g) => g.id === 'l7')!.providers).toEqual(['fastly', 'cloudfront']);
     // Cloudflare is a DNS provider here, listed ONLY as one (never as an L7 front).
-    expect(groups.find((g) => g.id === 'dns')!.providers).toEqual(['cloudflare']);
+    expect(groups.find((g) => g.id === 'dns')!.providers).toEqual(['cloudflare', 'gandi']);
     expect(providerGroupOf('cloudflare')).toBe('dns');
+    expect(providerGroupOf('gandi')).toBe('dns');
     // Every provider sits in exactly one group.
     expect(groups.flatMap((g) => g.providers).sort()).toEqual([...EDGE_PROVIDER_IDS].sort());
   });
 
   it('names the supported DNS providers and says what a DNS account does', () => {
-    expect(dnsProviderNames(EDGE_PROVIDER_IDS)).toEqual(['Cloudflare']);
+    expect(dnsProviderNames(EDGE_PROVIDER_IDS)).toEqual(['Cloudflare', 'Gandi']);
     expect(DNS_ACCOUNT_BLURB).toMatch(/no member traffic unless it is set to DNS and fronting/);
     for (const g of providerGroups(EDGE_PROVIDER_IDS)) expect(g.blurb).not.toMatch(/\u2014/);
     for (const u of Object.values(DNS_ACCOUNT_USES)) {
@@ -91,6 +94,8 @@ describe('edge provider meta', () => {
     expect(accountFronts({ provider: 'cloudflare' })).toBe(false);
     expect(accountFronts({ provider: 'cloudflare', frontsTraffic: false })).toBe(false);
     expect(accountFronts({ provider: 'cloudflare', frontsTraffic: true })).toBe(true);
+    // A DNS-only provider never fronts, even on a row that says it does.
+    expect(accountFronts({ provider: 'gandi', frontsTraffic: true })).toBe(false);
   });
 
   it('an add-account form opens on an edge provider the caller can use, never a DNS provider', () => {

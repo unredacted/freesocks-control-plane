@@ -22,7 +22,7 @@ import {
 } from './rotation';
 import { EDGES_ROUTES, edgesPaths, resolveEdgesRoute, setupStepTarget } from './routes';
 import { SETUP_STEP_IDS } from '../../../../../shared/contracts/edgeCodes';
-import { resolveServersRoute } from '../../servers/lib/routes';
+import { resolveSectionRoute, resolveServersRoute } from '../../servers/lib/routes';
 import { addTags, normalizeHostname, splitTags } from './tags';
 import { actorLabel, subjectOf } from './timeline';
 import type { TimelineRow } from './types';
@@ -48,7 +48,8 @@ describe('resolveEdgesRoute / edgesPaths', () => {
   it('resolves every page under /admin/servers', () => {
     expect(resolveEdgesRoute('/admin/servers')).toEqual({ page: 'home' });
     expect(resolveEdgesRoute('/admin/servers/')).toEqual({ page: 'home' });
-    expect(resolveEdgesRoute('/admin/servers/origins')).toEqual({ page: 'overview' });
+    // All origins is the Nodes table now (servers/lib/legacyRoutes.ts redirects the old path).
+    expect(resolveEdgesRoute('/admin/servers/origins')).toEqual({ page: 'not-found' });
     expect(resolveEdgesRoute('/admin/servers/origins/node-a')).toEqual({
       page: 'node',
       slug: 'node-a',
@@ -100,8 +101,16 @@ describe('resolveEdgesRoute / edgesPaths', () => {
       '/admin/servers?protect=1&server=main&node=n+1',
     );
     expect(edgesPaths.node('a b', { test: 'e1' })).toBe('/admin/servers/origins/a%20b?test=e1');
-    expect(edgesPaths.overview()).toBe('/admin/servers/origins');
-    expect(edgesPaths.overview({ new: '1' })).toBe('/admin/servers/origins?new=1');
+    expect(edgesPaths.overview()).toBe('/admin/servers/nodes?columns=technical');
+    expect(edgesPaths.overview({ new: '1' })).toBe(
+      '/admin/servers/nodes?columns=technical&add=origin',
+    );
+    expect(edgesPaths.overview({ filter: 'dark', layer: 'l4' })).toBe(
+      '/admin/servers/nodes?columns=technical&show=dark&layer=l4',
+    );
+    expect(edgesPaths.overview({ filter: 'all', layer: 'all' })).toBe(
+      '/admin/servers/nodes?columns=technical',
+    );
     expect(edgesPaths.country('ir')).toBe('/admin/servers/countries/IR');
     expect(edgesPaths.provider('a 1', { tab: 'inventory' })).toBe(
       '/admin/servers/providers/a%201?tab=inventory',
@@ -114,15 +123,17 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     for (const step of SETUP_STEP_IDS) {
       for (const slug of ['relay-a', null]) {
         const href = setupStepTarget(step, slug);
-        expect(resolveEdgesRoute(href.split('?')[0]!).page).not.toBe('not-found');
+        expect(resolveSectionRoute(href.split('?')[0]!).route.page).not.toBe('not-found');
       }
     }
     expect(setupStepTarget('edge', 'relay-a')).toBe(
       '/admin/servers/origins/relay-a/details?tab=edges',
     );
-    expect(setupStepTarget('origin', null)).toBe('/admin/servers/origins?new=1');
+    expect(setupStepTarget('origin', null)).toBe(
+      '/admin/servers/nodes?columns=technical&add=origin',
+    );
     expect(setupStepTarget('account', 'relay-a')).toBe('/admin/servers/providers');
-    expect(setupStepTarget('rendering', null)).toBe('/admin/servers/settings?section=rendering');
+    expect(setupStepTarget('rendering', null)).toBe('/admin/servers/settings?group=subscriptions');
   });
   it('lists each pattern once', () => {
     const patterns = EDGES_ROUTES.map(([p]) => p);
@@ -239,7 +250,7 @@ describe('attention', () => {
       '/admin/servers/providers/acc1',
     );
     expect(attentionTarget(item({ action: 'thaw', relaySlug: null }))).toBe(
-      '/admin/servers/settings?section=maintenance',
+      '/admin/servers/settings?group=maintenance',
     );
   });
   it('falls back to the home without a origin', () => {

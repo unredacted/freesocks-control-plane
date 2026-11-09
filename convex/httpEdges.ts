@@ -136,6 +136,22 @@ function isReadOnlyPost(parts: string[]): boolean {
     parts[5] === 'preview'
   )
     return true;
+  // What a country's default picks would write and cost: nothing written.
+  if (
+    parts.length === 3 &&
+    parts[0] === 'countries' &&
+    parts[1] === 'defaults' &&
+    parts[2] === 'preview'
+  )
+    return true;
+  // What cutting a country over on a node would move: synthetic seats, nothing written.
+  if (
+    parts.length === 5 &&
+    parts[0] === 'relays' &&
+    parts[2] === 'own-pools' &&
+    parts[4] === 'preview'
+  )
+    return true;
   // Asks the client-check service how it is; stores nothing but that answer.
   if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
   // Which country lists hold some names or addresses: a read over stored versions.
@@ -350,6 +366,25 @@ function wrap(handler: Handler, sealedRoute: boolean) {
 }
 
 const id = <T extends TableNames>(s: string | undefined) => (s ?? '') as Id<T>;
+
+/** `[{locationId, want}]` from a body (want a number, null or absent), or null when malformed. */
+function parseDefaultPicks(
+  raw: unknown,
+): Array<{ locationId: Id<'edgeLocations'>; want: number | null }> | null {
+  if (!Array.isArray(raw)) return null;
+  const out: Array<{ locationId: Id<'edgeLocations'>; want: number | null }> = [];
+  for (const p of raw as unknown[]) {
+    if (!p || typeof p !== 'object') return null;
+    const { locationId, want } = p as { locationId?: unknown; want?: unknown };
+    if (typeof locationId !== 'string') return null;
+    if (want !== undefined && want !== null && typeof want !== 'number') return null;
+    out.push({
+      locationId: id<'edgeLocations'>(locationId),
+      want: (want as number | null) ?? null,
+    });
+  }
+  return out;
+}
 const actor = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? undefined });
 
 // --- GET ----------------------------------------------------------------------------------------
@@ -617,6 +652,9 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   // The country view (edgeCountryView.ts): every listed country with its totals,
   // or one country in full (origins -> transports -> addresses and names), with
   // the probe sources' health (a failing or capped source is why a country goes quiet).
+  // A country's default picks (edgeCountryDefaults.ts), with their locations named.
+  if (a === 'countries' && b === 'defaults' && !c)
+    return json(await ctx.runQuery(internal.edgeCountryDefaults.listCountryDefaults, {}));
   if (a === 'countries' && b === 'summary' && !c) {
     // The frame, then each listed country in a query of its own, at most
     // COUNTRY_SUMMARY_PARALLEL at once: one query for every country ran past a
@@ -836,6 +874,20 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    // An operator's "use anyway" on names that resolve off the family's network.
+    if (b === 'families' && c && d === 'names' && e === 'use-anyway' && !parts[5]) {
+      if (typeof body.on !== 'boolean')
+        return errorJson('validation', 'on must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.sniFamilies.setUseAnyway, {
+          slug: c,
+          names: snis(body),
+          on: body.on,
+          ...(typeof body.reason === 'string' && body.reason.trim() ? { reason: body.reason } : {}),
+          ...act,
+        }),
+      );
+    }
     // An operator's judgement of names in one curated country.
     if (b === 'families' && c && d === 'names' && e === 'country')
       return json(
@@ -1470,6 +1522,82 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       if (!parts[5])
         return json(await ctx.runMutation(internal.edgePickWants.setPickWant, { ...args, ...act }));
     }
+    // Countries with their own addresses (edgeAudiences.ts): one pick's entry
+    // for some countries (`want` null = a place for theirs with no count of
+    // its own; `remove: true` drops it), and whether the pick serves its
+    // countries only.
+    if (c === 'providers' && d && parts[4] === 'audiences' && !parts[5]) {
+      if (!Array.isArray(body.codes) || body.codes.some((x: unknown) => typeof x !== 'string'))
+        return errorJson('validation', 'codes must be a list of country codes', 400);
+      const want =
+        body.want === null || body.want === undefined
+          ? null
+          : typeof body.want === 'number'
+            ? body.want
+            : undefined;
+      if (want === undefined) return errorJson('validation', 'want must be a number or null', 400);
+      return json(
+        await ctx.runMutation(internal.edgeAudiences.setPickAudience, {
+          relayId,
+          locationId: id<'edgeLocations'>(d),
+          codes: body.codes as string[],
+          want,
+          ...(body.remove === true ? { remove: true } : {}),
+          ...act,
+        }),
+      );
+    }
+    if (c === 'providers' && d && parts[4] === 'audience-only' && !parts[5]) {
+      if (typeof body.only !== 'boolean')
+        return errorJson('validation', 'only must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeAudiences.setPickAudienceOnly, {
+          relayId,
+          locationId: id<'edgeLocations'>(d),
+          only: body.only,
+          ...act,
+        }),
+      );
+    }
+    // A country on its own addresses (edgeOwnPools.ts): cut it over on this node
+    // (`own: true`, refused until it may be) or stop (`own: false`); first what it
+    // changes for its members (read only); this node's own daily budget.
+    if (c === 'own-pools' && d && parts[4] === 'preview' && !parts[5])
+      return json(await ctx.runQuery(internal.edgeOwnPools.cutoverPreview, { relayId, code: d }));
+    if (c === 'own-pools' && d && !parts[4]) {
+      if (typeof body.own !== 'boolean')
+        return errorJson('validation', 'own must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeOwnPools.setOwnPool, {
+          relayId,
+          code: d,
+          own: body.own,
+          ...act,
+        }),
+      );
+    }
+    // A country's default picks: this node takes none for that country (or again).
+    if (c === 'country-defaults' && d && !parts[4]) {
+      if (typeof body.optOut !== 'boolean')
+        return errorJson('validation', 'optOut must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeCountryDefaults.setOptOut, {
+          relayId,
+          code: d,
+          optOut: body.optOut,
+          ...act,
+        }),
+      );
+    }
+    if (c === 'own-budget' && !d) {
+      const perDay =
+        body.perDay === null ? null : typeof body.perDay === 'number' ? body.perDay : undefined;
+      if (perDay === undefined)
+        return errorJson('validation', 'perDay must be a number or null', 400);
+      return json(
+        await ctx.runMutation(internal.edgeOwnPools.setOwnBudget, { relayId, perDay, ...act }),
+      );
+    }
     if (c === 'auto-replace' && d === 'resume' && !parts[4])
       return json(
         await ctx.runMutation(internal.edgeRotations.resumeAutoReplace, {
@@ -1874,6 +2002,53 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     }
   }
   if (a === 'countries') {
+    // A country's default picks (edgeCountryDefaults.ts): save one (`picks`,
+    // in order, each `{locationId, want}`; want null = a fallback place),
+    // remove one, or first see what they would write and cost (read only).
+    if (b === 'defaults' && (!c || c === 'preview' || c === 'remove') && !d) {
+      const codes = body.codes;
+      if (
+        (c !== 'preview' || codes !== undefined) &&
+        (!Array.isArray(codes) || codes.some((x: unknown) => typeof x !== 'string'))
+      )
+        return errorJson('validation', 'codes must be a list of country codes', 400);
+      const picks = parseDefaultPicks(body.picks);
+      if (c === 'remove')
+        return json(
+          await ctx.runMutation(internal.edgeCountryDefaults.removeCountryDefault, {
+            codes: codes as string[],
+            ...act,
+          }),
+        );
+      if (c === 'preview')
+        return json(
+          await ctx.runQuery(internal.edgeCountryDefaults.preview, {
+            ...(codes !== undefined ? { codes: codes as string[] } : {}),
+            ...(picks ? { picks } : {}),
+          }),
+        );
+      if (!picks) return errorJson('validation', 'picks must be a list of {locationId, want}', 400);
+      return json(
+        await ctx.runMutation(internal.edgeCountryDefaults.setCountryDefault, {
+          codes: codes as string[],
+          picks,
+          ...act,
+        }),
+      );
+    }
+    // A country on its own addresses on every node where it may be now (or
+    // stopped on every node): one result per node that keeps addresses for it.
+    if (b === 'own-pools' && c && !parts[3]) {
+      if (typeof body.own !== 'boolean')
+        return errorJson('validation', 'own must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.edgeOwnPools.setOwnPoolEverywhere, {
+          code: c,
+          own: body.own,
+          ...act,
+        }),
+      );
+    }
     if (b === 'marks' && !c) {
       // { scope: 'edge' | 'group', ref, country, state: 'proven' | 'blocked' | null }
       const scope = body.scope;

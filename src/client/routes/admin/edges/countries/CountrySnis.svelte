@@ -6,8 +6,8 @@
    * member reports) and how many members here are handed it. Read only:
    * marks are made on the SNI list's page (the SNIs tab).
    *
-   * SLOT: the one-list-per-country card (each SNI once over every node, with
-   * shared / only for it / not used) goes first, above the per-node lists.
+   * First the country's own list (CountrySnisCard: each SNI once over every
+   * node, shared / only for it / not used), then the per-node lists.
    *
    * Props:
    *   view: CountryViewResponse
@@ -18,6 +18,7 @@
   import Link from '@client/components/Link.svelte';
   import type { CountryViewResponse } from '@shared/contracts/edges';
   import StatusDot from '../simple/StatusDot.svelte';
+  import CountrySnisCard from './CountrySnisCard.svelte';
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
   import {
@@ -45,7 +46,7 @@
 </script>
 
 <div class="space-y-6">
-  <!-- SLOT: the country's SNI card (each SNI once over every node) goes here. -->
+  {#if v.curated}<CountrySnisCard code={v.country} snis={v.snis} />{/if}
 
   {#if poolLines.length > 0}
     <Card>

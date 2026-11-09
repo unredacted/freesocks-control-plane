@@ -10,6 +10,7 @@
  * gathers facts. Nothing here returns credentials or addresses a deployment
  * uses beyond what the admin views already carry.
  */
+import { publishedEdgesOf } from './edgeRender';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
@@ -111,7 +112,12 @@ import {
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { readStateJson } from './lib/appStateJson';
 import { clientCheckService } from './lib/edges/clientCheck/client';
-import { CLIENT_CHECK_HEALTH_KEY, type ClientCheckHealthRecord } from './edgeClientCheck';
+import {
+  CLIENT_CHECK_HEALTH_KEY,
+  clientCheckReadiness,
+  type ClientCheckHealthRecord,
+} from './edgeClientCheck';
+import { pickUsable } from './lib/edges/assignedLocation';
 import { modeRefOf } from './nodeIntents';
 import { freedomAttention } from './freedomDelivery';
 import { resolveModeCatalog } from './lib/connectionModes';
@@ -1770,10 +1776,13 @@ export const attention = internalQuery({
         return e.publication === 'unpublished' && !!l && !verificationCurrent(e, l);
       });
       // Refused for want of a tested spare, or (FCP's own client check on) of a
-      // location where an address was tested.
+      // location assigned to the node (`no_ticked_location` is the code an older
+      // build stored for the same refusal).
       const refusal = relay.suspicion?.lastRotateError;
       const replaceRefused =
-        refusal === 'edge.no_verified_spare' || refusal === 'edge.no_ticked_location';
+        refusal === 'edge.no_verified_spare' ||
+        refusal === 'edge.no_assigned_location' ||
+        refusal === 'edge.no_ticked_location';
       if (relay.suspicion?.state === 'suspected' && (replaceRefused || untestedSpares.length > 0)) {
         const first = untestedSpares[0] ?? null;
         items.push({
@@ -1840,7 +1849,15 @@ export const attention = internalQuery({
             severity: 'warning',
             edgeId: e._id as string,
             code: 'unreachable',
-            facts: { countries: unreachable.map((c) => c.country) },
+            facts: {
+              countries: unreachable.map((c) => c.country),
+              // Probes that got through and failed, per country: what an alert counts.
+              probes: unreachable.map((c) => ({
+                country: c.country,
+                ok: c.okVantages,
+                failed: c.failVantages,
+              })),
+            },
             action: 'open_edge',
             since: isoN(e.reachability?.updatedAt),
           });
@@ -1937,6 +1954,12 @@ export const attention = internalQuery({
               wanted: first.want,
               inUse: Math.min(...mine.map((g) => g.inUse)),
               count: mine.length,
+              // The count some countries' own addresses ask for (a pick's audiences).
+              ...(mine.some((g) => g.audience)
+                ? {
+                    countries: [...new Set(mine.flatMap((g) => g.audience ?? []))].sort(),
+                  }
+                : {}),
             },
             action: 'open_relay',
             since: null,
@@ -1974,6 +1997,67 @@ export const attention = internalQuery({
             action: 'open_relay',
             since: null,
           });
+      }
+      // A country on its own addresses (convex/edgeOwnPools.ts): a transport
+      // whose own addresses for it are all blocked there or cannot be handed
+      // out puts its members on shared ones (the fallback; its evidence still
+      // never moves them); keys still on a body from before the cutover (info).
+      // A country's default picks wait on this node (edgeCountryDefaults.ts).
+      if (relay.countryDefaultsWaiting)
+        items.push({
+          ...base(relay),
+          id: `country_defaults_waiting:${relay._id}`,
+          kind: 'country_defaults_waiting',
+          severity: 'warning',
+          code: relay.countryDefaultsWaiting.code,
+          facts: {},
+          action: 'open_relay',
+          since: iso(relay.countryDefaultsWaiting.at),
+        });
+      if (relay.enabled && relay.ownPools?.length) {
+        const { published: pool } = await publishedEdgesOf(
+          ctx,
+          relay,
+          { kind: 'member' },
+          { includeIneligible: true },
+        );
+        for (const own of relay.ownPools) {
+          for (const l of setState.listeners) {
+            const carried = setState.requirement.audienceWants.some(
+              (w) => w.listenerKey === l.listenerKey && w.codes.includes(own.code),
+            );
+            if (!carried) continue;
+            const theirs = pool.filter(
+              (e) => e.listenerKey === l.listenerKey && !!e.audience?.includes(own.code),
+            );
+            const working = theirs.filter(
+              (e) => e.eligible !== false && !(e.blockedIn ?? []).includes(own.code),
+            );
+            if (working.length === 0)
+              items.push({
+                ...base(relay),
+                id: `audience_pool_down:${relay._id}:${own.code}:${l._id}`,
+                kind: 'audience_pool_down',
+                severity: 'warning',
+                listenerKey: l.listenerKey,
+                code: null,
+                facts: { country: own.code, inUse: theirs.length },
+                action: 'open_relay',
+                since: null,
+              });
+          }
+          if (own.stale && own.stale.keys > 0)
+            items.push({
+              ...base(relay),
+              id: `audience_stale_keys:${relay._id}:${own.code}`,
+              kind: 'audience_stale_keys',
+              severity: 'info',
+              code: null,
+              facts: { country: own.code, keys: own.stale.keys, countedAt: own.stale.at },
+              action: 'open_relay',
+              since: iso(own.since),
+            });
+        }
       }
       // The node's provider set: a pick that cools after a burn (no automatic
       // work goes there until it ends), and transports whose picks give no
@@ -2046,21 +2130,29 @@ export const attention = internalQuery({
           }
           held ??= e._id as string;
         }
-        // No spare, and every free slot held for set locations no address was
-        // tested in yet: a provision (upkeep's or Automatic) would buy in
-        // another location, an address that could only be a spare. The node
-        // page says to add a spare there and test it (docs/edges.md § "Provider sets").
+        // No spare, and every free slot held for set locations upkeep cannot
+        // use yet (not trusted, and FCP's own client check is not there to
+        // prove an address made there): a provision (upkeep's or Automatic)
+        // would buy in another location, an address that could only be a
+        // spare. The node page says so (docs/edges.md § "Provider sets").
         const slots = slotsOf(setState, relay);
+        const ccReady = (await clientCheckReadiness(ctx.db, cfg)) === 'ready';
         const untrustedOnly =
           standbys === 0 &&
           slots.free > 0 &&
           slots.held >= slots.free &&
-          setState.targets.every(
-            (t) =>
-              !!t.locationId &&
-              setState.picks?.find((p) => p.pick.locationId === t.locationId)?.location
-                .qualified === false,
-          );
+          setState.targets.every((t) => {
+            const row = t.locationId
+              ? setState.picks?.find((p) => p.pick.locationId === t.locationId)
+              : undefined;
+            return (
+              !!row?.location &&
+              !pickUsable(row.location, {
+                l4: edgeLayerOf(row.account.provider) === 'l4',
+                clientCheckReady: ccReady,
+              })
+            );
+          });
         items.push({
           ...base(relay),
           edgeId: publishable ?? held,

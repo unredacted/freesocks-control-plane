@@ -74,6 +74,7 @@ import {
 } from './lib/edges/probes/globalpingAccount';
 import { resolveGlobalpingShare } from './lib/edges/probes/globalpingShare';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
+import { PROBE_COUNTS_KEY, freshProbeCounts } from './lib/edges/probes/networks';
 import { shapeProtocolFor } from './lib/edges/verifyRung';
 import { hostSniOf } from './relayListeners';
 import { refreshPartialRung } from './edgeVerification';
@@ -1530,7 +1531,27 @@ export const runContext = internalQuery({
       kind: run.targetKind,
       ref: run.targetRef,
     });
-    return { run, cfg, secrets, servername: servername ?? null, countries };
+    // `home_first` tops a country short of home-network probes up from the
+    // probe listing, counted at most once an hour (`saveProbeCounts`).
+    const probeCounts =
+      run.source === 'globalping' && cfg.probe.networks === 'home_first'
+        ? freshProbeCounts(await readStateJson(ctx.db, PROBE_COUNTS_KEY), Date.now())
+        : null;
+    return { run, cfg, secrets, servername: servername ?? null, countries, probeCounts };
+  },
+});
+
+/** Globalping's probe listing counted per country, for `home_first` address probes. */
+export const saveProbeCounts = internalMutation({
+  args: {
+    counts: v.record(
+      v.string(),
+      v.object({ eyeball: v.number(), datacenter: v.number(), total: v.number() }),
+    ),
+  },
+  handler: async (ctx, { counts }) => {
+    await writeStateJson(ctx.db, PROBE_COUNTS_KEY, { at: Date.now(), counts });
+    return null;
   },
 });
 

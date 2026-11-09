@@ -14,14 +14,14 @@ const NOTE: NotedNamePool = {
   total: 9,
   limit: 3,
   needs: 3,
-  preferEyeball: true,
+  networks: 'home_first',
 };
 const NOW = {
   at: AT + H,
   globalping: true,
   limit: 3,
   needs: 3,
-  preferEyeball: true,
+  networks: 'home_first' as const,
   intervalHours: 72,
 };
 
@@ -31,8 +31,25 @@ describe('the stored note', () => {
     expect(parseNamePool('not json')).toBeNull();
     expect(parseNamePool(JSON.stringify({ ...NOTE, mode: 'other' }))).toBeNull();
     expect(parseNamePool(JSON.stringify({ ...NOTE, total: -1 }))).toBeNull();
-    const { preferEyeball: _drop, ...noPref } = NOTE;
-    expect(parseNamePool(JSON.stringify(noPref))).toBeNull();
+    const { networks: _drop, ...noSetting } = NOTE;
+    expect(parseNamePool(JSON.stringify(noSetting))).toBeNull();
+    expect(parseNamePool(JSON.stringify({ ...NOTE, networks: 'other' }))).toBeNull();
+  });
+
+  test('a note from before the network setting: the old switch on was home first, off any', () => {
+    const { networks: _drop, ...old } = NOTE;
+    expect(parseNamePool(JSON.stringify({ ...old, preferEyeball: true }))).toEqual(NOTE);
+    expect(parseNamePool(JSON.stringify({ ...old, preferEyeball: false }))).toEqual({
+      ...NOTE,
+      networks: 'any',
+    });
+    // Under the new default (home only) an old note no longer describes the checks.
+    expect(
+      currentNamePool(parseNamePool(JSON.stringify({ ...old, preferEyeball: true })), {
+        ...NOW,
+        networks: 'home',
+      }),
+    ).toBeNull();
   });
 });
 
@@ -53,9 +70,10 @@ describe('shown only while it describes the checks', () => {
     expect(currentNamePool(NOTE, { ...NOW, intervalHours: 6, at: AT + 25 * H })).toBeNull();
   });
 
-  test('the limit, the floor or the preference changed since', () => {
+  test('the limit, the floor or the network setting changed since', () => {
     expect(currentNamePool(NOTE, { ...NOW, limit: 4 })).toBeNull();
     expect(currentNamePool(NOTE, { ...NOW, needs: 2 })).toBeNull();
-    expect(currentNamePool(NOTE, { ...NOW, preferEyeball: false })).toBeNull();
+    expect(currentNamePool(NOTE, { ...NOW, networks: 'any' })).toBeNull();
+    expect(currentNamePool(NOTE, { ...NOW, networks: 'home' })).toBeNull();
   });
 });

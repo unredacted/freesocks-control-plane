@@ -128,8 +128,9 @@ const COPY = {
   // credential test answers (an adapter's short codes)
   token_rejected: {
     label: 'Token rejected',
-    explain: 'Cloudflare rejected this token as both a user and an account API token.',
-    fix: 'FCP accepts user API tokens and account API tokens. Check that the token is active and has the permissions the account needs.',
+    explain:
+      'The provider rejected this token. Cloudflare rejected it as both a user and an account API token. Gandi rejected it as a personal access token, or it lacks DNS permissions.',
+    fix: 'Check that the token is active, not expired, and has the permissions the account form lists. Cloudflare takes user and account API tokens. Gandi takes personal access tokens only.',
   },
   token_not_active: {
     label: 'Token not active',
@@ -212,8 +213,9 @@ const COPY = {
   },
   zone_not_active: {
     label: 'Zone not active yet',
-    explain: 'The zone is not active at the provider yet.',
-    fix: 'Finish setting up the zone at the provider, then check the location again.',
+    explain:
+      "The zone is not active at the provider yet, so records written there are never served. For Gandi, the domain's name servers must be Gandi LiveDNS.",
+    fix: "Finish setting up the zone at the provider, then check the location again. For Gandi, point the domain's name servers at LiveDNS.",
   },
   zone_flattens_cnames: {
     label: 'Zone flattens every CNAME',
@@ -645,11 +647,19 @@ const COPY = {
       "Replacing this address needs a spare you have tested, unless FCP's own client check is on and can make and check one.",
     fix: "Create and test a spare, or turn on FCP's client check in Edges settings.",
   },
-  no_ticked_location: {
-    label: 'No tested location',
+  no_assigned_location: {
+    label: 'No location for it',
     explain:
-      'FCP only makes replacements in locations where you have tested an address, and none can take this one.',
-    fix: 'Add a spare in a location you trust, test it with a real session, then replace.',
+      "FCP makes and checks a replacement itself only in this node's locations, and none can take this one. Each is switched off, untrusted by hand, full or at its spending cap.",
+    fix: 'Add a location to this node, or free one up, then replace.',
+  },
+  // The code an older build stored for the same refusal (`relays.suspicion.lastRotateError`
+  // keeps it until another rotation overwrites it): the same words.
+  no_ticked_location: {
+    label: 'No location for it',
+    explain:
+      "FCP makes and checks a replacement itself only in this node's locations, and none can take this one. Each is switched off, untrusted by hand, full or at its spending cap.",
+    fix: 'Add a location to this node, or free one up, then replace.',
   },
   replacement_reblocked: {
     label: 'Replacement blocked again',
@@ -683,7 +693,7 @@ const COPY = {
   client_check_unconfirmed: {
     label: 'Checked but not confirmed',
     explain:
-      "FCP's clients got through, but the check cannot replace your test, because this location is no longer a tested one or the client check is off.",
+      "FCP's clients got through, but the check cannot replace your test. The location is no longer one of this node's locations or you untrusted it, or the client check is off.",
     fix: 'Test the address yourself, then put it in use.',
   },
   // --- preflight: selection -------------------------------------------------------------
@@ -1017,8 +1027,8 @@ const COPY = {
   needs_test: {
     label: 'Blocked, spare untested',
     explain:
-      "This node's address looks blocked, and automatic replacement has no tested spare and no tested location to make one in.",
-    fix: 'Test the spare address with a real session, then replace.',
+      "This node's address looks blocked. Automatic replacement has no tested spare, and FCP's client check cannot make one because it is off or not answering, or no location of this node can take one.",
+    fix: "Turn on FCP's client check and add a location to this node, or test the spare with a real session, then replace.",
   },
   auto_replace_held: {
     label: 'Automatic replacement held',
@@ -1044,6 +1054,24 @@ const COPY = {
       'This node has country-only addresses in use, but ordering by country is off, so nobody gets them.',
     fix: 'Turn ordering by country back on under Settings, or switch those locations back to everyone.',
   },
+  audience_pool_down: {
+    label: 'Country on shared addresses',
+    explain:
+      "This country's own addresses for this transport on this node are all blocked there or cannot be handed out. Its members get shared addresses until one of theirs works, and their reports still never replace a shared address.",
+    fix: "Replace the country's own address now or wait for tomorrow's budget, or stop the country's own addresses on this node.",
+  },
+  country_defaults_waiting: {
+    label: 'Country defaults waiting',
+    explain:
+      "A country's default picks are not on this node yet. It first needs the rendezvous walk, ordering by country, room in its pool, or room for more locations (six at most). Members there keep the shared addresses meanwhile.",
+    fix: 'Switch the node to the rendezvous walk on its page (members move once), turn on ordering by country, or opt the node out of that country.',
+  },
+  audience_stale_keys: {
+    label: 'Keys not moved to own addresses',
+    explain:
+      "Some keys of this country on this node have not refreshed since it moved to its own addresses. They keep the shared addresses, which this country's reports no longer replace.",
+    fix: 'Most move at their next refresh. Members who never refresh need to update their subscription in the app.',
+  },
   location_short: {
     label: 'Location short of addresses',
     explain:
@@ -1061,6 +1089,12 @@ const COPY = {
     explain:
       "This node's open addresses, the ones new and suspected accounts get, are all gone, so those members get nothing until one is replaced.",
     fix: 'Wait for the next open address, add one, or raise the open addresses wanted on the node.',
+  },
+  audience_budget: {
+    label: 'Country budget used',
+    explain:
+      "This country's own addresses on this node were replaced as often as today's budget allows. They never use the replacements kept for everyone's addresses.",
+    fix: 'They are replaced again tomorrow (UTC). Replace one by hand, or raise the budget under Settings or on the node.',
   },
   open_lane_budget: {
     label: 'Open address budget used',
@@ -1252,6 +1286,11 @@ const COPY = {
     label: 'Protocol-level block',
     explain:
       'Every edge suffers alike, which points at the protocol being blocked, not the address.',
+  },
+  own_pool: {
+    label: 'Country on its own addresses',
+    explain:
+      'Every report of this block comes from countries on their own addresses on this node, so the shared address is not replaced for them.',
   },
   outside_audience: {
     label: 'Blocked only outside its countries',

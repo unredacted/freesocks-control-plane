@@ -1,48 +1,40 @@
 <script lang="ts">
   /**
-   * Origin details (`/admin/servers/origins/:slug/details`): one origin's
-   * technical page. URL state: `?tab` overview|edges|listeners|rotations|probes,
-   * `?edge` (edge drawer), `?rotation` (rotation drawer), `?listener` (the
-   * listener card to scroll to / edit). A backend node's day-to-day page is
-   * its Servers node page; this is where every knob is.
+   * The old origin details address (`/admin/servers/origins/:slug/details`;
+   * `/admin/edges/relays/:slug` lands here first, servers/lib/legacyRoutes.ts).
+   * An origin's technical details live in the "Technical details" fold of its
+   * node's page now (relay/TechnicalDetails.svelte), so this page only finds
+   * that page and goes there:
    *
-   * The page resolves the slug to the origin (id) once and hands the origin, its
-   * listeners, its edges and the provider accounts to the tabs in `relay/`.
-   * Both drawers live here so every tab can open them through the URL. An
-   * origin that is not a backend node and has no edge yet shows the
-   * first-edge card (FirstEdgeCard) above the tabs.
+   *   a backend node        -> /admin/servers/nodes/:uuid?backend=<slug>&section=...
+   *   an origin added by hand -> /admin/servers/origins/:slug?section=...
+   *
+   * The query is mapped by `detailsSearch` (servers/lib/nodeSections.ts):
+   * `?tab=overview` lands on Summary, any other tab on the fold at that tab,
+   * no tab on the fold; `?edge=`, `?rotation=`, `?listener=` are kept.
+   *
+   * Where the node is depends on the origin (its backend, its node uuid, or
+   * for an origin made before uuids were recorded its node name in the
+   * backend's tree), so the redirect needs these lookups at runtime and lives
+   * here, not in the pure legacy table (as simple/NodePage.svelte does for
+   * `/admin/servers/origins/:slug`). A backend node whose page cannot be found
+   * (its backend is gone) keeps its technical details here, so nothing is lost.
    */
+  import { untrack } from 'svelte';
   import { ApiCallError } from '@client/lib/api';
-  import { Badge } from '@client/components/ui/badge';
-  import { Skeleton } from '@client/components/ui/skeleton';
-  import * as Tabs from '@client/components/ui/tabs';
   import * as Card from '@client/components/ui/card';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
-  import {
-    providersQuery,
-    relayEdgesQuery,
-    relayListenersQuery,
-    relayLookupQuery,
-  } from '@client/lib/edgesApi';
-  import { originBusy } from '@client/lib/livePoll';
-  import { searchParam, setSearchParams } from '@client/lib/urlState.svelte';
-  import type { EdgeLayer } from '@shared/contracts/edges';
-  import AdminListState from '../AdminListState.svelte';
+  import { relayLookupQuery } from '@client/lib/edgesApi';
+  import { serverSummaryQuery, serverTreeQuery } from '@client/lib/serversApi';
+  import { setSearchParams } from '@client/lib/urlState.svelte';
+  import { router } from '@client/stores/router.svelte';
+  import { instanceSlugOf, nodeHomeOf, serversPaths } from '../servers/lib/routes';
+  import { detailsSearch, joinSearch } from '../servers/lib/nodeSections';
   import SectionHeader from './components/SectionHeader.svelte';
-  import StatusBadge from './components/StatusBadge.svelte';
-  import LayerBadge from './components/LayerBadge.svelte';
-  import EdgeDetailDrawer from './components/EdgeDetailDrawer.svelte';
-  import RotationDrawer from './components/RotationDrawer.svelte';
-  import { edgesPaths, RELAY_TABS, type RelayTab } from './lib/routes';
-  import { suspicionChip } from './relay/relayLogic';
-  import RelayActionsMenu from './relay/RelayActionsMenu.svelte';
-  import OverviewTab from './relay/OverviewTab.svelte';
-  import EdgesTab from './relay/EdgesTab.svelte';
-  import ListenersTab from './relay/ListenersTab.svelte';
-  import RotationsTab from './relay/RotationsTab.svelte';
-  import ProbesTab from './relay/ProbesTab.svelte';
-  import EdgeActionsMenu from './relay/EdgeActionsMenu.svelte';
-  import FirstEdgeCard from './relay/FirstEdgeCard.svelte';
+  import { edgesPaths } from './lib/routes';
+  import OriginNotices from './relay/OriginNotices.svelte';
+  import TechnicalDetails from './relay/TechnicalDetails.svelte';
 
   interface Props {
     /** The origin slug from the route (`/admin/servers/origins/:slug/details`). */
@@ -52,209 +44,81 @@
 
   const relayQ = relayLookupQuery(() => slug);
   const relay = $derived(relayQ.data ?? null);
-  const ref = {
-    slug: () => slug,
-    id: () => relay?.id ?? null,
-    rotating: () => !!relay && originBusy(relay),
-  };
-  const listenersQ = relayListenersQuery(ref);
-  const edgesQ = relayEdgesQuery(ref);
-  const providersQ = providersQuery();
-
-  const listeners = $derived(listenersQ.data?.listeners ?? []);
-  const edges = $derived(edgesQ.data ?? []);
-  const accounts = $derived(providersQ.data?.accounts ?? []);
-
-  const tabParam = searchParam('tab', 'overview');
-  const edgeParam = searchParam('edge');
-  const rotationParam = searchParam('rotation');
-  const tab = $derived<RelayTab>(
-    (RELAY_TABS as readonly string[]).includes(tabParam.value)
-      ? (tabParam.value as RelayTab)
-      : 'overview',
-  );
-
   const notFound = $derived(relayQ.error instanceof ApiCallError && relayQ.error.status === 404);
-
-  const layers = $derived.by((): EdgeLayer[] => {
-    const set = new Set<EdgeLayer>();
-    for (const l of listeners) if (!l.retired) for (const layer of l.layers) set.add(layer);
-    for (const e of edges) if (e.publication !== 'unpublished') set.add(e.layer);
-    return (['l4', 'l7'] as const).filter((l) => set.has(l));
+  const panelNode = $derived(relay?.origin.kind === 'panel-node' ? relay.origin : null);
+  const summary = serverSummaryQuery();
+  // An origin made before node uuids were recorded: its node is found by name.
+  const tree = serverTreeQuery(() =>
+    panelNode && !panelNode.nodeUuid
+      ? instanceSlugOf(summary.data?.instances, panelNode.backendServerId)
+      : null,
+  );
+  const home = $derived(
+    !relay
+      ? null
+      : panelNode
+        ? nodeHomeOf(relay.origin, summary.data?.instances, tree.data?.nodes)
+        : edgesPaths.node(relay.slug),
+  );
+  // Still finding out where the node lives (or about to move there).
+  const resolving = $derived(
+    !relay ||
+      !!home ||
+      (!!panelNode && (summary.isPending || (!panelNode.nodeUuid && tree.isLoading))),
+  );
+  // Once: the move changes the address this page would read again.
+  let moved = false;
+  $effect(() => {
+    if (!home || moved) return;
+    moved = true;
+    router.navigate(joinSearch(home, detailsSearch(untrack(() => router.search))), {
+      replace: true,
+    });
   });
-
-  const relayState = $derived.by(
-    (): { value: string; label: string; tone: 'success' | 'danger' | 'info' | 'muted' } => {
-      if (!relay) return { value: 'unknown', label: 'Loading', tone: 'muted' };
-      if (relay.deleting) return { value: 'deleting', label: 'Being deleted', tone: 'danger' };
-      if (relay.quarantine) return { value: 'quarantined', label: 'Quarantined', tone: 'danger' };
-      if (relay.activeRotationId)
-        return { value: 'rotating', label: 'Rotation running', tone: 'info' };
-      if (!relay.enabled) return { value: 'disabled', label: 'Disabled', tone: 'muted' };
-      return { value: 'enabled', label: 'Enabled', tone: 'success' };
-    },
-  );
-  const chip = $derived(suspicionChip(relay?.suspicion));
-
-  // A manual or whole-server origin with no edge yet: its first edge is given here.
-  const needsFirstEdge = $derived(
-    !!relay &&
-      relay.origin.kind !== 'panel-node' &&
-      !relay.deleting &&
-      // Only a SUCCESSFUL read that lists nothing: a failed one says nothing about the edges.
-      edgesQ.isSuccess &&
-      edges.every((e) => e.status === 'destroyed'),
-  );
-  const openEdge = (edgeId: string): void => setSearchParams({ edge: edgeId, rotation: null });
-  const openRotation = (rotationId: string): void =>
-    setSearchParams({ rotation: rotationId, edge: null });
+  const back = { href: serversPaths.nodes(), label: 'Nodes' };
 </script>
 
 {#if notFound}
-  <SectionHeader
-    title="Origin not found"
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
-  />
+  <SectionHeader title="Origin not found" {back} />
   <Card.Root>
     <Card.Header>
       <Card.Title>There is no origin called "{slug}"</Card.Title>
       <Card.Description>It may have been deleted, or the address is mistyped.</Card.Description>
     </Card.Header>
     <Card.Content class="flex flex-wrap gap-4 text-sm">
-      <Link href={edgesPaths.overview()} class="font-medium text-primary hover:underline">
-        Go to all origins
+      <Link href={serversPaths.nodes()} class="text-primary font-medium hover:underline">
+        Go to Nodes
       </Link>
       <Link
         href={edgesPaths.overview({ new: '1' })}
-        class="font-medium text-primary hover:underline"
+        class="text-primary font-medium hover:underline"
       >
-        New origin
+        Add an origin by hand
       </Link>
     </Card.Content>
   </Card.Root>
 {:else if relayQ.error && !relay}
-  <SectionHeader
-    title={`Origin ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
-  />
-  <AdminListState error={relayQ.error} onRetry={() => void relayQ.refetch()} />
-{:else if !relay}
-  <SectionHeader
-    title={`Origin ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
-  />
+  <SectionHeader title={`Origin ${slug}`} {back} />
+  <TechnicalDetails {slug} />
+{:else if resolving || !relay}
+  <SectionHeader title={`Origin ${slug}`} {back} />
   <div class="space-y-3">
     <Skeleton class="h-9 w-80" />
     <Skeleton class="h-40 w-full" />
-    <Skeleton class="h-40 w-full" />
   </div>
 {:else}
+  <!-- A backend node whose page is not known: its technical details stay here. -->
   <SectionHeader
     title={relay.label ? `${relay.label} (${relay.slug})` : `Origin ${relay.slug}`}
-    description="Pool, listeners, rotations and reachability of this origin."
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
-  >
-    {#snippet badges()}
-      <StatusBadge
-        kind="status"
-        value={relayState.value}
-        label={relayState.label}
-        tone={relayState.tone}
-      />
-      {#each layers as layer (layer)}
-        <LayerBadge {layer} />
-      {/each}
-      {#if !relay.autoRotate}
-        <Badge variant="muted" title="The block detector never rotates this origin on its own."
-          >Auto rotate off</Badge
-        >
-      {/if}
-      {#if chip}
-        <Badge variant={chip.tone} title={chip.title}>{chip.label}</Badge>
-      {/if}
-    {/snippet}
-    {#snippet actions()}
-      <RelayActionsMenu
-        {relay}
-        {listeners}
-        edgeCount={edges.filter((e) => e.status !== 'destroyed').length}
-        onRotationStarted={openRotation}
-      />
-    {/snippet}
-  </SectionHeader>
-
-  {#if needsFirstEdge}
-    <div class="mb-6">
-      <FirstEdgeCard
-        {relay}
-        {listeners}
-        {accounts}
-        onStarted={openRotation}
-        onImported={openEdge}
-      />
-    </div>
-  {/if}
-
-  <Tabs.Root value={tab} onValueChange={(v) => (tabParam.value = v)}>
-    <Tabs.List>
-      <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
-      <Tabs.Trigger value="edges">Edges ({edges.length})</Tabs.Trigger>
-      <Tabs.Trigger value="listeners">
-        Listeners ({listeners.filter((l) => !l.retired).length})
-      </Tabs.Trigger>
-      <Tabs.Trigger value="rotations">Rotations</Tabs.Trigger>
-      <Tabs.Trigger value="probes">Probes</Tabs.Trigger>
-    </Tabs.List>
-
-    <!-- Only the active tab is mounted: each one owns queries that should not poll in the background. -->
-    {#if tab === 'overview'}
-      <OverviewTab
-        {relay}
-        {edges}
-        {listeners}
-        connectionPlan={listenersQ.data?.connectionPlan ?? []}
-        onOpenEdge={openEdge}
-        onOpenRotation={openRotation}
-      />
-    {:else if tab === 'edges'}
-      <EdgesTab
-        {relay}
-        {edges}
-        {listeners}
-        {accounts}
-        loading={edgesQ.isPending}
-        error={edgesQ.error}
-        onRetry={() => void edgesQ.refetch()}
-        onOpenEdge={openEdge}
-        onRotationStarted={openRotation}
-      />
-    {:else if tab === 'listeners'}
-      <ListenersTab
-        {relay}
-        {listeners}
-        {edges}
-        hostsPlan={listenersQ.data?.hostsPlan ?? null}
-        loading={listenersQ.isPending}
-        error={listenersQ.error}
-        onRetry={() => void listenersQ.refetch()}
-      />
-    {:else if tab === 'rotations'}
-      <RotationsTab {relay} onOpenRotation={openRotation} />
-    {:else}
-      <ProbesTab {relay} {edges} />
-    {/if}
-  </Tabs.Root>
-
-  <EdgeDetailDrawer edgeId={edgeParam.value || null} onClose={() => (edgeParam.value = null)}>
-    {#snippet actions(edge)}
-      <EdgeActionsMenu {relay} {edge} variant="drawer" onRotationStarted={openRotation} />
-    {/snippet}
-  </EdgeDetailDrawer>
-  <RotationDrawer
-    rotationId={rotationParam.value || null}
-    relaySlug={relay.slug}
-    relayId={relay.id}
-    onClose={() => (rotationParam.value = null)}
-    onOpenEdge={openEdge}
+    description="Its node's page could not be found, so its technical details are shown here."
+    {back}
   />
+  <div class="mb-6 space-y-4">
+    <OriginNotices
+      {relay}
+      onOpenEdge={(edgeId) => setSearchParams({ edge: edgeId, rotation: null })}
+      onOpenRotation={(rotationId) => setSearchParams({ rotation: rotationId, edge: null })}
+    />
+  </div>
+  <TechnicalDetails {slug} />
 {/if}

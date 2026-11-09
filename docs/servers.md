@@ -1391,19 +1391,25 @@ The paths are spelled only in `src/client/routes/admin/servers/lib/routes.ts` (t
 pages) and `src/client/routes/admin/edges/lib/routes.ts` (the pages that came from the old Edges
 section, docs/edges.md "Admin section"):
 
-| Tab       | Path                                                                         | What                                                                                                                                            |
-| --------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Overview  | `/admin/servers`                                                             | The fronted nodes, what needs you, and the automatic replacement switch (`?protect=1` opens the protect sheet, `?run=<id>` its progress).       |
-| Nodes     | `/admin/servers/nodes[?backend=<slug>]`                                      | Below. **All origins** (`/admin/servers/origins`) is its technical view; an origin's details are at `/admin/servers/origins/<slug>/details`.    |
-| Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`          | Every censored country, the list editor and the Delivery card; one country by section (`?section=`); the country lists.                         |
-| SNIs      | `/admin/servers/snis[/lists/<slug>]`, `/admin/servers/snis/find[/<network>]` | The SNI lists, one list, and finding more SNIs.                                                                                                 |
-| Probes    | `/admin/servers/probes`                                                      | Outside reachability: the matrix, runs, probe now, custom targets.                                                                              |
-| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates`      | The provider accounts, one account, and every template.                                                                                         |
-| Settings  | `/admin/servers/settings[?section=]`                                         | Every edge setting. Its sub-views: **Backends** (`/admin/servers/settings/backends`) and **Mode pools** (`/admin/servers/settings/mode-pools`). |
+| Tab       | Path                                                                         | What                                                                                                                                                                                                                  |
+| --------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview  | `/admin/servers`                                                             | Status, ONE Action needed list, Automatic work, tiles, readiness, fronted nodes, activity (`?protect=1`: protect sheet, `?run=<id>`: progress).                                                                       |
+| Nodes     | `/admin/servers/nodes[?backend=<slug>][&show=][&columns=technical]`          | Below. Every node of every backend in one table; **Technical columns** is the old All origins. An origin's details are at `/admin/servers/origins/<slug>/details`.                                                    |
+| Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`          | Every censored country, the list editor and the Delivery card; one country by section (`?section=`); the country lists.                                                                                               |
+| SNIs      | `/admin/servers/snis[/lists/<slug>]`, `/admin/servers/snis/find[/<network>]` | The SNI lists, one list, and finding more SNIs.                                                                                                                                                                       |
+| Probes    | `/admin/servers/probes`                                                      | Outside reachability: the matrix, runs, probe now, custom targets.                                                                                                                                                    |
+| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates`      | The provider accounts, one account, and every template.                                                                                                                                                               |
+| Settings  | `/admin/servers/settings[?group=][&q=][&changed=1][&field=]`                 | Every setting, in groups, with a search (docs/edges.md "Admin section"). Its sub-views: **Backends** (`/admin/servers/settings/backends[?backend=<slug>]`) and **Mode pools** (`/admin/servers/settings/mode-pools`). |
 
 **Backends** lists the backend servers keys are issued on (add, edit, remove; a link to each
-Remnawave server's nodes) and the node logging privacy check. **Mode pools** says which mode groups
-each connection mode issues new keys into (write-only uuids), and the node load per placement.
+Remnawave server's nodes), each Remnawave server's **Mode groups** (the same card as on Nodes: add,
+change, remove, with changes from here on) and the node logging privacy check. `?backend=<slug>`
+brings one server's row into view. **Mode pools** says which mode groups each connection mode
+issues new keys into, and the node load per placement. The uuids a mode holds are write-only, so
+the page names groups from what the client knows (`servers/lib/modePools.ts`): each backend's pool
+check says how many of a mode's groups it holds (and which grant no transport), every typed uuid
+is named from the mode groups each backend reports, and so is each node load row. Each name links
+to its backend's row, and the page links to Connection modes.
 
 Old addresses redirect through ONE table, `servers/lib/legacyRoutes.ts`, with a test for every
 rule: the whole old `/admin/edges/...` tree, `/admin/backend-servers`, `/admin/remnawave`,
@@ -1411,12 +1417,40 @@ rule: the whole old `/admin/edges/...` tree, `/admin/backend-servers`, `/admin/r
 `?instance=` (now `?backend=`). `/admin/servers?instance=X` (the root used to be Nodes) lands on
 `/admin/servers/nodes?backend=X`.
 
-**Nodes** is built like the simple Edges screens: one status sentence, an "Action needed" list only
-when something is broken, one row per node, and the leftovers as quiet one-line notes (a
-transport nobody uses on three nodes is one line, not six). **Backend setup** says how a ready
-backend is set up (its modes, the generation, the zone for origin names) and, with changes from
-here allowed, carries **Change setup** ("Changing a backend's setup"). The two switches (regular
-reading, changes from here) sit in the footer.
+**Nodes** (`servers/ServersHome.svelte`, rows from `servers/lib/nodesTable.ts`) is ONE table
+across every backend: one row per node, one per enrolled node whose panel row is gone while it
+retires, and one per origin that is not a backend node row (**Added by hand**: a manual address or
+a whole server; also a backend node no panel lists any more). Columns: the node (a dot, its name,
+its machine name, its backend when there is more than one), Country, Modes (its enrolled mode and
+extra modes, else its mode groups), **Addresses** ("3 fronted, 1 spare", "Direct", "None yet"),
+**Users online** and one status sentence: the most urgent of the node's own words, its activation
+stage and its origin's status (the server's one judgement, docs/edges.md "Admin section"). A row
+opens the node's page (an origin added by hand opens `/admin/servers/origins/<slug>`); a live or
+stopped fronting run offers **Show progress**, and a node without an enrolled node offers **Adopt
+as an enrolled node**.
+
+The header holds the search (node name, machine name, origin slug or label), the filter chips
+(`?show=`: All, Action needed, Fronted, Direct, Retiring, Added by hand, each with its count), the
+**Backend** chip (`?backend=`, only with more than one backend), the **Technical columns** switch
+(`?columns=technical`), Refresh (re-reads every shown backend) and **Add**: **Front a node** (the
+protect sheet, on this page: `?front=1[&backend=&node=]`, and `?run=<id>` for a run's progress),
+**Add a node by hand** (per backend that allows it) and **Add an origin by hand** (`?add=origin`).
+Technical columns add the old All origins columns (origin slug and kind, layers, pool, provider
+check, qualification, delivery, detector, and a row menu with Technical details, Provision an edge
+and Probe now), its filters (Members dark, Quarantined, Nothing published; `?layer=` l4 / l7), and
+the rest of that page: the "New edge work is paused" banner, the fleet tiles, Needs attention,
+Readiness and the Reachability chart. `/admin/servers/origins` (and the older
+`/admin/edges/advanced/origins`) redirect here with the technical columns on (`?filter=` becomes
+`?show=`, `?new=1` becomes `?add=origin`), and `/admin/edges` lands on the fronted nodes.
+
+Above the table each backend says its status and when its panel was read, and its "Action needed"
+list only when something is broken (`servers/components/BackendStatus.svelte`), then its port
+changes. Below it each backend keeps its quiet one-line notes (a transport nobody uses on three
+nodes is one line, not six), **Backend setup**, which says how a ready backend is set up (its
+modes, the generation, the zone for origin names) and, with changes from here allowed, carries
+**Change setup** ("Changing a backend's setup"), its mode groups and Recent changes
+(`BackendDetails.svelte`). The two switches (regular reading, changes from here) sit in the
+footer, and in Settings, Maintenance.
 
 **Add a node** (with changes allowed and the backend set up) writes one node row by hand: name,
 where the backend reaches it, country, the profile it runs and the transports it serves. The
@@ -1427,16 +1461,49 @@ chosen transport, and what `placements/validate` says about every mode's pool (a
 mode group this backend does not have, a mode group with no transport). The create is the
 ledger's node create (`POST {slug}/nodes`, sent once).
 
-`/admin/servers/nodes/{uuid}` is the node's ONE page: its sentence, the profile it runs, its own
-notes, its activation (an enrolled node), its **edges** when an origin protects it, and its
-transports with the addresses members get for each. The edges panel is the Edges section's
-(`edges/simple/NodeEdgesPanel.svelte`, loaded lazily): the origin's status from the server's one
-projection (docs/edges.md "Admin section"), Go live or Replace address, More (a spare address,
-**Front again**, Origin details, Remove fronting), the test card (`?test=<edgeId>`), the
-addresses in use, the per-node automatic switch and recent activity. An origin's page,
-`/admin/servers/origins/<slug>`, redirects here for a backend node. **Front again** (an enrolled node live behind edges) starts
-a re-protect run ("A fronted node's activation") and opens its progress in the protect sheet; it
-is the primary action while the node waits to be protected again.
+`/admin/servers/nodes/{uuid}` is the node's ONE page (`servers/NodePage.svelte`). The header has
+its name, "machine · country · backend" (the backend only when there is more than one), its
+status sentence and the node actions. A sticky section bar (`components/SectionBar.svelte`, the
+rules in `servers/lib/nodeSections.ts`) jumps within one scroll and names the section in the
+address (`?section=summary|addresses|transports|snis|modes|activity|details`):
+
+- **Summary**: the profile it runs, a rename, its notes, what its origin says first (the
+  quarantine resolver, that it is being deleted, a running rotation with Watch it:
+  `edges/relay/OriginNotices.svelte`), a fronting run's progress **inline** (`?run=<id>`, the
+  protect sheet's own progress in a card: `components/RunProgress.svelte`), and its activation
+  and approval (an enrolled node).
+- **Addresses**: the edges panel when an origin fronts the node (`edges/simple/NodeEdgesPanel.svelte`,
+  loaded lazily): the origin's status from the server's one projection (docs/edges.md "Admin
+  section"), Go live or Replace address, More (a spare address, **Front again**, Technical
+  details, Remove fronting), the test card (`?test=<edgeId>`), the addresses per location, the
+  per-node automatic switch. A node nothing fronts gets "Front this node" instead, which opens the
+  protect sheet on this page (`?front=1`); its run then shows in Summary.
+- **Transports**: port changes, each transport with Change port and the addresses members get
+  (the operator's own fronts apart), and Add a transport.
+- **SNIs**: each REALITY transport's SNIs with their one next step (manage, add suggestions, send,
+  test).
+- **Modes**: its mode and whether members can pick it, the mode groups each transport is in, and
+  the modes it also serves.
+- **Activity**: the fronted node's recent activity (`edges/simple/NodeActivity.svelte`).
+- **Technical details**: closed by default (`components/DetailsFold.svelte`; `?section=details`,
+  and any of `?tab=`, `?edge=`, `?rotation=`, `?listener=` open it). It holds ALL of the old
+  origin page (`edges/relay/TechnicalDetails.svelte`): its badges and Actions menu, the first-edge
+  card, the Overview (origin overrides, pool, delivery preview, detector, timeline), Edges (table,
+  drawer, every action), Listeners (the Hosts plan, the L7 credential), Rotations (drawer) and
+  Probes tabs.
+
+An origin added by hand (a manual address or a whole server) gets the same layout at
+`/admin/servers/origins/<slug>` without Transports, SNIs and Modes; that address redirects to the
+node page for a backend node. The old origin details address
+(`/admin/servers/origins/<slug>/details`, and before it `/admin/edges/relays/<slug>`) redirects
+to the node page's Technical details: `?tab=overview` lands on Summary, any other tab on the fold
+at that tab, no tab on the fold (`detailsSearch`). Where the node lives depends on the origin's
+backend and node uuid (or, for an origin made before uuids were recorded, its node name in the
+backend's tree), so this redirect is done at runtime by the page component
+(`edges/RelayPage.svelte`), not by the pure legacy table; a backend node whose page cannot be
+found keeps its technical details there. **Front again** (an enrolled node live behind edges)
+starts a re-protect run ("A fronted node's activation") and shows its progress in Summary; it is
+the primary action while the node waits to be protected again.
 
 With changes allowed and the backend set up the node header carries Edit, Restart or Turn on,
 and a More menu with Turn off, **Stop and remove** (offered only once the node is off) and

@@ -74,8 +74,14 @@ function view(over: Partial<CountryViewResponse> = {}): CountryViewResponse {
     },
     controls: [],
     curated: false,
-    totals: { addresses: ZERO, names: ZERO, originsAtRisk: 0, lastEvidenceAt: null },
+    totals: {
+      addresses: ZERO,
+      names: ZERO,
+      originsAtRisk: 0,
+      lastEvidenceAt: null,
+    },
     origins: [],
+    snis: [],
     meantFor: [],
     exits: [],
     namePool: null,
@@ -139,6 +145,23 @@ describe('CountryPage', () => {
     expect(text()).toContain('Edges are checked from here. SNIs are not checked from inside.');
     expect(text()).toContain('Least-loaded location.');
     expect(text()).toContain('Mark an address for this country');
+  });
+
+  test("SNIs: the country's own list comes first", () => {
+    const sni = {
+      name: 'cover.example',
+      family: 'fam-a',
+      familyLabel: 'Fam A',
+      state: 'proven' as const,
+      basis: 'checks' as const,
+      scope: 'only_here' as const,
+      blockedElsewhere: [],
+      handed: 3,
+      transports: 1,
+    };
+    open('/admin/servers/countries/AA?section=snis', view({ curated: true, snis: [sni] }));
+    expect(text()).toContain('SNIs in AA');
+    expect(text()).toContain('cover.example');
   });
 
   test('Checks from here: a switch saves the whole list with only that switch changed', async () => {

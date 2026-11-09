@@ -141,6 +141,8 @@ async function seed(
     onRestoreStart?: () => Promise<void>;
     /** What the run's test card reads of the REALITY transports (default: nothing known). */
     realityClients?: StageOps['realityClients'];
+    /** FCP's own client check of an address (default: not due, the card is shown). */
+    clientConfirm?: StageOps['clientConfirm'];
   } = {},
 ) {
   vi.useFakeTimers();
@@ -255,6 +257,7 @@ async function seed(
       calls.restore.push(a.purpose);
     },
     realityClients: opts.realityClients ?? (async () => []),
+    clientConfirm: opts.clientConfirm ?? (async () => 'skipped' as const),
   };
   __setStageOpsForTests(ops);
   return {
@@ -1230,6 +1233,76 @@ describe('edgeSetupRuns: what the outside check could not test', () => {
 });
 
 describe('edgeSetupRuns: the happy path (cases 1, 26)', () => {
+  test("FCP's own client check stands in for the try_it card: nobody tests, the run goes live", async () => {
+    const checked: string[] = [];
+    // A passing check recorded the way the real one records it: confirmed only
+    // where the location is assigned to the node (here: the run's own pick).
+    const clientConfirm: StageOps['clientConfirm'] = async (ctx, edgeId) => {
+      checked.push(edgeId as string);
+      const b = await ctx.runQuery(internal.edgeVerification.binding, { edgeId });
+      if (!b) return 'skipped';
+      const out = await ctx.runMutation(internal.edgeClientCheck.record, {
+        edgeId,
+        binding: {
+          endpoint: b.endpoint,
+          listenerKey: b.listenerKey,
+          listenerRevision: b.listenerRevision,
+          configHash: b.configHash,
+        },
+        result: {
+          at: Date.now(),
+          verdict: 'passed',
+          ok: true,
+          engines: [
+            {
+              engine: 'sing-box',
+              code: 'ok',
+              engineVersion: '1.14.3',
+              egress: 'matched',
+              excused: false,
+            },
+            {
+              engine: 'xray',
+              code: 'ok',
+              engineVersion: '26.10.21',
+              egress: 'matched',
+              excused: false,
+            },
+          ],
+          control: false,
+          by: 'system',
+          listenerRevision: b.listenerRevision,
+          configHash: b.configHash,
+        },
+      });
+      return out.confirmed ? 'confirmed' : 'unconfirmed';
+    };
+    const { t, serverId, accountId } = await seed({ clientConfirm });
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'true'));
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.state).toBe('done');
+    expect(r.need?.code).not.toBe('try_it');
+    expect(checked).toHaveLength(1);
+    const edge = (await t.run((ctx) => ctx.db.get(r.listeners[0].edgeId!)))!;
+    expect(edge.publication).toBe('published');
+    expect(edge.verification).toMatchObject({ method: 'client_check', by: 'system' });
+  });
+
+  test('the client check off: the try_it card as before', async () => {
+    let asked = 0;
+    const { t, serverId, accountId } = await seed({
+      clientConfirm: async () => {
+        asked++;
+        return 'skipped';
+      },
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(asked).toBeGreaterThan(0);
+  });
+
   test('one listener: standby first, partial from outside, try_it before anything is published, publish, hide, rehearse, go live', async () => {
     const { t, world, serverId, accountId, calls } = await seed();
     const { runId } = await startRun(t, serverId, accountId);

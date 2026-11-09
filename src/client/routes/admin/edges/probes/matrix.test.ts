@@ -7,6 +7,7 @@ import {
   groupTargets,
   matrixCell,
   matrixColumns,
+  networkMix,
   parseSkipped,
   probeRequestSummary,
   skipNotes,
@@ -115,7 +116,7 @@ describe('small labels', () => {
         { ...base, country: 'AA', ok: false },
         { ...base, country: 'BB', ok: true },
       ]),
-    ).toEqual([
+    ).toMatchObject([
       { country: 'AA', control: false, ok: 1, fail: 1 },
       { country: 'BB', control: false, ok: 1, fail: 0 },
     ]);
@@ -126,11 +127,24 @@ describe('small labels', () => {
         { ...base, country: 'AA', ok: false },
         { ...base, country: 'DE', ok: false },
       ]),
-    ).toEqual([
+    ).toMatchObject([
       { country: 'AA', control: false, ok: 0, fail: 1 },
       { country: 'DE', control: false, ok: 0, fail: 1 },
       { country: 'DE', control: true, ok: 1, fail: 0 },
     ]);
+  });
+  it("says which networks a country's results came from", () => {
+    const base = { asn: null, network: null, rttMs: null, error: null, control: false };
+    const [ir] = countryTally([
+      { ...base, country: 'IR', ok: true, vantageClass: 'eyeball' },
+      { ...base, country: 'IR', ok: false, vantageClass: 'eyeball' },
+      { ...base, country: 'IR', ok: true, vantageClass: 'datacenter' },
+    ]);
+    expect(ir).toMatchObject({ home: 2, datacentre: 1, unknown: 0 });
+    expect(networkMix(ir!)).toBe('2 home, 1 data centre');
+    expect(networkMix({ home: 0, datacentre: 3, unknown: 1 })).toBe('3 data centre, 1 not known');
+    // A source that does not tag its vantages: nothing to say.
+    expect(networkMix({ home: 0, datacentre: 0, unknown: 4 })).toBe('');
   });
   it('labels the address family', () => {
     expect(familyLabel(4)).toBe('IPv4');

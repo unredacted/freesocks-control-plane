@@ -69,6 +69,7 @@ import {
   parseGlobalpingNameResults,
   type NamePool,
 } from './lib/edges/probes/nameCheck';
+import type { ProbeNetworks } from './lib/edges/probes/networks';
 import {
   ooniUrl,
   parseOoni,
@@ -751,7 +752,7 @@ export const countryBatch = internalAction({
       gate: string | null;
       country: string;
       perCountryLimit: number;
-      preferEyeball: boolean;
+      networks: ProbeNetworks;
       minVantages: number;
       spacingMs: number;
       token: string;
@@ -796,14 +797,14 @@ export const countryBatch = internalAction({
       let res;
       if (first) res = await client.createMeasurement(globalpingNameRequest(t, { reuse: first }));
       else {
-        // Shaped by the country's probes: too few home-network ones are topped up.
+        // Shaped by the network setting and the country's probes (lib/edges/probes/networks.ts).
         const made = await createFirstNameMeasurement(
           client,
           t,
           {
             country: c.country,
             limit: c.perCountryLimit,
-            preferEyeball: c.preferEyeball,
+            networks: c.networks,
             minVantages: c.minVantages,
           },
           () => deps.sleep(c.spacingMs),

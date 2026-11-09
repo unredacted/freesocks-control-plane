@@ -333,22 +333,26 @@ export const reconcileLanes = internalMutation({
     );
     // Lanes are everyone's addresses: a contained one is its countries' own
     // (sized by its location's count, never retired by lane cleanup).
-    const published = (await publishedOf(ctx.db, origin)).filter((e) => !e.audience?.length);
+    const inUse = await publishedOf(ctx.db, origin);
+    const published = inUse.filter((e) => !e.audience?.length);
+    // Contained addresses in use keep their slots on top of the lanes.
+    const containedInUse = inUse.length - published.length;
     const book = laneBook(
       listeners.map((l) => l._id as string),
       published.map((e) => ({ listenerId: e.listenerId as string, lane: e.lane })),
       targets,
     );
-    // Addresses per location (lib/edges/providerSet.ts `wants`): the pool also
-    // holds what the counts still ask for, and cleanup keeps what they need.
-    // Without counts both are exactly what they were.
-    const set = origin.providerSet?.some((p) => p.want !== undefined)
+    // Addresses per location (lib/edges/providerSet.ts `wants`) and some
+    // countries' own (`audienceWants`): the pool also holds what the counts
+    // still ask for, and cleanup keeps what they need. Without counts both
+    // are exactly what they were.
+    const set = origin.providerSet?.some((p) => p.want !== undefined || p.audiences?.length)
       ? await setStateOf(ctx.db, origin)
       : null;
     const counted = set ? countDeficit(set.requirement, set.published) : 0;
     const desired = Math.min(
       MAX_DESIRED_PUBLISHED,
-      Math.max(1, laneDesired(book, targets) + counted),
+      Math.max(1, laneDesired(book, targets) + containedInUse + counted),
     );
     if (desired !== origin.desiredPublished)
       await ctx.db.patch(relayId, { desiredPublished: desired, updatedAt: Date.now() });
@@ -392,6 +396,8 @@ export const reconcileLanes = internalMutation({
       for (const id of origin.standbyEdgeIds) {
         const s = await ctx.db.get(id);
         if (!s || s.listenerId !== l._id || s.status !== 'active') continue;
+        // Made for some countries: theirs, never a lane of everyone's.
+        if (s.audienceIntent?.length) continue;
         if (lane === 'trusted' && !mayBeTrusted(s, origin, false)) continue;
         spares.push(id);
       }

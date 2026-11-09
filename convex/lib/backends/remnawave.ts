@@ -912,6 +912,7 @@ export async function remnawaveGetNodeInventory(cfg: RemnawaveConfig): Promise<N
     name: n.name ?? n.uuid,
     usersOnline: n.usersOnline ?? 0,
     online: (n.isConnected ?? false) && !(n.isDisabled ?? false),
+    disabled: n.isDisabled ?? false,
     address: n.address ?? undefined,
     port: n.port ?? undefined,
     countryCode: n.countryCode ?? undefined,
