@@ -226,6 +226,26 @@ describe('gandi DNS client', () => {
     expect(api.sets.get('example.org|n|A')?.values).toEqual(['192.0.2.9', '192.0.2.11']);
   });
 
+  test('an update whose pre-read fails leaves no mark behind; a refused write drops its new mark', async () => {
+    const rec = await client().createRecord(cname('front.example.org', 'old.cdn.example'));
+    api.failWith = 503;
+    await expect(
+      client().updateRecord!(rec.id, cname('front.example.org', 'new.cdn.example')),
+    ).rejects.toThrow();
+    api.failWith = null;
+    expect(marks.rows.map((r) => r.content)).toEqual(['old.cdn.example']);
+    // A write LiveDNS refuses (400): the new mark goes, the old one stays.
+    api.stub.route(async (c, i) =>
+      c.method === 'PUT'
+        ? new Response(JSON.stringify({ code: 400 }), { status: 400 })
+        : ((await api.handler(c, i)) ?? new Response(null, { status: 404 })),
+    );
+    await expect(
+      client().updateRecord!(rec.id, cname('front.example.org', 'new.cdn.example')),
+    ).rejects.toThrow();
+    expect(marks.rows.map((r) => r.content)).toEqual(['old.cdn.example']);
+  });
+
   test('what LiveDNS cannot do is refused before any call', async () => {
     const proxied = await client()
       .createRecord({ ...cname('a.example.org', 'b.example'), proxied: true })
@@ -260,6 +280,21 @@ describe('gandi DNS client', () => {
       { flags: 128, tag: 'iodef', value: 'mailto:x@example.org' },
     ]);
     expect(await client().flattensAllCnames!()).toBe(false);
+  });
+
+  test("a zone whose apex NS names custom servers is not LiveDNS's, even when public NS agrees", async () => {
+    // LiveDNS answers its apex NS records instead of Gandi's hashed servers.
+    api.nameservers = ['ns1.custom.example', 'ns2.custom.example'];
+    __setGandiNsLookup(async () => ['ns1.custom.example', 'ns2.custom.example']);
+    expect((await client().readZone()).status).toBe('not_delegated');
+    // Delegated to LiveDNS, but not to the servers assigned to this zone.
+    api.nameservers = ['ns-1-a.gandi.net', 'ns-2-b.gandi.net'];
+    __setGandiNsLookup(async () => ['ns-9-z.gandi.net']);
+    expect((await client().readZone()).status).toBe('not_delegated');
+    // Delegated to LiveDNS while the zone carries custom apex NS: served by LiveDNS.
+    api.nameservers = ['ns1.custom.example'];
+    __setGandiNsLookup(async () => ['ns-1-a.gandi.net.']);
+    expect((await client().readZone()).status).toBe('active');
   });
 
   test('a zone delegated elsewhere reads not_delegated; an unknowable answer stays active', async () => {
@@ -312,6 +347,21 @@ describe('gandi adapter (the account half)', () => {
         code: 'token_rejected',
       });
     }
+  });
+
+  test("a company organization's domains are listed through its sharing_id", async () => {
+    api.domains = [];
+    api.orgs = { 'org-company': ['company.example'] };
+    expect(await gandiProvider.testCredentials(cfg)).toEqual({ ok: true, detail: 'zones_1' });
+    const listings = api.stub.calls.filter((c) => c.path === '/v5/livedns/domains');
+    expect(listings.map((c) => new URLSearchParams(c.query).get('sharing_id'))).toEqual([
+      'personal',
+      'org-company',
+    ]);
+    // A token that may not list organizations falls back to the plain listing.
+    api.orgs = null;
+    api.domains = ['example.org'];
+    expect(await gandiProvider.testCredentials(cfg)).toEqual({ ok: true, detail: 'zones_1' });
   });
 
   test('the domains are the zone list, named by themselves', async () => {

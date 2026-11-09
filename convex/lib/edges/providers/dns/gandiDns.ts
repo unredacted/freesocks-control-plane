@@ -28,9 +28,11 @@
  *  - The TTL floor is 300 seconds; Cloudflare's "automatic" (absent or 1) is
  *    sent as that floor.
  *  - A domain can sit in LiveDNS without being delegated to it: records are
- *    accepted and never served. `readZone` compares the public NS answer with
- *    the zone's LiveDNS name servers and answers `not_delegated` only when the
- *    public answer exists and names none of them.
+ *    accepted and never served. `readZone` answers `not_delegated` when the
+ *    public NS answer names no LiveDNS server, or none of the ones assigned to
+ *    the zone (`delegationOf`).
+ *  - The plain domain listing shows only the personal organization's domains:
+ *    `listGandiDomains` lists the token's organizations and asks for each.
  *
  * Auth: a personal access token (`Authorization: Bearer`), scoped to the
  * organization's domains and the LiveDNS permissions when it is created. The
@@ -49,7 +51,10 @@ import type {
   DnsRecordType,
 } from './types';
 
-export const GANDI_API_BASE = 'https://api.gandi.net/v5/livedns';
+export const GANDI_API_ROOT = 'https://api.gandi.net/v5';
+export const GANDI_API_BASE = `${GANDI_API_ROOT}/livedns`;
+/** Most organizations one token's domains are listed for (each is one more request). */
+export const GANDI_MAX_ORGANIZATIONS = 10;
 /** LiveDNS refuses a TTL below this (`rrset_ttl` minimum). */
 export const GANDI_MIN_TTL_S = 300;
 /** One page of the domain listing; more is `truncated`. */
@@ -159,7 +164,7 @@ export function __setGandiNsLookup(f: NsLookup | null): void {
   nsLookupOverride = f;
 }
 
-/** One authenticated LiveDNS call. */
+/** One authenticated LiveDNS call (`path` under `/v5/livedns`). */
 export function gandiCall<T>(
   apiToken: string,
   step: string,
@@ -169,10 +174,22 @@ export function gandiCall<T>(
   body?: unknown,
   okStatuses?: number[],
 ): Promise<T> {
+  return gandiFetch(apiToken, step, method, `${GANDI_API_BASE}${path}`, schema, body, okStatuses);
+}
+
+function gandiFetch<T>(
+  apiToken: string,
+  step: string,
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  url: string,
+  schema: z.ZodType<T>,
+  body?: unknown,
+  okStatuses?: number[],
+): Promise<T> {
   return providerFetch({
     provider: 'gandi',
     step,
-    url: `${GANDI_API_BASE}${path}`,
+    url,
     method,
     headers: { authorization: `Bearer ${apiToken}` },
     ...(body !== undefined ? { body } : {}),
@@ -183,25 +200,60 @@ export function gandiCall<T>(
 
 const seg = (s: string) => encodeURIComponent(s);
 
+const ORGANIZATION = z.object({ id: z.string().min(1) }).passthrough();
+
 /**
- * The domains the token reaches in LiveDNS (one page). A 401 / 403 is the
- * token refused; the caller words it.
+ * The domains the token reaches in LiveDNS (one page per organization). The
+ * plain listing shows ONLY the personal organization's domains (Gandi's own
+ * warning), so a token made for a company organization would list none: the
+ * organizations the token may act for are listed first and each one's domains
+ * asked for by its `sharing_id`. A token that may not list organizations
+ * falls back to the plain listing. A 401 / 403 on the domains is the token
+ * refused; the caller words it.
+ * Source: https://api.gandi.net/docs/livedns/ (GET /domains, `sharing_id`) and
+ * https://api.gandi.net/docs/organization/ (GET /organizations), 2026-11-09.
  */
 export async function listGandiDomains(
   apiToken: string,
   step: string,
 ): Promise<{ domains: string[]; truncated: boolean }> {
-  const rows = await gandiCall(
-    apiToken,
-    step,
-    'GET',
-    `/domains?per_page=${GANDI_DOMAIN_PAGE}`,
-    z.array(DOMAIN),
-  );
-  return {
-    domains: rows.map((r) => normalizeDnsName(r.fqdn)),
-    truncated: rows.length >= GANDI_DOMAIN_PAGE,
-  };
+  let orgs: string[] | null;
+  try {
+    const rows = await gandiFetch(
+      apiToken,
+      step,
+      'GET',
+      `${GANDI_API_ROOT}/organization/organizations`,
+      z.array(ORGANIZATION),
+    );
+    orgs = [...new Set(rows.map((r) => r.id))];
+  } catch (e) {
+    if (!(e instanceof EdgeProviderError) || e.meta.retryable) throw e;
+    orgs = null;
+  }
+  const page = (sharingId?: string) =>
+    gandiCall(
+      apiToken,
+      step,
+      'GET',
+      `/domains?per_page=${GANDI_DOMAIN_PAGE}${
+        sharingId ? `&sharing_id=${encodeURIComponent(sharingId)}` : ''
+      }`,
+      z.array(DOMAIN),
+    );
+  const pages: Array<Array<z.infer<typeof DOMAIN>>> = [];
+  let truncated = false;
+  if (orgs === null || orgs.length === 0) pages.push(await page());
+  else {
+    if (orgs.length > GANDI_MAX_ORGANIZATIONS) truncated = true;
+    for (const id of orgs.slice(0, GANDI_MAX_ORGANIZATIONS)) pages.push(await page(id));
+  }
+  const domains = new Set<string>();
+  for (const rows of pages) {
+    if (rows.length >= GANDI_DOMAIN_PAGE) truncated = true;
+    for (const r of rows) domains.add(normalizeDnsName(r.fqdn));
+  }
+  return { domains: [...domains], truncated };
 }
 
 /** A `DnsClient` bound to one LiveDNS domain. `cfg.marks` holds the ownership markers. */
@@ -393,26 +445,39 @@ export function gandiDnsClient(cfg: DnsZoneConfig): DnsClient {
         proxied: false,
         comment: args.comment,
       };
-      await marks.set(zone, { ...to, marker: args.comment });
-      if (content === from.content) return record;
+      if (content === from.content) {
+        await marks.set(zone, { ...to, marker: args.comment });
+        return record;
+      }
+      // The read first: a failure here wrote nothing, so no mark is left behind
+      // that a later foreign record with this content could borrow.
       const rrset = await readRrset(step, rel, args.type);
       const path = `/records/${seg(rel)}/${seg(args.type)}`;
       const values = rrset?.rrset_values ?? [];
       const oldWire = values.filter((v) => normalizeContent(args.type, v) === from.content);
       const newWire = wireValue(args.type, content);
-      if (!rrset || oldWire.length === values.length) {
-        // The RRset holds only the value that moves (always so for a CNAME):
-        // replaced whole in one request.
-        await call(step, 'PUT', path, z.unknown(), {
-          rrset_values: [newWire],
-          rrset_ttl: rrset?.rrset_ttl ?? ttlOf(args),
-        });
-      } else {
-        // Other values stay: one PATCH adds the new value and drops the old.
-        await call(step, 'PATCH', path, z.unknown(), {
-          add_rrset_values: [newWire],
-          ...(oldWire.length > 0 ? { remove_rrset_values: oldWire } : {}),
-        });
+      // Marked before the write, so a write whose answer is lost is still owned.
+      await marks.set(zone, { ...to, marker: args.comment });
+      try {
+        if (!rrset || oldWire.length === values.length) {
+          // The RRset holds only the value that moves (always so for a CNAME):
+          // replaced whole in one request.
+          await call(step, 'PUT', path, z.unknown(), {
+            rrset_values: [newWire],
+            rrset_ttl: rrset?.rrset_ttl ?? ttlOf(args),
+          });
+        } else {
+          // Other values stay: one PATCH adds the new value and drops the old.
+          await call(step, 'PATCH', path, z.unknown(), {
+            add_rrset_values: [newWire],
+            ...(oldWire.length > 0 ? { remove_rrset_values: oldWire } : {}),
+          });
+        }
+      } catch (e) {
+        // Refused for good: nothing was written, so the new mark goes. An
+        // unknown outcome keeps it for discovery.
+        if (createRefusedForGood(e)) await marks.remove(zone, to);
+        throw e;
       }
       await marks.remove(zone, from);
       return record;
@@ -439,30 +504,43 @@ export function gandiDnsClient(cfg: DnsZoneConfig): DnsClient {
   };
 
   /**
-   * `active` unless the zone is publicly delegated to OTHER name servers
-   * (`not_delegated`): records written to LiveDNS would then never be served.
-   * A lookup that fails, or a zone LiveDNS lists no name servers for, cannot
-   * prove that and stays `active`.
+   * `active` unless the zone is provably NOT served by LiveDNS
+   * (`not_delegated`): records written there would never resolve. Served
+   * means the public NS answer names a LiveDNS server (`ns-<n>-<x>.gandi.net`),
+   * and, when LiveDNS names this zone's own hashed servers, one of those. The
+   * zone's `/nameservers` answer alone cannot prove it: with NS records at the
+   * apex it returns those records instead of Gandi's servers (Gandi's docs),
+   * and a zone delegated to those same custom servers is not LiveDNS's to
+   * serve. A public lookup that fails or answers nothing cannot prove either
+   * way and stays `active`.
    */
   async function delegationOf(name: string): Promise<string> {
-    let own: string[];
-    try {
-      own = await call('location', 'GET', '/nameservers', z.array(z.string()));
-    } catch (e) {
-      if (e instanceof EdgeProviderError && e.meta.status !== undefined && e.meta.status < 500)
-        return 'active';
-      throw e;
-    }
     let pub: string[];
     try {
-      pub = await (nsLookupOverride ?? dnsNsLookup)(name);
+      pub = (await (nsLookupOverride ?? dnsNsLookup)(name)).map(normalizeDnsName);
     } catch {
       return 'active';
     }
-    if (own.length === 0 || pub.length === 0) return 'active';
-    const mine = new Set(own.map(normalizeDnsName));
-    return pub.some((n) => mine.has(normalizeDnsName(n))) ? 'active' : 'not_delegated';
+    if (pub.length === 0) return 'active';
+    const served = pub.filter(isLiveDnsNameserver);
+    if (served.length === 0) return 'not_delegated';
+    let own: string[] = [];
+    try {
+      own = (await call('location', 'GET', '/nameservers', z.array(z.string()))).map(
+        normalizeDnsName,
+      );
+    } catch (e) {
+      if (!(e instanceof EdgeProviderError) || e.meta.retryable) throw e;
+    }
+    const assigned = own.filter(isLiveDnsNameserver);
+    if (assigned.length === 0) return 'active';
+    return served.some((n) => assigned.includes(n)) ? 'active' : 'not_delegated';
   }
+}
+
+/** A LiveDNS name server (`ns-154-a.gandi.net`), as Gandi assigns them to a zone. */
+export function isLiveDnsNameserver(name: string): boolean {
+  return /^ns-\d+-[a-z]\.gandi\.net$/.test(normalizeDnsName(name));
 }
 
 /**

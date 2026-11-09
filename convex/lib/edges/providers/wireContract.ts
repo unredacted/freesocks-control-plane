@@ -930,12 +930,17 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
   // --- DNS only: Gandi LiveDNS (API v5) ----------------------------------------------
   gandi: {
     source:
-      'https://api.gandi.net/docs/livedns/ (LiveDNS API v5) and https://api.gandi.net/docs/authentication/, 2026-11-08',
+      'https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09',
     calls: [
       {
         method: 'GET',
+        path: '^/v5/organization/organizations$',
+        purpose: 'the organizations the token acts for: whose domains to list',
+      },
+      {
+        method: 'GET',
         path: '^/v5/livedns/domains$',
-        purpose: 'list the domains the token reaches: credential test, zone list',
+        purpose: "list one organization's domains: credential test, zone list",
         query: ['per_page'],
       },
       {
@@ -946,7 +951,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/v5/livedns/domains/[^/]+/nameservers$',
-        purpose: "the domain's LiveDNS name servers: is the zone delegated to them",
+        purpose: "the domain's assigned LiveDNS name servers: is the zone delegated to them",
       },
       {
         method: 'GET',

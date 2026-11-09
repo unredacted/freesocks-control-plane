@@ -23,8 +23,14 @@ export interface FakeGandi {
   handler: PartialHandler;
   /** `<zone>|<rrset_name>|<type>` -> values as LiveDNS stores them. */
   sets: Map<string, { ttl: number; values: string[] }>;
-  /** The domains the token reaches. */
+  /** The personal organization's domains (the only ones the plain listing shows). */
   domains: string[];
+  /**
+   * Other organizations the token may act for, by `sharing_id`; null = the
+   * token may not list organizations (403). The personal one is always listed
+   * as `personal`, holding `domains`.
+   */
+  orgs: Record<string, string[]> | null;
   /** The zone's LiveDNS name servers. */
   nameservers: string[];
   /** Answer every call with this status (a refused or unknown token). */
@@ -49,6 +55,7 @@ export function fakeGandiApi(opts: { domains?: string[]; nameservers?: string[] 
     handler: () => null,
     sets: new Map(),
     domains: opts.domains ?? ['example.org'],
+    orgs: {},
     nameservers: opts.nameservers ?? ['ns-1-a.gandi.net', 'ns-2-b.gandi.net'],
     failWith: null,
   };
@@ -72,13 +79,24 @@ export function fakeGandiApi(opts: { domains?: string[]; nameservers?: string[] 
       );
     if (c.headers.authorization !== 'Bearer SECRET_GANDI') return jsonRes({ code: 401 }, 401);
     const path = decodeURIComponent(c.path);
+    const domainsOf = (sharing: string | null) =>
+      sharing === null || sharing === 'personal' ? fake.domains : (fake.orgs?.[sharing] ?? []);
+    const allDomains = () => [...fake.domains, ...Object.values(fake.orgs ?? {}).flat()];
+    if (path === '/v5/organization/organizations' && c.method === 'GET') {
+      if (fake.orgs === null) return jsonRes({ code: 403 }, 403);
+      return jsonRes(
+        ['personal', ...Object.keys(fake.orgs)].map((id) => ({ id, name: id, type: 'company' })),
+      );
+    }
     if (!path.startsWith(PREFIX)) return notFound();
     const parts = path.slice(PREFIX.length).split('/').filter(Boolean);
     if (parts[0] !== 'domains') return notFound();
-    if (parts.length === 1 && c.method === 'GET')
-      return jsonRes(fake.domains.map((fqdn) => ({ fqdn, domain_href: `x/${fqdn}` })));
+    if (parts.length === 1 && c.method === 'GET') {
+      const sharing = new URLSearchParams(c.query).get('sharing_id');
+      return jsonRes(domainsOf(sharing).map((fqdn) => ({ fqdn, domain_href: `x/${fqdn}` })));
+    }
     const zone = parts[1]!;
-    if (!fake.domains.includes(zone)) return notFound();
+    if (!allDomains().includes(zone)) return notFound();
     if (parts.length === 2 && c.method === 'GET')
       return jsonRes({ fqdn: zone, automatic_snapshots: false });
     if (parts[2] === 'nameservers' && c.method === 'GET') return jsonRes(fake.nameservers);
