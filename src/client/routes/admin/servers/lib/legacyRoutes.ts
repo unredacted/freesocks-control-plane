@@ -2,8 +2,9 @@
  * Every moved Servers address and where it lives now (pure; unit-tested in
  * legacyRoutes.test.ts, one test per rule). AdminRouter replaces a moved
  * address with its new one before anything renders. The search string is kept
- * unless a rule says otherwise. Nothing on the server builds these addresses,
- * so this is the whole move.
+ * unless a rule says otherwise. The server builds admin links only in alerts
+ * (convex/lib/alertMessages.ts `adminPaths`), which spell the new addresses;
+ * an alert sent before the move lands here and is redirected.
  *
  *   /admin/servers?instance=X              -> /admin/servers/nodes?backend=X (the root is Overview now)
  *   /admin/servers/nodes/:uuid?instance=X  -> the same page, ?backend=X
