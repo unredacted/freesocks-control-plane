@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import type { AttentionItem } from '@shared/contracts/edges';
 import {
   atRiskCount,
+  frontedCount,
   backendNodeCounts,
   oldestRead,
   unadoptedCount,
@@ -415,6 +416,18 @@ describe('per-source helpers', () => {
         { status: { fronted: true, dot: 'amber' } },
       ]),
     ).toBe(1);
+  });
+
+  test('a fronted node with a warning is still fronted', () => {
+    expect(
+      frontedCount([
+        { status: { kind: 'protected', published: 2 } },
+        { status: { kind: 'needs-you', published: 1 } },
+        { status: { kind: 'needs-you', published: 0 } },
+        { status: { kind: 'removing', published: 1 } },
+        { status: { kind: 'off', published: 1 } },
+      ]),
+    ).toBe(2);
   });
 
   test('the oldest read of the sources that have data', () => {
