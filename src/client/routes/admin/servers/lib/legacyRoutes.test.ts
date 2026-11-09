@@ -50,7 +50,9 @@ const RULES: ReadonlyArray<readonly [string, string, string]> = [
   ['/admin/edges/probes', '?target=t', '/admin/servers/probes?target=t'],
   ['/admin/edges/settings', '?section=delivery', '/admin/servers/settings?section=delivery'],
   ['/admin/edges/names', '', '/admin/servers/snis'],
-  ['/admin/edges/names/fam-a', '', '/admin/servers/snis/fam-a'],
+  ['/admin/edges/names/fam-a', '', '/admin/servers/snis/lists/fam-a'],
+  // An SNI list may be called "find": it never lands on Find more.
+  ['/admin/edges/names/find', '', '/admin/servers/snis/lists/find'],
   ['/admin/edges/find-names', '', '/admin/servers/snis/find'],
   ['/admin/edges/find-names/net-a', '', '/admin/servers/snis/find/net-a'],
   ['/admin/edges/countries', '', '/admin/servers/countries'],
