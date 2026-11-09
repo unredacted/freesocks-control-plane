@@ -15,6 +15,8 @@
  *   mergeActivity(input)      one timeline from every fronted node's timeline
  *                             and every backend's recent changes, newest first.
  *   freedomSummary(preview)   what "Freedom only through edges" holds back.
+ *   backendNodeCounts(tree), unadoptedCount(nodes, intents), atRiskCount(origins),
+ *   oldestRead(times)         the per-source figures the page and BackendFeed feed in.
  *
  * Words follow docs/servers.md: plain, short, "fronted", "Action needed",
  * never "names" for SNIs, no dashes.
@@ -93,6 +95,8 @@ export interface BackendInput {
   ops: readonly (OpLike & { id: string })[];
   /** Nodes that serve members but are not enrolled, while the backend is set up to adopt them. */
   unadopted: number;
+  /** Its last panel read failed (or its tree could not be fetched): node status may be stale. */
+  readFailed: boolean;
 }
 
 /** A country on the censored-country list (`countries/summary`, the fields read here). */
@@ -147,6 +151,13 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
     rowChip: Chip | null = chip,
   ) => out.push({ key: `${b.slug}:${key}`, source, severity, chip: rowChip, text, action });
 
+  if (b.readFailed)
+    row(
+      'read-failed',
+      'critical',
+      'The panel could not be read, so its node status may be out of date.',
+      { ...open },
+    );
   for (const h of b.holds)
     row(
       `hold:${h.id}`,
@@ -339,18 +350,67 @@ export function mergeAttention(input: AttentionInput): OverviewRow[] {
 
 // --- status sentence --------------------------------------------------------------------------------
 
+// --- per-source helpers (BackendFeed and the page) -------------------------------------------------
+
+/**
+ * Nodes switched on, and how many are online, from one backend's tree. Null
+ * when the tree is not read yet or its last panel read failed: cached
+ * `online` flags are not current then, so they are never counted.
+ */
+export function backendNodeCounts(
+  tree: {
+    state: { ok: boolean | null };
+    nodes: readonly { online: boolean; isDisabled: boolean }[];
+  } | null,
+): { online: number; total: number } | null {
+  if (!tree || tree.state.ok === false) return null;
+  const on = tree.nodes.filter((n) => !n.isDisabled);
+  return { online: on.filter((n) => n.online).length, total: on.length };
+}
+
+/** Nodes switched on that serve members without being enrolled (no intent by uuid or name). */
+export function unadoptedCount(
+  nodes: readonly { nodeUuid: string; name: string; isDisabled: boolean }[],
+  intents: readonly { nodeUuid: string | null; name: string }[],
+): number {
+  return nodes.filter(
+    (n) => !n.isDisabled && !intents.some((i) => i.nodeUuid === n.nodeUuid || i.name === n.name),
+  ).length;
+}
+
+/** Fronted nodes with no working address: a fronted origin whose status dot is red. */
+export function atRiskCount(
+  origins: readonly { status: { fronted: boolean; dot: string } }[],
+): number {
+  return origins.filter((o) => o.status.fronted && o.status.dot === 'red').length;
+}
+
+/**
+ * When the oldest data shown was read (ms), from every source that has data;
+ * 0 while none has. "Updated N s ago" uses it, so it never claims fresher data.
+ */
+export function oldestRead(times: readonly number[]): number {
+  const read = times.filter((t) => t > 0);
+  return read.length > 0 ? Math.min(...read) : 0;
+}
+
 export interface StatusInput {
   /** Nodes switched on across every backend, and how many are online; null before any backend answered. */
   nodes: { online: number; total: number } | null;
   /** The edge fleet status (the attention response), null before it answered. */
   fleet: Pick<FleetStatus, 'protected' | 'total'> | null;
   rows: readonly Pick<OverviewRow, 'severity'>[];
+  /** A source of Action needed could not be read: the dot is never green then. */
+  incomplete?: boolean;
+  /** A backend's panel read failed, so its nodes are not counted. */
+  nodesUnread?: boolean;
 }
 
 /** "6 nodes online, 4 fronted. 2 things need you." and its dot. */
 export function statusSentence(s: StatusInput): { dot: Dot; text: string } {
   const parts: string[] = [];
-  const fronted = s.fleet && s.fleet.total > 0 ? s.fleet.protected : null;
+  // A loaded empty fleet is "0 fronted", not "not known".
+  const fronted = s.fleet ? s.fleet.protected : null;
   if (s.nodes && s.nodes.total > 0) {
     const n = s.nodes;
     const online =
@@ -358,8 +418,10 @@ export function statusSentence(s: StatusInput): { dot: Dot; text: string } {
         ? `${plural(n.total, 'node')} online`
         : `${n.online} of ${plural(n.total, 'node')} online`;
     parts.push(fronted !== null ? `${online}, ${fronted} fronted.` : `${online}.`);
-  } else if (fronted !== null) {
-    parts.push(`${plural(fronted, 'node')} fronted.`);
+  } else if (s.fleet && s.fleet.total > 0) {
+    parts.push(`${plural(s.fleet.protected, 'node')} fronted.`);
+  } else if (s.nodesUnread) {
+    parts.push('Node status could not be read.');
   } else {
     parts.push('No nodes yet.');
   }
@@ -367,14 +429,14 @@ export function statusSentence(s: StatusInput): { dot: Dot; text: string } {
   parts.push(
     count === 0 ? 'Nothing needs you.' : `${plural(count, 'thing needs', 'things need')} you.`,
   );
-  const empty = !(s.nodes && s.nodes.total > 0) && fronted === null;
+  const empty = !(s.nodes && s.nodes.total > 0) && !(s.fleet && s.fleet.total > 0);
   let dot: Dot = 'green';
   if (
     s.rows.some((r) => r.severity === 'critical') ||
     (s.nodes && s.nodes.total > 0 && s.nodes.online === 0)
   )
     dot = 'red';
-  else if (count > 0 || (s.nodes && s.nodes.online < s.nodes.total)) dot = 'amber';
+  else if (count > 0 || s.incomplete || (s.nodes && s.nodes.online < s.nodes.total)) dot = 'amber';
   else if (empty) dot = 'grey';
   return { dot, text: parts.join(' ') };
 }
@@ -413,9 +475,12 @@ function spendTile(providers: readonly ProviderInput[] | null): Omit<Tile, 'id' 
   const label = 'Spend a month';
   if (!providers)
     return { label, value: '?', hint: 'Estimated from live addresses.', tone: 'muted' };
-  const enabled = providers.filter((p) => p.enabled && p.cost);
+  // A switched-off account still pays for its live addresses, so its spend
+  // counts; only switched-on accounts' caps do, as only they make new ones.
+  const priced = providers.filter((p) => p.cost);
+  const enabled = priced.filter((p) => p.enabled);
   const spend = sumByCurrency(
-    enabled.flatMap((p) =>
+    priced.flatMap((p) =>
       p.cost!.spend.totals.map((t): [string, number] => [t.currency, t.monthly]),
     ),
   );
@@ -424,7 +489,7 @@ function spendTile(providers: readonly ProviderInput[] | null): Omit<Tile, 'id' 
       .filter((p) => p.cost!.monthlyCap !== null && p.cost!.currency)
       .map((p): [string, number] => [p.cost!.currency!, p.cost!.monthlyCap!]),
   );
-  const unpriced = enabled.reduce((a, p) => a + p.cost!.spend.unpriced, 0);
+  const unpriced = priced.reduce((a, p) => a + p.cost!.spend.unpriced, 0);
   const atCap = enabled.some((p) => p.cost!.spend.atCap);
   const currencies = [...new Set([...spend.keys(), ...caps.keys()])].sort();
   if (currencies.length === 0)

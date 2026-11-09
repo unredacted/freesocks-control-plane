@@ -5,10 +5,10 @@
   /** What one backend tells the Overview: its Action needed input, its node counts, its changes. */
   export interface BackendReport {
     input: BackendInput;
-    /** Nodes switched on, and how many of them are online (null until the tree is read). */
+    /** Nodes switched on, and how many are online (null until read, or when the panel read failed). */
     nodes: { online: number; total: number } | null;
     ops: readonly OpView[];
-    /** When its tree was read (ms; 0 before). */
+    /** When the oldest of its queries was read (ms; 0 before any). */
     updatedAt: number;
   }
 </script>
@@ -36,6 +36,7 @@
   } from '@client/lib/serversApi';
   import { namesNeedsYou } from '../../edges/names/lib/transportWords';
   import { needsYou, setupWords } from '../lib/words';
+  import { backendNodeCounts, oldestRead, unadoptedCount } from './overviewModel';
 
   interface Props {
     slug: string;
@@ -60,10 +61,6 @@
   const report = $derived.by((): BackendReport => {
     const canWrite = manageOn && writable && setUp;
     const t = tree.data;
-    const intentList = intents.data?.intents ?? [];
-    const enrolled = (n: { nodeUuid: string; name: string }) =>
-      intentList.some((i) => i.nodeUuid === n.nodeUuid || i.name === n.name);
-    const on = (t?.nodes ?? []).filter((n) => !n.isDisabled);
     return {
       input: {
         slug,
@@ -79,12 +76,21 @@
         ops: ops.data?.ops ?? [],
         unadopted:
           t && intents.data && canWrite && setup.data?.state === 'ready'
-            ? t.nodes.filter((n) => !enrolled(n)).length
+            ? unadoptedCount(t.nodes, intents.data.intents)
             : 0,
+        // As the Nodes page: "The panel could not be read" (cached nodes are not current).
+        readFailed: tree.isError || t?.state.ok === false,
       },
-      nodes: t ? { online: on.filter((n) => n.online).length, total: on.length } : null,
+      nodes: backendNodeCounts(tree.isError ? null : (t ?? null)),
       ops: ops.data?.ops ?? [],
-      updatedAt: tree.dataUpdatedAt,
+      updatedAt: oldestRead([
+        tree.dataUpdatedAt,
+        intents.dataUpdatedAt,
+        setup.dataUpdatedAt,
+        transports.dataUpdatedAt,
+        portChanges.dataUpdatedAt,
+        ops.dataUpdatedAt,
+      ]),
     };
   });
 

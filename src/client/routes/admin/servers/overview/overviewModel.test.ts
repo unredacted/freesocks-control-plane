@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import type { AttentionItem } from '@shared/contracts/edges';
 import {
+  atRiskCount,
+  backendNodeCounts,
+  oldestRead,
+  unadoptedCount,
   freedomSummary,
   mergeActivity,
   mergeAttention,
@@ -44,6 +48,7 @@ const backend = (over: Partial<BackendInput> = {}): BackendInput => ({
   portChanges: [],
   ops: [],
   unadopted: 0,
+  readFailed: false,
   ...over,
 });
 
@@ -332,6 +337,89 @@ describe('statusSentence', () => {
       text: '2 nodes fronted. Nothing needs you.',
     });
   });
+
+  test('a loaded empty fleet says "0 fronted"; not loaded says nothing about fronting', () => {
+    const nodes = { online: 3, total: 3 };
+    expect(statusSentence({ nodes, fleet: { protected: 0, total: 0 }, rows: [] }).text).toBe(
+      '3 nodes online, 0 fronted. Nothing needs you.',
+    );
+    expect(statusSentence({ nodes, fleet: null, rows: [] }).text).toBe(
+      '3 nodes online. Nothing needs you.',
+    );
+    expect(statusSentence({ nodes: null, fleet: { protected: 0, total: 0 }, rows: [] })).toEqual({
+      dot: 'grey',
+      text: 'No nodes yet. Nothing needs you.',
+    });
+  });
+
+  test('a source that could not be read is never green', () => {
+    const nodes = { online: 3, total: 3 };
+    expect(statusSentence({ nodes, fleet: null, rows: [], incomplete: true }).dot).toBe('amber');
+    expect(
+      statusSentence({
+        nodes: null,
+        fleet: null,
+        rows: [{ severity: 'critical' }],
+        nodesUnread: true,
+      }),
+    ).toEqual({ dot: 'red', text: 'Node status could not be read. 1 thing needs you.' });
+  });
+});
+
+describe('per-source helpers', () => {
+  const node = (over: Partial<{ online: boolean; isDisabled: boolean }> = {}) => ({
+    online: true,
+    isDisabled: false,
+    ...over,
+  });
+
+  test('node counts leave out disabled nodes, and are not counted after a failed panel read', () => {
+    const nodes = [node(), node({ online: false }), node({ isDisabled: true, online: false })];
+    expect(backendNodeCounts({ state: { ok: true }, nodes })).toEqual({ online: 1, total: 2 });
+    expect(backendNodeCounts({ state: { ok: null }, nodes })).toEqual({ online: 1, total: 2 });
+    expect(backendNodeCounts({ state: { ok: false }, nodes })).toBeNull();
+    expect(backendNodeCounts(null)).toBeNull();
+  });
+
+  test('a failed panel read is critical in Action needed', () => {
+    const [row] = merge({ backends: [backend({ readFailed: true })] });
+    expect(row).toMatchObject({
+      key: 'main:read-failed',
+      severity: 'critical',
+      text: 'The panel could not be read, so its node status may be out of date.',
+      action: { href: '/admin/servers/nodes' },
+    });
+  });
+
+  test('nodes not enrolled leave out disabled ones and match intents by uuid or name', () => {
+    const nodes = [
+      { nodeUuid: 'n1', name: 'a', isDisabled: false },
+      { nodeUuid: 'n2', name: 'b', isDisabled: false },
+      { nodeUuid: 'n3', name: 'c', isDisabled: true },
+      { nodeUuid: 'n4', name: 'd', isDisabled: false },
+    ];
+    expect(
+      unadoptedCount(nodes, [
+        { nodeUuid: 'n1', name: 'x' },
+        { nodeUuid: null, name: 'b' },
+      ]),
+    ).toBe(1);
+  });
+
+  test('at risk counts only fronted nodes with a red dot', () => {
+    expect(
+      atRiskCount([
+        { status: { fronted: true, dot: 'red' } },
+        { status: { fronted: false, dot: 'red' } },
+        { status: { fronted: true, dot: 'amber' } },
+      ]),
+    ).toBe(1);
+  });
+
+  test('the oldest read of the sources that have data', () => {
+    expect(oldestRead([0, 0])).toBe(0);
+    expect(oldestRead([3000, 0, 1000, 2000])).toBe(1000);
+  });
 });
 
 describe('overviewTiles', () => {
@@ -417,6 +505,15 @@ describe('overviewTiles', () => {
     expect(overviewTiles({ ...base, providers: [] })[2]).toMatchObject({
       value: 'None',
       hint: 'No live address costs anything now.',
+    });
+  });
+
+  test('spend: a switched-off account still bills its live addresses, but its cap is left out', () => {
+    const off = provider({ id: 'acc4', name: 'Off', enabled: false }, 20, 50);
+    off.cost!.spend.unpriced = 1;
+    expect(overviewTiles({ ...base, providers: [provider({}, 38), off] })[2]).toMatchObject({
+      value: '€58.00 / €90.00',
+      hint: 'Estimated from live addresses, against the caps. 1 address without a price.',
     });
   });
 

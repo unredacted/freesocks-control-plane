@@ -101,6 +101,32 @@ describe('The merged Action needed list', () => {
     await vi.waitFor(() => expect(acknowledgeForeignEdit).toHaveBeenCalledWith('main', 'p1'));
   });
 
+  test('a failed edge attention read shows inline, and the other rows still list', () => {
+    vi.mocked(releaseHold).mockReset();
+    client = new QueryClient();
+    app = mountWithQuery(client, ActionNeeded, {
+      rows: rows.slice(1),
+      onAction: vi.fn(),
+      edgeError: new Error('down'),
+      onEdgeRetry: vi.fn(),
+    });
+    flushSync();
+    expect(document.querySelectorAll('ul[aria-label="Action needed"] > li')).toHaveLength(3);
+    expect(document.body.textContent).not.toMatch(/Nothing needs you/);
+    expect(button('Retry')).toBeDefined();
+  });
+
+  test('with only the failed edge read, it never says nothing needs you', () => {
+    client = new QueryClient();
+    app = mountWithQuery(client, ActionNeeded, {
+      rows: [],
+      onAction: vi.fn(),
+      edgeError: new Error('down'),
+    });
+    flushSync();
+    expect(document.body.textContent).not.toMatch(/Nothing needs you/);
+  });
+
   test('beyond max, the rest wait behind Show all', () => {
     mount(2);
     expect(document.querySelectorAll('ul[aria-label="Action needed"] > li')).toHaveLength(2);

@@ -67,6 +67,8 @@
     mergeActivity,
     mergeAttention,
     overviewTiles,
+    atRiskCount,
+    oldestRead,
     statusSentence,
     type TimelineEntryInput,
   } from '../../servers/overview/overviewModel';
@@ -128,7 +130,8 @@
 
   const actionRows = $derived(
     mergeAttention({
-      edge: attention.data?.items ?? [],
+      // A failed read shows inline in Action needed; its stale items are not listed.
+      edge: attention.isError ? [] : (attention.data?.items ?? []),
       backends: backendReports.map((r) => r.input),
       countries: countries.data?.countries ?? [],
       providers: providers.data?.accounts ?? [],
@@ -143,14 +146,20 @@
       total: read.reduce((a, n) => a + n.total, 0),
     };
   });
-  const headline = $derived(statusSentence({ nodes: nodeCounts, fleet, rows: actionRows }));
+  const headline = $derived(
+    statusSentence({
+      nodes: nodeCounts,
+      fleet,
+      rows: actionRows,
+      incomplete: attention.isError,
+      nodesUnread: backendReports.some((r) => r.input.readFailed),
+    }),
+  );
   const tiles = $derived(
     overviewTiles({
       nodes: nodeCounts,
       fleet,
-      atRisk: attention.data
-        ? attention.data.origins.filter((o) => o.status.dot === 'red').length
-        : null,
+      atRisk: attention.data ? atRiskCount(attention.data.origins) : null,
       countries: countries.data?.countries ?? null,
       providers: providers.data?.accounts ?? null,
       probe: {
@@ -169,7 +178,16 @@
   const clientCheckReady = $derived(
     clientCheckStatus.data?.configured === true && clientCheckStatus.data.health?.ok === true,
   );
-  const updatedAt = $derived(Math.min(summary.dataUpdatedAt, attention.dataUpdatedAt));
+  // The oldest read of everything shown, so the line never claims fresher data.
+  const updatedAt = $derived(
+    oldestRead([
+      summary.dataUpdatedAt,
+      attention.dataUpdatedAt,
+      countries.dataUpdatedAt,
+      providers.dataUpdatedAt,
+      ...backendReports.map((r) => r.updatedAt),
+    ]),
+  );
   const refreshNow = () =>
     Promise.all([
       qc.refetchQueries({ queryKey: edgeKeys.summary, type: 'active' }),
@@ -310,10 +328,14 @@
     </div>
   {/if}
 
-  {#if attention.isError}
-    <AdminListState error={attention.error} onRetry={() => void attention.refetch()} />
-  {:else if !attention.isPending}
-    <ActionNeeded rows={actionRows} {onAction}>
+  {#if !attention.isPending}
+    <!-- A failed edge attention read shows inline; the other sources' rows still list. -->
+    <ActionNeeded
+      rows={actionRows}
+      {onAction}
+      edgeError={attention.isError ? attention.error : null}
+      onEdgeRetry={() => void attention.refetch()}
+    >
       {#snippet top()}
         {#if testEdgeIds.length > 0}
           <EndpointTestCard

@@ -4,6 +4,9 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { mountWithQuery } from '../../../../testing/mountWithQuery';
 import EdgesHome from './EdgesHome.svelte';
 
+/** What a test changes about the mocked reads. */
+const flags = vi.hoisted(() => ({ attentionFails: false, panelOk: true }));
+
 /** A query result as the pages read it. */
 const q = (data: unknown) => ({
   data,
@@ -31,28 +34,37 @@ vi.mock('@client/lib/edgesApi', async (importOriginal) => ({
       generatedAt: new Date().toISOString(),
     }),
   attentionQuery: () =>
-    q({
-      items: [
-        {
-          id: 'block:e1',
-          kind: 'block_suspected',
-          severity: 'warning',
-          relaySlug: 'node-a',
-          relayId: 'r1',
-          edgeId: 'e1',
-          listenerKey: null,
-          accountId: null,
-          rotationId: null,
-          code: null,
-          facts: {},
-          action: 'open_relay',
-          since: null,
-        },
-      ],
-      origins: [],
-      fleet: null,
-      generatedAt: new Date().toISOString(),
-    }),
+    flags.attentionFails
+      ? {
+          data: undefined,
+          isPending: false,
+          isError: true,
+          error: new Error('down'),
+          dataUpdatedAt: 0,
+          refetch: () => Promise.resolve(),
+        }
+      : q({
+          items: [
+            {
+              id: 'block:e1',
+              kind: 'block_suspected',
+              severity: 'warning',
+              relaySlug: 'node-a',
+              relayId: 'r1',
+              edgeId: 'e1',
+              listenerKey: null,
+              accountId: null,
+              rotationId: null,
+              code: null,
+              facts: {},
+              action: 'open_relay',
+              since: null,
+            },
+          ],
+          origins: [],
+          fleet: null,
+          generatedAt: new Date().toISOString(),
+        }),
   edgeConfigQuery: () => q(undefined),
   clientCheckStatusQuery: () => q(undefined),
   setupStatusQuery: () => q({ complete: true, steps: [] }),
@@ -82,6 +94,7 @@ vi.mock('@client/lib/serversApi', async (importOriginal) => ({
     }),
   serverTreeQuery: () =>
     q({
+      state: { ok: flags.panelOk },
       nodes: [{ nodeUuid: 'n1', name: 'node-a', online: true, isDisabled: false, transports: [] }],
       profiles: [],
       unattached: { addresses: [] },
@@ -107,15 +120,21 @@ afterEach(() => {
   if (app) unmount(app);
   app = null;
   client.clear();
+  flags.attentionFails = false;
+  flags.panelOk = true;
 });
+
+async function mountHome() {
+  client = new QueryClient();
+  app = mountWithQuery(client, EdgesHome, {});
+  flushSync();
+  await tick();
+  flushSync();
+}
 
 describe('Overview', () => {
   test('one sentence, one merged Action needed list, the switches and the tiles', async () => {
-    client = new QueryClient();
-    app = mountWithQuery(client, EdgesHome, {});
-    flushSync();
-    await tick();
-    flushSync();
+    await mountHome();
 
     const text = document.body.textContent ?? '';
     expect(document.querySelector('[role="status"]')?.textContent).toMatch(
@@ -138,5 +157,25 @@ describe('Overview', () => {
     expect(tiles[1]).toMatch(/Countries 1 of 1/);
     // No fronted node yet: the offer to front one.
     expect(text).toMatch(/A fronted node gives members a provider address/);
+  });
+
+  test('a failed edge attention read shows inline; the backend rows still list', async () => {
+    flags.attentionFails = true;
+    await mountHome();
+    const rows = document.querySelectorAll('ul[aria-label="Action needed"] > li');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toMatch(/node-a is held closed/);
+    expect(
+      [...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Retry'),
+    ).toBe(true);
+  });
+
+  test('a failed panel read is not counted as online and is listed as Action needed', async () => {
+    flags.panelOk = false;
+    await mountHome();
+    expect(document.querySelector('[role="status"]')?.textContent).toMatch(
+      /Node status could not be read\. 3 things need you\./,
+    );
+    expect(document.body.textContent).toMatch(/The panel could not be read/);
   });
 });

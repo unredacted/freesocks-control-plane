@@ -12,6 +12,9 @@
    *   onAction: (item: AttentionItem) => void | Promise<unknown>   edge attention calls
    *   max?: number                     rows shown before "Show all" (default 5)
    *   top?: Snippet                    drawn above the rows (the endpoint test card)
+   *   edgeError?: unknown              the edge attention read failed: shown inline, the
+   *                                    other sources' rows still list
+   *   onEdgeRetry?: () => void         reads edge attention again
    */
   import type { Snippet } from 'svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
@@ -21,6 +24,7 @@
   import { cn } from '@client/lib/utils';
   import { router } from '@client/stores/router.svelte';
   import { acknowledgeForeignEdit, invalidateServers, releaseHold } from '@client/lib/serversApi';
+  import AdminListState from '../../AdminListState.svelte';
   import AttentionList from '../../edges/components/AttentionList.svelte';
   import StatusBadge from '../../edges/components/StatusBadge.svelte';
   import type { AttentionItem } from '../../edges/lib/attention';
@@ -33,8 +37,10 @@
     onAction: (item: AttentionItem) => void | Promise<unknown>;
     max?: number;
     top?: Snippet;
+    edgeError?: unknown;
+    onEdgeRetry?: () => void;
   }
-  let { rows, onAction, max = 5, top }: Props = $props();
+  let { rows, onAction, max = 5, top, edgeError = null, onEdgeRetry }: Props = $props();
 
   const qc = useQueryClient();
   let showAll = $state(false);
@@ -73,7 +79,13 @@
   <h2 id="action-needed" class="mb-3 text-base font-semibold">Action needed</h2>
   <div class="space-y-3">
     {@render top?.()}
-    {#if rows.length === 0}
+    {#if edgeError}
+      <!-- The edge attention read failed: said here, while every other source still lists. -->
+      <AdminListState error={edgeError} onRetry={onEdgeRetry} />
+    {/if}
+    {#if rows.length === 0 && edgeError}
+      <!-- Nothing else to list; never "Nothing needs you" while a source is unread. -->
+    {:else if rows.length === 0}
       <p class="text-muted-foreground rounded-lg border border-dashed p-6 text-center text-sm">
         Nothing needs you.
       </p>
