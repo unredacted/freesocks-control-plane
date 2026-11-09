@@ -69,6 +69,7 @@
   import { NODE_SECTIONS, patchSearch } from './lib/nodeSections';
   import { nodeSectionState, sectionId } from './lib/nodeSectionState.svelte';
   import { pickInstance, serversPaths } from './lib/routes';
+  import { tagOfName, transportName } from '@client/lib/transportName';
   import {
     countryLabel,
     frontsHint,
@@ -167,6 +168,22 @@
   const backendName = $derived(
     (summary.data?.instances.length ?? 0) > 1 ? (instance?.name ?? null) : null,
   );
+
+  // A transport by its mode's name, never its tag (FREEDOM_WEBSOCKET is Freedom-WebSocket).
+  type Named = { tag: string; modeGroups: { name: string }[] };
+  const nameOf = (i: Named) =>
+    transportName(
+      i.tag,
+      i.modeGroups.map((g) => g.name),
+    );
+  // The mode groups it is in, its own (the one its name makes) said once.
+  function groupsLine(i: Named): string {
+    if (i.modeGroups.length === 0) return 'in no mode group.';
+    const others = i.modeGroups.filter((g) => tagOfName(g.name) !== i.tag).map((g) => g.name);
+    if (others.length === 0) return 'in its own mode group.';
+    const own = others.length < i.modeGroups.length ? 'its own mode group and ' : '';
+    return `in ${own}${others.join(', ')}.`;
+  }
 </script>
 
 {#snippet addressRow(inbound: TransportView, host: AddressView)}
@@ -376,7 +393,7 @@
             <li class="rounded-lg border p-3 text-sm">
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <p class="font-medium break-all">
-                  {inbound.tag}
+                  {nameOf(inbound)}
                   <span class="text-muted-foreground font-normal">{inboundSummary(inbound)}</span>
                 </p>
                 {#if canWrite && node.profile && portChangeable(inbound)}
@@ -451,7 +468,7 @@
           {#each sniTransportsHere as inbound (inbound.transportUuid)}
             {@const names = serverNamesLabel(inbound)}
             <li class="rounded-lg border p-3 text-sm">
-              <p class="font-medium break-all">{inbound.tag}</p>
+              <p class="font-medium break-all">{nameOf(inbound)}</p>
               {#if inbound.security === 'reality' && slug && !sniTransports.isError}
                 <TransportNames
                   backendSlug={slug}
@@ -531,14 +548,8 @@
         <ul class="space-y-1 text-sm">
           {#each node.transports as inbound (inbound.transportUuid)}
             <li>
-              <span class="font-medium break-all">{inbound.tag}</span>
-              <span class="text-muted-foreground">
-                {#if inbound.modeGroups.length === 0}
-                  in no mode group.
-                {:else}
-                  in {inbound.modeGroups.map((s) => s.name).join(', ')}.
-                {/if}
-              </span>
+              <span class="font-medium break-all">{nameOf(inbound)}</span>
+              <span class="text-muted-foreground">{groupsLine(inbound)}</span>
             </li>
           {/each}
         </ul>

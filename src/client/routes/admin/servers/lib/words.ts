@@ -11,6 +11,7 @@ import type {
   ServerTree,
 } from '../../../../../shared/contracts/servers';
 import { runNeedStep } from '../../edges/lib/runNeedWords';
+import { tagOfName, transportName } from '../../../../lib/transportName';
 
 export type Dot = 'green' | 'amber' | 'red' | 'grey';
 
@@ -922,22 +923,75 @@ export function opWords(op: OpLike): { dot: Dot; sentence: string } {
 }
 
 /**
- * The words for `count` identical changes in a row (Recent changes folds them):
- * one change reads as `opWords`; a retried create that never went out reads
- * "Tried 40 times, never sent".
+ * The words for `count` changes folded into one line (Recent changes folds
+ * them): one change reads as `opWords`; a retried create that never went out
+ * reads "Tried 40 times, never sent"; refused changes to several items (`targets`)
+ * read "40 changes like this, never sent".
  */
-export function opRepeatWords(op: OpLike, count: number): { dot: Dot; sentence: string } {
+export function opRepeatWords(
+  op: OpLike,
+  count: number,
+  targets = 1,
+): { dot: Dot; sentence: string } {
   const w = opWords(op);
   if (count < 2) return w;
-  if (op.state === 'refused' && op.errorCode === 'servers.never_sent')
+  const neverSent = op.state === 'refused' && op.errorCode === 'servers.never_sent';
+  if (targets > 1)
+    return {
+      dot: w.dot,
+      sentence: neverSent
+        ? `${count} changes like this, never sent. Nothing was changed.`
+        : `${count} changes like this. ${w.sentence}`,
+    };
+  if (neverSent)
     return { dot: w.dot, sentence: `Tried ${count} times, never sent. Nothing was changed.` };
   return { dot: w.dot, sentence: `${count} times in a row. ${w.sentence}` };
 }
 
-/** What makes two changes the same for folding: never an open one (it has its own buttons). */
+/**
+ * What makes two changes the same for folding: never an open one (it has its
+ * own buttons). A refused change changed nothing, so refusals of one kind fold
+ * whichever item they were for; any other keeps its item apart.
+ */
 export function opRepeatKey(op: OpLike & { open: boolean }): string | null {
-  return op.open ? null : [op.kind, op.verb, op.label, op.state, op.errorCode ?? ''].join('\u0000');
+  if (op.open) return null;
+  const label = op.state === 'refused' ? '' : op.label;
+  return [op.kind, op.verb, label, op.state, op.errorCode ?? ''].join('\u0000');
 }
+
+/** One line of Recent changes: the newest change, the oldest folded in, how many, for how many items. */
+export interface OpGroup<T extends OpLike> {
+  op: T;
+  last: T;
+  count: number;
+  targets: number;
+}
+
+/** Recent changes as lines: neighbours that are the same change fold (newest first, order kept). */
+export function opGroups<T extends OpLike & { open: boolean }>(ops: readonly T[]): OpGroup<T>[] {
+  const out: (OpGroup<T> & { labels: Set<string> })[] = [];
+  let prevKey: string | null = null;
+  for (const op of ops) {
+    const k = opRepeatKey(op);
+    const prev = out.at(-1);
+    if (prev && k !== null && k === prevKey) {
+      prev.count += 1;
+      prev.last = op;
+      prev.labels.add(op.label);
+    } else out.push({ op, last: op, count: 1, targets: 1, labels: new Set([op.label]) });
+    prevKey = k;
+  }
+  return out.map(({ labels, ...g }) => ({ ...g, targets: labels.size }));
+}
+
+/** A line's title: the change, and how many other items it was for. */
+export function opGroupTitle(g: OpGroup<OpLike>): string {
+  const title = opTitle(g.op);
+  return g.targets > 1 ? `${title} and ${g.targets - 1} more` : title;
+}
+
+/** How many lines Recent changes shows before "Show all". */
+export const RECENT_CHANGES_SHOWN = 10;
 
 /** One server name per line or comma; trimmed, blanks dropped, order kept, no repeats. */
 export function parseNames(text: string): string[] {
@@ -1153,4 +1207,25 @@ export function extraModeWords(m: ExtraModeLike): { dot: Dot; sentence: string }
     case 'removing':
       return { dot: 'amber', sentence: 'Being removed: its address first, then the transport.' };
   }
+}
+
+/**
+ * A mode group's line under its name: the transports it carries by name (its
+ * own, the one its name makes, goes without saying) and its members.
+ * "11 members"; "Also Freedom XHTTP · 3 members"; "No transports".
+ */
+export function groupLine(
+  name: string,
+  tags: readonly (string | null | undefined)[],
+  members: number | null,
+): string {
+  const present = tags.filter((t): t is string => !!t);
+  const own = tagOfName(name);
+  const others = present.filter((t) => t !== own).map((t) => transportName(t));
+  const parts: string[] = [];
+  if (present.length === 0) parts.push('No transports');
+  else if (others.length > 0)
+    parts.push(present.includes(own) ? `Also ${others.join(', ')}` : others.join(', '));
+  if (members !== null) parts.push(`${members} ${members === 1 ? 'member' : 'members'}`);
+  return parts.join(' · ');
 }

@@ -16,6 +16,7 @@ import type {
   CountryViewOrigin,
   CountryViewTotals,
 } from '../../../../../shared/contracts/edges';
+import { protocolLine } from '../lib/format';
 
 export const COUNTRY_SECTIONS = [
   { id: 'summary', label: 'Summary' },
@@ -66,7 +67,7 @@ export function markableAddresses(
         out.push({
           edgeId: a.edgeId,
           address: a.address,
-          where: `${node} · transport ${l.key}`,
+          where: `${node} · ${protocolLine(l)}`,
           mark: own?.state ?? null,
         });
       }
@@ -110,15 +111,17 @@ export function snisDigest(totals: CountryViewTotals): string {
 }
 
 export function checksDigest(
-  listed: { checkEdges: boolean; checkNamesInside: boolean } | null,
+  listed: { checkEdges: boolean; checkNamesInside: boolean; nameChecksRun?: boolean } | null,
 ): string {
   if (!listed) return 'Not on the censored-country list, so nothing is checked from here.';
   const edges = listed.checkEdges
     ? 'Edges are checked from here.'
     : 'Edges are not checked from here.';
-  const snis = listed.checkNamesInside
-    ? 'SNIs are checked from inside.'
-    : 'SNIs are not checked from inside.';
+  const snis = !listed.checkNamesInside
+    ? 'SNIs are not checked from inside.'
+    : listed.nameChecksRun === false
+      ? 'SNI checks from inside are on, but none runs now.'
+      : 'SNIs are checked from inside.';
   return `${edges} ${snis}`;
 }
 

@@ -16,6 +16,7 @@
   import type { ServerTree } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { runWrite } from '../lib/run';
+  import { groupLine } from '../lib/words';
 
   let { slug, tree, canWrite }: { slug: string; tree: ServerTree; canWrite: boolean } = $props();
   type ModeGroup = ServerTree['modeGroups'][number];
@@ -95,10 +96,7 @@
           <span class="min-w-0 flex-1">
             <span class="block font-medium break-all">{group.name}</span>
             <span class="text-muted-foreground block break-all">
-              {group.transportTags.filter(Boolean).join(', ') || 'No transports'}
-              {#if group.membersCount !== null}
-                · {group.membersCount} {group.membersCount === 1 ? 'member' : 'members'}
-              {/if}
+              {groupLine(group.name, group.transportTags, group.membersCount)}
             </span>
           </span>
           {#if canWrite}

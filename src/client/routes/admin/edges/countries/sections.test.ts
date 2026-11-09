@@ -41,7 +41,14 @@ const origin = (
     slug,
     label,
     nodeName: null,
-    listeners: listeners.map((l) => ({ ...l, listenerId: l.key, names: [] })),
+    listeners: listeners.map((l) => ({
+      ...l,
+      listenerId: l.key,
+      names: [],
+      protocol: 'vless',
+      streamTransport: 'raw',
+      security: 'reality',
+    })),
   }) as unknown as CountryViewOrigin;
 
 describe('?section=', () => {
@@ -96,8 +103,8 @@ describe('the address picker', () => {
   it('lists each edge address once, in page order, never the node itself', () => {
     const got = markableAddresses(origins, marks, 'AA');
     expect(got.map((a) => a.edgeId)).toEqual(['e1', 'e2', 'e3']);
-    expect(got[0]!.where).toBe('Node one · transport 443');
-    expect(got[2]!.where).toBe('n2 · transport 443');
+    expect(got[0]!.where).toBe('Node one · VLESS · raw · REALITY');
+    expect(got[2]!.where).toBe('n2 · VLESS · raw · REALITY');
   });
 
   it("shows only this country's own mark", () => {
@@ -131,6 +138,10 @@ describe('Summary lines', () => {
     expect(checksDigest(null)).toContain('Not on the censored-country list');
     expect(checksDigest({ checkEdges: true, checkNamesInside: false })).toBe(
       'Edges are checked from here. SNIs are not checked from inside.',
+    );
+    // On for the country, but no source runs: the digest says so, as the Checks section does.
+    expect(checksDigest({ checkEdges: true, checkNamesInside: true, nameChecksRun: false })).toBe(
+      'Edges are checked from here. SNI checks from inside are on, but none runs now.',
     );
   });
 

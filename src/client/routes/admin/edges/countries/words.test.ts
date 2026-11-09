@@ -116,7 +116,10 @@ function everyString(): string[] {
     nameChecks: false,
     realHost: false,
   };
-  out.push(...W.switchNotes(off, false), ...W.switchNotes(off, true));
+  out.push(
+    ...W.switchNotes(off, { checkNamesInside: false, nameChecksRun: false }),
+    ...W.switchNotes(off, { checkNamesInside: true, nameChecksRun: true }),
+  );
   for (const w of Object.values(W.REAL_HOST_WORDS)) out.push(w.short, w.sentence);
   return out;
 }
@@ -749,5 +752,26 @@ describe('namePoolLines', () => {
       'Globalping has only 2 home-network probes here, fewer than the 3 vantages a verdict needs. Probes come from home networks only, so checks from here may not reach a verdict. "Home networks first" in the probe settings tops them up with data centres.',
     ]);
     for (const l of lines) expect(l).not.toMatch(/—|_|names|meant for/);
+  });
+});
+
+describe('switchNotes', () => {
+  const on = {
+    probes: true,
+    countryChecks: true,
+    steering: true,
+    render: true,
+    names: true,
+    nameChecks: true,
+    realHost: true,
+  };
+  it('a switch that is on but runs nowhere is not called off', () => {
+    expect(W.switchNotes(on, { checkNamesInside: false, nameChecksRun: false })).toEqual([
+      'SNIs are not checked from inside this country. Turn it on under Checks from here.',
+    ]);
+    expect(W.switchNotes(on, { checkNamesInside: true, nameChecksRun: false })).toEqual([
+      W.NAME_CHECKS_IDLE,
+    ]);
+    expect(W.switchNotes(on, { checkNamesInside: true, nameChecksRun: true })).toEqual([]);
   });
 });

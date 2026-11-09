@@ -30,7 +30,9 @@
   import ProtocolBadge from '../components/ProtocolBadge.svelte';
   import StatusDot from '../simple/StatusDot.svelte';
   import { edgesPaths } from '../lib/routes';
+  import { protocolLine } from '../lib/format';
   import {
+    HANDED_SCOPE,
     STATE_WORDS,
     addressListsLine,
     addressWhy,
@@ -89,6 +91,7 @@
 </script>
 
 <div class="space-y-6">
+  <p class="text-muted-foreground text-sm">{HANDED_SCOPE}</p>
   <Card>
     <CardHeader class="pb-2">
       <CardTitle class="text-base">Locations for {countryLabel(code)}</CardTitle>
@@ -154,14 +157,13 @@
       </CardHeader>
       <CardContent class="space-y-6 text-sm">
         {#each o.listeners as l (l.listenerId)}
-          <section aria-label={`Transport ${l.key}`} class="space-y-3">
+          <section aria-label={protocolLine(l)} class="space-y-3">
             <div class="flex flex-wrap items-center gap-2">
               <ProtocolBadge
                 protocol={l.protocol}
                 streamTransport={l.streamTransport}
                 security={l.security}
               />
-              <span class="text-muted-foreground">Transport {l.key}</span>
               {#if !l.usable}<Badge variant="outline">Not in use</Badge>{/if}
             </div>
 

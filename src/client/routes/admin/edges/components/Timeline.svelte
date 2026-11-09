@@ -93,10 +93,10 @@
           title={SUBJECT_WORD[subject]}
         >
           <Icon class="size-3.5" aria-hidden="true" />
-          <span class="sr-only">{SUBJECT_WORD[subject]}: </span>
         </span>
         <div class="min-w-0 flex-1">
           <p>
+            <span class="sr-only">{SUBJECT_WORD[subject]}: </span>
             {#if href}
               <Link {href} class="font-medium underline-offset-4 hover:underline">
                 {labelFor(entry.action, entry.payload)}

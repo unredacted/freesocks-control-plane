@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * A fronted node's recent activity in plain words (the origin's timeline
-   * through `plainAuditActionLabel`). A failed run is named by what it was
+   * through `plainAuditActionLabel`), without probe runs (the Probes tab has
+   * them). A failed run is named by what it was
    * (adding a spare is no replacement) with the provider's words, and links to
    * the run (`runHref`). The node page shows it as its Activity section;
    * NodeEdgesPanel shows it at its foot when the page has no such section.
@@ -20,6 +21,7 @@
   import { transportName } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
   import { timelineLinkParams } from '../relay/relayLogic';
+  import { nodeActivityEntries } from '../lib/timeline';
 
   interface Props {
     slug: string;
@@ -39,6 +41,8 @@
   const listenersQ = relayListenersQuery(ref);
   const timelineQ = relayTimelineQuery(ref);
   const listeners = $derived(listenersQ.data?.listeners ?? []);
+
+  const activity = $derived(nodeActivityEntries(timelineQ.data?.entries ?? []));
 
   // A run that failed or kept its address a spare links to the run itself.
   const runHref = (entry: {
@@ -70,7 +74,7 @@
     <AdminListState error={timelineQ.error} onRetry={() => void timelineQ.refetch()} />
   {:else}
     <Timeline
-      entries={timelineQ.data?.entries ?? []}
+      entries={activity}
       max={8}
       labelFor={plainAuditActionLabel}
       hrefFor={runHref}

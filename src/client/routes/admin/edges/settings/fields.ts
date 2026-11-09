@@ -52,7 +52,7 @@ export const BASIC_SWITCHES: Field[] = inGroup('automatic', [
     keywords: ['spare', 'tested location'],
     label: "Replace without a spare using FCP's client check",
     helper:
-      "On: nobody has to test an address by hand. A new address in a node's locations is checked with FCP's sing-box and Xray clients, and a pass counts as the test. Off: an address needs a person's test before it goes live, and the check is advice only.",
+      "On: nobody has to test an address by hand. A new address in a node's locations is checked with FCP's sing-box and Xray clients, and a pass counts as the test. Off: the check only advises, and a new address waits for a test with a real session before it goes live.",
   },
   {
     kind: 'switch',
