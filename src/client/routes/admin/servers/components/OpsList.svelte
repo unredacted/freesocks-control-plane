@@ -15,13 +15,14 @@
   import type { OpView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { codeOf } from '../lib/run';
-  import { collapseRepeats } from '@client/lib/collapseRepeats';
   import {
     ago,
-    opRepeatKey,
+    opGroupTitle,
+    opGroups,
     opRepeatWords,
     opTitle,
     opWords,
+    RECENT_CHANGES_SHOWN,
     serverErrorWords,
     type Dot,
   } from '../lib/words';
@@ -40,8 +41,11 @@
     grey: 'bg-muted-foreground/50',
   };
 
-  // Identical settled changes in a row (a retried create) read as one line with a count.
-  const groups = $derived(collapseRepeats(ops.data?.ops ?? [], opRepeatKey));
+  // The same settled change in a row (a retried create, forty refused adds) reads as
+  // one line with a count; the newest lines first, the rest behind "Show all".
+  const groups = $derived(opGroups(ops.data?.ops ?? []));
+  let showAll = $state(false);
+  const shown = $derived(showAll ? groups : groups.slice(0, RECENT_CHANGES_SHOWN));
 
   let looking = $state<string | null>(null);
   let settling = $state<OpView | null>(null);
@@ -95,16 +99,16 @@
     <p class="text-muted-foreground text-sm">Nothing has been changed from here yet.</p>
   {:else}
     <ul class="divide-y rounded-lg border text-sm" aria-live="polite">
-      {#each groups as g (g.item.id)}
-        {@const op = g.item}
-        {@const w = opRepeatWords(op, g.count)}
+      {#each shown as g (g.op.id)}
+        {@const op = g.op}
+        {@const w = opRepeatWords(op, g.count, g.targets)}
         <li class="flex flex-wrap items-start gap-3 px-3 py-2.5">
           <span
             class={`mt-1.5 inline-block size-2.5 shrink-0 rounded-full ${DOT[w.dot]}`}
             aria-hidden="true"
           ></span>
           <span class="min-w-0 flex-1">
-            <span class="block font-medium break-all">{opTitle(op)}</span>
+            <span class="block font-medium break-all">{opGroupTitle(g)}</span>
             <span class="text-muted-foreground block">{w.sentence}</span>
           </span>
           <span class="text-muted-foreground"
@@ -132,6 +136,11 @@
         </li>
       {/each}
     </ul>
+    {#if groups.length > RECENT_CHANGES_SHOWN}
+      <Button variant="link" size="sm" class="mt-1 px-0" onclick={() => (showAll = !showAll)}>
+        {showAll ? 'Show fewer' : `Show all ${groups.length}`}
+      </Button>
+    {/if}
   {/if}
 </section>
 
