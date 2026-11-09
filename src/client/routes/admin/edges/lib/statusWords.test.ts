@@ -65,6 +65,23 @@ describe('originSentence: a failed run', () => {
   });
 });
 
+describe('originSentence on the node itself', () => {
+  test('says what to do, never "Open the node"', () => {
+    const unreachable = status({ kind: 'needs-you', code: 'edge_unreachable' });
+    expect(originSentence(unreachable, { onNode: true })).toBe(
+      'Address unreachable. Probe it again, or replace the address if it stays unreachable.',
+    );
+    for (const code of ['edge_unreachable', 'rotation_failed', 'some_new_code']) {
+      const here = originSentence(status({ kind: 'needs-you', code }), { onNode: true });
+      expect(here, code).not.toMatch(/Open the node/);
+    }
+    // From a list, a code without its own fix still points to the node.
+    expect(originSentence(status({ kind: 'needs-you', code: 'some_new_code' }))).toMatch(
+      /Open the node to see what to do\.$/,
+    );
+  });
+});
+
 describe('originSentence', () => {
   test('a live run speaks first, in four plain steps', () => {
     expect(

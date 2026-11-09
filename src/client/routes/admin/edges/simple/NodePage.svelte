@@ -108,7 +108,7 @@
   {#if status}
     <p class="-mt-3 mb-4 flex items-center gap-2 text-lg font-medium" role="status">
       <StatusDot dot={status.dot} class="size-3" />
-      {originSentence(status)}
+      {originSentence(status, { onNode: true })}
     </p>
   {/if}
 
