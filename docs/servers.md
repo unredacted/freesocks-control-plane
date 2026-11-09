@@ -1393,7 +1393,7 @@ section, docs/edges.md "Admin section"):
 
 | Tab       | Path                                                                    | What                                                                                                                                            |
 | --------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Overview  | `/admin/servers`                                                        | The fronted nodes, what needs you, and the automatic replacement switch (`?protect=1` opens the protect sheet, `?run=<id>` its progress).       |
+| Overview  | `/admin/servers`                                                        | Status, ONE Action needed list, Automatic work, tiles, readiness, fronted nodes, activity (`?protect=1`: protect sheet, `?run=<id>`: progress). |
 | Nodes     | `/admin/servers/nodes[?backend=<slug>]`                                 | Below. **All origins** (`/admin/servers/origins`) is its technical view; an origin's details are at `/admin/servers/origins/<slug>/details`.    |
 | Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`     | Every censored country, one country in full, and the country lists.                                                                             |
 | SNIs      | `/admin/servers/snis[/<slug>]`, `/admin/servers/snis/find[/<network>]`  | The SNI lists, one list, and finding more SNIs.                                                                                                 |
