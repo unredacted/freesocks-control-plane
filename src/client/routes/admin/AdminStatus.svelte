@@ -19,6 +19,7 @@
   import { humanizeSlug } from '../../lib/humanize';
   import { countryName } from '../../lib/countries';
   import Link from '../../components/Link.svelte';
+  import { edgesPaths } from './edges/lib/routes';
   import {
     adminConnectionModesQuery,
     adminStatusIncidentsQuery,
@@ -389,8 +390,9 @@
         <CardDescription>
           Per-country availability of each connection mode, as judged by the operator (user reports,
           community signal). Shown on /status as country × mode, for the countries on the
-          censored-country list (<Link href="/admin/settings" class="underline underline-offset-2"
-            >Settings, Censored countries</Link
+          censored-country list (<Link
+            href={edgesPaths.countries()}
+            class="underline underline-offset-2">Servers, Countries</Link
           >); a country with no cell and no label is left off the page. In a listed country, the
           connection mode suggested to a member follows this matrix.
         </CardDescription>

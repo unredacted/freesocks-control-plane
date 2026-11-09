@@ -12,7 +12,7 @@
  *   /admin/servers/origins/:slug                    an origin: a backend node redirects to its node page,
  *                                                   any other origin shows its edges panel here
  *   /admin/servers/origins/:slug/details            an origin's technical details (`?tab=`)
- *   /admin/servers/countries[/:CC]                  Countries
+ *   /admin/servers/countries[/:CC]                  Countries (`/:CC?section=` one section of a country)
  *   /admin/servers/countries/lists[/:id]            Countries -> Lists
  *   /admin/servers/snis                             SNIs: the SNI lists
  *   /admin/servers/snis/lists/:slug                 one SNI list (its own namespace, so no slug
@@ -174,9 +174,14 @@ export const edgesPaths = {
   /** Finding more SNIs: every network, and one network's candidates. */
   findNames: () => `${R}/snis/find`,
   findNetwork: (slug: string) => `${R}/snis/find/${enc(slug)}`,
-  /** The Countries tab: every censored country, and one country in full. */
+  /**
+   * The Countries tab: every censored country (with the list editor and the
+   * Delivery card), and one country in full (`section` picks one of its
+   * sections, ../countries/sections.ts; Summary when left out).
+   */
   countries: () => `${R}/countries`,
-  country: (code: string) => `${R}/countries/${enc(code.toUpperCase())}`,
+  country: (code: string, params?: { section?: string | null }) =>
+    withSearch(`${R}/countries/${enc(code.toUpperCase())}`, params),
   /** Country lists: every list FCP follows, and one list. */
   lists: () => `${R}/countries/lists`,
   list: (id: string) => `${R}/countries/lists/${enc(id)}`,

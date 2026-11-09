@@ -3702,7 +3702,8 @@ volunteers' home connections. These rules are built in, not settings:
   **Budget and failing sources**). Calls to one service inside a
   batch are spaced like the address-level probes (1.5 s apart, `EDGE_PLUMBING.probeSourceSpacingMs`).
 - **Opt-in per country.** Nothing runs until the switch is on **and** a country on the
-  censored-country list has "Check names from inside" on (Settings, Censored countries). Turning
+  censored-country list has "Check SNIs from inside" on (Servers -> Countries, or the country's
+  "Checks from here"). Turning
   it off stops new measurements at once.
 - **Each source's rules.** Globalping: own addresses, HEAD, within the rate limit. Atlas:
   non-public one-offs within credits. check-host.net is not used. A maintenance freeze stops new
@@ -4500,7 +4501,7 @@ transport's names).
   Settings ("Use this list", whose line says what is true now; the network; HTTP/2 only; using the
   list on another port with the same cover site; removing it) are folded away below.
 - Checks from inside countries (the Advanced page, below): the switch for `edge.sni.vantage.enabled`,
-  the countries they run from (read only: changed on Settings, Censored countries), the services,
+  the countries they run from (read only: changed on Servers -> Countries), the services,
   "Apply suggestions by themselves", the budget in one line, and the residual risk next to the
   switch. On a list, every name shows under Details one line per country it was checked from (what
   the checks saw, then what they suggest against the mark standing today) with **Apply** (or "Use
@@ -4940,7 +4941,7 @@ account}` (the tests the probe rounds asked in the last hour, the setting, the n
 
 ### Delivery by country
 
-With `delivery.country.steer` on (Admin -> Settings, "Where members connect from"; default
+With `delivery.country.steer` on (Servers -> Countries, the Delivery card; default
 off), a freedom-family member's addresses are ordered by their **stored** country: their own
 choice, or the stored guess (lib/memberCountry.ts `steeringCountry`). A transient CDN reading
 (detection off) never orders anything, nor does any other mode family. One `where` serves both
@@ -5403,8 +5404,8 @@ Where a member's key is placed, by the country they chose (`convex/lib/countryEx
 FCP only places keys: it never moves one by itself, since moving a key across backends
 re-issues it.
 
-- **The setting.** `delivery.country.exits` (Admin -> Settings, "Where members connect from",
-  "Exit location for each country"): per listed country, up to three location codes of the
+- **The setting.** `delivery.country.exits` (Servers -> Countries, the Delivery card's "Exit
+  location for each country", or one country's Exit section): per listed country, up to three location codes of the
   member catalog, in order. Empty by default, which changes nothing.
 - **Who it applies to.** A NEW key (regenerate, a mode or backend switch, the re-issue leg of
   a server switch) of a FREEDOM-family mode, for a member on Automatic (no location pick of
@@ -5536,6 +5537,41 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   address is blocked there (`atRisk`), the newest piece of evidence. The summary adds the worst
   share of members holding a blocked address over every transport.
 
+**The pages** (`src/client/routes/admin/edges/countries/`). The Countries tab
+(`/admin/servers/countries`, sub-views Countries and Lists) lists every censored country, then
+edits the list itself (§ The censored-country list: "Add a country", order, the two switches per
+country, one Save), under one line saying the list also drives the sign-up "Where are you
+connecting from?" choice, the status page matrix and the mode suggestion. Below it the
+**Delivery** card holds "Where members connect from" (guess, ask, order by country and by
+distance, how long a guess lasts, the service's own exit ranges, the exit location for each
+country); its Save sends only those keys (`delivery.ts` `DELIVERY_KEYS`) in one partial
+`PATCH /api/v1/admin/settings`, and Admin -> Settings leaves them out of its own save. Both cards
+moved from Admin -> Settings, which keeps link cards in their place.
+
+One country (`/admin/servers/countries/<CC>[?section=]`) shows one section at a time, picked by a
+section bar (`sections.ts`; Summary when `?section=` is missing or unknown):
+
+- **Summary**: the totals, what is switched off, and one line per section linking to it.
+- **Addresses for this country**: the locations set for it (with "Add a location for this
+  country", which opens Providers), then every origin's transports with what a member here is
+  handed and each address with its state, why and evidence. The per-country edges design's card
+  goes in its `perCountry` slot, between the locations and the origins.
+- **SNIs**: first the country's own list (`CountrySnisCard`: each SNI once over every node, with
+  its state here and whether it is shared, only for this country or not used there), then each
+  REALITY transport's SNIs from here, with the name-check probe note.
+- **Lists**: the country lists FCP follows for it.
+- **Probes**: the coverage lines, then the Probes tab's matrix with only this country's column
+  (`ProbeMatrix` `country`); Probe now and runs work as on the Probes tab.
+- **Checks from here**: the country's two switches on the censored-country list, each saved at
+  once (the whole list, only that switch changed), with the risk of checks from inside beside
+  it; a country off the list can be added here.
+- **Exit**: where new keys of members who chose it go, and its row of `delivery.country.exits`
+  (Save sends the whole setting with only this row changed).
+
+"Mark an address for this country" (the header) picks one of the page's edge addresses and opens
+the same mark dialog as an address row (`POST countries/marks`, preset to this country; off for
+a country not on the list, which the server refuses).
+
 **Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure, read per address
 family): `partial` = provider health + outside reachability over one family (at least
 `probe.agreementVantages` distinct vantages reachable) + a passing protocol-SHAPE check over
@@ -5641,7 +5677,8 @@ the same account limit as the address-level probes.
 One list, `censorship.countries` in `appSettings` (`convex/lib/censoredCountries.ts`), replaces
 five that had drifted apart: `edge.sni.curatedCountries`, `edge.probe.countries`,
 `edge.sni.vantage.countries`, `delivery.privacyCountries` and the rows of the status page's
-availability matrix (`status.censorship`). Admin -> Settings -> "Censored countries"
+availability matrix (`status.censorship`). Edited on Admin -> Servers -> Countries (the
+"Censored countries" card, and each country's "Checks from here"; Admin -> Settings keeps a link)
 (`GET|PUT /api/v1/admin/censored-countries`, `admin:settings:read|write`; PUT replaces the
 whole list). Up to 40 entries, in the operator's order, each
 `{ code, checkEdges, checkNamesInside }`:
@@ -5670,7 +5707,7 @@ union, in the order curated, probe, vantage, privacy, matrix rows; a probe count
 moves between `convex deploy` and the seed. `seed:seedCensoredCountries` (part of `seedCutover`)
 then writes that list once and never overwrites a stored one. The union is never truncated: when
 the old keys together hold more than 40 countries the seed does not copy it (dropping the tail
-would silently stop checks, suggestions and matrix rows), it stays live, and the Settings card asks
+would silently stop checks, suggestions and matrix rows), it stays live, and the list card asks
 the operator to remove the extra countries and save. The edges and server-name PATCH routes no
 longer write the old keys, and once the list is stored the same seed deletes the four country
 lists among them (`seed:retireLegacyCountryKeys`; `status.censorship` stays, it is the matrix

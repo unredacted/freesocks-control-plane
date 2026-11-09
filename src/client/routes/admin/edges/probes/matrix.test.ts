@@ -6,6 +6,7 @@ import {
   groupRounds,
   groupTargets,
   matrixCell,
+  matrixColumns,
   networkMix,
   parseSkipped,
   probeRequestSummary,
@@ -38,6 +39,14 @@ describe('groupTargets', () => {
     const g = groupTargets(all, (k) => k === 'edge:e2');
     expect(g).toHaveLength(1);
     expect(g[0]?.targets.map((t) => t.key)).toEqual(['edge:e2']);
+  });
+});
+
+describe('matrixColumns', () => {
+  it('shows every country, or only one (a country page)', () => {
+    expect(matrixColumns(['AA', 'BB'])).toEqual(['AA', 'BB']);
+    expect(matrixColumns(['AA', 'BB'], 'bb')).toEqual(['BB']);
+    expect(matrixColumns(['AA', 'BB'], 'CC')).toEqual([]);
   });
 });
 
