@@ -4,6 +4,9 @@ import {
   WORDED_CODES,
   importWords,
   networkLine,
+  offersUseAnyway,
+  useAnywayDoneWords,
+  useAnywayWords,
   NETWORK_REFRESH_WORDS,
   parseAsns,
   parseRanges,
@@ -29,6 +32,8 @@ const name = (over: Record<string, unknown> = {}) => ({
   tlsVersion: 'TLSv1.3',
   alpn: 'h2',
   checkedAt: null,
+  offNetwork: false,
+  useAnyway: null,
   blockedIn: [],
   provenIn: [],
   suspectIn: [] as string[],
@@ -230,5 +235,45 @@ describe('refusals', () => {
   test('no em-dashes and no codes in the copy', () => {
     for (const code of WORDED_CODES) expect(sniErrorWords(code)).not.toMatch(/—|edge\.|servers\./);
     for (const w of Object.values(CHECK_WORDS)) expect(w).not.toMatch(/—|q_/);
+  });
+});
+
+describe('use anyway', () => {
+  const NOW = Date.parse('2026-11-08T12:00:00Z');
+  const anyway = { at: '2026-11-08T09:00:00Z', by: 'Ops', reason: 'Works from inside the country' };
+
+  test('offered only on a server name failing because it resolves off the network', () => {
+    expect(offersUseAnyway(name({ code: 'q_off_network', qualification: 'failed' }))).toBe(true);
+    expect(offersUseAnyway(name({ code: 'q_off_network', status: 'suspended' }))).toBe(true);
+    // Every other failure keeps its own meaning: no way around it here.
+    for (const code of ['q_target_off_network', 'q_cert', 'q_timeout', 'q_name_unresolved', null])
+      expect(offersUseAnyway(name({ code }))).toBe(false);
+    expect(offersUseAnyway(name({ code: 'q_off_network', status: 'burned' }))).toBe(false);
+    expect(offersUseAnyway(name({ code: 'q_off_network', status: 'retired' }))).toBe(false);
+    // Already on: the row offers to stop instead.
+    expect(offersUseAnyway(name({ code: 'q_off_network', useAnyway: anyway }))).toBe(false);
+  });
+
+  test('a use anyway stays in sight: what, who, when and why', () => {
+    expect(useAnywayWords(name(), NOW)).toBeNull();
+    expect(useAnywayWords(name({ offNetwork: true, useAnyway: anyway }), NOW)).toBe(
+      'Used anyway: it resolves outside the list’s network. Set by Ops today. Reason: Works from inside the country',
+    );
+    expect(
+      useAnywayWords(name({ useAnyway: { at: anyway.at, by: null, reason: null } }), NOW),
+    ).toBe('Use anyway is on: it may resolve outside the list’s network. Set by an admin today.');
+  });
+
+  test('plain words: no em-dash, no "names", no "meant for"', () => {
+    const all = [
+      CHECK_WORDS.q_off_network!,
+      CHECK_WORDS.q_name_unresolved!,
+      sniErrorWords('edge.sni.no_network'),
+      useAnywayWords(name({ offNetwork: true, useAnyway: anyway }), NOW)!,
+      useAnywayDoneWords(true, 1),
+      useAnywayDoneWords(false, 1),
+    ];
+    for (const w of all) expect(w).not.toMatch(/—|\bnames\b|meant for/);
+    expect(useAnywayDoneWords(true, 0)).toBe('Nothing changed.');
   });
 });

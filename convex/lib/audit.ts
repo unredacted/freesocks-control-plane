@@ -707,6 +707,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.names.reactivate': ['slug', 'count'],
   'edge.sni.names.burn': ['slug', 'count', 'listeners', 'skipped'],
   'edge.sni.names.recheck': ['slug', 'count'],
+  // An operator's "use anyway" on server names that resolve off the list's network
+  // (on) or taken back (off). Counts only: the reason is free text.
+  'edge.sni.names.use_anyway': ['slug', 'on', 'count', 'withReason'],
   'edge.sni.inbound.bind': ['slug', 'backendSlug', 'inboundTag', 'imported', 'notImported'],
   'edge.sni.inbound.unbind': ['slug', 'backendSlug', 'inboundTag'],
   'edge.sni.transport.manage': [

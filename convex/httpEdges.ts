@@ -836,6 +836,20 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    // An operator's "use anyway" on names that resolve off the family's network.
+    if (b === 'families' && c && d === 'names' && e === 'use-anyway' && !parts[5]) {
+      if (typeof body.on !== 'boolean')
+        return errorJson('validation', 'on must be true or false', 400);
+      return json(
+        await ctx.runMutation(internal.sniFamilies.setUseAnyway, {
+          slug: c,
+          names: snis(body),
+          on: body.on,
+          ...(typeof body.reason === 'string' && body.reason.trim() ? { reason: body.reason } : {}),
+          ...act,
+        }),
+      );
+    }
     // An operator's judgement of names in one curated country.
     if (b === 'families' && c && d === 'names' && e === 'country')
       return json(

@@ -3494,7 +3494,7 @@ Routes, under `/api/v1/admin/edges/sni/`: `GET|PATCH config` (settings scope),
 `GET|POST families`, `GET|PATCH|DELETE families/{slug}`, `POST families/{slug}/names` (a pasted
 list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, `invalid`,
 `in_other_family`, `burned`), `POST families/{slug}/names/{retire|reactivate|burn|recheck}`,
-`POST families/{slug}/names/country`,
+`POST families/{slug}/names/use-anyway`, `POST families/{slug}/names/country`,
 `POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`,
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
@@ -3869,8 +3869,8 @@ off the network now, and the locations learn their network again.
 `edge.sni.network_bound`; a change puts every name back to waiting for its first check, so none is
 used, by a rebind either, until it was checked against the new network): qualification adds two
 checks before the handshake. Every address the target resolves to must be on the network
-(`q_target_off_network`), and the name must resolve, every answer on it (`q_off_network`: a name
-that does not resolve is not a site there). A name of such a family is not checked at all while
+(`q_target_off_network`), and the name must resolve (`q_name_unresolved`: a name that does not
+resolve is not a site there), every answer on it (`q_off_network`). A name of such a family is not checked at all while
 its network has no ranges yet (it waits; it is never failed for that).
 
 **What qualification walks past steps aside.** A pass takes the oldest-checked names first. A
@@ -3879,6 +3879,46 @@ yet) is deferred (`sniFamilies.deferQualification`: its `checkedAt` becomes now,
 and only when nothing moved it meanwhile), so it leaves the head of the queue and can never crowd
 out the names that are due. Whatever makes it checkable again marks it due: a reactivation, the
 family switched back on, the network's ranges moving.
+
+**Using a server name off the network anyway.** An operator may know better than the network
+check: a server name (SNI) that resolves outside the family's network can still be confirmed to
+work from inside a country. "Use anyway" on that entry (the family page, a row failing with
+`q_off_network`; `POST sni/families/{slug}/names/use-anyway {snis, on, reason?}`, audited
+`edge.sni.names.use_anyway` with the admin, `on`, the count and whether a reason was given, never
+the hostname or the reason) stores `sniNames.networkOverride {by, at, reason?}` (a reason is at
+most 300 characters) and marks the name due. Qualification then lifts the name's own network check
+and nothing else (`qualificationNetworkVerdict` in `lib/edges/networks.ts`): the target must
+still be on the network (`q_target_off_network` is never lifted), the handshake must still pass,
+and a name that comes back suspended still needs to qualify. It is then used like any other
+qualified name: rollouts, auto-confirm, the checks from inside a country, per-country marks and
+the renderer treat it as they treat every name (blocked or failing verdicts still apply). Each
+check under the override records `qualification.offNetwork` when the name resolved outside the
+network, and the row
+keeps saying so ("Used anyway: it resolves outside the list's network", who set it, when, the
+reason) with "Stop using anyway" next to it.
+
+- **Never automatic.** Only the admin route writes `networkOverride`; finding names
+  (`sniHuntOps`) and the qualification pass without it refuse an off-network name exactly as
+  before, and nothing reads a country check, a member report or a client check as a reason to
+  set it. A test scans the backend for every writer.
+- **Taking it back** (`on: false`) clears it and its `offNetwork` mark and marks the name due:
+  the next pass applies the
+  normal check, so a name still off the network fails (`q_off_network`) and leaves members the
+  way any failing name does (suspended after `edge.sni.suspendAfterFails`).
+- **A name that stops resolving at all** is refused even with the override (`q_name_unresolved`):
+  the operator vouched for a site that lives on another network, not for one that is gone (a
+  lapsed domain is a giveaway and may change hands). It fails and is suspended like any failing
+  name (an origin keeps its last name), the override stays, and the name comes back by itself
+  once it resolves again.
+- **A family's network change** drops every override of its names: each was said about the old
+  network.
+- **A check that ran while it changed** does not count: the pass hands back whether it judged the
+  name under the override, and a verdict judged under the other state is dropped, so the recheck
+  the operator asked for still happens.
+- A family with no network refuses it (`edge.sni.no_network`). A burned name never gets one, and
+  a burn clears it; taking it back works on any name.
+- "Use anyway" is offered only for `q_off_network`, which means the name was seen resolving
+  elsewhere: a name that does not resolve at all is `q_name_unresolved`, with or without it.
 
 **A transport scoped to a network.** Binding a family on a network to a transport scopes it:
 `relayListeners.networkId` is written on every listener of that transport (by the bind, on every
@@ -7123,6 +7163,14 @@ env change. Nothing changes until an operator adds a network: the cron reads not
 or transport is on one, and `carries` and publication behave as before. To roll back, delete every
 network first (unbind or move its families, then `DELETE networks/{slug}`): the older schema has
 none of those fields, and a location's learned network is cleared with its network.
+
+**Use anyway** (§ "Using a server name off the network anyway") adds two optional fields
+(`sniNames.networkOverride`, `sniNames.qualification.offNetwork`), one route, one audit action
+(`edge.sni.names.use_anyway`) and one qualification word (`q_name_unresolved`, which a family on
+a network now uses for a name that does not resolve, formerly `q_off_network`): one deploy, no
+migration, no env change. Nothing changes until an operator says "use anyway". To roll back,
+take back every override first (`on: false`, which clears both fields): the older schema has
+neither.
 
 **Country delivery, walk fixes** change what members receive, nothing in the schema: a listener
 whose names carry a per-country mark is on `hrw1` (each move audited `relay.listener.sni_pick`,
