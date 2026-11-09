@@ -9,7 +9,8 @@
    *   - `{kind: 'site', prefill}`: the form (name, short id, cover site, port,
    *     HTTP/2 only, network), blank on the SNIs page, prefilled from a found
    *     site or a seed. `POST sni/families`. The short id and the name follow
-   *     the cover site until they are edited.
+   *     the cover site until they are edited. A seed's short id is locked
+   *     (`lockSlug`): the next import of the seed finds its list by it.
    *   - `{kind: 'port', backendSlug, transport, nodeUuid}`: a node's REALITY
    *     port (docs/edges.md "A transport's names"). The cover site is the
    *     port's own. One call makes the list, takes in the SNIs the port lists
@@ -82,13 +83,15 @@
   let draft = $state<ListDraft>(draftFrom());
   // The short id and the name follow the cover site until someone edits them.
   let slugEdited = $state(false);
+  // A seed's list: its short id is how the next import of the seed finds it.
+  let slugLocked = $derived(from.kind === 'site' && from.lockSlug === true);
   let labelEdited = $state(false);
   let tried = $state(false);
   let problem = $derived(draftProblem(draft));
   let slugIssue = $derived(draft.slug.trim() ? slugProblem(draft.slug) : null);
   function onCoverSite(value: string) {
     draft.coverSite = value;
-    if (!slugEdited) draft.slug = slugFor(value);
+    if (!slugEdited && !slugLocked) draft.slug = slugFor(value);
     if (!labelEdited) draft.label = value.trim().replace(/^www\./, '');
   }
 
@@ -320,28 +323,39 @@
             maxlength={80}
           />
         </div>
-        <div class="space-y-1.5">
-          <Label for={`${uid}-slug`}>Short id</Label>
-          <Input
-            id={`${uid}-slug`}
-            value={draft.slug}
-            oninput={(e) => {
-              draft.slug = e.currentTarget.value;
-              slugEdited = true;
-            }}
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck={false}
-            aria-invalid={slugIssue !== null}
-            aria-describedby={`${uid}-slug-help`}
-          />
-          <p
-            id={`${uid}-slug-help`}
-            class={slugIssue ? 'text-destructive text-sm' : 'text-muted-foreground text-sm'}
-          >
-            {slugIssue ?? "The list page's address. It never changes."}
-          </p>
-        </div>
+        {#if slugLocked}
+          <div class="space-y-1.5">
+            <p class="text-sm font-medium">Short id</p>
+            <p class="font-mono text-sm break-all" data-testid="locked-slug">{draft.slug}</p>
+            <p class={slugIssue ? 'text-destructive text-sm' : 'text-muted-foreground text-sm'}>
+              {slugIssue ??
+                'Set by the seed: importing the seed again fills the list with this short id.'}
+            </p>
+          </div>
+        {:else}
+          <div class="space-y-1.5">
+            <Label for={`${uid}-slug`}>Short id</Label>
+            <Input
+              id={`${uid}-slug`}
+              value={draft.slug}
+              oninput={(e) => {
+                draft.slug = e.currentTarget.value;
+                slugEdited = true;
+              }}
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck={false}
+              aria-invalid={slugIssue !== null}
+              aria-describedby={`${uid}-slug-help`}
+            />
+            <p
+              id={`${uid}-slug-help`}
+              class={slugIssue ? 'text-destructive text-sm' : 'text-muted-foreground text-sm'}
+            >
+              {slugIssue ?? "The list page's address. It never changes."}
+            </p>
+          </div>
+        {/if}
         <div class="flex items-start gap-2">
           <Checkbox id={`${uid}-h2`} bind:checked={draft.requireH2} />
           <Label for={`${uid}-h2`} class="leading-snug font-normal">

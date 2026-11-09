@@ -4318,8 +4318,10 @@ skips them).
 Lists view; from a port on a node's page (§ A transport's names: the port's own cover site, the
 suggested network, an unused list with the same cover site; `POST sni/transports/manage`); with a
 found site's cover site, port 443, HTTP/2 only and the network on a network's page; with the seed's
-values for a seed's missing list on Find more. The form (`POST sni/families`) has the cover site and
-port, a name and a short id that follow the cover site until edited, HTTP/2 only, and the network.
+values for a seed's missing list on Find more (its short id locked: importing the seed again finds
+the list by it). The form (`POST sni/families`) has the cover site (a hostname, or an IPv4 or IPv6
+literal) and port, a name and a short id that follow the cover site until edited, HTTP/2 only, and
+the network.
 The cover site is fixed at creation.
 
 - Lists: the switch for `edge.sni.enabled` ("SNI lists") at the top, its line saying what is

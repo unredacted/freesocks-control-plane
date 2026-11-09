@@ -38,7 +38,7 @@
   import SectionHeader from '../components/SectionHeader.svelte';
   import AddSniListDialog from './AddSniListDialog.svelte';
   import NetworksCard from './NetworksCard.svelte';
-  import type { AddListFrom } from './lib/addList';
+  import { seedFrom, type AddListFrom } from './lib/addList';
   import { edgesPaths } from '../lib/routes';
   import {
     huntImportWords,
@@ -126,21 +126,12 @@
     toast.success(huntImportWords(r));
   }
 
-  // A seed's SNI list: the one dialog, prefilled from the seed.
+  // A seed's SNI list: the one dialog, prefilled from the seed, its short id
+  // locked so the next import of the seed finds the list (lib/addList.ts seedFrom).
   let addOpen = $state(false);
   let addFrom = $state<AddListFrom>({ kind: 'site' });
   function makeSeedList(f: SniHuntImported['proposals']['families'][number]) {
-    addFrom = {
-      kind: 'site',
-      prefill: {
-        slug: f.slug,
-        label: f.label,
-        coverSite: f.targetAddress,
-        port: f.targetPort,
-        requireH2: f.requireH2,
-        network: f.network,
-      },
-    };
+    addFrom = seedFrom(f);
     addOpen = true;
   }
 </script>

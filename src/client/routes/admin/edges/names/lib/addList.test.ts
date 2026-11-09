@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest';
-import { createBody, draftFrom, draftProblem, slugFor, slugProblem } from './addList';
+import {
+  coverSiteKind,
+  createBody,
+  draftFrom,
+  draftProblem,
+  seedFrom,
+  slugFor,
+  slugProblem,
+} from './addList';
 
 describe('slugFor', () => {
   test('a cover site suggests its short id', () => {
@@ -8,6 +16,41 @@ describe('slugFor', () => {
     expect(slugFor('192.0.2.1')).toBe('192-0-2-1');
     expect(slugFor('')).toBe('');
     expect(slugFor(`${'a'.repeat(39)}.example`)).toBe('a'.repeat(39));
+  });
+
+  test('an IPv6 literal keeps its last group; only a bracketed one has a port', () => {
+    expect(slugFor('2001:db8::1')).toBe('2001-db8-1');
+    expect(slugFor('[2001:db8::1]')).toBe('2001-db8-1');
+    expect(slugFor('[2001:db8::1]:8443')).toBe('2001-db8-1');
+    expect(slugFor('192.0.2.1:8443')).toBe('192-0-2-1');
+  });
+});
+
+describe('coverSiteKind', () => {
+  test('a hostname, or an IP literal of either family', () => {
+    expect(coverSiteKind('site.example')).toBe('hostname');
+    expect(coverSiteKind(' www.site.example ')).toBe('hostname');
+    expect(coverSiteKind('192.0.2.1')).toBe('ipv4');
+    expect(coverSiteKind('2001:db8::1')).toBe('ipv6');
+    expect(coverSiteKind('[2001:db8::1]')).toBe('ipv6');
+    expect(coverSiteKind('2001:db8:0:0:0:0:0:1')).toBe('ipv6');
+    expect(coverSiteKind('::ffff:192.0.2.1')).toBe('ipv6');
+  });
+
+  test('anything else is none of them', () => {
+    for (const bad of [
+      '',
+      'localhost',
+      'a site.example',
+      'site.example/path',
+      '1.2.3',
+      '256.0.0.1',
+      '2001:db8:::1',
+      '2001:db8::1::2',
+      '12345::1',
+      'site.example:443:1',
+    ])
+      expect(coverSiteKind(bad)).toBeNull();
   });
 });
 
@@ -55,11 +98,17 @@ describe('slugProblem', () => {
 describe('draftProblem', () => {
   const ok = draftFrom({ coverSite: 'site.example' });
   test('a complete draft passes', () => expect(draftProblem(ok)).toBeNull());
+  test('an IP literal is a cover site too, IPv6 included (as a seed may give it)', () => {
+    expect(draftProblem(draftFrom({ coverSite: '192.0.2.1' }))).toBeNull();
+    expect(draftProblem(draftFrom({ coverSite: '2001:db8::1' }))).toBeNull();
+    expect(draftProblem(draftFrom({ coverSite: '[2001:db8::1]' }))).toBeNull();
+  });
   test('the first problem, in the order of the form', () => {
     expect(draftProblem({ ...ok, label: ' ' })).toBe('Give the list a name.');
     expect(draftProblem({ ...ok, slug: 'find' })).toMatch(/address of an SNIs page/);
     expect(draftProblem({ ...ok, coverSite: 'localhost' })).toMatch(/^The cover site/);
     expect(draftProblem({ ...ok, coverSite: 'a site.example' })).toMatch(/^The cover site/);
+    expect(draftProblem({ ...ok, coverSite: '1.2.3' })).toMatch(/^The cover site/);
     expect(draftProblem({ ...ok, port: '0' })).toBe('The port is a number from 1 to 65535.');
     expect(draftProblem({ ...ok, port: '70000' })).toBe('The port is a number from 1 to 65535.');
     expect(draftProblem({ ...ok, port: '44a' })).toBe('The port is a number from 1 to 65535.');
@@ -88,5 +137,38 @@ describe('createBody', () => {
       requireH2: false,
     });
     expect(createBody({ ...d, network: 'net-a' }).network).toBe('net-a');
+  });
+
+  test('an IPv6 cover site is sent bare, as the server reads it', () => {
+    const d = draftFrom({ coverSite: '[2001:db8::1]' });
+    expect(createBody(d).targetAddress).toBe('2001:db8::1');
+    expect(createBody(draftFrom({ coverSite: '2001:db8::1' })).targetAddress).toBe('2001:db8::1');
+  });
+});
+
+describe('seedFrom', () => {
+  test("a seed's list: every value from the seed, its short id locked", () => {
+    const from = seedFrom({
+      slug: 'seed-list',
+      label: 'Seed list',
+      targetAddress: '2001:db8::1',
+      targetPort: 443,
+      requireH2: true,
+      network: 'net-a',
+      names: ['a.site.example'],
+    });
+    expect(from).toEqual({
+      kind: 'site',
+      lockSlug: true,
+      prefill: {
+        slug: 'seed-list',
+        label: 'Seed list',
+        coverSite: '2001:db8::1',
+        port: 443,
+        requireH2: true,
+        network: 'net-a',
+      },
+    });
+    expect(from.kind === 'site' && draftProblem(draftFrom(from.prefill))).toBeNull();
   });
 });

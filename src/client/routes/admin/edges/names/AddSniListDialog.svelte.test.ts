@@ -5,7 +5,7 @@ import type { SniTransport } from '../../../../../shared/contracts/sni';
 import { createFamily, manageTransport, previewManage, sniKeys } from '@client/lib/sniApi';
 import { mountWithQuery } from '../../../../testing/mountWithQuery';
 import AddSniListDialog from './AddSniListDialog.svelte';
-import type { AddListFrom } from './lib/addList';
+import { seedFrom, type AddListFrom } from './lib/addList';
 
 vi.mock('@client/lib/sniApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@client/lib/sniApi')>()),
@@ -107,6 +107,40 @@ describe('Add an SNI list', () => {
     button('Add').click();
     flushSync();
     expect(createFamily).not.toHaveBeenCalled();
+  });
+
+  test("a seed's list keeps the seed's short id, so the next import finds it", async () => {
+    show(
+      seedFrom({
+        slug: 'seed-list',
+        label: 'Seed list',
+        targetAddress: '2001:db8::1',
+        targetPort: 443,
+        requireH2: true,
+        network: 'net-a',
+        names: ['a.site.example'],
+      }),
+    );
+    // No field to edit: the seed's short id is shown as it is, and the cover site never moves it.
+    expect(
+      [...document.querySelectorAll('label')].some((l) => l.textContent?.trim() === 'Short id'),
+    ).toBe(false);
+    const locked = () => document.querySelector('[data-testid="locked-slug"]')?.textContent;
+    expect(locked()).toBe('seed-list');
+    type('Cover site', 'other.example');
+    expect(locked()).toBe('seed-list');
+    expect(text()).toContain('importing the seed again fills the list with this short id');
+    type('Cover site', '2001:db8::1');
+    button('Add').click();
+    await vi.waitFor(() => expect(onAdded).toHaveBeenCalledWith('seed-list'));
+    expect(createFamily).toHaveBeenCalledWith({
+      slug: 'seed-list',
+      label: 'Seed list',
+      targetAddress: '2001:db8::1',
+      targetPort: 443,
+      requireH2: true,
+      network: 'net-a',
+    });
   });
 
   test("from a port: the server's suggestion, then one call that takes the port's SNIs in", async () => {
