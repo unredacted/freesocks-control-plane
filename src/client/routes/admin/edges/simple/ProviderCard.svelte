@@ -15,7 +15,7 @@
   import FakeBadge from '../components/FakeBadge.svelte';
   import { providerLabel } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
-  import { isTested } from '../providers/accountWords';
+  import { DNS_ACCOUNT_DOES, holdsAddresses, isTested } from '../providers/accountWords';
   import { accountSpendWords } from '../providers/spendWords';
   import StatusDot from './StatusDot.svelte';
   import type { Dot } from './runStages';
@@ -71,7 +71,8 @@
       <FakeBadge fake={a.fake} />
     </span>
     <span class="text-muted-foreground block text-sm">
-      {state.label}{#if usage}, {usage.liveEdges} of {usage.maxLiveEdges} addresses used{/if}.
+      {state.label}{#if !holdsAddresses(a)}, {DNS_ACCOUNT_DOES}{:else if usage}, {usage.liveEdges} of
+        {usage.maxLiveEdges} addresses used{/if}.
     </span>
     {#if spend}
       <span class="text-muted-foreground block text-sm">{spend}</span>

@@ -20,6 +20,7 @@
   import ProviderAccountStepper from './forms/ProviderAccountStepper.svelte';
   import { edgesPaths } from './lib/routes';
   import { sortAccounts } from './providers/accountList';
+  import { holdsAddresses } from './providers/accountWords';
   import { spendSummary, spendSummaryWords } from './providers/spendWords';
   import ProviderCard from './simple/ProviderCard.svelte';
 
@@ -38,9 +39,13 @@
   const spend = $derived(spendSummaryWords(spendSummary(accounts)));
   const usageOf = (id: string) => usage.data?.accounts.find((u) => u.id === id) ?? null;
   const used = $derived(usage.data?.totals.liveEdges ?? null);
+  // Only accounts that hold addresses count (a DNS account writes hostnames, it holds none).
   const capacity = $derived(
     usage.data
-      ? usage.data.accounts.reduce((n, a) => n + (a.enabled ? a.maxLiveEdges : 0), 0)
+      ? usage.data.accounts.reduce((n, u) => {
+          const acc = accounts.find((x) => x.id === u.id);
+          return n + (u.enabled && (!acc || holdsAddresses(acc)) ? u.maxLiveEdges : 0);
+        }, 0)
       : null,
   );
 
