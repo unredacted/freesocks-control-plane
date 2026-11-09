@@ -161,7 +161,8 @@ export function attentionTarget(item: AttentionItem): string {
     slug ? edgesPaths.relay(slug, params) : edgesPaths.home();
   switch (item.action) {
     case 'resolve_quarantine':
-      return relay({ tab: 'rotations', rotation: item.rotationId });
+      // The resolver card is on the origin's Overview tab, not Rotations.
+      return relay({ tab: 'overview' });
     case 'resolve_operator':
     case 'open_edge':
     case 'publish':
@@ -203,7 +204,9 @@ export function attentionTarget(item: AttentionItem): string {
     case 'open_node': {
       const uuid = factString(item, 'nodeUuid');
       const instance = factString(item, 'serverSlug') ?? undefined;
-      return uuid ? serversPaths.node(uuid, { instance }) : serversPaths.home({ instance });
+      return uuid
+        ? serversPaths.node(uuid, { backend: instance })
+        : serversPaths.nodes({ backend: instance });
     }
     case 'open_modes':
       return '/admin/connection-modes';

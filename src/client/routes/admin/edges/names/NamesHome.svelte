@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Admin -> Edges -> Server names (`/admin/edges/names`): the switch (its line
+   * Admin -> Servers -> SNIs (`/admin/servers/snis`): the switch (its line
    * says what is true now), testing new names with FCP's client check (shown
    * while server names are on), then the name lists. A name list is one cover site
    * (the real site a REALITY port shows anyone without a member's key) plus the
@@ -56,7 +56,7 @@
     saving = true;
     try {
       await patchSniConfig({ enabled: v });
-      toast.success(v ? 'Server names are on.' : 'Server names are off.');
+      toast.success(v ? 'SNI lists are on.' : 'SNI lists are off.');
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
@@ -117,12 +117,12 @@
 </script>
 
 <SectionHeader
-  title="Server names"
+  title="SNIs"
   description="The SNIs a REALITY port answers to, grouped in SNI lists. Each list has one cover site, the real site shown to anyone without a member's key, and the SNIs it serves."
 >
   {#snippet actions()}
     <Button size="sm" variant="outline" onclick={() => router.navigate(edgesPaths.findNames())}>
-      Advanced
+      Find more
     </Button>
     <Button size="sm" variant="outline" onclick={() => (open = true)}>Add an SNI list</Button>
   {/snippet}
@@ -138,7 +138,7 @@
     onCheckedChange={(v) => void setOn(v)}
   />
   <div>
-    <Label for={`${uid}-on`} class="font-medium">Server names</Label>
+    <Label for={`${uid}-on`} class="font-medium">SNI lists</Label>
     <p id={`${uid}-on-help`} class="text-muted-foreground">{namesSwitchLine(on)}</p>
   </div>
 </div>

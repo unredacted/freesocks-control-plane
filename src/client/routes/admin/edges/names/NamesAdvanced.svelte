@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Server names, Advanced (`/admin/edges/find-names`; docs/edges.md "The
+   * Find more SNIs (`/admin/servers/snis/find`; docs/edges.md "The
    * page"): what most setups never need, in one place. Finding names (its
    * switch, its line saying what is true now; each network's "Search it" and
    * where its nodes are, taken from a node when one of its ports was managed),
@@ -127,12 +127,12 @@
 
 <p class="mb-2 text-sm">
   <Link href={edgesPaths.names()} class="text-muted-foreground underline underline-offset-4">
-    Server names
+    SNIs
   </Link>
 </p>
 
 <SectionHeader
-  title="Server names: advanced"
+  title="Find more SNIs"
   description="Most setups need none of this, since a node's page already finds SNIs on its cover site's certificate. Sources are public only, and no address range is ever scanned. Nothing found is used until you add it to an SNI list."
 />
 

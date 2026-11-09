@@ -137,7 +137,7 @@
   }
 </script>
 
-<div class="mt-3 border-t pt-3" aria-label="Server names">
+<div class="mt-3 border-t pt-3" aria-label="SNIs">
   {#if !transport || !switches || !step || !status}
     <Skeleton class="h-5 w-64" />
   {:else}
@@ -145,7 +145,7 @@
       <div class="min-w-0 flex-1 space-y-1">
         <p class="flex flex-wrap items-center gap-2 font-medium" role="status">
           <StatusDot dot={status.dot} />
-          Server names: {status.text}
+          SNI lists: {status.text}
         </p>
         <p class="text-muted-foreground">
           {stepWords(step, transport)}

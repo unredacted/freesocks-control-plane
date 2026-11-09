@@ -280,14 +280,12 @@ describe('what the page says', () => {
 
 describe('routes', () => {
   test('paths and instance selection', () => {
-    expect(serversPaths.home()).toBe('/admin/servers');
-    expect(serversPaths.home({ instance: 'backend a' })).toBe(
-      '/admin/servers?instance=backend%20a',
+    expect(serversPaths.nodes()).toBe('/admin/servers/nodes');
+    expect(serversPaths.nodes({ backend: 'backend a' })).toBe(
+      '/admin/servers/nodes?backend=backend%20a',
     );
-    expect(serversPaths.node('n 1', { instance: 'p' })).toBe(
-      '/admin/servers/nodes/n%201?instance=p',
-    );
-    expect(resolveServersRoute('/admin/servers')).toEqual({ page: 'home' });
+    expect(serversPaths.node('n 1', { backend: 'p' })).toBe('/admin/servers/nodes/n%201?backend=p');
+    expect(resolveServersRoute('/admin/servers/nodes')).toEqual({ page: 'nodes' });
     expect(resolveServersRoute('/admin/servers/nodes/n%201')).toEqual({
       page: 'node',
       uuid: 'n 1',
@@ -297,7 +295,7 @@ describe('routes', () => {
       { slug: 'outline-a', observable: false },
       { slug: 'panel-a', observable: true },
     ];
-    expect(pickInstance('?instance=outline-a', list)).toBe('outline-a');
+    expect(pickInstance('?backend=outline-a', list)).toBe('outline-a');
     expect(pickInstance('?instance=gone', list)).toBe('panel-a');
     expect(pickInstance('', list)).toBe('panel-a');
     expect(pickInstance('', [{ slug: 'outline-a', observable: false }])).toBe('outline-a');

@@ -171,7 +171,7 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-xl`}>
     <Dialog.Header>
-      <Dialog.Title>Edit relay {relay.slug}</Dialog.Title>
+      <Dialog.Title>Edit origin {relay.slug}</Dialog.Title>
       <Dialog.Description>
         These apply to this origin only and override the fleet settings. Set a value back to the
         fleet value to follow the fleet again. The slug and origin address are fixed once edges use

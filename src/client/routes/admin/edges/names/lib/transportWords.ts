@@ -162,7 +162,7 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
     nodes > 1 ? ` The ${nodes} nodes on the profile ${t.profileName} share these SNIs.` : '';
   switch (step.kind) {
     case 'names_off':
-      return 'Server names are off, so FCP does not manage these SNIs.';
+      return 'SNI lists are off, so FCP does not manage these SNIs.';
     case 'manage':
       return `Its SNIs are set by hand. FCP can check them against the cover site, suggest more, and get them to members.${shared}`;
     case 'list_off':

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * `/admin/edges/nodes/:slug`. A backend node has ONE page, its Servers node
+   * `/admin/servers/origins/:slug`. A backend node has ONE page, its Servers node
    * page (machine, activation and these edges together): this address
    * redirects there, keeping `?test=<edgeId>` (`nodeHomeOf`). An origin that is
    * not a backend node (manual, a whole Outline server) has no Servers page,
@@ -50,7 +50,7 @@
   $effect(() => {
     if (target) router.navigate(target, { replace: true });
   });
-  const back = { href: edgesPaths.home(), label: 'Edges' };
+  const back = { href: edgesPaths.home(), label: 'Overview' };
 </script>
 
 {#if notFound}

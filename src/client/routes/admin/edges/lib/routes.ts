@@ -1,30 +1,32 @@
 /**
- * The Admin -> Edges route table (pure; unit-tested). The ONLY place the
- * section's paths are spelled: pages and shared components build links through
- * `edgesPaths`, the router resolves a pathname through `resolveEdgesRoute`.
+ * The pages that came from the old Admin -> Edges section (pure; unit-tested).
+ * They live under `/admin/servers` with the Servers section's own pages
+ * (../../servers/lib/routes.ts) and share its tab bar. The ONLY place these
+ * paths are spelled: pages and shared components build links through
+ * `edgesPaths`, the section resolves a pathname through `resolveEdgesRoute`.
  *
- * The section has two faces. The simple screens (`simple/`): the home at
- * `/admin/edges` (nodes), Providers and the Advanced index. A backend node's
- * page is its Servers node page (`/admin/edges/nodes/<slug>` redirects there;
- * an origin that is not a backend node keeps its edges panel at that
- * address). The technical pages live under Advanced: All origins at
- * `/admin/edges/advanced/origins`, an origin's details at
- * `/admin/edges/relays/<slug>`, and the rest at their old addresses.
+ *   /admin/servers                                  Overview (today: the fronted nodes and what needs you)
+ *   /admin/servers/origins                          All origins (Nodes, technical view); `?new=1` opens "New origin"
+ *   /admin/servers/origins/:slug                    an origin: a backend node redirects to its node page,
+ *                                                   any other origin shows its edges panel here
+ *   /admin/servers/origins/:slug/details            an origin's technical details (`?tab=`)
+ *   /admin/servers/countries[/:CC]                  Countries
+ *   /admin/servers/countries/lists[/:id]            Countries -> Lists
+ *   /admin/servers/snis[/:slug]                     SNIs: the SNI lists, one list
+ *   /admin/servers/snis/find[/:slug]                SNIs -> Find more: every network, one network
+ *   /admin/servers/probes                           Probes
+ *   /admin/servers/providers[/:id]                  Providers, one account
+ *   /admin/servers/providers/templates              Providers -> All templates
+ *   /admin/servers/settings                         Settings (`?section=`)
  *
- * Panel nodes are set up with Autopilot only (the protect sheet); a manual or
- * whole-server origin is created from All origins (`?new=1`) and gets its
- * first edge on its own page. Moved addresses resolve to `redirect`:
- * `/admin/edges/setup[?relay=<slug>]` (the old step-by-step wizard) and
- * `/admin/edges/advanced/relays` (All origins' old address).
+ * The old `/admin/edges/...` addresses redirect (../../servers/lib/legacyRoutes.ts).
  *
  * Exports:
  *   EDGES_ROUTES                     pattern -> page id, in match order
  *   resolveEdgesRoute(pathname)      -> EdgesRoute (page 'not-found' when nothing matches)
- *   legacyEdgesRedirect(path, search)  the new address of a moved page, or null
  *   edgesPaths                       link builders (slug / id URL-encoded, optional search params)
  *   setupStepTarget(step, slug)      where a readiness step is done now
- *   sectionTabOf(route)              which tab of the Servers tab bar the route lights up
- *   RELAY_TABS / RelayTab            the `?tab` values of the origin page
+ *   RELAY_TABS / RelayTab            the `?tab` values of an origin's details
  */
 import { matchRoute } from '../../../../lib/matchRoute';
 import type { SetupStepId } from '../../../../../shared/contracts/edgeCodes';
@@ -35,7 +37,6 @@ export type RelayTab = (typeof RELAY_TABS)[number];
 export type EdgesRoute =
   | { page: 'home' }
   | { page: 'node'; slug: string }
-  | { page: 'advanced' }
   | { page: 'overview' }
   | { page: 'relay'; slug: string }
   | { page: 'providers' }
@@ -53,26 +54,29 @@ export type EdgesRoute =
   | { page: 'list'; id: string }
   | { page: 'not-found' };
 
+const R = '/admin/servers';
+
 export const EDGES_ROUTES = [
-  ['/admin/edges', 'home'],
-  ['/admin/edges/nodes/:slug', 'node'],
-  ['/admin/edges/advanced', 'advanced'],
-  ['/admin/edges/advanced/origins', 'overview'],
-  ['/admin/edges/relays/:slug', 'relay'],
-  ['/admin/edges/providers', 'providers'],
-  ['/admin/edges/providers/:id', 'provider'],
-  ['/admin/edges/templates', 'templates'],
-  ['/admin/edges/probes', 'probes'],
-  ['/admin/edges/settings', 'settings'],
-  ['/admin/edges/names', 'names'],
-  ['/admin/edges/names/:slug', 'family'],
-  ['/admin/edges/find-names', 'findNames'],
-  ['/admin/edges/find-names/:slug', 'findNetwork'],
-  ['/admin/edges/countries', 'countries'],
+  [R, 'home'],
+  [`${R}/origins`, 'overview'],
+  [`${R}/origins/:slug`, 'node'],
+  [`${R}/origins/:slug/details`, 'relay'],
+  [`${R}/providers`, 'providers'],
+  // Before `:id`: "templates" is no account.
+  [`${R}/providers/templates`, 'templates'],
+  [`${R}/providers/:id`, 'provider'],
+  [`${R}/probes`, 'probes'],
+  [`${R}/settings`, 'settings'],
+  [`${R}/snis`, 'names'],
+  // Before `:slug`: "find" is no SNI list.
+  [`${R}/snis/find`, 'findNames'],
+  [`${R}/snis/find/:slug`, 'findNetwork'],
+  [`${R}/snis/:slug`, 'family'],
+  [`${R}/countries`, 'countries'],
   // Before `:code`: "lists" is no country.
-  ['/admin/edges/countries/lists', 'lists'],
-  ['/admin/edges/countries/lists/:id', 'list'],
-  ['/admin/edges/countries/:code', 'country'],
+  [`${R}/countries/lists`, 'lists'],
+  [`${R}/countries/lists/:id`, 'list'],
+  [`${R}/countries/:code`, 'country'],
 ] as const;
 
 export function resolveEdgesRoute(pathname: string): EdgesRoute {
@@ -92,48 +96,6 @@ export function resolveEdgesRoute(pathname: string): EdgesRoute {
   return { page: 'not-found' };
 }
 
-/**
- * Pages that moved inside the section, and where they live now. The old
- * step-by-step wizard (`/admin/edges/setup`) is gone: with `?relay=<slug>` it
- * lands on that origin's page, otherwise on All origins.
- */
-export function legacyEdgesRedirect(pathname: string, search = ''): string | null {
-  const path = pathname.replace(/\/+$/, '') || '/';
-  const params = new URLSearchParams(search);
-  if (path === '/admin/edges/advanced/relays') return `/admin/edges/advanced/origins${search}`;
-  if (path === '/admin/edges/setup') {
-    const relay = params.get('relay');
-    return relay ? edgesPaths.relay(relay) : edgesPaths.overview();
-  }
-  return null;
-}
-
-/**
- * The tab an Edges page lights in the Servers tab bar (servers/components/ServersNav.svelte):
- * Edges (the home and an origin's node page), Probes, Countries, Edge providers, or Advanced.
- */
-export type SectionTab = 'edges' | 'probes' | 'countries' | 'providers' | 'advanced';
-export function sectionTabOf(route: EdgesRoute): SectionTab {
-  switch (route.page) {
-    case 'home':
-    case 'node':
-    case 'not-found':
-      return 'edges';
-    case 'probes':
-      return 'probes';
-    case 'countries':
-    case 'country':
-    case 'lists':
-    case 'list':
-      return 'countries';
-    case 'providers':
-    case 'provider':
-      return 'providers';
-    default:
-      return 'advanced';
-  }
-}
-
 type Params = Record<string, string | null | undefined>;
 function withSearch(path: string, params?: Params): string {
   if (!params) return path;
@@ -148,7 +110,7 @@ function withSearch(path: string, params?: Params): string {
 const enc = encodeURIComponent;
 export const edgesPaths = {
   /**
-   * The section root: the nodes list (`?protect=1` opens the Protect-a-node sheet,
+   * The Overview tab, the section root (`?protect=1` opens the Protect-a-node sheet,
    * `?run=<id>` its progress). With `protect`, `server` (a backend's slug or id) and
    * `node` (its node uuid) preselect the node, as the Servers page links to it.
    */
@@ -157,14 +119,13 @@ export const edgesPaths = {
     run?: string | null;
     server?: string | null;
     node?: string | null;
-  }) => withSearch('/admin/edges', params),
-  /** The simple per-node page (`?test=<edgeId>` opens the test card for that address). */
+  }) => withSearch(R, params),
+  /** An origin's page (`?test=<edgeId>` opens the test card for that address). */
   node: (slug: string, params?: { test?: string | null }) =>
-    withSearch(`/admin/edges/nodes/${enc(slug)}`, params),
-  advanced: () => '/admin/edges/advanced',
-  /** All origins (the technical fleet dashboard), under Advanced; `?new=1` opens "New origin". */
+    withSearch(`${R}/origins/${enc(slug)}`, params),
+  /** All origins (the technical fleet dashboard, under Nodes); `?new=1` opens "New origin". */
   overview: (params?: { filter?: string; layer?: string; new?: string | null }) =>
-    withSearch('/admin/edges/advanced/origins', params),
+    withSearch(`${R}/origins`, params),
   relay: (
     slug: string,
     params?: {
@@ -173,30 +134,29 @@ export const edgesPaths = {
       rotation?: string | null;
       listener?: string | null;
     },
-  ) => withSearch(`/admin/edges/relays/${enc(slug)}`, params),
+  ) => withSearch(`${R}/origins/${enc(slug)}/details`, params),
   /** `edit: 'new'` opens the add-account flow; `provider` preselects one in it. */
   providers: (params?: { edit?: string | null; provider?: string | null }) =>
-    withSearch('/admin/edges/providers', params),
-  provider: (id: string, params?: { tab?: string; edit?: string }) =>
-    withSearch(`/admin/edges/providers/${enc(id)}`, params),
+    withSearch(`${R}/providers`, params),
+  provider: (id: string, params?: { tab?: string }) =>
+    withSearch(`${R}/providers/${enc(id)}`, params),
+  /** All templates, under Providers. */
   templates: (params?: { template?: string; provider?: string }) =>
-    withSearch('/admin/edges/templates', params),
-  probes: (params?: { target?: string; range?: string }) =>
-    withSearch('/admin/edges/probes', params),
-  settings: (params?: { section?: string }) => withSearch('/admin/edges/settings', params),
-  /** Server-name families (under Advanced). */
-  names: () => '/admin/edges/names',
-  family: (slug: string) => `/admin/edges/names/${enc(slug)}`,
-  /** Finding names: every network, and one network's candidates. */
-  findNames: () => '/admin/edges/find-names',
-  findNetwork: (slug: string) => `/admin/edges/find-names/${enc(slug)}`,
-  /** The country view: every censored country, and one country in full (`?node=<slug>` jumps to a node). */
-  countries: () => '/admin/edges/countries',
-  country: (code: string, params?: { node?: string | null }) =>
-    withSearch(`/admin/edges/countries/${enc(code.toUpperCase())}`, params),
+    withSearch(`${R}/providers/templates`, params),
+  probes: (params?: { target?: string; range?: string }) => withSearch(`${R}/probes`, params),
+  settings: (params?: { section?: string }) => withSearch(`${R}/settings`, params),
+  /** SNI lists (the SNIs tab), and one list. */
+  names: () => `${R}/snis`,
+  family: (slug: string) => `${R}/snis/${enc(slug)}`,
+  /** Finding more SNIs: every network, and one network's candidates. */
+  findNames: () => `${R}/snis/find`,
+  findNetwork: (slug: string) => `${R}/snis/find/${enc(slug)}`,
+  /** The Countries tab: every censored country, and one country in full. */
+  countries: () => `${R}/countries`,
+  country: (code: string) => `${R}/countries/${enc(code.toUpperCase())}`,
   /** Country lists: every list FCP follows, and one list. */
-  lists: () => '/admin/edges/countries/lists',
-  list: (id: string) => `/admin/edges/countries/lists/${enc(id)}`,
+  lists: () => `${R}/countries/lists`,
+  list: (id: string) => `${R}/countries/lists/${enc(id)}`,
 };
 
 /**

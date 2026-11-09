@@ -454,7 +454,7 @@ export function nodeAutomationWords(
     : 'FCP makes no spares on its own (Edges, Settings). After each replacement, add and test the next spare yourself.';
   if (!config.enabled)
     return {
-      line: 'Edge automation is off for every node. Turn on automatic replacement on the Edges page.',
+      line: 'Edge automation is off for every node. Turn on automatic replacement on Servers, Overview.',
       spares: null,
     };
   if (!config.autoRotate)

@@ -8,7 +8,7 @@
    * words. URL state: `?test=<edgeId>` opens the test card for that address.
    *
    * It lives on the node's own page: the Servers node page embeds it (lazily)
-   * for a backend node, and `/admin/edges/nodes/<slug>` shows it for an origin
+   * for a backend node, and `/admin/servers/origins/<slug>` shows it for an origin
    * that is not a backend node (manual, a whole Outline server).
    *
    * It keeps itself current (lib/livePoll.ts): its lists poll every 30 s, every

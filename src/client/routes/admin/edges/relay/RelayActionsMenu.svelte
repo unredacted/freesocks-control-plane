@@ -102,9 +102,9 @@
   bind:open={disableOpen}
   title={`Disable origin ${relay.slug}?`}
   body={relay.origin.kind === 'manual'
-    ? 'Rotations and automatic provisioning stop for this relay. Its edges stay where they are.'
+    ? 'Rotations and automatic provisioning stop for this origin. Its edges stay where they are.'
     : 'Members on this origin get "temporarily unavailable" until you enable it again, because delivery is edge-required. Edges stay provisioned and keep billing.'}
-  confirmLabel="Disable relay"
+  confirmLabel="Disable origin"
   danger
   run={() =>
     act.mutateAsync({
@@ -125,8 +125,8 @@
     act.mutateAsync({
       run: () => updateRelay(relay.id, { autoRotate: !relay.autoRotate }),
       success: relay.autoRotate
-        ? 'Auto rotate is off for this relay.'
-        : 'Auto rotate is on for this relay.',
+        ? 'Auto rotate is off for this origin.'
+        : 'Auto rotate is on for this origin.',
       quiet: true,
     })}
 />

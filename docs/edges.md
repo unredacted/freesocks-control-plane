@@ -21,10 +21,10 @@ observes edges, and the contract the node role (Ansible) follows. It is provider
 purpose: nothing here says which providers, regions, zones, targets or names a given deployment
 uses.
 
-Admin surface: **Admin → Edges** (`/admin/edges`) and `/api/v1/admin/edges/*`; probe
-telemetry lives under **Admin → Edges → Advanced → Probes** (`/admin/edges/probes`; the former
-`/admin/telemetry/probes` redirects there). A backend node's own page is on Servers
-(`/admin/servers/...`, see `docs/servers.md`), with its edges embedded. Every request under the
+Admin surface: **Admin → Servers** (`/admin/servers/...`, every page and its tab in
+`docs/servers.md` "The page") and `/api/v1/admin/edges/*`; probe telemetry is the **Probes** tab
+(`/admin/servers/probes`). A backend node's own page is on Servers, with its edges embedded. The
+old `/admin/edges/...` addresses (and `/admin/telemetry/probes`) redirect to their Servers page. Every request under the
 API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 How to take one node from the role run to a member connection is the runbook
 "Deploy a fronted node" in `docs/servers.md`.
@@ -1337,7 +1337,7 @@ place leading edge entries (`… via …`) on 2026-11-05.
 
 - **Where an address is.** An L4 address reads its location's member-facing place
   (`edgeLocations.memberPlace`: a name and an ISO 3166-1 alpha-2 country an operator typed for
-  members, Admin -> Edges -> a provider account -> Locations, "Name in apps"; its country's
+  members, Admin -> Servers -> Providers -> an account -> Locations, "Name in apps"; its country's
   flag shows only where the node's own place is unknown; `POST
 providers/{id}/locations/{locationId}/member-place {name, country}`). The provider's own region
   name (`edgeLocations.label`) is admin-only and never reaches a member: it can name the provider.
@@ -1401,7 +1401,7 @@ XHTTP`: the member's connection mode by its family and leaf names (their choice;
 
 ### Freedom modes only through edges
 
-One switch, `edge.freedom.edgesOnly` (Admin → Edges → Settings, the "Freedom modes only through
+One switch, `edge.freedom.edgesOnly` (Admin → Servers → Settings, the "Freedom modes only through
 edges" card; `GET/POST /api/v1/admin/edges/freedom`). While it is on, a member on a
 freedom-family connection mode is never handed a node's own address: the node their key resolves
 to serves them only through a delivery binding (whose render hands out edges, never the origin),
@@ -1810,7 +1810,7 @@ with 2, one watching account sees the whole lane).
 
 ### Names for load balancer addresses
 
-An L4 edge publishes IP literals. With **`edge.names.enabled`** (Admin -> Edges -> Settings,
+An L4 edge publishes IP literals. With **`edge.names.enabled`** (Admin -> Servers -> Settings,
 "Names for load balancer addresses"; off by default) an L4 address planned from then on also gets
 a **name**, the way a CDN front gets one: two dictionary words joined by a dash
 (`lib/edges/frontWords.ts`) as ONE label under a zone the operator made eligible
@@ -2337,15 +2337,14 @@ What a protect run writes to such a panel, in order:
    direct Host is put back by the restore workflow, and the check user is deleted through the
    owed-removal ledger. The operator's Host and load balancer are left as they are.
 
-### Admin section (Admin -> Edges)
+### Admin section (Admin -> Servers)
 
-Its own lazy chunk under `src/client/routes/admin/edges/`, reached from the ONE **Servers**
-sidebar leaf it shares with the Servers section (lit on every `/admin/servers/*` and
-`/admin/edges/*` path). Both sections sit under one quiet tab bar,
-`Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced`
-(`servers/components/ServersNav.svelte`): Nodes, Backends and Mode pools are the Servers pages
-(docs/servers.md "The page"), the rest are this section's, so a node row on the Edges tab opens
-the node's page without leaving the section.
+The pages live under `src/client/routes/admin/edges/` and sit in the Servers section: one lazy
+chunk, every page under `/admin/servers`, one quiet tab bar,
+`Overview | Nodes | Countries | SNIs | Probes | Providers | Settings`
+(`servers/components/ServersNav.svelte`; every path and its tab in docs/servers.md "The page").
+`edges/EdgesPages.svelte` picks this folder's pages; `servers/ServersSection.svelte` draws the
+tab bar for both. The old `/admin/edges/...` addresses redirect (`servers/lib/legacyRoutes.ts`).
 The section has two faces:
 
 **The simple screens** (`simple/`, plain words: origin -> fronted node, edge -> address,
@@ -2353,7 +2352,7 @@ published / standby / draining -> in use / spare / retiring, rotate -> replace a
 qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
 `src/client/lib/edgeCodes.ts`):
 
-- **Edges** (`/admin/edges`, `EdgesHome`, the Edges tab): one status sentence with a dot ("All 6
+- **Overview** (`/admin/servers`, `EdgesHome`, the Overview tab): one status sentence with a dot ("All 6
   nodes fronted" / "1 node needs attention" / "Setting up 1 node"), the **Action needed** rows from
   `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
   and renders the same card for whatever comes back pending), one row per fronted node
@@ -2389,7 +2388,7 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   on, each new address shows a chip per checked country ("IR: checking", then what its first
   round found), the checks read every 4 s while the run is live.
 - **A node's edges** (`NodeEdgesPanel`, no tabs), part of the node's ONE page: a backend node's
-  Servers node page embeds it (docs/servers.md "The page") and `/admin/edges/nodes/<slug>`
+  Servers node page embeds it (docs/servers.md "The page") and `/admin/servers/origins/<slug>`
   redirects there (`nodeHomeOf`, keeping `?test=`); an origin that is not a backend node (manual,
   a whole Outline server) keeps it at that address. The status sentence, then **Addresses**
   (`NodeProvidersCard` + `AddressRow`, words in `simple/addressWords.ts`): one group per
@@ -2474,9 +2473,9 @@ are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies
 `src/client/routes/admin/edges/lib/routes.ts`; API paths only in `src/client/lib/edgesApi.ts`.
 
 A backend node is set up only with Autopilot (the protect sheet); the old step-by-step wizard
-is gone. Its addresses redirect (`legacyEdgesRedirect`, pinned by a test):
+is gone. Its addresses redirect (`servers/lib/legacyRoutes.ts`, pinned by a test):
 `/admin/edges/setup?relay=<slug>` to that origin's details, `/admin/edges/setup` and
-`/admin/edges/advanced/relays` to All origins. One provision dialog (`ProvisionDialog`) covers
+`/admin/edges/advanced/relays` to All origins (`/admin/servers/origins`). One provision dialog (`ProvisionDialog`) covers
 both the ordinary provision (FCP picks a trusted account) and the bootstrap provision
 (`test-provision`, chosen automatically when the operator names an account), and one import
 dialog (`ImportFrontDialog`, with the inventory refresh) imports an existing front.
@@ -4016,7 +4015,7 @@ and `POST lists/lookup {entries}` (read only, at most 50, so one query stays ins
 index reads: which lists hold each name or address,
 each flagged off or stale). Audit: `admin.edge.list.create|update|delete|upload|fetch|approve|reject`,
 `edge.list.published|held|failed` (ids, counts and codes; never the address, a name or a range).
-Admin: Countries, Country lists (`/admin/edges/countries/lists`), one page per list, a card on
+Admin: Countries, Country lists (`/admin/servers/countries/lists`), one page per list, a card on
 each country's page, and Settings, Country lists.
 
 **Names into finding names** (`convex/countryListFeeds.ts`). A list may **feed** up to 10 networks
@@ -4304,12 +4303,12 @@ address.
 
 ### The page
 
-Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/names/{slug}`).
+Admin -> Servers -> SNIs (`/admin/servers/snis`, `/admin/servers/snis/{slug}`).
 The admin copy calls a family a **name list** and its target the **cover site** (the real site a
 REALITY port shows anyone without a member's key). A list usually starts from a node's page (§ A
 transport's names).
 
-- The Server names page: the switch for `edge.sni.enabled` at the top, its line saying what is
+- The SNIs page: the switch for `edge.sni.enabled` ("SNI lists") at the top, its line saying what is
   true now, and under it, while it is on, "Test new names with FCP's client check"
   (`edge.sni.autoConfirm`; its line says when the client-check service is not set up or not
   answering); then each name list in one line with the same counts as its page and the node page
@@ -4343,7 +4342,7 @@ transport's names).
   the checks instead" on a conflict); a block suggestion or a conflict also puts the name under
   "Action needed".
 
-- Advanced (`/admin/edges/find-names`, "Advanced" on the Server names page; `names/NamesAdvanced.svelte`):
+- Find more (`/admin/servers/snis/find`, "Find more" on the SNIs page; `names/NamesAdvanced.svelte`):
   what most setups never need, in one place. Finding names: its switch (its line says what is true
   now), each network's "Include it in the top-sites search" and where its nodes are, in one line
   ("Timed from <city> (<cc>), taken from a node on it" when it came from managing a port, § A
@@ -4353,7 +4352,7 @@ transport's names).
   that confirms with the same words; "Stop the search" while one runs. Networks (add, edit, read
   ranges again, remove). Import (a pasted list into a network or a name list, or a seed file, whose
   missing networks and name lists are offered to create). Checks from inside countries (above). A
-  network's page (`/admin/edges/find-names/{slug}`) groups the sites by the address they live on
+  network's page (`/admin/servers/snis/find/{slug}`) groups the sites by the address they live on
   ("Make a name list with this cover site" prefills a list on the network, cover site fixed), lists
   what was found for the name lists on it, and its found names with three filters (Usable, Not
   usable, All), each with a one-line reason, the rest (qualification's verdict, the extra
@@ -4792,7 +4791,7 @@ the names and the edges (`locateMember` / `locateAt`).
 ### Locations meant for a country
 
 An operator can say which listed countries a location serves best: one place for members in two
-countries, another for a third (Admin -> Edges -> a provider account -> Locations, "Countries";
+countries, another for a third (Admin -> Servers -> Providers -> an account -> Locations, "Countries";
 `edgeLocations.forCountries`, pure rules in `convex/lib/edges/meantFor.ts`). It is set on the
 location, not per address or per node: a replacement is a new address and would lose an address
 setting, and a place's network path to a country is the same for every node that uses it. Every
@@ -5053,7 +5052,7 @@ re-issues it.
 ### The country view
 
 One place that answers "from this country, which of my addresses and server names work right
-now, why do we think so, and what is a member there handed" (Admin -> Edges -> Countries).
+now, why do we think so, and what is a member there handed" (Admin -> Servers -> Countries).
 Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, pure builder
 `convex/lib/edges/country/view.ts`).
 
@@ -5160,7 +5159,7 @@ edges keep `tls` / `https` by name.
 
 ## Configuration
 
-`edge.*` in `appSettings` (Admin → Edges → Advanced → Settings, `/admin/edges/settings`, probe
+`edge.*` in `appSettings` (Admin → Servers → Settings, `/admin/servers/settings`, probe
 settings included; `GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant:
 `enabled=false`, `autoRotate=false`, `render.enabled=false`, `probe.enabled=false`,
 `l7.autoSelect=false`, `names.enabled=false` (with `names.zones` empty and

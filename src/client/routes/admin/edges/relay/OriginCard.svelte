@@ -187,7 +187,7 @@
               Minted. FCP signs in through each L7 front with this test account before publishing it
               and again before the proof expires.
             {:else}
-              Not minted. L7 fronts of this relay cannot be proven or published without it.
+              Not minted. L7 fronts of this origin cannot be proven or published without it.
             {/if}
           </p>
         </div>

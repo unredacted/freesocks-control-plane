@@ -153,8 +153,8 @@
     <Sheet.Header class="border-b">
       <Sheet.Title>
         {r
-          ? `${ROTATION_KIND_LABELS[r.kind]} on relay ${relaySlug}`
-          : `Rotation on relay ${relaySlug}`}
+          ? `${ROTATION_KIND_LABELS[r.kind]} on origin ${relaySlug}`
+          : `Rotation on origin ${relaySlug}`}
       </Sheet.Title>
       <Sheet.Description>
         {#if r && !r.terminal}

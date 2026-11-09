@@ -116,7 +116,7 @@ describe('originSentence', () => {
     expect(originSentence(status({ kind: 'needs-you', code: 'members_dark' }))).toBe(
       'Members get nothing. Put an address in use and turn rendering on.',
     );
-    expect(originSentence(status({ kind: 'off' }))).toBe('Fronting is switched off (Advanced).');
+    expect(originSentence(status({ kind: 'off' }))).toBe('Fronting is switched off for this node.');
     expect(originSentence(status({ kind: 'not-live', published: 1 }))).toBe(
       'Address ready, not live yet. Members still use the direct address.',
     );

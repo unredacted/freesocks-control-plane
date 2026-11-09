@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One country list (`/admin/edges/countries/lists/:id`): where it comes
+   * One country list (`/admin/servers/countries/lists/:id`): where it comes
    * from and when its source last confirmed it, a version waiting for you
    * (why it waits, what changed, Use it or Throw it away), the version in
    * use, fetch now or paste a new copy, where its names go, whether edge

@@ -169,7 +169,7 @@ describe('one list', () => {
   });
 });
 
-describe('the Server names page', () => {
+describe('the SNIs page', () => {
   const summary = (o: Partial<SniFamilySummary> = {}): SniFamilySummary => ({
     id: 'f',
     slug: 'f',

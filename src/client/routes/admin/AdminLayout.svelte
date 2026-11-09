@@ -96,10 +96,9 @@
       group: 'Servers',
       icon: Server,
       children: [
-        // One leaf for the nodes, their edges, backends and mode pools: the
-        // Servers and Edges pages share one tab bar (ServersNav), so every
-        // `/admin/servers/*` and `/admin/edges/*` path keeps this leaf lit.
-        { to: '/admin/servers', label: 'Servers', icon: ListTree, also: ['/admin/edges'] },
+        // One leaf for every Servers page (one tab bar, ServersNav): any
+        // `/admin/servers/*` path keeps this leaf lit.
+        { to: '/admin/servers', label: 'Servers', icon: ListTree },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/storage', label: 'Storage mirrors', icon: Cloud },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },

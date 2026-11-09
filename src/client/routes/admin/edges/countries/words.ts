@@ -502,14 +502,14 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
   if (!s.render) out.push('Rendering is off: members are not handed fronted addresses.');
   if (s.render && !s.steering)
     out.push('Delivery by country is off: members are not steered away from blocked addresses.');
-  if (!s.names) out.push('Server names are off, so SNIs are not judged per country.');
+  if (!s.names) out.push('SNI lists are off, so SNIs are not judged per country.');
   else if (nameChecksHere === false)
     out.push(
       'SNIs are not checked from inside this country. Turn it on under Settings, Censored countries.',
     );
   else if (nameChecksHere && !s.realHost)
     out.push(
-      'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under Server names, Advanced.',
+      'Real-site checks are off, so a failing SNI is not compared with its real site. Turn them on under SNIs, Find more.',
     );
   return out;
 }

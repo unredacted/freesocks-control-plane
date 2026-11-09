@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Edges home (`/admin/edges`, the Edges tab of the Servers tab bar): one
+   * Overview (`/admin/servers`, the first tab of the Servers tab bar): one
    * status sentence, Action needed, one row per fronted node, "Front a node". URL state: `?protect=1` opens the
    * protect sheet (`&server=<slug>&node=<uuid>` preselect a node, as the Servers
    * page links to it), `?run=<id>` opens a run's progress.
@@ -170,7 +170,7 @@
 </script>
 
 <SectionHeader
-  title="Edges"
+  title="Overview"
   description="Members reach these nodes through provider addresses. FCP replaces an address when it stops working."
 >
   {#snippet actions()}
@@ -326,8 +326,8 @@
     {:else}
       <span></span>
     {/if}
-    <Link href={edgesPaths.advanced()} class="hover:text-foreground underline underline-offset-4">
-      Advanced
+    <Link href={edgesPaths.overview()} class="hover:text-foreground underline underline-offset-4">
+      All origins
     </Link>
   </footer>
 </div>

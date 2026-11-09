@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Names found on one network (`/admin/edges/find-names/:slug`; docs/edges.md
+   * Names found on one network (`/admin/servers/snis/find/:slug`; docs/edges.md
    * "Finding names"): the sites grouped by the address they live on (each a
    * possible cover site with the names it serves), and every found name. A
    * name list made from a group starts with the cover site only; its names

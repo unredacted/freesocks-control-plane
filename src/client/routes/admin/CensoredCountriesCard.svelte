@@ -1,11 +1,11 @@
 <script lang="ts">
   /**
    * Censored countries (Settings): the one list the service uses wherever a
-   * country matters. Being on it makes a country one where server names are
+   * country matters. Being on it makes a country one where SNIs are
    * judged, a choice under "Where are you connecting from?", a row the status
    * page's availability matrix can show, and a country the mode suggestion
    * treats as censored. Two switches per country: probe edges from there, and
-   * check server names from inside it (opt-in, with the risk said beside it).
+   * check SNIs from inside it (opt-in, with the risk said beside it).
    * The whole list is saved at once (PUT /api/v1/admin/censored-countries).
    */
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
@@ -100,10 +100,10 @@
   <CardHeader>
     <CardTitle class="text-base">Censored countries</CardTitle>
     <CardDescription>
-      The one list used wherever a country matters. A country on it is one where server names are
-      judged country by country, a choice members get under "Where are you connecting from?", a row
-      the status page's availability matrix can show, and a place where the connection mode
-      suggestion follows that matrix.
+      The one list used wherever a country matters. A country on it is one where SNIs are judged
+      country by country, a choice members get under "Where are you connecting from?", a row the
+      status page's availability matrix can show, and a place where the connection mode suggestion
+      follows that matrix.
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-4 text-sm">
@@ -132,9 +132,9 @@
         </p>
       {/if}
       <p class="text-muted-foreground">
-        "Check names from inside" runs checks on other people's machines in that country, often home
-        connections. Whoever runs one sees the address and the server name. Turn it on only where
-        that is acceptable (Edges, Server names, describes the checks).
+        "Check SNIs from inside" runs checks on other people's machines in that country, often home
+        connections. Whoever runs one sees the address and the SNI. Turn it on only where that is
+        acceptable (Servers, SNIs, describes the checks).
       </p>
       {#if rows.length === 0}
         <p class="text-muted-foreground">No country is on the list.</p>
@@ -197,7 +197,7 @@
                     disabled={save.isPending}
                     onCheckedChange={(v) => flag(r.code, 'checkNamesInside', v === true)}
                   />
-                  <span>Check names from inside</span>
+                  <span>Check SNIs from inside</span>
                 </label>
               </div>
             </li>

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Probes (`/admin/edges/probes`; URL state `?target` = the target whose run
+   * Probes (`/admin/servers/probes`; URL state `?target` = the target whose run
    * history is open, `?range` = the outcome chart's range, see
    * `probes/rangeParam.ts`). Reachability of FCP's own addresses as measured from the
    * configured countries: edges of every origin, origin nodes that opted in, and

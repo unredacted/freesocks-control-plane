@@ -1,23 +1,18 @@
 <script lang="ts">
   /**
-   * Dispatches `/admin/edges/...` to its page with `matchRoute`. App.svelte keys
-   * the route on the pathname, so a path change remounts the page and a
-   * search-only change (`?tab=`, `?edge=`) does not: pages keep their view state
-   * in the query string through `searchParam` (lib/urlState.svelte.ts).
-   *
-   * Every page sits under the Servers tab bar (servers/components/ServersNav.svelte:
-   * Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced).
-   * Routes: see EDGES_ROUTES in ./lib/routes.ts (the single list of patterns);
-   * a moved address (`legacyEdgesRedirect`) is replaced by its new one.
+   * The pages that came from the old Edges section, picked by their route
+   * (../servers/ServersSection.svelte resolves it and draws the tab bar).
+   * App.svelte keys the route on the pathname, so a path change remounts the
+   * page and a search-only change (`?tab=`, `?edge=`) does not: pages keep
+   * their view state in the query string through `searchParam`
+   * (lib/urlState.svelte.ts). Routes: EDGES_ROUTES in ./lib/routes.ts.
    */
-  import { router } from '../../../stores/router.svelte';
   import Link from '../../../components/Link.svelte';
   import * as Card from '@client/components/ui/card';
-  import { resolveEdgesRoute, edgesPaths, legacyEdgesRedirect, sectionTabOf } from './lib/routes';
-  import ServersNav from '../servers/components/ServersNav.svelte';
+  import { edgesPaths, type EdgesRoute } from './lib/routes';
+  import SettingsNav from '../servers/components/SettingsNav.svelte';
   import EdgesHome from './simple/EdgesHome.svelte';
   import NodePage from './simple/NodePage.svelte';
-  import EdgesAdvanced from './simple/EdgesAdvanced.svelte';
   import EdgesOverview from './EdgesOverview.svelte';
   import RelayPage from './RelayPage.svelte';
   import EdgesProviders from './EdgesProviders.svelte';
@@ -34,24 +29,16 @@
   import ListsPage from './countries/ListsPage.svelte';
   import ListPage from './countries/ListPage.svelte';
 
-  const route = $derived(resolveEdgesRoute(router.pathname));
-  const movedTo = $derived(legacyEdgesRedirect(router.pathname, router.search));
-  $effect(() => {
-    if (movedTo) router.navigate(movedTo, { replace: true });
-  });
+  interface Props {
+    route: EdgesRoute;
+  }
+  let { route }: Props = $props();
 </script>
 
-<ServersNav current={sectionTabOf(route)} />
-
-{#if movedTo}
-  <!-- Moved: the $effect above is replacing the URL with the new address. -->
-  <div class="text-muted-foreground mx-auto max-w-md py-12 text-center">Loading…</div>
-{:else if route.page === 'home'}
+{#if route.page === 'home'}
   <EdgesHome />
 {:else if route.page === 'node'}
   <NodePage slug={route.slug} />
-{:else if route.page === 'advanced'}
-  <EdgesAdvanced />
 {:else if route.page === 'overview'}
   <EdgesOverview />
 {:else if route.page === 'relay'}
@@ -65,6 +52,7 @@
 {:else if route.page === 'probes'}
   <EdgesProbes />
 {:else if route.page === 'settings'}
+  <SettingsNav current="settings" />
   <EdgesSettings />
 {:else if route.page === 'names'}
   <NamesHome />
@@ -87,12 +75,12 @@
     <Card.Header>
       <Card.Title>Page not found</Card.Title>
       <Card.Description>
-        No Edges page at this address. It may have been renamed, or the link is incomplete.
+        There is no Servers page at this address. It may have moved, or the link is incomplete.
       </Card.Description>
     </Card.Header>
     <Card.Content>
       <Link href={edgesPaths.home()} class="text-primary text-sm underline underline-offset-4">
-        Back to Edges
+        Back to Overview
       </Link>
     </Card.Content>
   </Card.Root>

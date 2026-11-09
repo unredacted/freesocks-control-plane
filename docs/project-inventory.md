@@ -336,7 +336,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   field — the old tier-level `remnawaveSquadUuid` bind was removed in Phase 5b; node placement
   is per connection mode.)
 
-- **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:read` /
+- **Edges** (Admin -> Servers, `/admin/servers/...`, `docs/edges.md`; scopes `admin:servers:read` /
   `admin:servers:manage` for infrastructure, `admin:settings:*` for the `edge.*` config; no edges route takes the node
   role's `admin:edges:register`, which is for the Servers by-name routes): origins are
   ANY origin (a backend node, a whole backend server such as Outline, or a manual address) with
@@ -349,18 +349,18 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   **edge-required delivery policy** (a covered subscription is served a rendered body or 503,
   never the origin body; mirrors are revalidated or stubbed; the account view drops the raw
   URL); a maintenance switch (`edgeMaintenance`) + reset drain (`seedEdgesReset`).
-  **Edges → Probes** (`/admin/edges/probes`; the old `/admin/telemetry/probes` redirects) holds
-  the reachability matrix over every probe target, run history, "probe now" and a probe audit
-  feed; probe settings live under Edges → Settings. **Every
+  **Servers → Probes** (`/admin/servers/probes`; the old `/admin/edges/probes` and
+  `/admin/telemetry/probes` redirect) holds the reachability matrix over every probe target, run
+  history, "probe now" and a probe audit feed; probe settings live under Servers → Settings. **Every
   route under `/api/v1/admin/edges/` is HPKE-sealed by verb.** The node role's by-slug
   registration (`PUT …/edges/relays/by-slug/{slug}`, contract v1) is retired; `GET
 …/relays/by-slug/{slug}` stays as an admin read of `publishedEndpoints`, `connectionPlan` and
   `hostsPlan`. **The admin CMS section** (own lazy chunk,
-  `src/client/routes/admin/edges/`, sharing the Servers sidebar leaf and its tab bar
-  `Nodes | Edges | Countries | Backends | Mode pools | Edge providers | Advanced`) has a
-  **simple face** in plain words (the Edges home with "Front a node" = the guided setup runs, a
-  per-node page, provider cards; `simple/`) and,
-  under Advanced, the technical pages: the fleet dashboard (fleet tiles, server-ranked
+  `src/client/routes/admin/edges/`, under the Servers sidebar leaf and its tab bar
+  `Overview | Nodes | Countries | SNIs | Probes | Providers | Settings`, all under
+  `/admin/servers`; old `/admin/edges/...` addresses redirect) has a
+  **simple face** in plain words (the Overview with "Front a node" = the guided setup runs, a
+  per-node page, provider cards; `simple/`) and the technical pages (All origins under Nodes): the fleet dashboard (fleet tiles, server-ranked
   attention list, readiness), the **manual setup** driven entirely by the origin-scoped
   `setup-status` endpoint, per-origin pages (edges, listeners, rotations, probes, timeline,
   quarantine resolver), the per-account page, templates, probes and settings, on top

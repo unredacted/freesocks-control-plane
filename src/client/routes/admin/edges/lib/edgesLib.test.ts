@@ -20,14 +20,7 @@ import {
   standbyResultWords,
   stepStateTone,
 } from './rotation';
-import {
-  EDGES_ROUTES,
-  edgesPaths,
-  legacyEdgesRedirect,
-  resolveEdgesRoute,
-  sectionTabOf,
-  setupStepTarget,
-} from './routes';
+import { EDGES_ROUTES, edgesPaths, resolveEdgesRoute, setupStepTarget } from './routes';
 import { SETUP_STEP_IDS } from '../../../../../shared/contracts/edgeCodes';
 import { resolveServersRoute } from '../../servers/lib/routes';
 import { addTags, normalizeHostname, splitTags } from './tags';
@@ -52,99 +45,68 @@ const item = (over: Partial<AttentionItem>): AttentionItem => ({
 });
 
 describe('resolveEdgesRoute / edgesPaths', () => {
-  it('resolves every page', () => {
-    expect(resolveEdgesRoute('/admin/edges')).toEqual({ page: 'home' });
-    expect(resolveEdgesRoute('/admin/edges/')).toEqual({ page: 'home' });
-    expect(resolveEdgesRoute('/admin/edges/nodes/node-a')).toEqual({
+  it('resolves every page under /admin/servers', () => {
+    expect(resolveEdgesRoute('/admin/servers')).toEqual({ page: 'home' });
+    expect(resolveEdgesRoute('/admin/servers/')).toEqual({ page: 'home' });
+    expect(resolveEdgesRoute('/admin/servers/origins')).toEqual({ page: 'overview' });
+    expect(resolveEdgesRoute('/admin/servers/origins/node-a')).toEqual({
       page: 'node',
       slug: 'node-a',
     });
-    expect(resolveEdgesRoute('/admin/edges/advanced')).toEqual({ page: 'advanced' });
-    expect(resolveEdgesRoute('/admin/edges/advanced/origins')).toEqual({ page: 'overview' });
-    expect(resolveEdgesRoute('/admin/edges/relays/relay-a')).toEqual({
+    expect(resolveEdgesRoute('/admin/servers/origins/relay-a/details')).toEqual({
       page: 'relay',
       slug: 'relay-a',
     });
-    expect(resolveEdgesRoute('/admin/edges/providers')).toEqual({ page: 'providers' });
-    expect(resolveEdgesRoute('/admin/edges/providers/abc123')).toEqual({
+    expect(resolveEdgesRoute('/admin/servers/providers')).toEqual({ page: 'providers' });
+    expect(resolveEdgesRoute('/admin/servers/providers/abc123')).toEqual({
       page: 'provider',
       id: 'abc123',
     });
-    expect(resolveEdgesRoute('/admin/edges/templates')).toEqual({ page: 'templates' });
-    expect(resolveEdgesRoute('/admin/edges/probes')).toEqual({ page: 'probes' });
-    expect(resolveEdgesRoute('/admin/edges/settings')).toEqual({ page: 'settings' });
-  });
-  it('falls through to not-found', () => {
-    expect(resolveEdgesRoute('/admin/edges/nope')).toEqual({ page: 'not-found' });
-    expect(resolveEdgesRoute('/admin/edges/relays')).toEqual({ page: 'not-found' });
-    expect(resolveEdgesRoute('/admin/edges/relays/a/b')).toEqual({ page: 'not-found' });
-    expect(resolveEdgesRoute('/admin/edges/nodes')).toEqual({ page: 'not-found' });
-    // Moved: they resolve to nothing here, and legacyEdgesRedirect sends them on.
-    expect(resolveEdgesRoute('/admin/edges/setup')).toEqual({ page: 'not-found' });
-    expect(resolveEdgesRoute('/admin/edges/advanced/relays')).toEqual({ page: 'not-found' });
-  });
-  it('lights the header link of each page', () => {
-    expect(sectionTabOf({ page: 'home' })).toBe('edges');
-    expect(sectionTabOf({ page: 'node', slug: 'a' })).toBe('edges');
-    expect(sectionTabOf({ page: 'providers' })).toBe('providers');
-    expect(sectionTabOf({ page: 'provider', id: 'x' })).toBe('providers');
-    for (const page of ['advanced', 'overview', 'templates', 'settings', 'names'] as const)
-      expect(sectionTabOf({ page })).toBe('advanced');
-    expect(sectionTabOf({ page: 'probes' })).toBe('probes');
-    expect(sectionTabOf({ page: 'family', slug: 'a' })).toBe('advanced');
-    expect(sectionTabOf({ page: 'countries' })).toBe('countries');
-    expect(sectionTabOf({ page: 'country', code: 'IR' })).toBe('countries');
-    expect(resolveEdgesRoute('/admin/edges/countries')).toEqual({ page: 'countries' });
-    expect(resolveEdgesRoute(edgesPaths.country('ir'))).toEqual({ page: 'country', code: 'IR' });
-    expect(edgesPaths.country('ir', { node: 'node a' })).toBe(
-      '/admin/edges/countries/IR?node=node+a',
-    );
-    expect(resolveEdgesRoute('/admin/edges/countries/iran')).toEqual({ page: 'not-found' });
-    expect(resolveEdgesRoute('/admin/edges/names')).toEqual({ page: 'names' });
+    expect(resolveEdgesRoute('/admin/servers/providers/templates')).toEqual({
+      page: 'templates',
+    });
+    expect(resolveEdgesRoute('/admin/servers/probes')).toEqual({ page: 'probes' });
+    expect(resolveEdgesRoute('/admin/servers/settings')).toEqual({ page: 'settings' });
+    expect(resolveEdgesRoute('/admin/servers/snis')).toEqual({ page: 'names' });
     expect(resolveEdgesRoute(edgesPaths.family('fam a'))).toEqual({
       page: 'family',
       slug: 'fam a',
     });
-    expect(sectionTabOf({ page: 'relay', slug: 'a' })).toBe('advanced');
-    // Find names (docs/edges.md "Finding names"): its own address, never a family slug.
+    // Finding more SNIs: its own address, never an SNI list's slug.
     expect(resolveEdgesRoute(edgesPaths.findNames())).toEqual({ page: 'findNames' });
     expect(resolveEdgesRoute(edgesPaths.findNetwork('net a'))).toEqual({
       page: 'findNetwork',
       slug: 'net a',
     });
-    expect(sectionTabOf({ page: 'findNames' })).toBe('advanced');
+    expect(resolveEdgesRoute('/admin/servers/countries')).toEqual({ page: 'countries' });
+    expect(resolveEdgesRoute(edgesPaths.country('ir'))).toEqual({ page: 'country', code: 'IR' });
+    expect(resolveEdgesRoute(edgesPaths.lists())).toEqual({ page: 'lists' });
+    expect(resolveEdgesRoute(edgesPaths.list('l1'))).toEqual({ page: 'list', id: 'l1' });
   });
-  it('keeps every old address and builds the new ones', () => {
-    expect(edgesPaths.overview()).toBe('/admin/edges/advanced/origins');
-    expect(edgesPaths.overview({ new: '1' })).toBe('/admin/edges/advanced/origins?new=1');
-    expect(edgesPaths.home()).toBe('/admin/edges');
-    expect(edgesPaths.home({ protect: '1' })).toBe('/admin/edges?protect=1');
+  it('falls through to not-found', () => {
+    expect(resolveEdgesRoute('/admin/servers/nope')).toEqual({ page: 'not-found' });
+    expect(resolveEdgesRoute('/admin/servers/origins/a/b')).toEqual({ page: 'not-found' });
+    expect(resolveEdgesRoute('/admin/servers/countries/iran')).toEqual({ page: 'not-found' });
+    // The old addresses resolve to nothing; legacyRoutes.ts sends them on.
+    for (const p of ['/admin/edges', '/admin/edges/relays/x', '/admin/edges/setup'])
+      expect(resolveEdgesRoute(p)).toEqual({ page: 'not-found' });
+  });
+  it('builds the addresses, with encoded params and clean defaults', () => {
+    expect(edgesPaths.home()).toBe('/admin/servers');
+    expect(edgesPaths.home({ protect: '1' })).toBe('/admin/servers?protect=1');
     expect(edgesPaths.home({ protect: '1', server: 'main', node: 'n 1', run: null })).toBe(
-      '/admin/edges?protect=1&server=main&node=n+1',
+      '/admin/servers?protect=1&server=main&node=n+1',
     );
-    expect(edgesPaths.node('a b', { test: 'e1' })).toBe('/admin/edges/nodes/a%20b?test=e1');
-    expect(edgesPaths.advanced()).toBe('/admin/edges/advanced');
-  });
-  it('builds links that resolve back, with encoded params and clean defaults', () => {
+    expect(edgesPaths.node('a b', { test: 'e1' })).toBe('/admin/servers/origins/a%20b?test=e1');
+    expect(edgesPaths.overview()).toBe('/admin/servers/origins');
+    expect(edgesPaths.overview({ new: '1' })).toBe('/admin/servers/origins?new=1');
+    expect(edgesPaths.country('ir')).toBe('/admin/servers/countries/IR');
+    expect(edgesPaths.provider('a 1', { tab: 'inventory' })).toBe(
+      '/admin/servers/providers/a%201?tab=inventory',
+    );
     const href = edgesPaths.relay('a b/c', { tab: 'edges', edge: 'e1', rotation: null });
-    expect(href).toBe('/admin/edges/relays/a%20b%2Fc?tab=edges&edge=e1');
+    expect(href).toBe('/admin/servers/origins/a%20b%2Fc/details?tab=edges&edge=e1');
     expect(resolveEdgesRoute(href.split('?')[0]!)).toEqual({ page: 'relay', slug: 'a b/c' });
-  });
-  it('redirects the moved pages: All origins and the old step-by-step wizard', () => {
-    expect(legacyEdgesRedirect('/admin/edges/advanced/relays')).toBe(
-      '/admin/edges/advanced/origins',
-    );
-    expect(legacyEdgesRedirect('/admin/edges/advanced/relays', '?filter=dark')).toBe(
-      '/admin/edges/advanced/origins?filter=dark',
-    );
-    expect(legacyEdgesRedirect('/admin/edges/setup')).toBe('/admin/edges/advanced/origins');
-    expect(legacyEdgesRedirect('/admin/edges/setup/', '?relay=relay-a&step=edge')).toBe(
-      '/admin/edges/relays/relay-a',
-    );
-    for (const p of ['/admin/edges/advanced/relays', '/admin/edges/setup'])
-      expect(resolveEdgesRoute(legacyEdgesRedirect(p)!.split('?')[0]!).page).not.toBe('not-found');
-    for (const p of ['/admin/edges', '/admin/edges/advanced', '/admin/edges/relays/x'])
-      expect(legacyEdgesRedirect(p)).toBeNull();
   });
   it('sends every readiness step to a page that does it', () => {
     for (const step of SETUP_STEP_IDS) {
@@ -153,10 +115,12 @@ describe('resolveEdgesRoute / edgesPaths', () => {
         expect(resolveEdgesRoute(href.split('?')[0]!).page).not.toBe('not-found');
       }
     }
-    expect(setupStepTarget('edge', 'relay-a')).toBe('/admin/edges/relays/relay-a?tab=edges');
-    expect(setupStepTarget('origin', null)).toBe('/admin/edges/advanced/origins?new=1');
-    expect(setupStepTarget('account', 'relay-a')).toBe('/admin/edges/providers');
-    expect(setupStepTarget('rendering', null)).toBe('/admin/edges/settings?section=rendering');
+    expect(setupStepTarget('edge', 'relay-a')).toBe(
+      '/admin/servers/origins/relay-a/details?tab=edges',
+    );
+    expect(setupStepTarget('origin', null)).toBe('/admin/servers/origins?new=1');
+    expect(setupStepTarget('account', 'relay-a')).toBe('/admin/servers/providers');
+    expect(setupStepTarget('rendering', null)).toBe('/admin/servers/settings?section=rendering');
   });
   it('lists each pattern once', () => {
     const patterns = EDGES_ROUTES.map(([p]) => p);
@@ -235,54 +199,58 @@ describe('attention', () => {
         expect(href).toBe('/admin/connection-modes');
         continue;
       }
-      expect(href.startsWith('/admin/edges')).toBe(true);
+      expect(href.startsWith('/admin/servers')).toBe(true);
       expect(resolveEdgesRoute(href.split('?')[0]!).page).not.toBe('not-found');
     }
   });
   it('links an enrolled node to the front sheet or to its Servers page', () => {
     const facts = { serverSlug: 'panel-a', nodeUuid: 'uuid-1', node: 'node-one' };
     expect(attentionTarget(item({ action: 'protect_node', relaySlug: null, facts }))).toBe(
-      '/admin/edges?protect=1&server=panel-a&node=uuid-1',
+      '/admin/servers?protect=1&server=panel-a&node=uuid-1',
     );
     // An origin already covers it: Protect again lives on its node page.
     expect(attentionTarget(item({ action: 'protect_node', facts }))).toBe(
-      '/admin/edges/nodes/relay-a',
+      '/admin/servers/origins/relay-a',
     );
     expect(attentionTarget(item({ action: 'open_node', facts }))).toBe(
-      '/admin/servers/nodes/uuid-1?instance=panel-a',
+      '/admin/servers/nodes/uuid-1?backend=panel-a',
     );
-    expect(attentionTarget(item({ action: 'open_node', facts: {} }))).toBe('/admin/servers');
+    expect(attentionTarget(item({ action: 'open_node', facts: {} }))).toBe('/admin/servers/nodes');
   });
   it('routes the navigation actions as documented', () => {
-    expect(attentionTarget(item({ action: 'open_setup' }))).toBe('/admin/edges/relays/relay-a');
+    expect(attentionTarget(item({ action: 'open_setup' }))).toBe(
+      '/admin/servers/origins/relay-a/details',
+    );
     expect(attentionTarget(item({ action: 'resolve_quarantine', rotationId: 'rot1' }))).toBe(
-      '/admin/edges/relays/relay-a?tab=rotations&rotation=rot1',
+      '/admin/servers/origins/relay-a/details?tab=overview',
     );
     expect(attentionTarget(item({ action: 'look_at_host', listenerKey: 'main' }))).toBe(
-      '/admin/edges/relays/relay-a?tab=listeners&listener=main',
+      '/admin/servers/origins/relay-a/details?tab=listeners&listener=main',
     );
     expect(attentionTarget(item({ action: 'provision' }))).toBe(
-      '/admin/edges/relays/relay-a?tab=edges',
+      '/admin/servers/origins/relay-a/details?tab=edges',
     );
     expect(attentionTarget(item({ action: 'open_edge', edgeId: 'e1' }))).toBe(
-      '/admin/edges/relays/relay-a?tab=edges&edge=e1',
+      '/admin/servers/origins/relay-a/details?tab=edges&edge=e1',
     );
     expect(attentionTarget(item({ action: 'open_account', accountId: 'acc1' }))).toBe(
-      '/admin/edges/providers/acc1',
+      '/admin/servers/providers/acc1',
     );
     expect(attentionTarget(item({ action: 'thaw', relaySlug: null }))).toBe(
-      '/admin/edges/settings?section=maintenance',
+      '/admin/servers/settings?section=maintenance',
     );
   });
   it('falls back to the home without a origin', () => {
-    expect(attentionTarget(item({ action: 'open_relay', relaySlug: null }))).toBe('/admin/edges');
-    expect(attentionTarget(item({ action: 'open_account' }))).toBe('/admin/edges/providers');
+    expect(attentionTarget(item({ action: 'open_relay', relaySlug: null }))).toBe('/admin/servers');
+    expect(attentionTarget(item({ action: 'open_account' }))).toBe('/admin/servers/providers');
   });
   it('sends the endpoint test and go-live to the node page', () => {
     expect(attentionTarget(item({ action: 'verify_endpoint', edgeId: 'e1' }))).toBe(
-      '/admin/edges/nodes/relay-a?test=e1',
+      '/admin/servers/origins/relay-a?test=e1',
     );
-    expect(attentionTarget(item({ action: 'require_edges' }))).toBe('/admin/edges/nodes/relay-a');
+    expect(attentionTarget(item({ action: 'require_edges' }))).toBe(
+      '/admin/servers/origins/relay-a',
+    );
     // Both are handled by the host page when it offers `onAction` (the card opens in place).
     expect(ATTENTION_ACTION_PLAN.verify_endpoint).toEqual({ type: 'call', confirm: null });
     expect(ATTENTION_ACTION_PLAN.require_edges).toEqual({ type: 'call', confirm: null });

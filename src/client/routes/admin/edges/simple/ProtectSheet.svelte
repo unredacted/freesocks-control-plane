@@ -570,7 +570,7 @@
         {:else if panels.length === 0}
           <div class="text-muted-foreground space-y-2 rounded-md border border-dashed p-4 text-sm">
             <p>No panel is registered yet. Add a Remnawave backend server first.</p>
-            <Link href={serversPaths.home()} class={LINK}>Open Servers</Link>
+            <Link href={serversPaths.nodes()} class={LINK}>Open Nodes</Link>
           </div>
         {:else}
           {#if panels.length > 1}
@@ -635,7 +635,7 @@
                 The node from Servers is not in this list yet. Refresh once it is online on the
                 backend, or pick another node.
                 <Link
-                  href={serversPaths.node(preset.node, { instance: serverSlug || undefined })}
+                  href={serversPaths.node(preset.node, { backend: serverSlug || undefined })}
                   class={LINK}>Open it on Servers</Link
                 >
               </p>
@@ -649,7 +649,7 @@
                 class="text-muted-foreground space-y-2 rounded-md border border-dashed p-4 text-sm"
               >
                 <p>This panel has no nodes yet.</p>
-                <Link href={serversPaths.home({ instance: serverSlug || undefined })} class={LINK}
+                <Link href={serversPaths.nodes({ backend: serverSlug || undefined })} class={LINK}
                   >Add one under Servers</Link
                 >
               </div>
@@ -800,7 +800,7 @@
                     <p class="text-muted-foreground text-xs">
                       A node's transports are set on its panel.
                       <Link
-                        href={serversPaths.node(nodeUuid, { instance: serverSlug || undefined })}
+                        href={serversPaths.node(nodeUuid, { backend: serverSlug || undefined })}
                         class={LINK}>Open the node on Servers</Link
                       >
                     </p>

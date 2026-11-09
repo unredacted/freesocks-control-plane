@@ -5,13 +5,13 @@
    * (lib/attention.ts, typechecked complete):
    *
    *   pure navigation, done here:
-   *     open_setup          -> /admin/edges/setup?origin=<slug>
+   *     open_setup          -> the origin's details
    *     open_relay          -> the origin page (rotations tab + ?rotation when the item names one)
    *     open_edge, resolve_operator -> origin page ?tab=edges&edge=<id>
    *     resolve_quarantine  -> origin page ?tab=rotations&rotation=<id>
    *     look_at_host        -> origin page ?tab=listeners&listener=<key>
-   *     open_account        -> /admin/edges/providers/<id>
-   *     open_settings       -> /admin/edges/settings
+   *     open_account        -> /admin/servers/providers/<id>
+   *     open_settings       -> /admin/servers/settings
    *   server calls, handed to `onAction` (after a ConfirmDialog for the billable /
    *   disruptive ones: publish, provision, rotate, thaw, rebalance; none for
    *   qualify_front, test_credentials, verify_endpoint, require_edges):

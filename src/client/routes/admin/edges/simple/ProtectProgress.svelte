@@ -269,7 +269,7 @@
       case 'approve':
         // Reached only without an enrolled node to approve here (an older server
         // answers no `enrolled`): the Servers page has the node's approval.
-        router.navigate(serversPaths.home());
+        router.navigate(serversPaths.nodes());
         return;
     }
   }

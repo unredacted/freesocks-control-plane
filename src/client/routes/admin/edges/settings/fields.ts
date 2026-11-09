@@ -16,6 +16,8 @@ export const SETTINGS_SECTIONS = [
   'lists',
   'maintenance',
   'freedom',
+  // The Edge-required places card (DeliveryBindingsCard, id settings-delivery).
+  'delivery',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const parseSection = (raw: string | null | undefined): SettingsSection =>
@@ -307,7 +309,7 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
   {
     kind: 'number',
     path: 'render.namesPerEndpoint',
-    label: 'Server names per member',
+    label: 'SNIs per member',
     unit: 'SNIs',
     helper:
       'SNIs one member gets for their main address. Apps with an Auto group get them all and skip a blocked one. Plain lists get the first only. Only for listeners with growth-stable SNI selection.',
@@ -315,7 +317,7 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
   {
     kind: 'number',
     path: 'render.backupNames',
-    label: 'Server names on the backup address',
+    label: 'SNIs on the backup address',
     unit: 'SNIs',
     helper:
       'The same for the backup address, also only in apps with an Auto group. They differ from the main SNIs where possible.',
@@ -807,7 +809,7 @@ const pathsOf = (fields: readonly Field[]): string[] => fields.map((f) => f.path
 
 /** Every flat path a section owns (the rendering section adds its family rules at runtime). */
 export const SECTION_PATHS: Record<
-  Exclude<SettingsSection, 'maintenance' | 'freedom'>,
+  Exclude<SettingsSection, 'maintenance' | 'freedom' | 'delivery'>,
   string[]
 > = {
   basics: [...pathsOf(BASIC_SWITCHES), ...pathsOf(BASIC_NUMBERS), AUTO_PROVISION.path],

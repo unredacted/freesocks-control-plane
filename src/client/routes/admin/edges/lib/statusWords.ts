@@ -93,7 +93,7 @@ export function originSentence(s: OriginStatus): string {
       return `${plainWords(codeLabel(code))}. ${nextStep(code)}`;
     }
     case 'off':
-      return 'Fronting is switched off (Advanced).';
+      return 'Fronting is switched off for this node.';
     case 'not-live':
       // A fronted node has no direct address to fall back on.
       if (s.fronted)

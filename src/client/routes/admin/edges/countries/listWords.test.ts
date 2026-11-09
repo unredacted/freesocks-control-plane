@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { CountryListHoldReason, type CountryListVersion } from '@shared/contracts/countryLists';
-import { edgesPaths, resolveEdgesRoute, sectionTabOf } from '../lib/routes';
+import { edgesPaths, resolveEdgesRoute } from '../lib/routes';
+import { resolveSectionRoute, tabOf } from '../../servers/lib/routes';
 import { parseAsns } from '../names/lib/words';
 import {
   countsLine,
@@ -176,7 +177,10 @@ describe('list routes', () => {
   test('lists sit under Countries, and "lists" is no country', () => {
     expect(resolveEdgesRoute(edgesPaths.lists())).toEqual({ page: 'lists' });
     expect(resolveEdgesRoute(edgesPaths.list('abc'))).toEqual({ page: 'list', id: 'abc' });
-    expect(resolveEdgesRoute('/admin/edges/countries/ru')).toEqual({ page: 'country', code: 'RU' });
-    expect(sectionTabOf({ page: 'list', id: 'abc' })).toBe('countries');
+    expect(resolveEdgesRoute('/admin/servers/countries/ru')).toEqual({
+      page: 'country',
+      code: 'RU',
+    });
+    expect(tabOf(resolveSectionRoute(edgesPaths.list('abc')))).toBe('countries');
   });
 });
