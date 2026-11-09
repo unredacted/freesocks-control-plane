@@ -189,7 +189,7 @@ describe('what the page says', () => {
         transports: [inbound({ tag: 'VLESS_XHTTP_CDN', addresses: [], modeGroups: [] })],
       });
     expect(quietNotes(tree([unused('a'), unused('b'), unused('c')]))).toEqual([
-      'VLESS_XHTTP_CDN is unused on every node: no address and no mode group.',
+      'VLESS XHTTP CDN is unused on every node: no address and no mode group.',
     ]);
     expect(
       quietNotes(
@@ -198,7 +198,7 @@ describe('what the page says', () => {
         }),
       ),
     ).toEqual([
-      'VLESS_XHTTP_CDN is unused on a: no address and no mode group.',
+      'VLESS XHTTP CDN is unused on a: no address and no mode group.',
       'No node runs Default-Profile.',
     ]);
     expect(quietNotes(tree([node({ transports: [inbound({ modeGroups: [] })] })]))).toEqual([
@@ -246,6 +246,17 @@ describe('what the page says', () => {
     ]);
     expect(quietNotes(tree([node({ transports: [inbound({ addresses: fronts })] })]))).toEqual([
       'reality-in is unused on node-one: no address for members.',
+    ]);
+  });
+
+  test('an unused transport is named by its mode, never its tag', () => {
+    const t = inbound({
+      tag: 'FREEDOM_REALITY',
+      addresses: [],
+      modeGroups: [{ groupUuid: 'g', name: 'Freedom-Reality' }],
+    });
+    expect(quietNotes(tree([node({ transports: [t] })]))).toEqual([
+      'Freedom-Reality is unused on node-one: no address for members.',
     ]);
   });
 
