@@ -111,10 +111,7 @@
 </script>
 
 {#if notFound}
-  <SectionHeader
-    title="Origin not found"
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
-  />
+  <SectionHeader title="Origin not found" back={{ href: edgesPaths.overview(), label: 'Nodes' }} />
   <Card.Root>
     <Card.Header>
       <Card.Title>There is no origin called "{slug}"</Card.Title>
@@ -122,27 +119,21 @@
     </Card.Header>
     <Card.Content class="flex flex-wrap gap-4 text-sm">
       <Link href={edgesPaths.overview()} class="font-medium text-primary hover:underline">
-        Go to all origins
+        Go to Nodes
       </Link>
       <Link
         href={edgesPaths.overview({ new: '1' })}
         class="font-medium text-primary hover:underline"
       >
-        New origin
+        Add an origin by hand
       </Link>
     </Card.Content>
   </Card.Root>
 {:else if relayQ.error && !relay}
-  <SectionHeader
-    title={`Origin ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
-  />
+  <SectionHeader title={`Origin ${slug}`} back={{ href: edgesPaths.overview(), label: 'Nodes' }} />
   <AdminListState error={relayQ.error} onRetry={() => void relayQ.refetch()} />
 {:else if !relay}
-  <SectionHeader
-    title={`Origin ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
-  />
+  <SectionHeader title={`Origin ${slug}`} back={{ href: edgesPaths.overview(), label: 'Nodes' }} />
   <div class="space-y-3">
     <Skeleton class="h-9 w-80" />
     <Skeleton class="h-40 w-full" />
@@ -152,7 +143,7 @@
   <SectionHeader
     title={relay.label ? `${relay.label} (${relay.slug})` : `Origin ${relay.slug}`}
     description="Pool, listeners, rotations and reachability of this origin."
-    back={{ href: edgesPaths.overview(), label: 'All origins' }}
+    back={{ href: edgesPaths.overview(), label: 'Nodes' }}
   >
     {#snippet badges()}
       <StatusBadge

@@ -2454,10 +2454,13 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   (§ "The country view"). Read only: marks and checks stay on the node and name pages.
 - **Advanced** (`/admin/edges/advanced`): a plain list of links to the technical pages.
 
-**The technical pages**: **All origins** (`/admin/edges/advanced/origins`, the former
-dashboard: fleet tiles, attention list, readiness whose steps link to where each is done
-(`setupStepTarget`), origin table, probe chart; **New origin** opens `NewRelayDialog` for a
-manual address or a whole Outline server), **Origin details** (`/admin/edges/relays/<slug>`:
+**The technical pages**: **All origins** is the Nodes table with **Technical columns** on
+(`/admin/servers/nodes?columns=technical`, docs/servers.md "Nodes"; the old
+`/admin/servers/origins` and `/admin/edges/advanced/origins` redirect there): the origin columns
+of the former dashboard's table (`overview/OriginCells.svelte`), and above and below it the fleet
+tiles, attention list, readiness whose steps link to where each is done (`setupStepTarget`) and
+probe chart (`overview/OriginsTechnical.svelte`); Nodes -> Add -> **Add an origin by hand**
+(`?add=origin`) opens `NewRelayDialog` for a manual address or a whole Outline server. **Origin details** (`/admin/edges/relays/<slug>`:
 overview, edges (an edge being destroyed, or gone, shows no publication badge: it is neither in
 use nor a standby, `showsPublication`; the edge drawer likewise), listeners, rotations, probes;
 the quarantine resolver; an origin that is not a
@@ -2475,7 +2478,7 @@ are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies
 A backend node is set up only with Autopilot (the protect sheet); the old step-by-step wizard
 is gone. Its addresses redirect (`servers/lib/legacyRoutes.ts`, pinned by a test):
 `/admin/edges/setup?relay=<slug>` to that origin's details, `/admin/edges/setup` and
-`/admin/edges/advanced/relays` to All origins (`/admin/servers/origins`). One provision dialog (`ProvisionDialog`) covers
+`/admin/edges/advanced/relays` to All origins (`/admin/servers/nodes?columns=technical`). One provision dialog (`ProvisionDialog`) covers
 both the ordinary provision (FCP picks a trusted account) and the bootstrap provision
 (`test-provision`, chosen automatically when the operator names an account), and one import
 dialog (`ImportFrontDialog`, with the inventory refresh) imports an existing front.
@@ -5414,7 +5417,7 @@ deployment").
 **Protect a backend node.** Autopilot only: the runbook "Deploy a fronted node" in
 `docs/servers.md`, from the role run to a member connection.
 
-**Bootstrap a manual or whole-Outline origin.** All origins → New origin (`?new=1`: a manual
+**Bootstrap a manual or whole-Outline origin.** Nodes → Add → Add an origin by hand (`?add=origin`: a manual
 address or a whole Outline server only), then the first-edge card on its Origin details page:
 provision an edge or import an existing front, publish it, enable rendering, preview each client
 family. Until the first publish with rendering on, members on that origin receive 503.

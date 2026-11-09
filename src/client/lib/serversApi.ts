@@ -9,7 +9,7 @@
  * Cadence: the backend is only re-read every ten minutes (the healthcheck) or on
  * an explicit Refresh, so the cached tree is polled gently (60 s).
  */
-import { createQuery, type QueryClient } from '@tanstack/svelte-query';
+import { createQueries, createQuery, type QueryClient } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import {
@@ -355,6 +355,56 @@ export const opsQuery = (slug: () => string | null, enabled: () => boolean) =>
     enabled: !!slug() && enabled(),
     refetchInterval: (q: { state: { data?: { ops: { open: boolean }[] } } }) =>
       q.state.data?.ops.some((o) => o.open) ? 5_000 : 60_000,
+  }));
+
+// --- every backend at once (the Nodes table spans them). Same keys and cadence as the
+// one-backend queries above, so a page that reads one backend shares their cache.
+const intentsInterval = (q: {
+  state: { data?: { intents: { stage: string; state: string }[] } };
+}) =>
+  q.state.data?.intents.some((i) => i.stage !== 'live' || i.state === 'pending') ? 5_000 : 60_000;
+
+/** The trees of these backends, in the same order. */
+export const serverTreesQuery = (slugs: () => readonly string[]) =>
+  createQueries(() => ({
+    queries: slugs().map((slug) => ({
+      queryKey: serverKeys.tree(slug),
+      queryFn: () => fetchServerTree(slug),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    })),
+  }));
+
+/** The enrolled nodes (and holds) of these backends, in the same order. */
+export const intentsListsQuery = (slugs: () => readonly string[]) =>
+  createQueries(() => ({
+    queries: slugs().map((slug) => ({
+      queryKey: serverKeys.intents(slug),
+      queryFn: () => fetchIntents(slug),
+      refetchInterval: intentsInterval,
+    })),
+  }));
+
+/** The setup of these backends, in the same order. */
+export const setupsQuery = (slugs: () => readonly string[]) =>
+  createQueries(() => ({
+    queries: slugs().map((slug) => ({
+      queryKey: serverKeys.setup(slug),
+      queryFn: () => fetchSetup(slug),
+      refetchInterval: (q: { state: { data?: { running: boolean } } }) =>
+        q.state.data?.running ? 3_000 : 60_000,
+    })),
+  }));
+
+/** The recent changes of these backends, in the same order. */
+export const opsListsQuery = (slugs: () => readonly string[]) =>
+  createQueries(() => ({
+    queries: slugs().map((slug) => ({
+      queryKey: serverKeys.ops(slug),
+      queryFn: () => fetchOps(slug),
+      refetchInterval: (q: { state: { data?: { ops: { open: boolean }[] } } }) =>
+        q.state.data?.ops.some((o) => o.open) ? 5_000 : 60_000,
+    })),
   }));
 
 export function invalidateServers(qc: QueryClient): void {

@@ -6,7 +6,9 @@
  * `edgesPaths`, the section resolves a pathname through `resolveEdgesRoute`.
  *
  *   /admin/servers                                  Overview (today: the fronted nodes and what needs you)
- *   /admin/servers/origins                          All origins (Nodes, technical view); `?new=1` opens "New origin"
+ *   /admin/servers/nodes?columns=technical          All origins: the Nodes table with its technical columns
+ *                                                   (`edgesPaths.overview`; `?add=origin` opens "Add an origin by hand").
+ *                                                   The old `/admin/servers/origins` redirects there.
  *   /admin/servers/origins/:slug                    an origin: a backend node redirects to its node page,
  *                                                   any other origin shows its edges panel here
  *   /admin/servers/origins/:slug/details            an origin's technical details (`?tab=`)
@@ -37,7 +39,6 @@ export type RelayTab = (typeof RELAY_TABS)[number];
 export type EdgesRoute =
   | { page: 'home' }
   | { page: 'node'; slug: string }
-  | { page: 'overview' }
   | { page: 'relay'; slug: string }
   | { page: 'providers' }
   | { page: 'provider'; id: string }
@@ -58,7 +59,6 @@ const R = '/admin/servers';
 
 export const EDGES_ROUTES = [
   [R, 'home'],
-  [`${R}/origins`, 'overview'],
   [`${R}/origins/:slug`, 'node'],
   [`${R}/origins/:slug/details`, 'relay'],
   [`${R}/providers`, 'providers'],
@@ -123,9 +123,12 @@ export const edgesPaths = {
   /** An origin's page (`?test=<edgeId>` opens the test card for that address). */
   node: (slug: string, params?: { test?: string | null }) =>
     withSearch(`${R}/origins/${enc(slug)}`, params),
-  /** All origins (the technical fleet dashboard, under Nodes); `?new=1` opens "New origin". */
+  /**
+   * All origins: the Nodes table with its technical columns (`filter` and
+   * `layer` as All origins spelled them; `new: '1'` opens "Add an origin by hand").
+   */
   overview: (params?: { filter?: string; layer?: string; new?: string | null }) =>
-    withSearch(`${R}/origins`, params),
+    `${R}/nodes${originsToNodesSearch(withSearch('', params))}`,
   relay: (
     slug: string,
     params?: {
@@ -158,6 +161,38 @@ export const edgesPaths = {
   lists: () => `${R}/countries/lists`,
   list: (id: string) => `${R}/countries/lists/${enc(id)}`,
 };
+
+/** Old All origins `?filter=` values and the Nodes `?show=` each became. */
+const ORIGIN_FILTERS: Record<string, string> = {
+  attention: 'attention',
+  dark: 'dark',
+  quarantined: 'quarantined',
+  unpublished: 'unpublished',
+};
+
+/**
+ * The old All origins query (`/admin/servers/origins`, before that
+ * `/admin/edges/advanced/origins`) as the Nodes query: the technical columns
+ * on, `filter` as `show` (`all` and unknown values dropped), `layer` kept
+ * when it is l4 or l7, `new=1` ("New origin") as `add=origin`. Any other
+ * param is kept, in order.
+ */
+export function originsToNodesSearch(search: string): string {
+  const out = new URLSearchParams();
+  out.set('columns', 'technical');
+  for (const [k, v] of new URLSearchParams(search)) {
+    if (k === 'columns') continue;
+    if (k === 'filter') {
+      const show = ORIGIN_FILTERS[v];
+      if (show) out.set('show', show);
+    } else if (k === 'new') {
+      if (v === '1') out.set('add', 'origin');
+    } else if (k === 'layer') {
+      if (v === 'l4' || v === 'l7') out.set('layer', v);
+    } else out.append(k, v);
+  }
+  return `?${out.toString()}`;
+}
 
 /**
  * Where a readiness step (`setup-status`) is done now that the step-by-step
