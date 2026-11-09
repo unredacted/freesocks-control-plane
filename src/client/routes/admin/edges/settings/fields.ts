@@ -52,7 +52,7 @@ export const BASIC_SWITCHES: Field[] = inGroup('automatic', [
     keywords: ['spare', 'tested location'],
     label: "Replace without a spare using FCP's client check",
     helper:
-      "On: with no tested spare, a blocked address is replaced in a location you tested before, and FCP's sing-box and Xray clients test the new one for you. Off: a replacement needs a tested spare, and the check is advice only.",
+      "On: nobody has to test an address by hand. A new address in a node's locations is checked with FCP's sing-box and Xray clients, and a pass counts as the test. Off: an address needs a person's test before it goes live, and the check is advice only.",
   },
   {
     kind: 'switch',
@@ -247,6 +247,15 @@ export const REPLACEMENT_FIELDS: Field[] = inGroup('replacement', [
     helper:
       'A new CDN hostname blocked in a country before anyone got it means the whole CDN is refused there. Automatic replacement for that country pauses this long and the address in use stays. Then one new hostname is tried. 0 never pauses.',
   },
+  {
+    kind: 'number',
+    path: 'audience.replacesPerDay',
+    keywords: ['own addresses', 'country budget', 'audience'],
+    label: "A country's own addresses replaced per node",
+    unit: 'a day',
+    helper:
+      "Replacements per day for a country on its own addresses on a node, per transport. Separate from the node's daily cap. 0 means by hand only.",
+  },
 ]);
 
 /** Trusted and open addresses, and suspicion (docs/edges.md "Address enumeration"). */
@@ -330,6 +339,12 @@ const IPV6_GLOBAL = [
   { value: 'both', label: 'IPv4 and IPv6 entries' },
   { value: 'auto-group-only', label: 'IPv6 only inside the automatic group' },
   { value: 'off', label: 'No IPv6 entries' },
+] as const;
+
+const PROBE_NETWORK_OPTIONS = [
+  { value: 'home', label: 'Home networks only' },
+  { value: 'home_first', label: 'Home networks first, topped up with data centres' },
+  { value: 'any', label: 'Any network' },
 ] as const;
 
 export const RENDER_GLOBAL_FIELDS: Field[] = inGroup('subscriptions', [
@@ -658,12 +673,13 @@ export const PROBE_FIELDS: Field[] = inGroup('probes', [
     helper: 'External probe runs allowed per hour. 0 stops external probing.',
   },
   {
-    kind: 'switch',
-    path: 'probe.preferEyeball',
-    keywords: ['eyeball', 'residential', 'home networks'],
-    label: 'Prefer residential networks',
+    kind: 'select',
+    path: 'probe.networks',
+    keywords: ['globalping', 'residential', 'home networks', 'eyeball', 'data centres'],
+    label: 'Globalping probe networks',
     helper:
-      'On: vantage points on consumer networks are asked for first, where the source can tell.',
+      'Which networks Globalping checks come from. Home networks see what members see, but a country with few of them gets fewer results. Control countries use any probe.',
+    options: PROBE_NETWORK_OPTIONS,
   },
   {
     kind: 'switch',
@@ -846,6 +862,9 @@ export const LIST_FIELDS: Field[] = inGroup('country-lists', [
   },
 ]);
 
+/** The per-country budgets' own path (`{IR: 2}`; a country left out follows the line above). */
+export const AUDIENCE_BUDGETS_PATH = 'audience.replacesPerDayByCountry';
+
 /** The zone checklist's own path (a list of zone ids). */
 export const NAME_ZONES_PATH = 'names.zones';
 
@@ -875,6 +894,7 @@ export const ALL_FIELDS: readonly Field[] = Object.values(GROUP_FIELDS).flat();
  */
 export function groupPaths(group: SettingsGroupId, families: readonly string[] = []): string[] {
   const own = GROUP_FIELDS[group].map((f) => f.path);
+  if (group === 'replacement') return [...own, AUDIENCE_BUDGETS_PATH];
   if (group === 'address-hostnames') return [...own, NAME_ZONES_PATH];
   if (group === 'subscriptions') return [...own, ...families.map(rulePath)];
   return own;
@@ -913,6 +933,7 @@ export const ENTRY_IDS = {
   globalpingToken: 'secrets.globalpingToken',
   ripeAtlasKey: 'secrets.ripeAtlasKey',
   probeCountries: 'probe.countries',
+  countryBudgets: AUDIENCE_BUDGETS_PATH,
   trustCounts: 'trust.counts',
   runCost: 'country.runCost',
   clientRules: 'render.clients',
@@ -932,6 +953,16 @@ export function settingEntries(families: readonly string[] = []): SettingEntry[]
   return [
     ...fields('automatic'),
     ...fields('replacement'),
+    {
+      id: E.countryBudgets,
+      group: 'replacement',
+      label: "Each country's own budget",
+      helper:
+        'One number per censored country for its own addresses. A blank follows the line above.',
+      keywords: ['own addresses', 'country budget', 'audience', 'per country'],
+      key: `edge.${AUDIENCE_BUDGETS_PATH}`,
+      paths: [AUDIENCE_BUDGETS_PATH],
+    },
     ...fields('trust'),
     {
       id: E.trustCounts,

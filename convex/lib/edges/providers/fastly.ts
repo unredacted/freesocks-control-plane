@@ -76,7 +76,7 @@ import type {
   SharedTeardownDriver,
   SharedTeardownState as GenericSharedTeardownState,
   StepOutcome,
-  CloudflareDnsConfig,
+  DnsZoneConfig,
 } from './types';
 import { firstResource, metaOf, resourcesOfKind, stepOf } from './types';
 import {
@@ -130,7 +130,7 @@ const INVENTORY_MAX_DETAILED = 100;
 
 // --- DNS client injection ----------------------------------------------------------
 
-type DnsClientFactory = (cfg: CloudflareDnsConfig) => DnsClient | Promise<DnsClient>;
+type DnsClientFactory = (cfg: DnsZoneConfig) => DnsClient | Promise<DnsClient>;
 let dnsFactory: DnsClientFactory | null = null;
 /** Test seam: an in-memory DnsClient, so these tests never load the Cloudflare SDK. */
 export function __setFastlyDnsClientFactory(f: DnsClientFactory | null): void {
@@ -147,8 +147,8 @@ async function dnsClientFor(cfg: FastlyConfig): Promise<DnsClient> {
   if (!dns)
     throw refusal('dns', 'dns_account_missing', 'the referenced DNS account is not resolved');
   if (dnsFactory) return await dnsFactory(dns);
-  const mod = await import('./dns/cloudflareDns');
-  return mod.cloudflareDnsClient(dns);
+  const mod = await import('./dns/clients');
+  return mod.dnsClientForZone(dns);
 }
 
 // --- CAA lookups (the credential test's issuance preflight) ---------------------------

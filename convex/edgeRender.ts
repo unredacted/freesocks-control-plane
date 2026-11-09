@@ -12,6 +12,7 @@
  * the binding's policy version while the subscription is edge-required, null
  * for a subscription no origin covers.
  */
+import { ownCodesOf } from './lib/edges/ownPools';
 import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
@@ -240,7 +241,11 @@ export async function publishedEdgesOf(
     published.push(
       toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now, {
         addressName: name?.fqdn,
-        meantFor: location?.forCountries?.codes ?? [],
+        // An address made for some countries (a pick's own, or an only
+        // location's) is meant for them, whatever its location says.
+        meantFor: [
+          ...new Set([...(location?.forCountries?.codes ?? []), ...(edge.audience ?? [])]),
+        ],
         memberPlace: location?.memberPlace,
       }),
     );
@@ -679,6 +684,8 @@ export const decideForSubscription = internalQuery({
         ...(lanesOn(relay)
           ? { memberLane: await memberLaneOfUser(ctx.db, sub.userId, Date.now()) }
           : {}),
+        // Countries on their own addresses here (convex/edgeOwnPools.ts).
+        ...(relay.ownPools?.length ? { ownCountries: ownCodesOf(relay) } : {}),
         minProvenForExclusive: cfg.country.minProvenForExclusive,
         // Latency ordering on: the node's position and the measured member legs.
         ...(await latencyContextOf(ctx.db, relay, published, countryCfg)),

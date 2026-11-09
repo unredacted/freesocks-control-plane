@@ -45,6 +45,7 @@ import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
   edgeRoleOf,
+  isDnsOnly,
   frontsAllowed,
 } from './lib/edges/providers/capabilities';
 import { LEGACY_DNS_PROVIDERS_FRONT_KEY } from './lib/edgeConfig';
@@ -327,6 +328,11 @@ function checkFrontingChoice(provider: EdgeProviderId, frontsTraffic: boolean | 
     throw new ConvexError({
       code: 'validation',
       message: "Only a DNS provider's account chooses whether it fronts traffic",
+    });
+  if (frontsTraffic === true && isDnsOnly(provider))
+    throw new ConvexError({
+      code: 'validation',
+      message: "This provider's accounts hold DNS records only: they never front traffic",
     });
 }
 

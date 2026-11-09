@@ -34,6 +34,8 @@ export interface EdgeProviderMeta {
   needsDnsAccount: boolean;
   /** The account can host DNS records for other providers' edges. */
   providesDns: boolean;
+  /** A DNS provider that never fronts traffic (Gandi): no "DNS and fronting" choice. */
+  dnsOnly?: true;
   /** The account's fronts can share one wildcard certificate (`certificateScope`). */
   sharedCertificates: boolean;
 }
@@ -83,11 +85,26 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
     providesDns: false,
     sharedCertificates: true,
   },
+  gandi: {
+    label: 'Gandi',
+    layer: 'l7',
+    role: 'dns',
+    addressKind: 'hostname',
+    l7Transports: [],
+    needsDnsAccount: false,
+    providesDns: true,
+    dnsOnly: true,
+    sharedCertificates: false,
+  },
 };
 
 /** What a DNS account does, in one sentence (picker, account form, badges). */
 export const DNS_ACCOUNT_BLURB =
   'A DNS account holds the records FCP writes for L7 fronts (their certificate challenge and traffic name). It carries no member traffic unless it is set to DNS and fronting.';
+
+/** The same, for a provider that can only hold DNS records (`dnsOnly`). */
+export const DNS_ONLY_ACCOUNT_BLURB =
+  'A DNS account holds the records FCP writes for L7 fronts (their certificate challenge and traffic name). This provider only does DNS, so it never carries member traffic.';
 
 /** The two things a DNS account can be for, as the account form and page name them. */
 export const DNS_ACCOUNT_USES = {
@@ -109,6 +126,7 @@ export const DNS_ACCOUNT_USES = {
  */
 export function accountFronts(a: { provider: string; frontsTraffic?: boolean }): boolean {
   const meta = EDGE_PROVIDER_META[a.provider as EdgeProviderId];
+  if (meta?.dnsOnly) return false;
   return meta?.role !== 'dns' || a.frontsTraffic === true;
 }
 

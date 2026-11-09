@@ -40,6 +40,7 @@
   import FreedomDeliveryCard from './settings/FreedomDeliveryCard.svelte';
   import ClientCheckCard from './settings/ClientCheckCard.svelte';
   import PanelSwitchesCard from './settings/PanelSwitchesCard.svelte';
+  import CountryBudgets from './settings/CountryBudgets.svelte';
   import TrustCounts from './settings/TrustCounts.svelte';
   import { ConfigForm } from './settings/form.svelte';
   import { pathCovers } from './settings/configDiff';
@@ -85,6 +86,9 @@
   const families = $derived(config.data?.families ?? []);
   const entries = $derived(settingEntries(families));
   const entryById = $derived(new Map(entries.map((e) => [e.id, e])));
+
+  // A country's own replacement budget: one number per listed country, blank = the fleet's.
+  const censoredCountries = $derived(config.data?.censoredCountries ?? []);
 
   // --- URL state ----------------------------------------------------------------
   const groupParam = searchParam('group', ALL_GROUPS);
@@ -328,6 +332,11 @@
 
 {#snippet replacement()}
   {@render grid(REPLACEMENT_FIELDS)}
+  {#if show(E.countryBudgets)}
+    <div id={fieldDomId(E.countryBudgets)} class={rowClass(E.countryBudgets)}>
+      <CountryBudgets codes={censoredCountries} {form} />
+    </div>
+  {/if}
   {#each drainCodes as code (code)}
     <CodeNote issue={{ code }} tone="warning" class="mt-4" />
   {/each}

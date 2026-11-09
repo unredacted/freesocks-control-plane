@@ -53,6 +53,12 @@ export interface EdgeRenderContext {
    * `open_lane_empty`, never handed a trusted one.
    */
   memberLane?: 'open' | 'trusted';
+  /**
+   * The countries cut over to their own addresses on this node
+   * (`relays.ownPools`, docs/edges.md "A country on its own addresses"): a
+   * member steered by one is handed its own addresses first. Absent = none.
+   */
+  ownCountries?: string[];
   originAddress: string;
   /**
    * Other addresses the node is known by (an enrolled node's other public
@@ -188,6 +194,7 @@ export function applyEdgeRender(
     ...namesInBody(rule, hasAutoGroup),
     where: opts.where,
     edgeCountry: opts.edgeCountry ?? null,
+    ...(opts.edgeCountry && rctx.ownCountries?.includes(opts.edgeCountry) ? { ownPool: true } : {}),
     ...(opts.avoidBlockedIn ? { avoidBlockedIn: opts.avoidBlockedIn } : {}),
     minProvenForExclusive: rctx.minProvenForExclusive,
     ...(pathMs ? { pathMs } : {}),
