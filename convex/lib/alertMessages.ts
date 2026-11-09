@@ -144,23 +144,34 @@ function withSearch(path: string, params?: Params): string {
 }
 const enc = encodeURIComponent;
 
-/** Admin paths, spelled as the SPA routes them (src/client/routes/admin/edges/lib/routes.ts). */
+/**
+ * Admin paths, spelled as the SPA routes them (src/client/routes/admin/edges/lib/routes.ts
+ * `edgesPaths` and src/client/routes/admin/servers/lib/routes.ts `serversPaths`): every
+ * page is under Servers. An old address still works there (servers/lib/legacyRoutes.ts),
+ * so a link in an alert sent before the move still opens the right page.
+ */
+const S = '/admin/servers';
 export const adminPaths = {
-  edges: (params?: Params) => withSearch('/admin/edges', params),
-  node: (slug: string, params?: Params) => withSearch(`/admin/edges/nodes/${enc(slug)}`, params),
-  relay: (slug: string, params?: Params) => withSearch(`/admin/edges/relays/${enc(slug)}`, params),
-  providers: () => '/admin/edges/providers',
-  provider: (id: string) => `/admin/edges/providers/${enc(id)}`,
-  settings: (params?: Params) => withSearch('/admin/edges/settings', params),
-  probes: () => '/admin/edges/probes',
-  family: (slug: string) => `/admin/edges/names/${enc(slug)}`,
-  findNames: () => '/admin/edges/find-names',
-  country: (code: string) => `/admin/edges/countries/${enc(code.toUpperCase())}`,
+  /** The Servers Overview (`protect`, `server`, `node` open the protect sheet; `run` a run). */
+  edges: (params?: Params) => withSearch(S, params),
+  /** An origin's page (`test` opens the test card for that address). */
+  node: (slug: string, params?: Params) => withSearch(`${S}/origins/${enc(slug)}`, params),
+  /** An origin's technical details. */
+  relay: (slug: string, params?: Params) => withSearch(`${S}/origins/${enc(slug)}/details`, params),
+  providers: () => `${S}/providers`,
+  provider: (id: string) => `${S}/providers/${enc(id)}`,
+  /** Settings; `group` opens one group. */
+  settings: (params?: Params) => withSearch(`${S}/settings`, params),
+  probes: () => `${S}/probes`,
+  family: (slug: string) => `${S}/snis/lists/${enc(slug)}`,
+  findNames: () => `${S}/snis/find`,
+  country: (code: string) => `${S}/countries/${enc(code.toUpperCase())}`,
   modes: () => '/admin/connection-modes',
-  servers: (instance?: string | null) => withSearch('/admin/servers', { instance }),
-  serverNode: (uuid: string, instance?: string | null) =>
-    withSearch(`/admin/servers/nodes/${enc(uuid)}`, { instance }),
-  backends: () => '/admin/servers/backends',
+  /** The Nodes tab; `backend` keeps one backend server. */
+  servers: (backend?: string | null) => withSearch(`${S}/nodes`, { backend }),
+  serverNode: (uuid: string, backend?: string | null) =>
+    withSearch(`${S}/nodes/${enc(uuid)}`, { backend }),
+  backends: () => `${S}/settings/backends`,
   dashboard: () => '/admin/dashboard',
 };
 
@@ -184,7 +195,8 @@ export function alertPath(s: AlertSource): string {
   const relay = (params?: Params) => (slug ? adminPaths.relay(slug, params) : adminPaths.edges());
   switch (s.action) {
     case 'resolve_quarantine':
-      return relay({ tab: 'rotations', rotation: s.rotationId });
+      // The resolver card is on the origin's Overview tab, not Rotations.
+      return relay({ tab: 'overview' });
     case 'resolve_operator':
     case 'open_edge':
     case 'publish':
@@ -210,7 +222,7 @@ export function alertPath(s: AlertSource): string {
     case 'open_settings':
       return adminPaths.settings();
     case 'thaw':
-      return adminPaths.settings({ section: 'maintenance' });
+      return adminPaths.settings({ group: 'maintenance' });
     case 'protect_node':
       if (slug) return adminPaths.node(slug);
       return adminPaths.edges({
