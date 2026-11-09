@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * One name list (`/admin/servers/snis/:slug`; docs/edges.md "The page"): the
+   * One SNI list (`/admin/servers/snis/:slug`; docs/edges.md "The page"): the
    * ports it is used on, each with its status and next step (FamilyPort), then
-   * ONE list of its names and the names found for it, each with one state on
+   * ONE list of its SNIs and the SNIs found for it, each with one state on
    * the way to members (lib/listWords.ts): Suggested, Being checked, Waiting
    * to be sent, Waiting for a test, In use; Failing, Retired, Burned,
    * Ignored, Not usable. Three filters. What was measured is under Details.
    *
-   * Picked names can be checked again, retired (confirmed: it states the name
+   * Picked SNIs can be checked again, retired (confirmed: it states the SNI
    * drain, `edge.sniDrainMinutes`), brought back, burned (typed), or marked
-   * for a curated country. Adding names by hand and the list's settings sit
+   * for a curated country. Adding SNIs by hand and the list's settings sit
    * below, folded away. "Rename" by the title changes the list's name only
    * (components/NameDialog): its slug is this page's link and never changes.
    *
@@ -345,8 +345,8 @@
       <FamilyPort binding={b} />
     {:else}
       <p class="text-muted-foreground text-sm">
-        Not used by any port yet. Open a node under Servers and choose "Manage these SNIs with FCP"
-        on its REALITY transport, or use it on a port under Settings below.
+        Not used by any port yet. Open a node under Nodes and choose "Add an SNI list" on its
+        REALITY transport, or use it on a port under Settings below.
       </p>
     {/each}
   </section>
@@ -491,7 +491,7 @@
               onCheckedChange={(v) => (picked = v === true ? [...pickable] : [])}
             />
             <Label for={`${uid}-all`} class="font-normal">
-              Pick the {pickable.length === 1 ? 'SNI' : `${pickable.length} SNIs`} shown
+              {pickable.length === 1 ? 'Select it' : `Select all ${pickable.length}`}
             </Label>
           </div>
         {/if}
@@ -750,8 +750,8 @@
         <p class="font-medium">Use it on a port</p>
         {#if !bindOpen}
           <p class="text-muted-foreground">
-            Usually done with "Manage these SNIs with FCP" on a node's page. Here you can pick any
-            REALITY port with the same cover site.
+            Usually done with "Add an SNI list" on a node's page. Here you can pick any REALITY port
+            with the same cover site.
           </p>
           <Button variant="outline" size="sm" disabled={busy} onclick={startBind}>
             Pick a port

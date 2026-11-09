@@ -144,7 +144,7 @@ export const fetchTransports = (backendSlug: string) =>
 /** What managing a transport's names would suggest (the network); nothing is written. */
 export const previewManage = (body: Omit<SniManageRequest, 'dryRun'>) =>
   apiClient.post(`${BASE}/transports/manage`, { ...body, dryRun: true }, SniManageDryRun);
-/** Manage a transport's names with FCP: a name list with its cover site, its names taken in. */
+/** Manage a transport's names with FCP: an SNI list with its cover site, its names taken in. */
 export const manageTransport = (body: Omit<SniManageRequest, 'dryRun'>) =>
   apiClient.post(`${BASE}/transports/manage`, body, SniManaged);
 
@@ -264,7 +264,7 @@ export const huntFamilyQuery = (slug: () => string) =>
   }));
 
 /**
- * Every page of a name list's finds of one state, best first (a scope holds at
+ * Every page of an SNI list's finds of one state, best first (a scope holds at
  * most 2,000: ten pages), so its page counts and lists all of them.
  */
 async function fetchAllFinds(slug: string, state: HuntViewState): Promise<SniHuntScopeView> {
@@ -277,7 +277,7 @@ async function fetchAllFinds(slug: string, state: HuntViewState): Promise<SniHun
   return { ...view, candidates };
 }
 
-/** A name list's finds of one state, best first (its page: suggestions, or everything). */
+/** An SNI list's finds of one state, best first (its page: suggestions, or everything). */
 export const familyFindsQuery = (
   slug: () => string,
   state: () => HuntViewState,

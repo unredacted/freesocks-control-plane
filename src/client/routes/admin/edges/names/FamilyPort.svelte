@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One port a name list is used on, on the list's page: the same status line
+   * One port an SNI list is used on, on the list's page: the same status line
    * and next step as the node page (TransportNames, for every node at once),
    * then each node behind it with what its members get and, where names wait
    * for a test there, "Test one name" through one of its proven addresses.
@@ -10,6 +10,7 @@
    *
    * Props: binding (the list's binding to that port).
    */
+  import { transportName } from '@client/lib/transportName';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
@@ -48,9 +49,9 @@
   }
 </script>
 
-<section class="rounded-lg border p-3 text-sm" aria-label={binding.inboundTag}>
+<section class="rounded-lg border p-3 text-sm" aria-label={transportName(binding.inboundTag)}>
   <p class="font-medium break-all">
-    {binding.inboundTag}
+    {transportName(binding.inboundTag)}
     <span class="text-muted-foreground font-normal">
       on {binding.backendSlug}{transport?.port ? `, port ${transport.port}` : ''}
     </span>

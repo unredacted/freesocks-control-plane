@@ -1,12 +1,12 @@
 /**
- * A REALITY transport's names on a node's page (docs/edges.md "A transport's
+ * A REALITY transport's SNIs on a node's page (docs/edges.md "A transport's
  * names"; pure, unit-tested): one status line and ONE next step at a time,
- * the way the node's edges show theirs. The steps follow a name's way to
+ * the way the node's edges show theirs. The steps follow an SNI's way to
  * members: managed by FCP, checked against the cover site, sent to the node
  * (the backend), proven on the node by a test, then handed to its members.
  *
- * Words: a family is a "name list", its target the "cover site" (the real site
- * the port shows anyone without a member's key).
+ * Words: a family is an "SNI list", its target the "cover site" (the real site
+ * the port shows anyone without a member's key). Never "names".
  */
 import { transportName } from '../../../../../lib/transportName';
 import {
@@ -27,31 +27,31 @@ import { CLIENT_CHECK_COPY, CLIENT_CHECK_ENGINE_LABELS } from '../../../../../li
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export type NamesStep =
-  /** `edge.sni.enabled` is off: FCP manages no names. */
+  /** `edge.sni.enabled` is off: FCP manages no SNIs. */
   | { kind: 'names_off' }
-  /** Names set by hand: hand them to FCP. */
+  /** SNIs set by hand: "Add an SNI list" hands them to FCP. */
   | { kind: 'manage' }
-  /** Its name list is switched off: nothing new is sent. */
+  /** Its SNI list is switched off: nothing new is sent. */
   | { kind: 'list_off' }
   /** A send to the backend is running. */
   | { kind: 'sending' }
-  /** Checked names are not on the node yet. */
+  /** Checked SNIs are not on the node yet. */
   | { kind: 'send' }
-  /** The last send did not go through, and names still wait for one. */
+  /** The last send did not go through, and SNIs still wait for one. */
   | { kind: 'send_again' }
-  /** Names wait for a send that a switch holds back. */
+  /** SNIs wait for a send that a switch holds back. */
   | { kind: 'send_blocked'; why: 'backend_changes_off' | 'not_set_up' }
-  /** Names on the node wait for a test here, through one of these addresses. */
+  /** SNIs on the node wait for a test here, through one of these addresses. */
   | { kind: 'test'; node: SniTransportNode }
-  /** Names wait for a test here, but no address of this node is proven yet. */
+  /** SNIs wait for a test here, but no address of this node is proven yet. */
   | { kind: 'test_needs_address'; node: SniTransportNode }
-  /** For every node at once (a name list's page): names wait for a test on these nodes. */
+  /** For every node at once (an SNI list's page): SNIs wait for a test on these nodes. */
   | { kind: 'test_nodes'; nodes: number }
-  /** No protected node hands the names out: on this node's page (here) or behind the port at all. */
+  /** No protected node hands the SNIs out: on this node's page (here) or behind the port at all. */
   | { kind: 'unprotected'; here: boolean }
-  /** Found names the cover site serves, ready to add. */
+  /** Found SNIs the cover site serves, ready to add. */
   | { kind: 'add_suggestions'; count: number }
-  /** Names are being checked against the cover site (minutes). */
+  /** SNIs are being checked against the cover site (minutes). */
   | { kind: 'checking'; count: number }
   /** Nothing to do. */
   | { kind: 'done' };
@@ -98,7 +98,7 @@ export function namesStep(
 
 /** The button for a step, or null when the step is waiting or done. */
 export const STEP_BUTTON: Partial<Record<NamesStep['kind'], string>> = {
-  manage: 'Manage these SNIs with FCP',
+  manage: 'Add an SNI list',
   send: 'Send to the node',
   send_again: 'Send again',
   test: 'Test one SNI',
@@ -115,12 +115,12 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   }
   const c = t.list.counts;
   const node = nodeOf(t, nodeUuid);
-  // No protected node (here, or behind the port): the names are on the port, handed out by none.
+  // No protected node (here, or behind the port): the SNIs are on the port, handed out by none.
   const unprotected = nodeUuid !== null ? !node : t.nodes.length === 0;
   const inUse = node ? node.inUse : c.inUse;
   const waiting = node ? node.waitingTest : c.waitingTest;
   const parts = [
-    unprotected ? `${plural(t.listed, 'SNI')} on the port` : `${plural(inUse, 'SNI')} in use`,
+    unprotected ? `${plural(t.listed, 'SNI')} on this port` : `${plural(inUse, 'SNI')} in use`,
   ];
   if (waiting) parts.push(`${waiting} waiting for a test`);
   if (c.toSend) parts.push(`${c.toSend} to send`);
@@ -139,7 +139,7 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   return { dot, text: parts.join(' · ') };
 }
 
-/** One node behind a port, on the name list's page. */
+/** One node behind a port, on the SNI list's page. */
 export function nodeLineWords(n: SniTransportNode): { dot: Dot; text: string } {
   const parts = [`${plural(n.inUse, 'SNI')} in use`];
   if (n.waitingTest)
@@ -199,7 +199,7 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
   }
 }
 
-/** What managing a port's names did, in one sentence. */
+/** What adding a port's SNI list did, in one sentence. */
 export function managedWords(done: SniManaged): string {
   const taken = done.imported.added;
   const parts = [
@@ -207,7 +207,7 @@ export function managedWords(done: SniManaged): string {
       ? `FCP manages these SNIs now. ${plural(taken, 'SNI')} taken in, each checked against the cover site first.`
       : 'FCP manages these SNIs now.',
   ];
-  // An existing list already holds the port's names: they are in it, not left out.
+  // An existing list already holds the port's SNIs: they are in it, not left out.
   const already = done.imported.lines.filter((l) => l.verdict === 'duplicate').length;
   if (already)
     parts.push(`${plural(already, 'SNI')} ${already === 1 ? 'was' : 'were'} already in the list.`);
@@ -260,8 +260,8 @@ export function sendPlanWords(p: SniRolloutPlan, t: SniTransport): string[] {
 }
 
 /**
- * Which name a test on a node presents: the send's witness while it still
- * waits there (one test of it proves the whole send), else one of the names
+ * Which SNI a test on a node presents: the send's witness while it still
+ * waits there (one test of it proves the whole send), else one of the SNIs
  * still waiting there (each proves only itself, so the operator may pick).
  */
 export function testNameChoice(
@@ -274,7 +274,7 @@ export function testNameChoice(
 
 // --- FCP's own test of a send (docs/edges.md "FCP's own test of a send") ---------------------------
 
-/** The node's line on the name list's page, in a few words. */
+/** The node's line on the SNI list's page, in a few words. */
 const AUTO_SHORT: Partial<Record<SniAutoTest['state'], string>> = {
   testing: 'FCP is testing one now',
   failed: "FCP's test did not pass",
@@ -293,7 +293,7 @@ const VOID_WORDS: Record<string, string> = {
   list_off: 'its SNI list was switched off while it ran',
 };
 
-/** The clients that did not get in with the name: `sing-box: Refused by REALITY; Xray: Timed out`. */
+/** The clients that did not get in with the SNI: `sing-box: Refused by REALITY; Xray: Timed out`. */
 function refusedWords(t: SniAutoTest): string {
   return t.engines
     .filter((e) => e.code !== 'ok')
@@ -316,8 +316,8 @@ function couldNotWords(t: SniAutoTest): string {
 const AGAIN = 'It tries again in about 10 minutes. You can test one now.';
 
 /**
- * The line about FCP's own test under a node's "Test one name" step, or null
- * when testing by FCP is off. A person's "Test one name" stays the button
+ * The line about FCP's own test under a node's "Test one SNI" step, or null
+ * when testing by FCP is off. A person's "Test one SNI" stays the button
  * whatever FCP's test says.
  */
 export function autoTestWords(
@@ -359,7 +359,7 @@ export function provenWords(activated: number, nodeName: string): string {
     : `${plural(activated, 'SNI')} ${activated === 1 ? 'is' : 'are'} now given to members on ${nodeName}.`;
 }
 
-/** After "Look for more names": the cover site's certificate, and certificate logs. */
+/** After "Look for more SNIs": the cover site's certificate, and certificate logs. */
 export function lookedWords(
   cert: Extract<SniHuntCertRead, { ok: true }>,
   ct: { queued: number } | null,
@@ -437,7 +437,7 @@ export interface NamesAttention {
   text: string;
   /** The node page it leads to, when it concerns one node. */
   nodeUuid?: string;
-  /** The name list page it leads to. */
+  /** The SNI list page it leads to. */
   family?: string;
 }
 

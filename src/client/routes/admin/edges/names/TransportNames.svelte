@@ -1,28 +1,31 @@
 <script lang="ts">
   /**
-   * A REALITY transport's server names on a node's page (docs/edges.md "A
+   * A REALITY transport's SNIs on a node's page (docs/edges.md "A
    * transport's names"), the way the node's edges show theirs: one status line
    * (what this node's members get, what waits) and ONE next step at a time,
    * worded by ./lib/transportWords.ts:
    *
-   *   Manage these names with FCP -> (checked) -> Add suggestions -> Send to
-   *   the node -> Test one name -> members get them.
+   *   Add an SNI list -> (checked) -> Add suggestions -> Send to the node ->
+   *   Test one SNI -> members get them.
+   *
+   * "Add an SNI list" opens the one dialog every entry point shares
+   * (AddSniListDialog), prefilled from this port.
    *
    * With testing by FCP on (`edge.sni.autoConfirm`), a line under the test step
-   * says what FCP's own test of the send found on this node; "Test one name"
+   * says what FCP's own test of the send found on this node; "Test one SNI"
    * stays the button.
    *
    * A step a switch holds back says which switch, with a link to it. The rest
-   * (the name list, looking for more names, stopping, editing by hand when FCP
-   * does not manage them) sits in "More". The names the port lists now are one
+   * (the SNI list, looking for more SNIs, stopping, editing by hand when FCP
+   * does not manage them) sits in "More". The SNIs the port lists now are one
    * click away.
    *
    * Props:
    *   backendSlug, nodeUuid           the page's backend and node
    *   transport                       its row of `GET sni/transports` (undefined while loading)
    *   switches                        that read's switches
-   *   names                           the names the port lists now (Servers' read)
-   *   onEditByHand?                   offered while FCP does not manage the names
+   *   names                           the SNIs the port lists now (Servers' read)
+   *   onEditByHand?                   offered while FCP does not manage the SNIs
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -39,8 +42,8 @@
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import { edgesPaths } from '../lib/routes';
   import StatusDot from '../simple/StatusDot.svelte';
+  import AddSniListDialog from './AddSniListDialog.svelte';
   import AddSuggestionsDialog from './AddSuggestionsDialog.svelte';
-  import ManageNamesDialog from './ManageNamesDialog.svelte';
   import SendNamesDialog from './SendNamesDialog.svelte';
   import TestNameDialog from './TestNameDialog.svelte';
   import {
@@ -80,7 +83,7 @@
   // FCP's own test of the send on this node (switch `edge.sni.autoConfirm`).
   let autoLine = $derived(step && switches ? autoTestWords(step, switches.autoTest) : null);
 
-  // Once the backend is seen to hold a send, the port's names as Servers reads
+  // Once the backend is seen to hold a send, the port's SNIs as Servers reads
   // them change too: read them again, so this card never shows two lists.
   let lastPhase: string | null = null;
   $effect(() => {
@@ -145,7 +148,7 @@
       <div class="min-w-0 flex-1 space-y-1">
         <p class="flex flex-wrap items-center gap-2 font-medium" role="status">
           <StatusDot dot={status.dot} />
-          SNI lists: {status.text}
+          {status.text}
         </p>
         <p class="text-muted-foreground">
           {stepWords(step, transport)}
@@ -236,7 +239,10 @@
       </details>
     {/if}
 
-    <ManageNamesDialog bind:open={manageOpen} {backendSlug} {transport} {nodeUuid} />
+    <AddSniListDialog
+      bind:open={manageOpen}
+      from={{ kind: 'port', backendSlug, transport, nodeUuid }}
+    />
     {#if transport.list}
       <AddSuggestionsDialog
         bind:open={addOpen}

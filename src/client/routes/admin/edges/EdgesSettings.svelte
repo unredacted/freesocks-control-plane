@@ -433,8 +433,8 @@
             ? `${form.list('probe.countries').join(', ')}.`
             : 'None.'}
           The censored countries with "Check edges from here" on.
-          <Link href="/admin/settings" class="underline underline-offset-2">
-            Change them in Settings, Censored countries.
+          <Link href={edgesPaths.countries()} class="underline underline-offset-2">
+            Change them on the Countries tab.
           </Link>
         </p>
       </div>

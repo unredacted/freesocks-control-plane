@@ -207,7 +207,7 @@ describe('the transports of a backend', () => {
     });
     // Nothing was written to the backend: the names are being checked.
     let tr = (await view()).transports[0]!;
-    expect(tr.list).toMatchObject({ slug: 'vless-relay-a', label: `${TAG} names` });
+    expect(tr.list).toMatchObject({ slug: 'vless-relay-a', label: `${TAG} SNIs` });
     expect(tr.list!.counts).toMatchObject({ checking: 2, inUse: 0 });
     // Members are still handed both while they are checked: in use on the node.
     expect(tr.nodes[0]).toMatchObject({ inUse: 2, waitingTest: 0 });
@@ -415,7 +415,7 @@ describe('the network', () => {
       coverSite: 'target.example:443',
       resolved: true,
       network: { slug: 'net-a', label: 'Net A' },
-      label: `${TAG} names`,
+      label: `${TAG} SNIs`,
     });
     // The target off the network: never suggested (every name would fail there).
     __setManageDepsForTests({ lookup: async () => ['203.0.113.5'] });

@@ -71,6 +71,8 @@ describe('the Servers section', () => {
     expect(tab(edgesPaths.family('f1'))).toBe('snis');
     expect(tab(edgesPaths.findNames())).toBe('snis');
     expect(tab(edgesPaths.findNetwork('n1'))).toBe('snis');
+    expect(tab(edgesPaths.sniChecks())).toBe('snis');
+    expect(tab(edgesPaths.sniSettings())).toBe('snis');
     expect(tab(edgesPaths.probes())).toBe('probes');
     expect(tab(edgesPaths.providers())).toBe('providers');
     expect(tab(edgesPaths.provider('a1'))).toBe('providers');

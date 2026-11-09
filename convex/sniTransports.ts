@@ -17,6 +17,7 @@ import { writeAuditLog } from './lib/audit';
 import { parseRealityTarget } from './lib/edges/inboundMapping';
 import { onNetwork, hasPrefixes } from './lib/edges/networks';
 import { sameTarget } from './lib/edges/sni/family';
+import { isReservedSniListSlug } from '../src/shared/contracts/sni';
 import {
   countDeliveries,
   familySlugForTransport,
@@ -395,12 +396,12 @@ export const manage = internalMutation({
           .query('sniFamilies')
           .withIndex('by_slug', (q) => q.eq('slug', slug))
           .unique();
-        if (!taken) break;
+        if (!taken && !isReservedSniListSlug(slug)) break;
         slug = `${base}-${n}`;
       }
       f = await insertFamily(ctx, {
         slug,
-        label: a.label?.trim() || `${i.tag} names`,
+        label: a.label?.trim() || `${i.tag} SNIs`,
         targetAddress: target.address,
         targetPort: target.port,
         requireH2: a.requireH2 ?? false,

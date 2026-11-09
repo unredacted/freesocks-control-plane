@@ -1,5 +1,5 @@
 /**
- * One name list as one list (docs/edges.md "The page"; pure, unit-tested):
+ * One SNI list as one list (docs/edges.md "The page"; pure, unit-tested):
  * its names and the names found for it, each with ONE state on the way to
  * members and one sentence, so "ready" never means two things. The states
  * come from the server (`delivery` per name, `usableCandidate` per find):
@@ -219,9 +219,9 @@ export function matchesListFilter(r: ListRow, f: ListFilter): boolean {
   );
 }
 
-// --- the Server names page --------------------------------------------------------------------
+// --- the SNIs page --------------------------------------------------------------------
 
-/** One line under a name list: what members get and what waits, the same counts as its page. */
+/** One line under an SNI list: what members get and what waits, the same counts as its page. */
 export function listLine(f: SniFamilySummary): string {
   const d = f.delivery;
   const parts: string[] = [];
@@ -245,7 +245,7 @@ export function listDot(f: SniFamilySummary): Dot {
   return d.inUse > 0 ? 'green' : 'grey';
 }
 
-/** Under the Server names switch: what is true now. */
+/** Under the "SNI lists" switch: what is true now. */
 export function namesSwitchLine(on: boolean): string {
   return on
     ? 'On. FCP checks the SNIs of every SNI list and can send them to nodes.'

@@ -1,5 +1,5 @@
 /**
- * Wording for Find names (docs/edges.md "Finding names"; pure, unit-tested).
+ * Wording for SNIs, Find more (docs/edges.md "Finding names"; pure, unit-tested).
  * A candidate is only ever shown: the page keeps apart what was checked here
  * (qualification's own verdict), what was measured (near the node, from
  * inside countries, OONI) and what adding does (the family's normal path).
@@ -243,16 +243,7 @@ export function parsePlace(
   return c ? { country: cc, city: c } : { country: cc };
 }
 
-/** A family's short id from a site name: `www.example.com` -> `example-com`. */
-export function familySlugFor(name: string): string {
-  return name
-    .replace(/^www\./, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-}
-
-// --- the Advanced page ----------------------------------------------------------------------------
+// --- the Find more page ----------------------------------------------------------------------------
 
 /** Under the finding-names switch: what is true now. */
 export function huntSwitchLine(on: boolean, sweepEveryDays: number): string {

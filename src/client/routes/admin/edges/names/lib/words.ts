@@ -1,5 +1,5 @@
 /**
- * Wording and small decisions for Admin -> Edges -> Server names (pure;
+ * Wording and small decisions for Admin -> Servers -> SNIs (pure;
  * unit-tested). A name goes through three separate facts and the page never
  * blurs them: the cover site serves it (checked), a node accepts it (proven
  * by a test link), and it works from a country (the operator's judgement).

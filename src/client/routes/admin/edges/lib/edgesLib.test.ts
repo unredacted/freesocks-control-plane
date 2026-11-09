@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ATTENTION_ACTIONS } from '../../../../../shared/contracts/edgeCodes';
+import { SNI_LIST_RESERVED_SLUGS } from '../../../../../shared/contracts/sni';
 import {
   ATTENTION_ACTION_PLAN,
   attentionActionLabel,
@@ -82,6 +83,12 @@ describe('resolveEdgesRoute / edgesPaths', () => {
       page: 'findNetwork',
       slug: 'net a',
     });
+    // The other SNIs views: their own addresses, never an SNI list's slug.
+    expect(resolveEdgesRoute(edgesPaths.sniChecks())).toEqual({ page: 'sniChecks' });
+    expect(resolveEdgesRoute(edgesPaths.sniSettings())).toEqual({ page: 'sniSettings' });
+    // Lists live under /snis/lists/, so even a reserved word stays a list there.
+    for (const slug of SNI_LIST_RESERVED_SLUGS)
+      expect(resolveEdgesRoute(edgesPaths.family(slug))).toEqual({ page: 'family', slug });
     expect(resolveEdgesRoute('/admin/servers/countries')).toEqual({ page: 'countries' });
     expect(resolveEdgesRoute(edgesPaths.country('ir'))).toEqual({ page: 'country', code: 'IR' });
     expect(resolveEdgesRoute(edgesPaths.lists())).toEqual({ page: 'lists' });

@@ -133,12 +133,12 @@ describe('the next step', () => {
     });
     expect(namesStatus(transport(), 'n-unprotected')).toEqual({
       dot: 'grey',
-      text: '4 SNIs on the port',
+      text: '4 SNIs on this port',
     });
-    // A port nobody protects, on the name list's page.
+    // A port nobody protects, on the SNI list's page.
     const bare = transport({ nodes: [] }, { inUse: 0, idle: 4 });
     expect(namesStep(bare, on, null)).toEqual({ kind: 'unprotected', here: false });
-    expect(namesStatus(bare, null).text).toBe('4 SNIs on the port');
+    expect(namesStatus(bare, null).text).toBe('4 SNIs on this port');
     expect(stepWords({ kind: 'unprotected', here: false }, bare)).toMatch(/^No node behind/);
   });
 
@@ -154,7 +154,7 @@ describe('the next step', () => {
     expect(kind(namesStep(t, on, NODE))).toBe('test');
     // Another node's page: nothing to test there.
     expect(kind(namesStep(t, on, 'n-2'))).toBe('unprotected');
-    // A name list's page (every node at once): the test is per node, below.
+    // An SNI list's page (every node at once): the test is per node, below.
     expect(namesStep(t, on, null)).toEqual({ kind: 'test_nodes', nodes: 1 });
     t.nodes[0]!.testable = [];
     expect(kind(namesStep(t, on, NODE))).toBe('test_needs_address');

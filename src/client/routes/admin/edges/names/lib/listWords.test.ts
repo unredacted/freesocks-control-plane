@@ -1,5 +1,5 @@
 /**
- * One name list as one list: one state per name (its own names and the names
+ * One SNI list as one list: one state per name (its own names and the names
  * found for it), one sentence each, three filters, and the line the Server
  * names page shows, with the same counts. No codes, no em-dashes, no "ready".
  */
