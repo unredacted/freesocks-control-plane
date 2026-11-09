@@ -523,8 +523,14 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       if (maintenance.frozen) continue;
       if (starts >= EDGE_PLUMBING.maxReconcileStartsPerTick) continue;
       const originEdges = edges.filter((e) => e.relayId === origin._id);
+      // A spare made for some countries is theirs (step 5W fills their count
+      // with it): never one of the fills of what everyone is handed.
       const standbys = originEdges.filter(
-        (e) => e.status === 'active' && e.publication === 'unpublished' && hasPublishableAddress(e),
+        (e) =>
+          e.status === 'active' &&
+          e.publication === 'unpublished' &&
+          hasPublishableAddress(e) &&
+          !e.audienceIntent?.length,
       );
       const standbysOf = (listenerId: string) =>
         standbys.filter((e) => (e.listenerId as string) === listenerId);
@@ -532,6 +538,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         listenerId: string | null,
         publishOnDone: boolean,
         onlyLocationId?: Id<'edgeLocations'>,
+        audience?: string[],
       ) => {
         // An automatic provision that just failed is not started again every
         // tick (each attempt pays for what it built before the failing step).
@@ -551,6 +558,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             relayId: origin._id,
             ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
             ...(onlyLocationId ? { onlyLocationId } : {}),
+            ...(audience?.length ? { audience } : {}),
           }))
         )
           return;
@@ -561,6 +569,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           publishOnDone,
           ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
           ...(onlyLocationId ? { onlyLocationId } : {}),
+          ...(audience?.length ? { audience } : {}),
         });
         report.started++;
         starts++;
@@ -650,7 +659,12 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // a provision for it at that location only (selection keeps every rule:
       // cooling, a refused location, trust, the account's cap; nothing is
       // bought where one of them holds it back, or with no free slot for it).
-      if (uncovered.length === 0 && origin.providerSet?.some((p) => p.want !== undefined)) {
+      // Some countries' own addresses (a pick's `audiences`) are counted here
+      // too, over every pick holding them, and made for them.
+      if (
+        uncovered.length === 0 &&
+        origin.providerSet?.some((p) => p.want !== undefined || p.audiences?.length)
+      ) {
         const gap = await ctx.runQuery(internal.edgePickWants.nextCountGap, {
           relayId: origin._id,
         });
@@ -674,7 +688,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         // A free slot is what it needs: at the cap part of the deficit may be
         // blocked while one more address still fits.
         if (gap?.mayProvision && cfg.autoProvisionToDesired && free > 0) {
-          await provision(gap.listenerId, true, gap.locationId);
+          await provision(gap.listenerId, true, gap.locationId, gap.audience);
           continue;
         }
       }

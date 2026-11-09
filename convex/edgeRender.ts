@@ -240,7 +240,11 @@ export async function publishedEdgesOf(
     published.push(
       toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now, {
         addressName: name?.fqdn,
-        meantFor: location?.forCountries?.codes ?? [],
+        // An address made for some countries (a pick's own, or an only
+        // location's) is meant for them, whatever its location says.
+        meantFor: [
+          ...new Set([...(location?.forCountries?.codes ?? []), ...(edge.audience ?? [])]),
+        ],
         memberPlace: location?.memberPlace,
       }),
     );

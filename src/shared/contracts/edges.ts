@@ -2968,7 +2968,8 @@ export const AttentionItem = z.object({
    * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider ·
    * `list_address_left` list (its label), country, addressFamily (v4|v6) ·
    * `location_short` name (the account), location, wanted (its count), inUse (the fewest
-   * in use of a transport there), count (transports short).
+   * in use of a transport there), count (transports short), countries[] (when the count is
+   * some countries' own addresses, `relays.providerSet[].audiences`).
    */
   facts: z.record(z.string(), z.unknown()).default({}),
   action: AttentionAction,

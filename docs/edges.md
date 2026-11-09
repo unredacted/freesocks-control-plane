@@ -5096,6 +5096,71 @@ in it is ever handed it.
 - **Where it shows:** each address on the node page says "(only for Iran, Russia)", and the
   preview's reasons say "only for IR, RU" for a contained endpoint.
 
+### Countries with their own addresses
+
+A node may keep addresses only for some countries at one of its picks
+(`relays.providerSet[].audiences`, `convex/edgeAudiences.ts`; pure rules in
+`convex/lib/edges/audience.ts` and the count in `convex/lib/edges/providerSet.ts`). Where a
+location only for some countries (§ Addresses only for some countries) holds them for every node
+picking it, this holds them for one node at one pick, so one location (an L4 region) or one CDN
+zone can serve addresses for Iran, for Russia and for everyone at once, and a country may have its
+own zone: each zone is its own location, so a country's entry on another zone's pick is a zone of
+its own, and an entry on the zone everyone uses shares it. Dormant until an entry is saved.
+
+- **An entry** is `{codes, want}`: the countries (1 to 4, on the censored-country list) and how
+  many addresses of each transport the pick carries the node keeps for them. The count is over
+  **every pick holding exactly those countries** (`Requirement.audienceWants`), so a second pick
+  with an entry and no count is a second place: upkeep makes their address at the first place
+  nothing holds back (cooling, a refused create, untrusted, the account's cap), in set order. One
+  pick's entries never share a country. Addresses for them anywhere on the node count, and only
+  addresses contained to exactly them.
+- **An address made for them** carries them from when it is planned (`edges.audienceIntent`,
+  written by the rotation that makes it: upkeep's fill of their count, `edgeRotations.audience`,
+  or the replacement of an address of theirs at a pick whose entry covers its countries) and
+  takes them as its audience at its first publication wherever it is (`audienceAtPublish` with
+  `made`), under the taint rule of § Addresses only for some countries. At a location only for
+  some countries, the location's countries rule: an address made for others is never published
+  there, and one made for exactly them keeps the location's switch-date rule. Everything there applies
+  from then on: who is handed it (fail closed), never the template, the detector's
+  `outside_audience`, probes only from its countries, names moving only within one audience.
+  It is also **meant for** them (§ Locations meant for a country, `meantFor` on the published
+  edge): their members are handed it before everyone's addresses, which stay their backup.
+- **Theirs only.** A spare made for them fills their count or replaces one of their addresses;
+  no fill of everyone's addresses takes it (the coverage fill, the lanes, the origin-wide fill,
+  a count of everyone's, a replacement of everyone's address). The pool admits it as theirs
+  (`publishedRefOf` reads the intent), and the pool grows by their count (it is part of the
+  deficit), within `MAX_DESIRED_PUBLISHED`. With address lanes on, the pool is the lanes, plus
+  the contained addresses in use (theirs, or at a location only for some countries), plus what
+  the counts still ask for.
+- **A pick serving its countries only** (`audienceOnly`): no address everyone is handed is
+  made there from then on (no coverage, no diversity, no count of everyone's, no fill, no
+  replacement of everyone's address). It needs an entry first, no count of everyone's there, and
+  another pick carrying each of its transports for everyone (`edge.audience_leaves_none`).
+  Addresses for everyone already there stay. No count for everyone may be saved there while it is
+  on. Switching it off, or removing its last entry, makes it serve everyone again (checked
+  against the pool's size).
+- **Guards:** ordering by country on (`edge.audience_needs_steering`), the rendezvous walk on the
+  node (`edge.audience_needs_spread`; the node keeps it while it holds an entry), never at a
+  location only for some countries (`edge.audience_on_only_location`; and such a location may not
+  be switched to only while a node keeps entries there, `edge.audience_on_pick`), and the pool's
+  size (`edge.set_too_large`, judged as the set will stand: nothing cooling, and the edited pick
+  as if its location and account were on). A provision for countries no pick holds is refused at start
+  (`edge.audience_not_picked`).
+- **Admin API:** `POST relays/{id}/providers/{locationId}/audiences {codes, want}` (want null =
+  a place with no count of its own; `{remove: true}` drops the entry: addresses made for it stay
+  theirs and keep serving), audited `edge.relay.pick_audience`;
+  `POST relays/{id}/providers/{locationId}/audience-only {only}`, audited
+  `edge.relay.pick_audience_only`. Attention `location_short` names the countries
+  (`facts.countries`) when the short count is theirs.
+- **Privacy-family keys** are never handed a contained address, so an entry on a node serving
+  privacy keys only buys addresses nobody is handed: use it on Freedom nodes.
+- **Rollback:** `edgeAudiences:clearAudiencePicksForRollback` (no arguments; refused while a run
+  for some countries is in flight): every entry and "countries only" flag goes, then every
+  rotation and address forgets what it was made for (each a page at a time, in the background). Addresses already
+  contained stay contained (the build before knows them); a spare made for them and never
+  published becomes an ordinary spare (nobody was handed it). To go back further, the rollback of
+  § Addresses only for some countries follows.
+
 ### Latency over the whole path
 
 Every member's traffic leaves the service at the NODE, so the nearest address is not always the
@@ -7437,6 +7502,14 @@ untested pick; a setup run's "Try it" checks its addresses before it shows the c
 switch off nothing changes. Rollback: deploy the older build; an address FCP confirmed in a
 location that was never ticked keeps serving while in use, but a spare confirmed that way needs a
 person's test again before it can be put in use (the older gate reads only ticked locations).
+
+**Countries with their own addresses** (§ "Countries with their own addresses", 2026-11): three
+optional fields (`relays.providerSet[].audiences` and `.audienceOnly`, `edges.audienceIntent`,
+`edgeRotations.audience`), no setting, no migration; nothing changes until an entry is saved.
+Rollback: `edgeAudiences:clearAudiencePicksForRollback` with no arguments (refused while a run
+for some countries is in flight); it pages in the background through nodes, rotations, then
+addresses, and the older build deploys once its last page ran (contained addresses stay
+contained, as the older build knows them).
 
 **FCP's own test of a send** adds one setting (`edge.sni.autoConfirm`, off), a receipt kind
 (`client_check`), a receipt state (`failed`) and one optional receipt field (`check`); the

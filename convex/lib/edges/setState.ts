@@ -155,6 +155,10 @@ export async function setPicksOf(
         ...(onlyCodesOf(location.forCountries)
           ? { onlyCodes: onlyCodesOf(location.forCountries)! }
           : {}),
+        ...(p.audiences?.length
+          ? { audiences: p.audiences.map((a) => ({ codes: a.codes, want: pickWant(a.want) })) }
+          : {}),
+        ...(p.audienceOnly ? { audienceOnly: true } : {}),
       },
       location,
       account,
@@ -165,17 +169,23 @@ export async function setPicksOf(
   return out;
 }
 
+/**
+ * An edge as the requirement reads it. One made for some countries and not
+ * published yet is read with the audience its first publication gives it
+ * (`audienceIntent`), so it lowers their count and never everyone's.
+ */
 export function publishedRefOf(
-  edge: Pick<Doc<'edges'>, 'locationId' | 'provider' | 'placeKey' | 'audience'>,
+  edge: Pick<Doc<'edges'>, 'locationId' | 'provider' | 'placeKey' | 'audience' | 'audienceIntent'>,
   listenerKey: string,
 ): PublishedRef {
+  const audience = edge.audience?.length ? edge.audience : edge.audienceIntent;
   return {
     listenerKey,
     locationId: (edge.locationId as string | undefined) ?? null,
     provider: edge.provider ?? null,
     locationKey:
       edge.provider && edge.placeKey ? locationKeyOf(edge.provider, edge.placeKey) : null,
-    ...(edge.audience?.length ? { audience: edge.audience } : {}),
+    ...(audience?.length ? { audience } : {}),
   };
 }
 
@@ -202,6 +212,10 @@ export async function setStateOf(
   db: DatabaseReader,
   relay: Relay,
   now: number = Date.now(),
+  opts: {
+    /** Judge this pick as if it were usable (a count saved while it is off asks once it is on). */
+    assumeUsable?: string;
+  } = {},
 ): Promise<SetState> {
   const rows = await db
     .query('relayListeners')
@@ -214,7 +228,9 @@ export async function setStateOf(
     listenerKey: l.listenerKey,
     carriers: (picks ?? [])
       .filter(
-        (p) => p.usable && carries(p, l, { websocketNode, originAddress: relay.originAddress }),
+        (p) =>
+          (p.usable || p.pick.locationId === opts.assumeUsable) &&
+          carries(p, l, { websocketNode, originAddress: relay.originAddress }),
       )
       .map((p) => p.pick.locationId),
   }));
