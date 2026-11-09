@@ -68,14 +68,26 @@ function runSentence(s: OriginStatus): string {
   return again ? `${lead}. Members keep what they have.` : `${lead}.`;
 }
 
-/** What to do about an attention item: the first sentence of its fix, in plain words. */
-function nextStep(code: string): string {
+/**
+ * What to do about an attention item: the first sentence of its fix, in plain
+ * words. Without one, where to look: the node (from a list), or its address
+ * rows (on the node itself, never "Open the node").
+ */
+function nextStep(code: string, onNode: boolean): string {
   const fix = codeFix(code);
   const first = fix ? /^.+?[.!?](?=\s|$)/.exec(plainWords(fix))?.[0] : undefined;
-  return first ?? 'Open the node to see what to do.';
+  return (
+    first ??
+    (onNode ? 'The address rows below say what to do.' : 'Open the node to see what to do.')
+  );
 }
 
-export function originSentence(s: OriginStatus): string {
+/**
+ * One plain sentence for one origin. `onNode`: said on the node's own page,
+ * so it never sends the reader to "open the node".
+ */
+export function originSentence(s: OriginStatus, opts: { onNode?: boolean } = {}): string {
+  const onNode = opts.onNode === true;
   if (s.runId) return runSentence(s);
   switch (s.kind) {
     case 'removing':
@@ -87,10 +99,12 @@ export function originSentence(s: OriginStatus): string {
         return `${plural(s.offline, 'address is', 'addresses are')} offline.`;
       // Any run (a spare, a new address, a replacement), not only a replacement.
       if (s.code === 'rotation_failed')
-        return 'The last run on this node failed. Open the node to see which step.';
+        return onNode
+          ? 'The last run on this node failed. Its row under Activity shows which step.'
+          : 'The last run on this node failed. Open the node to see which step.';
       // What is wrong, then what to do: never only that something waits.
       const code = s.code ?? 'needs_operator';
-      return `${plainWords(codeLabel(code))}. ${nextStep(code)}`;
+      return `${plainWords(codeLabel(code))}. ${nextStep(code, onNode)}`;
     }
     case 'off':
       return 'Fronting is switched off for this node.';
