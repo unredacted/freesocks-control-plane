@@ -1391,15 +1391,15 @@ The paths are spelled only in `src/client/routes/admin/servers/lib/routes.ts` (t
 pages) and `src/client/routes/admin/edges/lib/routes.ts` (the pages that came from the old Edges
 section, docs/edges.md "Admin section"):
 
-| Tab       | Path                                                                    | What                                                                                                                                            |
-| --------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Overview  | `/admin/servers`                                                        | Status, ONE Action needed list, Automatic work, tiles, readiness, fronted nodes, activity (`?protect=1`: protect sheet, `?run=<id>`: progress). |
-| Nodes     | `/admin/servers/nodes[?backend=<slug>]`                                 | Below. **All origins** (`/admin/servers/origins`) is its technical view; an origin's details are at `/admin/servers/origins/<slug>/details`.    |
-| Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`     | Every censored country, one country in full, and the country lists.                                                                             |
-| SNIs      | `/admin/servers/snis[/<slug>]`, `/admin/servers/snis/find[/<network>]`  | The SNI lists, one list, and finding more SNIs.                                                                                                 |
-| Probes    | `/admin/servers/probes`                                                 | Outside reachability: the matrix, runs, probe now, custom targets.                                                                              |
-| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates` | The provider accounts, one account, and every template.                                                                                         |
-| Settings  | `/admin/servers/settings[?section=]`                                    | Every edge setting. Its sub-views: **Backends** (`/admin/servers/settings/backends`) and **Mode pools** (`/admin/servers/settings/mode-pools`). |
+| Tab       | Path                                                                         | What                                                                                                                                            |
+| --------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview  | `/admin/servers`                                                             | Status, ONE Action needed list, Automatic work, tiles, readiness, fronted nodes, activity (`?protect=1`: protect sheet, `?run=<id>`: progress). |
+| Nodes     | `/admin/servers/nodes[?backend=<slug>]`                                      | Below. **All origins** (`/admin/servers/origins`) is its technical view; an origin's details are at `/admin/servers/origins/<slug>/details`.    |
+| Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`          | Every censored country, one country in full, and the country lists.                                                                             |
+| SNIs      | `/admin/servers/snis[/lists/<slug>]`, `/admin/servers/snis/find[/<network>]` | The SNI lists, one list, and finding more SNIs.                                                                                                 |
+| Probes    | `/admin/servers/probes`                                                      | Outside reachability: the matrix, runs, probe now, custom targets.                                                                              |
+| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates`      | The provider accounts, one account, and every template.                                                                                         |
+| Settings  | `/admin/servers/settings[?section=]`                                         | Every edge setting. Its sub-views: **Backends** (`/admin/servers/settings/backends`) and **Mode pools** (`/admin/servers/settings/mode-pools`). |
 
 **Backends** lists the backend servers keys are issued on (add, edit, remove; a link to each
 Remnawave server's nodes) and the node logging privacy check. **Mode pools** says which mode groups

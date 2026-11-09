@@ -4335,7 +4335,7 @@ address.
 
 ### The page
 
-Admin -> Servers -> SNIs (`/admin/servers/snis`, `/admin/servers/snis/{slug}`).
+Admin -> Servers -> SNIs (`/admin/servers/snis`, `/admin/servers/snis/lists/{slug}`).
 The admin copy calls a family a **name list** and its target the **cover site** (the real site a
 REALITY port shows anyone without a member's key). A list usually starts from a node's page (§ A
 transport's names).
