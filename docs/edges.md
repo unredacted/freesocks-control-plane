@@ -2436,16 +2436,38 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   details, **Remove fronting** (`restore-direct`; the restore workflow's phase is shown while it
   runs, and a removal held at the direct check says why and offers **Skip restoring direct**,
   § "Direct-Host hides and the restore workflow"). `?test=<edgeId>` opens the test card.
-- **Edge providers** (`/admin/edges/providers`): cards (Connected / Problem / Not tested, "3 of 6
-  addresses used" from `providers/usage`, and the trust line: "Trusted automatically, checked
-  with a real session on <date>" / "Tried with a real session by you on <date>" / "Reached from
-  outside. Not yet tried with a real session"); a card opens the account page, whose
-  **Locations** card lists each location with its trust, addresses and cost note (Add location,
-  Switch off, Make default, Remove, and the per-location **Trust override**), and its
-  **Countries** card grades each location from each checked country (Works, Blocked, Some
-  addresses blocked, Not checked yet, with the age), with the location marks (**Mark for a
-  country**: Works there, Blocked there, Use the checks) and a conflict line where a mark
-  disagrees with the checks; the inventory tab reads one location at a time.
+- **Providers** (`/admin/servers/providers`, `EdgesProviders`): the header says how many addresses
+  are used of the accounts' limits and what they cost against their monthly caps, from the
+  accounts' `cost` (`providers/spendWords.ts`: "Spend: about ... a month", "Against caps: ... of
+  ... on N accounts", and the accounts at their cap); then one card per account (Connected /
+  Problem / Not tested, "3 of 6 addresses used" from `providers/usage`, its spend against its cap,
+  and the trust line: "Trusted automatically, checked with a real session on <date>" / "Tried
+  with a real session by you on <date>" / "Reached from outside. Not yet tried with a real
+  session"). **Add account** (`?add=1[&provider=]`; the old `?edit=new` redirects) and **All
+  templates**. A card opens the account page (`/admin/servers/providers/<id>?tab=`, tabs in
+  `providers/accountList.ts`):
+  - **Overview**: readiness (credentials, qualification, capacity), the record, the Cost card
+    (what you pay and the monthly cap), the Limits card, and availability (enable, disable,
+    delete).
+  - **Locations**: each location with its trust, addresses and cost note (Add location, Switch
+    off, Make default, Remove, and the per-location **Trust override**).
+  - **Countries**: each location graded from each checked country (Works, Blocked, Some
+    addresses blocked, Not checked yet, with the age), with the location marks (**Mark for a
+    country**: Works there, Blocked there, Use the checks) and a conflict line where a mark
+    disagrees with the checks.
+  - **Templates**: the templates this account can use (its own and its provider's shared ones),
+    which one is in use, and the same editor and actions as All templates (`?template=<id>`,
+    `templates/TemplatesPanel.svelte`).
+  - **Inventory**: what lives at the provider, one location at a time.
+  - **Credentials and DNS**: the credentials (write-only), the account's settings and what the
+    last test saw, what it reaches, what a DNS account does, certificates and domains.
+
+  **All templates** (`/admin/servers/providers/templates`) lists every provider's templates.
+  The old provider-filtered view (`?provider=P[&template=T]`, also from
+  `/admin/edges/templates`) lands on the first account of P (the Providers list order) on its
+  Templates tab, or on the account T is only for; with no account of P the page shows P only
+  (`templates/list.ts` `templateRedirect`).
+
 - **Countries** (`/admin/edges/countries`, `countries/CountriesPage`): every censored country in
   one line each (addresses and names that work or are blocked there, nodes with no working
   address there, how many members there hold a blocked address, the newest evidence); a country
@@ -2464,7 +2486,7 @@ the quarantine resolver; an origin that is not a
 backend node and has no edge yet shows the first-edge card: provision one, where a named, tested
 account is allowed before it is trusted and the edge waits unpublished, or import a front), the
 per-account page
-(`/admin/edges/providers/<id>`), **Templates**, **Probes** (the old `/admin/telemetry/probes`
+(`/admin/servers/providers/<id>`, above), **All templates**, **Probes** (the old `/admin/telemetry/probes`
 redirects; a **Sources** panel says whether each source brings back evidence, a failing one
 with its last failure in words; a target's run history is grouped by round, control vantages
 labelled "control", and for an edge each round's finding per country) and **Settings** (Basics, Advanced sections, maintenance, delivery places). Codes

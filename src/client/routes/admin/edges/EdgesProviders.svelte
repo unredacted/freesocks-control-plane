@@ -1,9 +1,11 @@
 <script lang="ts">
   /**
-   * Provider accounts (`/admin/servers/providers`) as cards: state, addresses
-   * used, the trust line. A card opens the account page (the table with every
-   * column lives there). `?edit=new` opens the add-account flow, on the
+   * Provider accounts (`/admin/servers/providers`): the addresses used and the
+   * spend against the monthly caps over every account, then one card per
+   * account (state, addresses used, spend against its cap, the trust line). A
+   * card opens the account page. `?add=1` opens the add-account flow, on the
    * provider `?provider=` names when there is one (a DNS account first, say).
+   * The old `?edit=new` redirects to `?add=1` (servers/lib/legacyRoutes.ts).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { Button } from '@client/components/ui/button';
@@ -17,12 +19,14 @@
   import SectionHeader from './components/SectionHeader.svelte';
   import ProviderAccountStepper from './forms/ProviderAccountStepper.svelte';
   import { edgesPaths } from './lib/routes';
+  import { sortAccounts } from './providers/accountList';
+  import { spendSummary, spendSummaryWords } from './providers/spendWords';
   import ProviderCard from './simple/ProviderCard.svelte';
 
   const qc = useQueryClient();
   const providers = providersQuery();
   const usage = providersUsageQuery();
-  const edit = searchParam('edit');
+  const add = searchParam('add');
   const presetParam = searchParam('provider');
   const preset = $derived(
     (EDGE_PROVIDER_IDS as readonly string[]).includes(presetParam.value ?? '')
@@ -30,11 +34,8 @@
       : undefined,
   );
 
-  const accounts = $derived(
-    [...(providers.data?.accounts ?? [])].sort(
-      (a, b) => Number(!a.enabled) - Number(!b.enabled) || a.name.localeCompare(b.name),
-    ),
-  );
+  const accounts = $derived(sortAccounts(providers.data?.accounts ?? []));
+  const spend = $derived(spendSummaryWords(spendSummary(accounts)));
   const usageOf = (id: string) => usage.data?.accounts.find((u) => u.id === id) ?? null;
   const used = $derived(usage.data?.totals.liveEdges ?? null);
   const capacity = $derived(
@@ -51,16 +52,19 @@
 
 <SectionHeader
   title="Providers"
-  description={used !== null && capacity !== null
-    ? `${used} of ${capacity} addresses used across your accounts.`
-    : 'The accounts FCP creates addresses in.'}
+  description={[
+    used !== null && capacity !== null
+      ? `${used} of ${capacity} addresses used across your accounts.`
+      : 'The accounts FCP creates addresses in.',
+    ...spend,
+  ].join(' ')}
 >
   {#snippet actions()}
     <!-- Every template in one list (the old Advanced -> Templates). -->
     <Button size="sm" variant="outline" onclick={() => router.navigate(edgesPaths.templates())}>
       All templates
     </Button>
-    <Button size="sm" onclick={() => (edit.value = 'new')}>Add account</Button>
+    <Button size="sm" onclick={() => (add.value = '1')}>Add account</Button>
   {/snippet}
 </SectionHeader>
 
@@ -78,7 +82,7 @@
       A provider account is one set of credentials at a cloud or CDN provider, plus where FCP
       creates addresses. It becomes trusted when a real session first tries one of its addresses.
     </p>
-    <Button class="mt-4" size="sm" onclick={() => (edit.value = 'new')}>Add account</Button>
+    <Button class="mt-4" size="sm" onclick={() => (add.value = '1')}>Add account</Button>
   </div>
 {:else}
   <ul class="space-y-2" aria-label="Provider accounts">
@@ -89,10 +93,10 @@
 {/if}
 
 <Sheet.Root
-  open={edit.value === 'new'}
+  open={add.value === '1'}
   onOpenChange={(o) => {
     if (!o) {
-      edit.value = null;
+      add.value = null;
       presetParam.value = null;
     }
   }}
@@ -105,13 +109,13 @@
       </Sheet.Description>
     </Sheet.Header>
     <div class="flex-1 overflow-y-auto p-4">
-      {#if edit.value === 'new'}
+      {#if add.value === '1'}
         {#key preset}
           <ProviderAccountStepper
             {onCreated}
             provider={preset}
             onCancel={() => {
-              edit.value = null;
+              add.value = null;
               presetParam.value = null;
             }}
           />

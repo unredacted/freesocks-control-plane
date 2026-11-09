@@ -17,7 +17,9 @@
  *   /admin/edges/setup[?relay=S]           -> S's details, else /admin/servers/origins
  *   /admin/edges/relays/:slug              -> /admin/servers/origins/:slug/details
  *   /admin/edges/providers[/:id]           -> /admin/servers/providers[/:id]
- *   /admin/edges/templates                 -> /admin/servers/providers/templates
+ *   /admin/{edges,servers}/providers?edit=new -> /admin/servers/providers?add=1 (the add-account flow)
+ *   /admin/edges/templates                 -> /admin/servers/providers/templates (with ?provider=P
+ *                                             that page lands on P's first account, Templates tab)
  *   /admin/edges/probes                    -> /admin/servers/probes
  *   /admin/edges/settings                  -> /admin/servers/settings
  *   /admin/edges/names[/:slug]             -> /admin/servers/snis[/:slug]
@@ -35,6 +37,18 @@ function renameParam(search: string, from: string, to: string): string {
   for (const [k, v] of params) out.append(k === from ? to : k, v);
   const s = out.toString();
   return s ? `?${s}` : '';
+}
+
+/** The add-account flow was `?edit=new`; it is `?add=1` now (other params kept, in order). */
+function editNewToAdd(search: string): string {
+  const params = new URLSearchParams(search);
+  if (params.get('edit') !== 'new') return search;
+  const out = new URLSearchParams();
+  for (const [k, v] of params) {
+    if (k === 'edit') out.append('add', '1');
+    else out.append(k, v);
+  }
+  return `?${out.toString()}`;
 }
 
 /** Old Edges prefixes that only changed their prefix: old -> new, most specific first. */
@@ -60,6 +74,8 @@ export function legacyRedirect(pathname: string, search = ''): string | null {
   if (path === '/admin/servers/pools' || path === '/admin/remnawave')
     return `${serversPaths.pools()}${search}`;
   if (path === '/admin/telemetry/probes') return `${edgesPaths.probes()}${search}`;
+  if (path === '/admin/servers/providers' && new URLSearchParams(search).get('edit') === 'new')
+    return `${edgesPaths.providers()}${editNewToAdd(search)}`;
 
   // The old Edges section, page by page.
   if (path !== '/admin/edges' && !path.startsWith('/admin/edges/')) return null;
@@ -73,6 +89,7 @@ export function legacyRedirect(pathname: string, search = ''): string | null {
   }
   const relay = /^\/admin\/edges\/relays\/([^/]+)$/.exec(path);
   if (relay) return `/admin/servers/origins/${relay[1]}/details${search}`;
+  if (path === '/admin/edges/providers') return `${edgesPaths.providers()}${editNewToAdd(search)}`;
   if (path === '/admin/edges/templates') return `${edgesPaths.templates()}${search}`;
   if (path === '/admin/edges/probes') return `${edgesPaths.probes()}${search}`;
   if (path === '/admin/edges/settings') return `${edgesPaths.settings()}${search}`;

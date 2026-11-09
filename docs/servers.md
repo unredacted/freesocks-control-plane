@@ -1398,7 +1398,7 @@ section, docs/edges.md "Admin section"):
 | Countries | `/admin/servers/countries[/<CC>]`, `/admin/servers/countries/lists`     | Every censored country, one country in full, and the country lists.                                                                             |
 | SNIs      | `/admin/servers/snis[/<slug>]`, `/admin/servers/snis/find[/<network>]`  | The SNI lists, one list, and finding more SNIs.                                                                                                 |
 | Probes    | `/admin/servers/probes`                                                 | Outside reachability: the matrix, runs, probe now, custom targets.                                                                              |
-| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates` | The provider accounts, one account, and every template.                                                                                         |
+| Providers | `/admin/servers/providers[/<id>]`, `/admin/servers/providers/templates` | Accounts with spend against caps (`?add=1` adds one), one account (`?tab=`, docs/edges.md), and all templates.                                  |
 | Settings  | `/admin/servers/settings[?section=]`                                    | Every edge setting. Its sub-views: **Backends** (`/admin/servers/settings/backends`) and **Mode pools** (`/admin/servers/settings/mode-pools`). |
 
 **Backends** lists the backend servers keys are issued on (add, edit, remove; a link to each
