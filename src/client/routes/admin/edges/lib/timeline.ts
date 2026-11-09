@@ -30,3 +30,12 @@ const ACTOR_LABELS: Record<TimelineRow['actorType'], string> = {
 export function actorLabel(row: TimelineRow): string {
   return ACTOR_LABELS[row.actorType] ?? 'System';
 }
+
+/**
+ * A node's Activity: its timeline without probe runs, which come every few
+ * minutes and live on the Probes tab. A changed verdict stays.
+ */
+const PROBE_RUNS = new Set(['probe.requested', 'probe.run']);
+export function nodeActivityEntries<T extends { action: string }>(entries: readonly T[]): T[] {
+  return entries.filter((e) => !PROBE_RUNS.has(e.action));
+}

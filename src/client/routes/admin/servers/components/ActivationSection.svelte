@@ -122,7 +122,7 @@
     intent.stage === 'candidates_verified' || intent.stage === 'awaiting_approval',
   );
   // A fronted node with no protection open, at a point where protecting it is the next
-  // step. A live one gets a quiet "Open in Edges" instead: the protect sheet opens on it
+  // step. A live one gets a quiet "Open fronting" instead: the protect sheet opens on it
   // and says so when it is already protected (re-protecting after a removal starts there).
   let unprotected = $derived(!direct && !intent.protection && !intent.retirement);
   let canProtect = $derived(unprotected && (intent.stage === 'machine_ready' || reviewable));
@@ -356,7 +356,7 @@
       </Button>
     {/if}
     {#if canReprotect}
-      <Button size="sm" variant="outline" onclick={protect}>Open in Edges</Button>
+      <Button size="sm" variant="outline" onclick={protect}>Open fronting</Button>
     {/if}
     {#if needsWipeConfirmation}
       <Button size="sm" variant="outline" disabled={busy} onclick={() => (wipedOpen = true)}>

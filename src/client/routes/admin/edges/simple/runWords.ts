@@ -451,7 +451,7 @@ export function nodeAutomationWords(
 ): { line: string; spares: string | null } {
   const spares = config.autoProvisionToDesired
     ? null
-    : 'FCP makes no spares on its own (Edges, Settings). After each replacement, add and test the next spare yourself.';
+    : 'FCP makes no spares on its own (Settings, Automatic work). After each replacement, the next spare has to be added.';
   if (!config.enabled)
     return {
       line: 'Edge automation is off for every node. Turn on automatic replacement on Servers, Overview.',
@@ -459,7 +459,7 @@ export function nodeAutomationWords(
     };
   if (!config.autoRotate)
     return {
-      line: 'Automatic rotation is off for every node (Edges, Settings). This switch does nothing until it is on.',
+      line: 'Automatic rotation is off for every node (Settings, Automatic work). This switch does nothing until it is on.',
       spares: null,
     };
   if (node.setupOwned && node.runLive === false)

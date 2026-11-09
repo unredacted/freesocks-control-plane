@@ -69,7 +69,9 @@
     try {
       await patchSniConfig({ autoConfirm: v });
       toast.success(
-        v ? 'FCP tests new SNIs on each node by itself.' : 'Only a person tests new SNIs now.',
+        v
+          ? 'FCP tests new SNIs on each node by itself.'
+          : 'FCP no longer tests new SNIs. A send waits for a test on each node.',
       );
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));

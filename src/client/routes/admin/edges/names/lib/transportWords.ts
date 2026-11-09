@@ -8,6 +8,7 @@
  * Words: a family is a "name list", its target the "cover site" (the real site
  * the port shows anyone without a member's key).
  */
+import { transportName } from '../../../../../lib/transportName';
 import {
   usableCandidate,
   type SniCandidateRow,
@@ -451,7 +452,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     if (c.toSend > 0 && (!view.switches.backendChanges || !view.switches.backendSetUp))
       out.push({
         key: `names-blocked:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(c.toSend, 'checked SNI')} cannot reach the nodes: ${
+        text: `${transportName(t.tag)}: ${plural(c.toSend, 'checked SNI')} cannot reach the nodes: ${
           view.switches.backendChanges
             ? 'this backend is not set up yet'
             : 'changes to the backend are off'
@@ -461,7 +462,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     else if (c.toSend > 0 && t.send?.phase !== 'writing')
       out.push({
         key: `names-send:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(c.toSend, 'checked SNI')} to send to the node.`,
+        text: `${transportName(t.tag)}: ${plural(c.toSend, 'checked SNI')} to send to the node.`,
         ...(first ? { nodeUuid: first } : {}),
       });
     if (t.send?.phase === 'panel_confirmed')
@@ -469,19 +470,19 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
         if (n.waitingTest > 0)
           out.push({
             key: `names-test:${t.transportUuid}:${n.relaySlug}`,
-            text: `${t.tag} on ${n.nodeName}: ${plural(n.waitingTest, 'SNI')} ${n.waitingTest === 1 ? 'waits' : 'wait'} for a test.${n.autoTest?.state === 'testing' ? ' FCP is testing one now.' : ''}`,
+            text: `${transportName(t.tag)} on ${n.nodeName}: ${plural(n.waitingTest, 'SNI')} ${n.waitingTest === 1 ? 'waits' : 'wait'} for a test.${n.autoTest?.state === 'testing' ? ' FCP is testing one now.' : ''}`,
             ...(n.nodeUuid ? { nodeUuid: n.nodeUuid } : {}),
           });
     if (t.list.suggestions > 0)
       out.push({
         key: `names-suggest:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(t.list.suggestions, 'suggested SNI')} to add.`,
+        text: `${transportName(t.tag)}: ${plural(t.list.suggestions, 'suggested SNI')} to add.`,
         ...(first ? { nodeUuid: first } : {}),
       });
     if (c.failing > 0)
       out.push({
         key: `names-failing:${t.transportUuid}`,
-        text: `${t.tag}: ${plural(c.failing, 'SNI')} no longer served by the cover site.`,
+        text: `${transportName(t.tag)}: ${plural(c.failing, 'SNI')} no longer served by the cover site.`,
         family: t.list.slug,
       });
   }

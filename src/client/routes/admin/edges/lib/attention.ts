@@ -14,6 +14,7 @@
  *          attentionSubject(item), attentionFactsLine(item), attentionHeading(item, plain),
  *          attentionActionLabel(item, plain), AttentionPlan, AttentionConfirmCopy.
  */
+import { transportName } from '../../../../lib/transportName';
 import type { z } from 'zod';
 import type { AttentionItem as AttentionItemSchema } from '../../../../../shared/contracts/edges';
 import type { AttentionAction } from '../../../../../shared/contracts/edgeCodes';
@@ -230,11 +231,15 @@ function factString(item: AttentionItem, key: string): string | null {
   return typeof v === 'string' && v !== '' ? v : null;
 }
 
-/** What the row is about, in words: "origin <slug>", plus the listener when known. */
+/**
+ * What the row is about, in words: "origin <slug>", plus its transport when
+ * known (named by its tag; a listener with no backend transport by its key).
+ */
 export function attentionSubject(item: AttentionItem): string {
   const parts: string[] = [];
   if (item.relaySlug) parts.push(`Origin ${item.relaySlug}`);
-  if (item.listenerKey) parts.push(`listener ${item.listenerKey}`);
+  if (item.listenerTag) parts.push(`transport ${transportName(item.listenerTag)}`);
+  else if (item.listenerKey) parts.push(`listener ${item.listenerKey}`);
   return parts.join(', ');
 }
 
