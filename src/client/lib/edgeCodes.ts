@@ -1075,7 +1075,7 @@ const COPY = {
   country_defaults_waiting: {
     label: 'Country defaults waiting',
     explain:
-      "A country's default picks are not written on this node yet: it needs the rendezvous walk, ordering by country, or room in its pool first. Its members there keep the shared addresses meanwhile.",
+      "A country's default picks are not written on this node yet: it needs the rendezvous walk, ordering by country, room in its pool, or room for more locations (six at most) first. Its members there keep the shared addresses meanwhile.",
     fix: 'Switch the node to the rendezvous walk on the node page (it moves members once), turn on ordering by country, or opt the node out of that country.',
   },
   audience_stale_keys: {

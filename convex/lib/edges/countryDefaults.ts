@@ -41,6 +41,8 @@ export interface DefaultsPlanInput<P extends DefaultsPick> {
   carries: (locationId: string) => boolean;
   /** Whether the node has a live address at a location (a pick the defaults added stays while it does). */
   liveAt: (locationId: string) => boolean;
+  /** The provider options a pick the defaults add starts from (its account's defaults, copied in). */
+  optionsOf?: (locationId: string) => string | undefined;
   now: number;
 }
 
@@ -68,14 +70,17 @@ export function handCodesOf(set: readonly DefaultsPick[]): string[] {
   ];
 }
 
-/** The defaults that apply to a node: none of its countries kept by hand or opted out. */
+/** The defaults as they apply to a node: without the countries it keeps by hand or opted out of. */
 export function defaultsFor(
   set: readonly DefaultsPick[],
   defaults: readonly CountryDefault[],
   optOut: readonly string[],
 ): CountryDefault[] {
   const hand = handCodesOf(set);
-  return defaults.filter((d) => !d.codes.some((c) => hand.includes(c) || optOut.includes(c)));
+  // A default for several countries still serves those not kept by hand or opted out.
+  return defaults
+    .map((d) => ({ ...d, codes: d.codes.filter((c) => !hand.includes(c) && !optOut.includes(c)) }))
+    .filter((d) => d.codes.length > 0);
 }
 
 /**
@@ -134,7 +139,9 @@ export function defaultsPlan<P extends DefaultsPick>(
     void _a;
     // A pick the defaults added, with nothing of theirs left and nothing live there: gone.
     if (pick.fromDefault && entries.length === 0 && !input.liveAt(pick.locationId)) continue;
-    out.push(entries.length > 0 ? { ...rest, audiences: entries } : rest);
+    // One the defaults added serves its countries only, whatever was switched since.
+    const only = pick.fromDefault ? { audienceOnly: true as const } : {};
+    out.push(entries.length > 0 ? { ...rest, ...only, audiences: entries } : { ...rest, ...only });
   }
   // Locations the node did not pick: added as picks serving their countries only.
   for (const [locationId, here] of wanted) {
@@ -147,9 +154,11 @@ export function defaultsPlan<P extends DefaultsPick>(
         fromDefault: true as const,
       };
     });
+    const options = input.optionsOf?.(locationId);
     out.push({
       locationId,
       addedAt: now,
+      ...(options !== undefined ? { options } : {}),
       audiences: entries,
       audienceOnly: true,
       fromDefault: true,

@@ -85,6 +85,25 @@ describe('writing the defaults on a node', () => {
     ]);
   });
 
+  test('a default for several countries still serves those not kept by hand or opted out', () => {
+    const both = { codes: ['IR', 'RU'], picks: [{ locationId: 'L1', want: 1 }] };
+    const out = plan([{ locationId: 'L1', addedAt: 1 }], { defaults: [both], optOut: ['IR'] });
+    expect(out.providerSet[0]!.audiences).toEqual([
+      { codes: ['RU'], want: 1, addedAt: NOW, fromDefault: true },
+    ]);
+  });
+
+  test('a pick it added serves its countries only again, and starts from the given options', () => {
+    const once = plan([], { optionsOf: (id) => (id === 'L2' ? '{"x":1}' : undefined) }).providerSet;
+    expect(once.find((p) => p.locationId === 'L2')!.options).toBe('{"x":1}');
+    const switched = once.map((p) => {
+      const { audienceOnly: _o, ...rest } = p;
+      void _o;
+      return rest;
+    });
+    expect(plan(switched).providerSet.every((p) => p.audienceOnly)).toBe(true);
+  });
+
   test("the node's own entries stay as they are", () => {
     const set: DefaultsPick[] = [
       { locationId: 'L1', addedAt: 1, audiences: [{ codes: ['RU'], want: 1, addedAt: 2 }] },

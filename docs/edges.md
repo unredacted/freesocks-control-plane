@@ -5085,22 +5085,27 @@ in order, each with a count of each transport it carries or none (a fallback pla
 
 - **Upkeep writes them** (each pass, before step 5W) onto every ready node as entries of its picks
   (§ Countries with their own addresses), marked `fromDefault`. A location the node does not pick
-  is added as a pick serving its countries only (`audienceOnly`, `fromDefault`). Only locations
+  is added as a pick serving its countries only (`audienceOnly`, `fromDefault`; kept so, and
+  starting from its account's options copied in, as any pick joining a node). Only locations
   that carry one of the node's freedom transports (a transport only freedom-family modes use);
   nodes with none take nothing. The next pass fills the counts as for any entry.
 - **Never on its own:** a node a guided setup owns (after go-live, the next pass), one with a
-  rotation running (the next pass), and one where writing them would need the operator: ordering
-  by country off, no rendezvous walk (switching it moves members once), or a pool that would grow
-  past its size. Such a node waits (`relays.countryDefaultsWaiting`, attention
+  rotation running (the next pass), a quarantined one or one under a restore (left alone), and
+  one where writing them would need the operator: ordering by country off, no rendezvous walk
+  (switching it moves members once), more than six locations, or a pool that would grow past its
+  size (an entry added or a count raised, judged with the defaults' locations as if usable). Such a node waits (`relays.countryDefaultsWaiting`, attention
   `country_defaults_waiting` with the refusal code).
 - **The node's own entries win.** A country a node keeps by hand (any entry not from the defaults)
-  takes no default there, and the defaults' entries for it go. A hand entry at a pick replaces a
+  takes no default there, and the defaults' entries for it go (a default for several countries
+  still serves the others there, as an entry for them alone). A hand entry at a pick replaces a
   default entry sharing a country there. A node may opt out of a country
   (`relays.countryDefaultsOptOut`).
 - **Changing or removing a default** follows on every node at its next pass. A removed entry's
   addresses stay theirs and keep serving; a pick the defaults added goes with its last entry once
   nothing is live there (until then it serves its countries only). A guided re-protect keeps the
   picks the defaults added.
+- **A location a default names** may not be switched to only for some countries
+  (`edge.audience_on_pick`).
 - **Saving** needs listed countries (1 to 4, none already in another default), ordering by country
   on, 1 to 4 locations, distinct, none only for some countries, and at least one with a count.
   Billable once applied: **the preview** says, per node, what it would add or remove, why it would

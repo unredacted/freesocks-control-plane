@@ -384,7 +384,7 @@ export const ATTENTION_KINDS = [
   'audience_pool_down',
   'audience_stale_keys',
   // A country's default picks wait on a node (docs/edges.md "A country's default picks"):
-  // it needs the rendezvous walk, ordering by country, or room in its pool first.
+  // it needs the rendezvous walk, ordering by country, room in its pool or for more locations first.
   'country_defaults_waiting',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];

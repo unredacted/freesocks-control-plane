@@ -105,6 +105,15 @@ async function onlyRefusal(
   for (const node of await nodesPicking(db, location._id))
     if (node.providerSet?.some((p) => p.locationId === location._id && p.audiences?.length))
       return AUDIENCE_ON_PICK(node);
+  // A country's default picks name it: upkeep would write their entries here.
+  const inDefault = (await db.query('countryDefaults').collect()).find((d) =>
+    d.picks.some((p) => p.locationId === location._id),
+  );
+  if (inDefault)
+    return {
+      code: 'edge.audience_on_pick',
+      message: `The default picks of ${inDefault.codes.join(', ')} name this location: a location only for some countries holds no country's own`,
+    };
   for (const node of await nodesPicking(db, location._id)) {
     if (node.edgePick !== 'hrw1')
       return {

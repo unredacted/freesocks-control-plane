@@ -324,6 +324,80 @@ describe('upkeep writing the defaults', () => {
   });
 });
 
+describe('what holds the defaults back', () => {
+  test('a quarantined node, or one under a restore, is left alone', async () => {
+    const w = await world();
+    await irDefault(w);
+    const now = Date.now();
+    await w.t.run((ctx) =>
+      ctx.db.patch(w.relayId, {
+        restore: {
+          purpose: 'release_requirement',
+          phase: 'freeze',
+          startedAt: now,
+          updatedAt: now,
+          attempt: 0,
+        },
+      }),
+    );
+    expect(await apply(w)).toEqual({ changed: false });
+    expect((await relayOf(w)).providerSet!.some((p) => p.audiences?.length)).toBe(false);
+  });
+
+  test('a node that would pass six locations waits', async () => {
+    const w = await world();
+    const more: Id<'edgeLocations'>[] = [];
+    for (let i = 0; i < 5; i++) {
+      const acct = await createAccount(w.t, { name: `acct-x${i}`, qualified: true });
+      await w.t.mutation(internal.edgeProviderAccounts.recordTest, { id: acct, ok: true });
+      more.push(
+        await w.t.run(
+          async (ctx) =>
+            (await ctx.db.query('edgeLocations').collect()).find((l) => l.accountId === acct)!._id,
+        ),
+      );
+    }
+    // The node already picks A, B and four more: six.
+    await w.t.run(async (ctx) => {
+      const r = (await ctx.db.get(w.relayId))!;
+      await ctx.db.patch(w.relayId, {
+        providerSet: [
+          ...r.providerSet!,
+          ...more.slice(0, 4).map((locationId) => ({ locationId, addedAt: 1 })),
+        ],
+      });
+    });
+    await setDefault(
+      w,
+      ['IR'],
+      [
+        { locationId: w.a._id, want: 1 },
+        { locationId: more[4]!, want: null },
+      ],
+    );
+    expect(await apply(w)).toMatchObject({ waiting: 'edge.set_too_many_picks' });
+  });
+
+  test('a location a default names cannot be switched to only for some countries', async () => {
+    const w = await world();
+    await irDefault(w);
+    await w.t.run((ctx) =>
+      ctx.db.patch(w.c._id, { forCountries: { codes: ['IR'], updatedAt: 1 } }),
+    );
+    await expect(
+      w.t.mutation(internal.edgeAudiences.setOnly, { id: w.c._id, only: true }),
+    ).rejects.toThrow(/default picks of IR name this location/);
+  });
+
+  test("a pick the defaults add starts from its account's options, copied in", async () => {
+    const w = await world();
+    await irDefault(w);
+    await apply(w);
+    const added = (await relayOf(w)).providerSet!.find((p) => p.locationId === w.c._id)!;
+    expect(added.options).toEqual(expect.any(String));
+  });
+});
+
 describe('the rollback', () => {
   test('every default goes; nodes keep what they wrote as their own entries', async () => {
     const w = await world();

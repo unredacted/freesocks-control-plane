@@ -23,7 +23,8 @@ import { assertAdmission } from './lib/edges/maintenance';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { resolveMemberCountryConfig } from './memberCountry';
 import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
-import { MAX_PICK_WANT } from './lib/edges/providerSet';
+import { MAX_PICK_WANT, MAX_PROVIDER_PICKS } from './lib/edges/providerSet';
+import { checkPickOptions } from './edgeTemplates';
 import { carries, setPicksOf, setStateOf } from './lib/edges/setState';
 import { websocketNodeOf } from './lib/edges/websocketNode';
 import { listenersOf } from './relayListeners';
@@ -58,6 +59,9 @@ function notReady(relay: Relay): string | null {
   if (relay.deleting) return 'deleting';
   if (!relay.enabled) return 'disabled';
   if (relay.setupOwned) return 'setup_owned';
+  // The safety workflows hold the set still: quarantine, a restore.
+  if (relay.quarantine) return 'quarantined';
+  if (relay.restore) return 'restore_in_progress';
   return null;
 }
 
@@ -94,25 +98,47 @@ async function nodePlan(
   const live = new Set(
     (await liveEdgesOfRelay(db, relay._id)).map((e) => e.locationId as string | undefined),
   );
+  // A pick the defaults add starts from its account's defaults, copied in (as
+  // any pick joining a node), so a later account edit does not move it.
+  const picked = new Set((relay.providerSet ?? []).map((p) => p.locationId as string));
+  const options = new Map<string, string>();
+  for (const row of rows) {
+    const id = row.pick.locationId as string;
+    if (picked.has(id) || !carried.has(id)) continue;
+    const r = await checkPickOptions({ db }, row.location, row.account, {});
+    if (r.ok) options.set(id, JSON.stringify(r.options));
+  }
   const plan = defaultsPlan({
     providerSet: (relay.providerSet ?? []) as unknown as DefaultsPick[],
     defaults,
     optOut: relay.countryDefaultsOptOut ?? [],
     carries: (id) => carried.has(id),
     liveAt: (id) => live.has(id),
+    optionsOf: (id) => options.get(id),
     now,
   });
   let refusal: string | null = null;
-  if (plan.changed && plan.added.length > 0) {
-    if (!(await resolveMemberCountryConfig(db)).steer) refusal = 'edge.audience_needs_steering';
-    else if (relay.edgePick !== 'hrw1') refusal = 'edge.audience_needs_spread';
+  if (plan.changed) {
+    const before = relay.providerSet?.length ?? 0;
+    if (plan.providerSet.length > MAX_PROVIDER_PICKS && plan.providerSet.length > before)
+      refusal = 'edge.set_too_many_picks';
+    else if (plan.added.length > 0 && !(await resolveMemberCountryConfig(db)).steer)
+      refusal = 'edge.audience_needs_steering';
+    else if (plan.added.length > 0 && relay.edgePick !== 'hrw1')
+      refusal = 'edge.audience_needs_spread';
     else {
-      const after = await setStateOf(
-        db,
-        { ...relay, providerSet: plan.providerSet as Relay['providerSet'], cooling: [] },
-        now,
-      );
-      if (after.published.length + after.deficit > MAX_DESIRED_PUBLISHED)
+      // Judged as the set will stand: nothing cooling, and the defaults'
+      // locations as if usable (one switched off now asks once it is on). A
+      // change (an entry added, a count raised) that grows the pool past its
+      // size waits; one that shrinks it never does.
+      const size = async (providerSet: Relay['providerSet']) => {
+        const s = await setStateOf(db, { ...relay, providerSet, cooling: [] }, now, {
+          assumeUsable: locations,
+        });
+        return s.published.length + s.deficit;
+      };
+      const after = await size(plan.providerSet as Relay['providerSet']);
+      if (after > MAX_DESIRED_PUBLISHED && after > (await size(relay.providerSet)))
         refusal = 'edge.set_too_large';
     }
   }

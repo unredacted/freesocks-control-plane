@@ -213,8 +213,11 @@ export async function setStateOf(
   relay: Relay,
   now: number = Date.now(),
   opts: {
-    /** Judge this pick as if it were usable (a count saved while it is off asks once it is on). */
-    assumeUsable?: string;
+    /**
+     * Judge these picks as if they were usable (a count saved while its pick is
+     * off asks once it is on).
+     */
+    assumeUsable?: string | readonly string[];
   } = {},
 ): Promise<SetState> {
   const rows = await db
@@ -223,13 +226,20 @@ export async function setStateOf(
     .collect();
   const listeners = rows.filter((l) => l.deployed && l.enabled && !l.retired);
   const picks = await setPicksOf(db, relay);
+  const assumed = new Set<string>(
+    opts.assumeUsable === undefined
+      ? []
+      : typeof opts.assumeUsable === 'string'
+        ? [opts.assumeUsable]
+        : opts.assumeUsable,
+  );
   const websocketNode = await websocketNodeOf(db, relay.origin);
   const setListeners: SetListener[] = listeners.map((l) => ({
     listenerKey: l.listenerKey,
     carriers: (picks ?? [])
       .filter(
         (p) =>
-          (p.usable || p.pick.locationId === opts.assumeUsable) &&
+          (p.usable || assumed.has(p.pick.locationId as string)) &&
           carries(p, l, { websocketNode, originAddress: relay.originAddress }),
       )
       .map((p) => p.pick.locationId),
