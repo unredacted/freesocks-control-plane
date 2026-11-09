@@ -611,7 +611,7 @@ without a provider set; manual provisioning, a guided setup run's chosen account
 and a pick of the node's provider set (the operator chose it, § "Provider sets") work
 regardless.
 
-Each **DNS provider's** account (capability `role: 'dns'`, Cloudflare today) says what it is
+Each **DNS provider's** account (capability `role: 'dns'`: Cloudflare and Gandi) says what it is
 for: **DNS only** (the default) or **DNS and fronting** (`edgeProviderAccounts.frontsTraffic`,
 chosen in the account form and on the account page; `frontsAllowed` in
 `providers/capabilities.ts` reads it, and an edge provider's account always fronts). A DNS-only
@@ -624,7 +624,10 @@ selection passes it over. Nor does attention ask to trust it (no `account_unqual
 carries no traffic). Switching an account to DNS only leaves its published edges as they are.
 The choice is deliberately separate from `l7.autoSelect`: letting automation pick L7 fronts
 must not turn a DNS account into one (§ "Adding a DNS provider", § "Cloudflare fronts"). It
-replaced the deployment-wide switch `edge.l7.dnsProvidersFront` (§ "Deploy notes").
+replaced the deployment-wide switch `edge.l7.dnsProvidersFront` (§ "Deploy notes"). A
+provider that can only do DNS (capability `dnsOnly`: Gandi) has no such choice: its accounts
+are DNS only, `frontsTraffic: true` is refused, and `frontsAllowed` is false whatever the row
+says.
 
 ### Publication
 
@@ -6976,10 +6979,14 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
 A **DNS provider** holds the records FCP writes for L7 fronts and fronts no member traffic
 itself unless its account is set to DNS and fronting (capability `role: 'dns'`, mirrored in
 `src/client/lib/edgeProviderMeta.ts`; the admin console lists it under "DNS providers" and the
-Fastly and CloudFront forms ask for one first; § "L7 edges"). Cloudflare is the only one today. The seam is the `DnsClient` interface in
+Fastly and CloudFront forms ask for one first; § "L7 edges"). There are two: Cloudflare and
+Gandi LiveDNS (§ "Gandi LiveDNS"). The seam is the `DnsClient` interface in
 `convex/lib/edges/providers/dns/types.ts`, which the Fastly and CloudFront adapters use (through their
 `dnsClientFor` factory) instead of any vendor SDK, and which the origin names of front nodes
-(`nodeIntentOps.ts`) are written through:
+(`nodeIntentOps.ts`) and the address names (`edgeNameOps.ts`) are written through. Every one
+of them gets its client from ONE factory, `providers/dns/clients.ts` (`dnsClientForZone` /
+`dnsClientForProvider`), chosen by the DNS account's provider; an action that has the account
+row uses `lib/edges/dnsAccountClient.ts`. The interface:
 
 - `createRecord`, `findRecordsByName`, `getRecord`, `deleteRecord` over A, AAAA and CNAME
   records in ONE zone, and the optional `updateRecord` (a record's content changed in place: how
@@ -6997,16 +7004,66 @@ Fastly and CloudFront forms ask for one first; § "L7 edges"). Cloudflare is the
 - `zoneId`, `zoneName` and `accountId` (the FCP account the credentials came from), recorded in
   every DNS ledger resource so cleanup acts on the zone the records were written into.
 
+**Ownership without record comments.** A provider whose records cannot hold a comment keeps
+the marker in FCP's own **`dnsRecordMarks`** table instead (`convex/dnsRecordMarks.ts`; one
+row per record FCP wrote, keyed by zone, name, type and content), read and written through the
+`DnsMarkStore` the action hands the client (`lib/edges/dnsMarks.ts`; `DnsZoneConfig.marks`).
+The client reports the stored marker as the record's `comment`, so every caller's ownership
+check is unchanged. The marker is never written into the zone (no TXT record or anything else
+a resolver could read): a public marker would let anyone who sees one front name link it to
+the others. A client without a store reads and deletes but refuses to create
+(`dns_marks_unavailable`).
+
 A new DNS provider needs: the id with its credentials and settings schemas (§ "Adding an edge
 provider", steps 1 and 2; its placement names the zone, its catalog lists the zones its token
-reaches), a `DnsClient` beside `cloudflareDns.ts`
+reaches; a zone id other than Cloudflare's 32 hex characters also needs the Fastly and
+CloudFront placements' `DNS_ZONE_ID` to accept it), a `DnsClient` beside `cloudflareDns.ts`
 (no transport retries, logging off, errors reduced to an HTTP status and a short code, never a
-response body), a credential test that accepts every token kind the provider issues,
-`role: 'dns'` and `providesDns: true` in its capability row, and `dnsClientFor` / the origin-name
-writer / the address-name writer (`edgeNameOps.ts`, whose factory already picks by provider)
-choosing the client by the DNS account's provider instead of assuming Cloudflare. A
-provider that can never front would also need the `EdgeProvider` front lifecycle made optional
-for it; that split has not been needed yet.
+response body; record comments, or the mark store), a credential test that accepts every token
+kind the provider issues, `role: 'dns'` and `providesDns: true` in its capability row (and
+`dnsOnly` when it can never front), a case in `providers/dns/clients.ts`, and its rows in the
+wire contract.
+
+### Gandi LiveDNS
+
+`convex/lib/edges/providers/gandi.ts` (the account: credential test, domain list, location
+check) and `providers/dns/gandiDns.ts` (the `DnsClient`), hand-rolled on `providerFetch`:
+there is no maintained Gandi SDK for JavaScript. A Gandi account is a DNS account only
+(`dnsOnly`): LiveDNS proxies nothing, so its edge lifecycle refuses to plan and answers that
+nothing exists.
+
+- **Credentials:** a personal access token (`Authorization: Bearer`) of the organization that
+  owns the domains, limited to them, with the permission to see and change their DNS records.
+  The deprecated API key is not accepted. Gandi tokens expire: rotate the account's
+  credentials before the date set on the token. A 401, or a 403 from a token without the
+  LiveDNS permission, is `token_rejected`.
+- **Domain listing:** LiveDNS lists only the personal organization's domains unless asked
+  for another organization's by its `sharing_id`, so the credential test and the zone list
+  first list the organizations the token acts for (`GET /v5/organization/organizations`, at
+  most 10) and then each one's domains. A token that may not list organizations falls back
+  to the plain listing.
+- **Locations** are domains, named by the domain itself (LiveDNS has no zone ids: `zoneId`
+  equals `zoneName`).
+- **Records** are record sets (name, type, a list of values) with no id and no comment. A
+  `DnsRecord` is one value; its id is `<type>|<fqdn>|<value>`, so a create whose answer was
+  lost is found again by what it holds. A create reads the set first: absent, it POSTs the set;
+  present, it PATCHes the value in (`add_rrset_values`); the same value already there is FCP's
+  only when its mark says so (a lost answer), anyone else's is refused
+  (`dns_record_exists`). The mark is written before the record and dropped when the create is
+  refused for good. A delete removes the set when the value is its last, else PATCHes the value
+  out. An update replaces a one-value set with one PUT (a moved name is never without a
+  record) and otherwise adds and removes in one PATCH.
+- **What LiveDNS does not do:** nothing is proxied (`dns_proxy_unsupported`), no CNAME is
+  flattened (`flatten_cname` is refused, `flattensAllCnames` is false; LiveDNS's apex alias is
+  the separate ALIAS type), record tags are ignored, and a TTL below 300 seconds (or
+  Cloudflare's automatic 1) is sent as 300.
+- **Delegation:** a domain can sit in LiveDNS without being served by it. `readZone` answers
+  `not_delegated` when the public NS answer names no LiveDNS server (`ns-<n>-<x>.gandi.net`),
+  or none of the hashed servers LiveDNS assigned the zone; a location check reports it as
+  `zone_not_active`. The zone's `/nameservers` answer alone cannot prove delegation: with NS
+  records at the apex it returns those records, not Gandi's servers. A public lookup that
+  fails or answers nothing stays `active`.
+- **Rate limit:** 1,000 requests a minute per address.
 
 **Cloudflare tokens.** FCP accepts both kinds Cloudflare issues. A user API token verifies at
 `/user/tokens/verify`; an account-owned token is unknown there (`1000 Invalid API Token`) and
@@ -7176,6 +7233,16 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | GET    | `^/2020-05-31/distribution/[^/]+/config$`                                           | read the distribution config and its ETag before disabling it                                                                                                               | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | cloudfront | PUT    | `^/2020-05-31/distribution/[^/]+/config$`                                           | disable the distribution (If-Match the ETag read)                                                                                                                           | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| gandi      | GET    | `^/v5/organization/organizations$`                                                  | the organizations the token acts for: whose domains to list                                                                                                                 | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains$ ?per_page`                                                   | list one organization's domains: credential test, zone list                                                                                                                 | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+$`                                                       | read one domain: location check, zone read                                                                                                                                  | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+/nameservers$`                                           | the domain's assigned LiveDNS name servers: is the zone delegated to them                                                                                                   | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+/records/[^/]+$`                                         | every record set at one name: discovery by name                                                                                                                             | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | GET    | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | one record set: read before a write, a record read back, CAA                                                                                                                | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | POST   | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | create a record set holding one value                                                                                                                                       | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | PATCH  | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | add or remove one value of a record set that holds others                                                                                                                   | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | PUT    | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | replace the one value of a record set in one request: a moved name                                                                                                          | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
+| gandi      | DELETE | `^/v5/livedns/domains/[^/]+/records/[^/]+/[^/]+$`                                   | delete a record set whose only value is FCP's                                                                                                                               | https://api.gandi.net/docs/livedns/ (LiveDNS API v5), https://api.gandi.net/docs/organization/ and https://api.gandi.net/docs/authentication/, 2026-11-09                                                                                                                                                                                                                                                                                                       |
 
 ## Deploy notes
 

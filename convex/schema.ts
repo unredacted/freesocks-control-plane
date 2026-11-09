@@ -135,6 +135,7 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
   v.object({ type: v.literal('cloudfront'), secretAccessKey: v.string() }),
+  v.object({ type: v.literal('gandi'), apiToken: v.string() }),
 );
 // Account settings: credential identifiers and intent defaults. WHERE an
 // account's edges live is never here: it is a location
@@ -184,6 +185,8 @@ const relayProviderSettings = v.union(
     type: v.literal('cloudfront'),
     accessKeyId: v.string(), // the IAM access key's public id; not a secret
   }),
+  // DNS only: the personal access token is all there is.
+  v.object({ type: v.literal('gandi') }),
 );
 // Where an edge's resources live (`lib/edges/accountSettings.ts`
 // EDGE_PLACEMENT_SCHEMAS validates every new one). A CDN front's keys are
@@ -231,6 +234,8 @@ const relayEdgePlacement = v.union(
     zoneId: v.optional(v.string()),
     zoneName: v.optional(v.string()),
   }),
+  // A Gandi LiveDNS domain (its id is its name).
+  v.object({ type: v.literal('gandi'), zoneId: v.string(), zoneName: v.string() }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
@@ -2493,6 +2498,16 @@ export default defineSchema({
   // because a name can MOVE to the address that replaces its own. Every record
   // carries the marker `fcp-name:<this id>`; each pass reads the name back
   // before it writes, so an answer lost mid-call is settled by discovery.
+  // FCP's private ownership marks for DNS records whose provider cannot hold a
+  // comment (Gandi LiveDNS): one row per record FCP wrote, removed with it.
+  // Never served (convex/dnsRecordMarks.ts).
+  dnsRecordMarks: defineTable({
+    zone: v.string(),
+    name: v.string(),
+    type: v.union(v.literal('A'), v.literal('AAAA'), v.literal('CNAME')),
+    content: v.string(),
+    marker: v.string(),
+  }).index('by_zone_name', ['zone', 'name']),
   edgeNames: defineTable({
     relayId: v.id('relays'),
     // The address the name serves (its records point there once `live`).

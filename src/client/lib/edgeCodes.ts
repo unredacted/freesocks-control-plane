@@ -130,8 +130,8 @@ const COPY = {
   token_rejected: {
     label: 'Token rejected',
     explain:
-      'Cloudflare rejected this token, both as a user API token and as an account API token.',
-    fix: 'FCP accepts user API tokens and account API tokens. Check that the token is active and has the permissions a Cloudflare account needs.',
+      'The provider rejected this token. Cloudflare: both as a user API token and as an account API token. Gandi: as a personal access token, or one without the DNS permissions.',
+    fix: 'Check that the token is active, not expired, and has the permissions the account form lists for this provider. Cloudflare takes user and account API tokens; Gandi takes personal access tokens only.',
   },
   token_not_active: {
     label: 'Token not active',
@@ -215,8 +215,9 @@ const COPY = {
   },
   zone_not_active: {
     label: 'Zone not active yet',
-    explain: 'The zone is not active at the provider yet.',
-    fix: 'Finish setting up the zone at the provider, then check the location again.',
+    explain:
+      "The zone is not active at the provider yet, or (Gandi) the domain's name servers are not Gandi LiveDNS, so records written there would never be served.",
+    fix: "Finish setting up the zone at the provider (for Gandi, point the domain's name servers at LiveDNS), then check the location again.",
   },
   zone_flattens_cnames: {
     label: 'Zone flattens every CNAME',
