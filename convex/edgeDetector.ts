@@ -410,7 +410,10 @@ async function openEdgeIdsOf(
  * Fails closed: a listener without a binding, a tag no mode claims, or one a
  * privacy-family mode also uses is not on the list.
  */
-async function freedomListenersOf(ctx: QueryCtx, origin: Origin): Promise<string[]> {
+export async function freedomListenersOf(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+): Promise<string[]> {
   if (!origin.backendServerId) return [];
   const setup = await ctx.db
     .query('panelSetups')

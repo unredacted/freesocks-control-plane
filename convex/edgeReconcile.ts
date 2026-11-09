@@ -518,6 +518,12 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // still hold a body from before its cutover (counts only).
       if (staleCountDue(origin, now))
         await ctx.scheduler.runAfter(0, internal.edgeOwnPools.countStale, { relayId: origin._id });
+      // A country's default picks: written onto a ready node (or taken away);
+      // the next pass fills their counts from the set as it now stands.
+      const defaults = await ctx.runMutation(internal.edgeCountryDefaults.applyToNode, {
+        relayId: origin._id,
+      });
+      if (defaults.changed) continue;
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
       // A guided setup owns the origin: nothing here publishes or provisions on it.
       if (origin.setupOwned) continue;

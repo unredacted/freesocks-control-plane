@@ -105,6 +105,15 @@ async function onlyRefusal(
   for (const node of await nodesPicking(db, location._id))
     if (node.providerSet?.some((p) => p.locationId === location._id && p.audiences?.length))
       return AUDIENCE_ON_PICK(node);
+  // A country's default picks name it: upkeep would write their entries here.
+  const inDefault = (await db.query('countryDefaults').collect()).find((d) =>
+    d.picks.some((p) => p.locationId === location._id),
+  );
+  if (inDefault)
+    return {
+      code: 'edge.audience_on_pick',
+      message: `The default picks of ${inDefault.codes.join(', ')} name this location: a location only for some countries holds no country's own`,
+    };
   for (const node of await nodesPicking(db, location._id)) {
     if (node.edgePick !== 'hrw1')
       return {
@@ -406,8 +415,11 @@ export const setPickAudience = internalMutation({
           code: 'validation',
           message: `Addresses for them must be 1 to ${MAX_PICK_WANT}, or none here`,
         });
-      // One pick's entries never share a country: each address there is one entry's.
-      const clash = entries.find((x, i) => i !== at && x.codes.some((c) => codes.includes(c)));
+      // One pick's entries never share a country: each address there is one
+      // entry's. An entry of a country's default picks gives way to the node's
+      // own (the defaults leave the countries a node keeps by hand alone).
+      const shares = (x: { codes: string[] }) => x.codes.some((c) => codes.includes(c));
+      const clash = entries.find((x, i) => i !== at && !x.fromDefault && shares(x));
       if (clash)
         throw new ConvexError({
           code: 'validation',
@@ -418,19 +430,26 @@ export const setPickAudience = internalMutation({
         ...(want !== null ? { want } : {}),
         addedAt: at >= 0 ? entries[at]!.addedAt : now,
       };
-      if (at >= 0 && (entries[at]!.want ?? null) === want)
+      if (at >= 0 && !entries[at]!.fromDefault && (entries[at]!.want ?? null) === want)
         return { ok: true as const, changed: false };
-      next = at >= 0 ? entries.map((x, i) => (i === at ? entry : x)) : [...entries, entry];
+      const kept = entries.filter((x, i) => i === at || !(x.fromDefault && shares(x)));
+      const atKept = at >= 0 ? kept.indexOf(entries[at]!) : -1;
+      next = atKept >= 0 ? kept.map((x, i) => (i === atKept ? entry : x)) : [...kept, entry];
     }
     const providerSet = relay.providerSet!.map((p) => {
       if (p.locationId !== a.locationId) return p;
       const { audiences: _a, audienceOnly: _o, ...rest } = p;
       void _a;
       void _o;
-      // A pick serving its countries only, with none left, serves everyone again.
-      return next.length > 0
-        ? { ...rest, audiences: next, ...(p.audienceOnly ? { audienceOnly: true as const } : {}) }
-        : rest;
+      // A pick serving its countries only, with none left, serves everyone again;
+      // one a country's default picks added never does (upkeep removes it).
+      if (next.length > 0)
+        return {
+          ...rest,
+          audiences: next,
+          ...(p.audienceOnly ? { audienceOnly: true as const } : {}),
+        };
+      return p.fromDefault && p.audienceOnly ? { ...rest, audienceOnly: true as const } : rest;
     });
     await assertPoolHolds(ctx.db, relay, providerSet, a.locationId, now);
     await ctx.db.patch(relay._id, { providerSet, updatedAt: now });

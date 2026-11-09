@@ -1382,7 +1382,10 @@ async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Pr
 function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay['providerSet']> {
   const before = relay.providerSet ?? [];
   const add = parsePlan(r).reprotect?.mode === 'add';
-  const out: NonNullable<Relay['providerSet']> = add ? [...before] : [];
+  // A pick a country's default picks added stays (upkeep keeps it in step).
+  const out: NonNullable<Relay['providerSet']> = add
+    ? [...before]
+    : before.filter((p) => p.fromDefault);
   for (const p of runPicks(r)) {
     if (!p.locationId) continue;
     const kept = before.find((x) => x.locationId === p.locationId);
@@ -1396,6 +1399,7 @@ function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay[
       ...(kept?.want !== undefined ? { want: kept.want } : {}),
       ...(kept?.audiences !== undefined ? { audiences: kept.audiences } : {}),
       ...(kept?.audienceOnly ? { audienceOnly: kept.audienceOnly } : {}),
+      ...(kept?.fromDefault ? { fromDefault: kept.fromDefault } : {}),
     };
     const at = out.findIndex((x) => x.locationId === p.locationId);
     if (at >= 0) out[at] = entry;

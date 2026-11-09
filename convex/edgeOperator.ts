@@ -2002,6 +2002,18 @@ export const attention = internalQuery({
       // whose own addresses for it are all blocked there or cannot be handed
       // out puts its members on shared ones (the fallback; its evidence still
       // never moves them); keys still on a body from before the cutover (info).
+      // A country's default picks wait on this node (edgeCountryDefaults.ts).
+      if (relay.countryDefaultsWaiting)
+        items.push({
+          ...base(relay),
+          id: `country_defaults_waiting:${relay._id}`,
+          kind: 'country_defaults_waiting',
+          severity: 'warning',
+          code: relay.countryDefaultsWaiting.code,
+          facts: {},
+          action: 'open_relay',
+          since: iso(relay.countryDefaultsWaiting.at),
+        });
       if (relay.enabled && relay.ownPools?.length) {
         const { published: pool } = await publishedEdgesOf(
           ctx,

@@ -84,6 +84,7 @@ export const ATTENTION_RANK = [
   'audience_pool_down',
   'audience_idle',
   'audience_stale_keys',
+  'country_defaults_waiting',
   'sni_family_thin',
   'health_stale',
   'pool_rebalance',
