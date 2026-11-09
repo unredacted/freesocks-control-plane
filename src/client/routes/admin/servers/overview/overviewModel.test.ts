@@ -229,7 +229,7 @@ describe('mergeAttention', () => {
         source: 'snis',
         severity: 'warning',
         chip: { kind: 'sni', label: 'SNIs' },
-        action: { label: 'Open the SNI list', href: '/admin/servers/snis/list-a' },
+        action: { label: 'Open the SNI list', href: '/admin/servers/snis/lists/list-a' },
       },
       {
         key: 'main:names-suggest:t1',
