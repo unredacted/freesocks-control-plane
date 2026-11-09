@@ -1,33 +1,30 @@
 <script lang="ts">
   /**
-   * Names found on one network (`/admin/servers/snis/find/:slug`; docs/edges.md
+   * SNIs found on one network (`/admin/servers/snis/find/:slug`; docs/edges.md
    * "Finding names"): the sites grouped by the address they live on (each a
-   * possible cover site with the names it serves), and every found name. A
-   * name list made from a group starts with the cover site only; its names
-   * are added from the list below, through the list's normal path.
+   * possible cover site with the SNIs it serves), and every found SNI. "Make
+   * an SNI list with this cover site" opens the one "Add an SNI list" dialog
+   * (AddSniListDialog), prefilled: that cover site, port 443, HTTP/2 only, this
+   * network. The list starts with the cover site only; its SNIs are added from
+   * the list below, through the list's normal path.
    *
    * All wording lives in ./lib/huntWords.ts (pure, unit-tested).
    */
-  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
-  import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
   import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
-  import * as Dialog from '@client/components/ui/dialog';
-  import { Input } from '@client/components/ui/input';
-  import { Label } from '@client/components/ui/label';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '@client/lib/api';
-  import { createFamily, familiesQuery, huntNetworkQuery, invalidateSni } from '@client/lib/sniApi';
+  import { familiesQuery, huntNetworkQuery } from '@client/lib/sniApi';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
+  import AddSniListDialog from './AddSniListDialog.svelte';
   import HuntTable from './HuntTable.svelte';
-  import { ctWords, familySlugFor } from './lib/huntWords';
+  import type { AddListFrom } from './lib/addList';
+  import { ctWords } from './lib/huntWords';
   import { sniErrorWords } from './lib/words';
 
   let { slug }: { slug: string } = $props();
-  const qc = useQueryClient();
-  const uid = $props.id();
   const view = huntNetworkQuery(() => slug);
   // Every family (the network list names only the first ones), those on this network.
   const families = familiesQuery();
@@ -42,45 +39,21 @@
   const GROUPS_FIRST = 20;
   let allGroups = $state(false);
 
-  // --- a family from a group ---------------------------------------------------------------------
+  // --- an SNI list from a group: the one dialog, prefilled ---------------------------------------
   let open = $state(false);
-  let target = $state('');
-  let label = $state('');
-  let familySlug = $state('');
-  let busy = $state(false);
-  let slugOk = $derived(/^[a-z0-9][a-z0-9-]{0,39}$/.test(familySlug.trim()));
+  let from = $state<AddListFrom>({ kind: 'site' });
   function startFamily(best: string) {
-    target = best;
-    familySlug = familySlugFor(best);
-    label = best.replace(/^www\./, '');
+    from = {
+      kind: 'site',
+      prefill: { coverSite: best, port: 443, requireH2: true, network: slug },
+    };
     open = true;
-  }
-  async function makeFamily() {
-    if (!slugOk || busy) return;
-    busy = true;
-    try {
-      await createFamily({
-        slug: familySlug.trim(),
-        label: label.trim() || target,
-        targetAddress: target,
-        targetPort: 443,
-        requireH2: true,
-        network: slug,
-      });
-      open = false;
-      toast.success('SNI list made. Add its SNIs from the list below. Each is checked first.');
-    } catch (e) {
-      toast.error(sniErrorWords(codeOf(e)));
-    } finally {
-      busy = false;
-      invalidateSni(qc);
-    }
   }
 </script>
 
 <p class="mb-2 text-sm">
   <Link href={edgesPaths.findNames()} class="text-muted-foreground underline underline-offset-4">
-    Find SNIs
+    Find more
   </Link>
 </p>
 
@@ -181,41 +154,9 @@
   </Card>
 {/if}
 
-<Dialog.Root bind:open>
-  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-md`}>
-    <Dialog.Header>
-      <Dialog.Title>Make an SNI list with this cover site</Dialog.Title>
-      <Dialog.Description>
-        Its cover site is <span class="font-mono">{target}</span> on port 443, over HTTP/2, on this network.
-        A list's cover site never changes.
-      </Dialog.Description>
-    </Dialog.Header>
-    <form
-      class="space-y-3"
-      onsubmit={(e) => {
-        e.preventDefault();
-        void makeFamily();
-      }}
-    >
-      <div class="space-y-1.5">
-        <Label for={`${uid}-label`}>Name</Label>
-        <Input id={`${uid}-label`} bind:value={label} autocomplete="off" />
-      </div>
-      <div class="space-y-1.5">
-        <Label for={`${uid}-slug`}>Short id</Label>
-        <Input
-          id={`${uid}-slug`}
-          bind:value={familySlug}
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck={false}
-          aria-invalid={!slugOk}
-        />
-      </div>
-      <Dialog.Footer class={STICKY_FOOTER}>
-        <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
-        <Button type="submit" disabled={!slugOk || busy}>{busy ? 'Working…' : 'Make it'}</Button>
-      </Dialog.Footer>
-    </form>
-  </Dialog.Content>
-</Dialog.Root>
+<AddSniListDialog
+  bind:open
+  {from}
+  onAdded={() =>
+    toast.success('SNI list made. Add its SNIs from the list below. Each is checked first.')}
+/>

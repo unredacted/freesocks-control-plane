@@ -5,7 +5,7 @@
    * the operations ledger. Every node on the profile restarts Xray once; no
    * member gets a new name until a test on a node proves it accepts them.
    *
-   * Props: open (bindable), transport (managed: it has a name list).
+   * Props: open (bindable), transport (managed: it has an SNI list).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';

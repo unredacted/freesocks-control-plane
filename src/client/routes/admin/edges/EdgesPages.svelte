@@ -24,6 +24,9 @@
   import FamilyPage from './names/FamilyPage.svelte';
   import NamesAdvanced from './names/NamesAdvanced.svelte';
   import FindNetwork from './names/FindNetwork.svelte';
+  import SnisNav from './names/SnisNav.svelte';
+  import CountryChecksCard from './names/CountryChecksCard.svelte';
+  import SniSettings from './names/SniSettings.svelte';
   import CountriesPage from './countries/CountriesPage.svelte';
   import CountryPage from './countries/CountryPage.svelte';
   import ListsPage from './countries/ListsPage.svelte';
@@ -55,13 +58,21 @@
   <SettingsNav current="settings" />
   <EdgesSettings />
 {:else if route.page === 'names'}
+  <SnisNav current="lists" />
   <NamesHome />
 {:else if route.page === 'family'}
   <FamilyPage slug={route.slug} />
 {:else if route.page === 'findNames'}
+  <SnisNav current="find" />
   <NamesAdvanced />
 {:else if route.page === 'findNetwork'}
   {#key route.slug}<FindNetwork slug={route.slug} />{/key}
+{:else if route.page === 'sniChecks'}
+  <SnisNav current="checks" />
+  <CountryChecksCard />
+{:else if route.page === 'sniSettings'}
+  <SnisNav current="settings" />
+  <SniSettings />
 {:else if route.page === 'countries'}
   <CountriesPage />
 {:else if route.page === 'country'}

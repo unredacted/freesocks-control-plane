@@ -3365,8 +3365,9 @@ family's `suggestions`.
 `names/lib/transportWords.ts`), each REALITY transport shows its names the way the node's edges
 show theirs: one status line (how many names this node's members are handed, then what waits:
 waiting for a test here, to send, being checked, failing, suggestions) and one next step at a
-time, in this order: server names off (a link to the switch); **Manage these names with FCP** (the
-call above; the dialog shows the cover site, the suggested network and an unused list with the
+time, in this order: SNI lists off (a link to the switch); **Add an SNI list** (the call above,
+through the one "Add an SNI list" dialog every entry point shares, `names/AddSniListDialog.svelte`,
+prefilled from the port: it shows the cover site, the suggested network and an unused list with the
 same cover site); a send running; **Send to the node** (the plan read first, then the rollout; it
 says every node on the profile restarts Xray once, and that members get nothing new until a test),
 or why it cannot run (changes to the backend off, the backend not set up, each with a link), or
@@ -3377,7 +3378,7 @@ names the cover site serves, best first, grouped by site, a one-line reason each
 Details); names being checked; with no protected node (this node on its page, or any node
 behind the port on the list's page), a line saying FCP hands the names to no member yet and the
 status counts the names on the port, never "in use"; done. A send comes before a test: one test after it proves
-everything new. "More" holds the name list, looking for more names (the cover site's certificate
+everything new. "More" holds the SNI list, looking for more SNIs (the cover site's certificate
 and certificate logs), and Stop managing (an unbind: the names stay); a transport FCP does not
 manage offers editing its names by hand there instead.
 
@@ -4303,19 +4304,32 @@ address.
 
 ### The page
 
-Admin -> Servers -> SNIs (`/admin/servers/snis`, `/admin/servers/snis/{slug}`).
-The admin copy calls a family a **name list** and its target the **cover site** (the real site a
-REALITY port shows anyone without a member's key). A list usually starts from a node's page (§ A
-transport's names).
+Admin -> Servers -> SNIs. The admin copy calls a family an **SNI list** and its target the **cover
+site** (the real site a REALITY port shows anyone without a member's key), and never says "names"
+for SNIs. The tab has four views, as a row of small links under the tab bar (`names/SnisNav.svelte`):
+**Lists** (`/admin/servers/snis`), **Find more** (`/admin/servers/snis/find`), **Checks from inside
+countries** (`/admin/servers/snis/checks`) and **More settings** (`/admin/servers/snis/settings`). A
+list's page is `/admin/servers/snis/{slug}`, so `find`, `checks` and `settings` are refused as list
+slugs (`SNI_LIST_RESERVED_SLUGS` in `src/shared/contracts/sni.ts`; a list made from a port's tag
+skips them).
 
-- The SNIs page: the switch for `edge.sni.enabled` ("SNI lists") at the top, its line saying what is
-  true now, and under it, while it is on, "Test new names with FCP's client check"
+**One "Add an SNI list" dialog** (`names/AddSniListDialog.svelte`, checks in
+`names/lib/addList.ts`) is opened from everywhere, prefilled from where it was opened: blank on the
+Lists view; from a port on a node's page (§ A transport's names: the port's own cover site, the
+suggested network, an unused list with the same cover site; `POST sni/transports/manage`); with a
+found site's cover site, port 443, HTTP/2 only and the network on a network's page; with the seed's
+values for a seed's missing list on Find more. The form (`POST sni/families`) has the cover site and
+port, a name and a short id that follow the cover site until edited, HTTP/2 only, and the network.
+The cover site is fixed at creation.
+
+- Lists: the switch for `edge.sni.enabled` ("SNI lists") at the top, its line saying what is
+  true now, and under it, while it is on, "Test new SNIs with FCP's client check"
   (`edge.sni.autoConfirm`; its line says when the client-check service is not set up or not
-  answering); then each name list in one line with the same counts as its page and the node page
-  (`GET sni/families` gives every list its `delivery` counts and `suggestions`: names in use,
+  answering); then each SNI list in one line with the same counts as its page and the node page
+  (`GET sni/families` gives every list its `delivery` counts and `suggestions`: SNIs in use,
   waiting for a test, to send, being checked, checked, failing, suggestions, and how many ports use
-  it); "Add a name list" (the cover site is fixed at creation).
-- A name list's page: "Rename" by its title changes its name (`label`, up to 80 characters; only
+  it); "Add an SNI list".
+- An SNI list's page: "Rename" by its title changes its name (`label`, up to 80 characters; only
   admins see it; `components/NameDialog.svelte`). The slug is the page's link and never changes,
   and nothing is sent to a node. Then where it is used, one block per port
   (`names/FamilyPort.svelte`) with the node page's status line and next step for every node at once, then each node behind the
@@ -4334,33 +4348,45 @@ transport's names).
   certificate logs. "Add names by hand" (the answer says what happened to every kind of line) and
   Settings ("Use this list", whose line says what is true now; the network; HTTP/2 only; using the
   list on another port with the same cover site; removing it) are folded away below.
-- Checks from inside countries (the Advanced page, below): the switch for `edge.sni.vantage.enabled`,
-  the countries they run from (read only: changed on Settings, Censored countries), the services,
-  "Apply suggestions by themselves", the budget in one line, and the residual risk next to the
-  switch. On a list, every name shows under Details one line per country it was checked from (what
+- Checks from inside countries (`/admin/servers/snis/checks`, `names/CountryChecksCard.svelte`):
+  the switch for `edge.sni.vantage.enabled`, the countries they run from (read only: changed on
+  Settings, Censored countries), the services, "Apply suggestions by themselves", real-site checks,
+  the budget in one line (with a link to its numbers under More settings), and the residual risk
+  next to the switch. On a list, every name shows under Details one line per country it was checked from (what
   the checks saw, then what they suggest against the mark standing today) with **Apply** (or "Use
   the checks instead" on a conflict); a block suggestion or a conflict also puts the name under
   "Action needed".
 
-- Find more (`/admin/servers/snis/find`, "Find more" on the SNIs page; `names/NamesAdvanced.svelte`):
-  what most setups never need, in one place. Finding names: its switch (its line says what is true
+- Find more (`/admin/servers/snis/find`; `names/NamesAdvanced.svelte`):
+  what most setups never need, in one place. Finding SNIs: its switch (its line says what is true
   now), each network's "Include it in the top-sites search" and where its nodes are, in one line
   ("Timed from <city> (<cc>), taken from a node on it" when it came from managing a port, § A
-  transport's names; Change opens the country and city), and what was found for each name list.
+  transport's names; Change opens the country and city), and what was found for each SNI list.
   The top-sites search: how far the last one got, its cost said before it starts (the sites, up to
   how many lookups, about how many hours: `sweepCostWords`), and a secondary "Search the top sites"
   that confirms with the same words; "Stop the search" while one runs. Networks (add, edit, read
-  ranges again, remove). Import (a pasted list into a network or a name list, or a seed file, whose
-  missing networks and name lists are offered to create). Checks from inside countries (above). A
-  network's page (`/admin/servers/snis/find/{slug}`) groups the sites by the address they live on
-  ("Make a name list with this cover site" prefills a list on the network, cover site fixed), lists
-  what was found for the name lists on it, and its found names with three filters (Usable, Not
+  ranges again, remove). Import (a pasted list into a network or an SNI list, or a seed file, whose
+  missing networks are offered to create, and whose missing SNI lists open the "Add an SNI list"
+  dialog with the seed's values). A network's page (`/admin/servers/snis/find/{slug}`) groups the
+  sites by the address they live on ("Make an SNI list with this cover site" opens the "Add an SNI
+  list" dialog, prefilled), lists what was found for the SNI lists on it, and its found SNIs with
+  three filters (Usable, Not
   usable, All), each with a one-line reason, the rest (qualification's verdict, the extra
   handshakes, near the node, the checks from inside countries and OONI, sources, the score) under
-  Details, and a site's other names folded behind its best one. Picked names can be added to a name
+  Details, and a site's other SNIs folded behind its best one. Picked SNIs can be added to an SNI
   list on the network (its normal path), ignored (the name or the whole site), checked again,
-  measured now, or looked up in certificate logs. On a name list's page its own finds are rows of
+  measured now, or looked up in certificate logs. On an SNI list's page its own finds are rows of
   its one list (above). Wording is in `names/lib/huntWords.ts`.
+- More settings (`/admin/servers/snis/settings`, `names/SniSettings.svelte`, catalog in
+  `names/lib/sniKnobs.ts`): every numeric `edge.sni.*` knob, one card per block of
+  `PATCH sni/config`: checking SNIs on lists (`qualifyPerTick`, `requalifyHours`,
+  `suspendAfterFails`, `reportWindowDays`), finding SNIs (`hunt.*`: depth, www. depth, lookups a
+  second, search interval, checks per run, recheck, shortlist, certificate log requests and pages,
+  timing), and the checks from inside countries (`vantage.*`: interval, hourly budget, vantages per
+  check, SNIs per batch, window, vantages and networks a suggestion needs). Each field says its
+  default and range; a card saves only what changed in it. The server clamps every value to the
+  same bounds (`SNI_BOUNDS`, `SNI_HUNT_BOUNDS`, `SNI_VANTAGE_BOUNDS` in `convex/lib/sniConfig.ts`;
+  `sniKnobs.test.ts` pins the page to them). The switches stay on the views they belong to.
 - Attention `sni_family_thin` (info, "Find names", worded "Few names in a name list"): a family on
   a network, bound to a transport, with fewer than three active names that qualify. A name blocked in one country is a last resort
   elsewhere (§ Names for the member's country), so a family that small runs out fast. Counting

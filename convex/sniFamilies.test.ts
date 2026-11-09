@@ -163,6 +163,17 @@ describe('families and names', () => {
     );
   });
 
+  test('a slug that is the address of an SNIs page is refused', async () => {
+    const { call } = await seed();
+    for (const slug of ['find', 'checks', 'settings']) {
+      const res = await call('POST', 'families', { ...family, slug });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe('validation');
+    }
+    const list = await (await call('GET', 'families')).json();
+    expect(list.families).toEqual([]);
+  });
+
   test('a private target is refused; the target of a family cannot be changed', async () => {
     const { call } = await seed();
     const bad = await call('POST', 'families', { ...family, targetAddress: '10.0.0.5' });

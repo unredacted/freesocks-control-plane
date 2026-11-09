@@ -55,7 +55,7 @@ export const manage = internalAction({
         coverSite: c.coverSite,
         resolved: at.ok,
         network: network ? { slug: network.slug, label: network.label } : null,
-        label: `${c.tag} names`,
+        label: `${c.tag} SNIs`,
       };
     }
     const done = await ctx.runMutation(internal.sniTransports.manage, {

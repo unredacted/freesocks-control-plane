@@ -32,6 +32,7 @@ import {
   type Qualification,
 } from './lib/edges/sni/family';
 import { parseRealityTarget } from './lib/edges/inboundMapping';
+import { isReservedSniListSlug } from '../src/shared/contracts/sni';
 import {
   resolveSniConfig,
   resolveSniHuntConfig,
@@ -487,6 +488,9 @@ export async function insertFamily(
   },
 ): Promise<Doc<'sniFamilies'>> {
   if (!SLUG.test(a.slug)) refuse('validation', 'A slug is lowercase letters, digits and dashes');
+  // The SNIs tab's own views sit beside the lists at /admin/servers/snis/<slug>.
+  if (isReservedSniListSlug(a.slug))
+    refuse('validation', 'That slug is the address of an SNIs page. Pick another');
   const exists = await ctx.db
     .query('sniFamilies')
     .withIndex('by_slug', (q) => q.eq('slug', a.slug))

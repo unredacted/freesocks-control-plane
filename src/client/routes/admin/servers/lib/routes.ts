@@ -99,6 +99,8 @@ export function tabOf(r: SectionRoute): ServersTab {
     case 'family':
     case 'findNames':
     case 'findNetwork':
+    case 'sniChecks':
+    case 'sniSettings':
       return 'snis';
     case 'probes':
       return 'probes';

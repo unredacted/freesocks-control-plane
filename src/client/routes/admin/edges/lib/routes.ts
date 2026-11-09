@@ -14,6 +14,8 @@
  *   /admin/servers/countries/lists[/:id]            Countries -> Lists
  *   /admin/servers/snis[/:slug]                     SNIs: the SNI lists, one list
  *   /admin/servers/snis/find[/:slug]                SNIs -> Find more: every network, one network
+ *   /admin/servers/snis/checks                      SNIs -> Checks from inside countries
+ *   /admin/servers/snis/settings                    SNIs -> More settings (the numeric `edge.sni.*` knobs)
  *   /admin/servers/probes                           Probes
  *   /admin/servers/providers[/:id]                  Providers, one account
  *   /admin/servers/providers/templates              Providers -> All templates
@@ -48,6 +50,8 @@ export type EdgesRoute =
   | { page: 'family'; slug: string }
   | { page: 'findNames' }
   | { page: 'findNetwork'; slug: string }
+  | { page: 'sniChecks' }
+  | { page: 'sniSettings' }
   | { page: 'countries' }
   | { page: 'country'; code: string }
   | { page: 'lists' }
@@ -68,9 +72,12 @@ export const EDGES_ROUTES = [
   [`${R}/probes`, 'probes'],
   [`${R}/settings`, 'settings'],
   [`${R}/snis`, 'names'],
-  // Before `:slug`: "find" is no SNI list.
+  // Before `:slug`: "find", "checks" and "settings" are no SNI list (the server
+  // refuses them as slugs: SNI_LIST_RESERVED_SLUGS).
   [`${R}/snis/find`, 'findNames'],
   [`${R}/snis/find/:slug`, 'findNetwork'],
+  [`${R}/snis/checks`, 'sniChecks'],
+  [`${R}/snis/settings`, 'sniSettings'],
   [`${R}/snis/:slug`, 'family'],
   [`${R}/countries`, 'countries'],
   // Before `:code`: "lists" is no country.
@@ -151,6 +158,10 @@ export const edgesPaths = {
   /** Finding more SNIs: every network, and one network's candidates. */
   findNames: () => `${R}/snis/find`,
   findNetwork: (slug: string) => `${R}/snis/find/${enc(slug)}`,
+  /** Checks of SNIs from inside countries. */
+  sniChecks: () => `${R}/snis/checks`,
+  /** The numeric `edge.sni.*` knobs ("More settings"). */
+  sniSettings: () => `${R}/snis/settings`,
   /** The Countries tab: every censored country, and one country in full. */
   countries: () => `${R}/countries`,
   country: (code: string) => `${R}/countries/${enc(code.toUpperCase())}`,
