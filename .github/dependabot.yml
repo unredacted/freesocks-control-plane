@@ -94,13 +94,14 @@ updates:
   # See the comment on the `backend` service in docker-compose.stack.yml.
   #
   # Two of the remaining ones want a human, not a rubber stamp:
-  #  - `tiago2/cap` is the accepted-risk image (docs/beta-deploy.md
+  #  - `tiago2/cap` now lives in /docker/cap/Dockerfile, in this same group.
+  #    It is the accepted-risk image (docs/beta-deploy.md
   #    § "Cap image provenance"). Pinned tag@digest on a real semver tag
   #    (was `latest` until 2026-08-25), so the PR names the actual version
-  #    jump — check the upstream release notes (tiagorangel1/cap, releases
-  #    tagged `standalone@<version>`) before merging. Not every version gets a
-  #    release (none after 3.1.13 as of 3.1.17): then read the commits under
-  #    standalone/ and core/ since the pinned version.
+  #    jump — check tiagozip/cap's capd@<version> notes and review the privacy
+  #    overlay before merging. Its source hashes intentionally fail closed on
+  #    drift; update them only after reviewing capd/ and core/ and passing the
+  #    real migration/privacy/browser integration suite.
   #  - `remnawave/backend` is only the throwaway integration-test panel in
   #    docker-compose.remnawave-test.yml, whose whole job is to catch provider
   #    contract drift. Bumping it is in scope, but it should track whatever
@@ -163,7 +164,7 @@ updates:
   # checks with, production runtime, so daily too). The Convex images' Node
   # (docker/convex-node/) has its own entry below, and the test images theirs.
   - package-ecosystem: docker
-    directories: [/docker, /docker/edge-client-check]
+    directories: [/docker, /docker/edge-client-check, /docker/cap]
     multi-ecosystem-group: stack-images
     patterns: ['*']
     cooldown:

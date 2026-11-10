@@ -15,6 +15,18 @@ permissions:
   contents: read
 
 jobs:
+  s3:
+    name: S3 storage against pinned SeaweedFS
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run test:integration:s3
+
   cap:
     name: Captcha through production Caddy (Chrome and Firefox)
     runs-on: ubuntu-latest
@@ -89,6 +101,7 @@ jobs:
           docker build -f docker/web.Dockerfile .
           docker build -f docker/backup.Dockerfile .
           docker build -f docker/deploy.Dockerfile .
+          docker build docker/cap
       # The Convex backend and dashboard on the patched Node, from the exact
       # refs the stack pins. The overlay's RUN step fails if the binary cannot
       # load against the image's libraries.

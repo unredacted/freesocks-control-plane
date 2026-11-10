@@ -67,7 +67,15 @@ function ignoreLines(text: string): string[] {
  * checklist's `snapshots/*.zip`, the backup sidecar's `*.sql.gz[.age]`, and the
  * age-encrypted `convex-env-*.txt.age` env capture.
  */
-const EXPORT_PATTERNS = ['snapshots', '*.zip', '*.sql', '*.sql.gz*', '*.age', 'convex-env-*'];
+const EXPORT_PATTERNS = [
+  'snapshots',
+  '*.zip',
+  '*.sql',
+  '*.sql.gz*',
+  '*.age',
+  '*.rdb',
+  'convex-env-*',
+];
 
 /** One service's block in a compose file (up to the next top-level key). */
 function serviceBlock(name: string, compose = stack): string {
@@ -253,6 +261,15 @@ function operationalFiles(): string[] {
 }
 
 describe('cross-file image pins', () => {
+  test('Cap always builds the reviewed privacy overlay', () => {
+    const cap = YAML.parse(stack).services.cap;
+    expect(cap.build.context).toBe('docker/cap');
+    expect(cap.image).toBeUndefined();
+    expect(read('../docker/cap/Dockerfile')).toMatch(
+      /^FROM tiago2\/cap:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}$/m,
+    );
+    expect(cap.volumes).toContain('cap_data:/usr/src/app/data');
+  });
   test('the backup sidecar builds on the exact postgres image the server runs', () => {
     const serverImage = stack.match(/image:\s*(postgres:\S+)/)?.[1];
     const sidecarBase = fromRefs(backupDockerfile).find((ref) => ref.startsWith('postgres:'));
