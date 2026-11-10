@@ -263,28 +263,35 @@ describe('what the page says', () => {
         .filter((p) => p.to)
         .map((p) => [p.text, p.to]);
     // A REALITY transport an SNI list manages: the addresses above and the list.
-    expect(text({ reality: true, listLabel: 'Shared cover' })).toBe(
+    const managed = { reality: true, list: { label: 'Shared cover' } };
+    expect(text(managed)).toBe(
       "One of this node's addresses above, with an SNI from the SNI list Shared cover.",
     );
-    expect(links({ reality: true, listLabel: 'Shared cover' })).toEqual([
+    expect(links(managed)).toEqual([
       ["this node's addresses above", 'addresses'],
       ['Shared cover', 'list'],
     ]);
-    // SNIs set by hand: the SNIs section of the page.
-    expect(text({ reality: true, listLabel: null })).toBe(
-      "One of this node's addresses above, with one of its SNIs.",
+    // Known to have no list: its SNIs are set by hand, in the SNIs section of the page.
+    const byHand = { reality: true, list: null };
+    expect(text(byHand)).toBe(
+      "One of this node's addresses above, with one of the SNIs set on it by hand.",
     );
-    expect(links({ reality: true, listLabel: null })).toEqual([
+    expect(links(byHand)).toEqual([
+      ["this node's addresses above", 'addresses'],
+      ['the SNIs set on it by hand', 'snis'],
+    ]);
+    // Not read yet, or the read failed: never said as set by hand.
+    const unknown = { reality: true, list: 'unknown' as const };
+    expect(text(unknown)).toBe("One of this node's addresses above, with one of its SNIs.");
+    expect(text(unknown)).not.toMatch(/by hand|SNI list/);
+    expect(links(unknown)).toEqual([
       ["this node's addresses above", 'addresses'],
       ['its SNIs', 'snis'],
     ]);
     // No SNIs of its own (a WebSocket transport behind its edges).
-    expect(text({ reality: false, listLabel: null })).toBe("One of this node's addresses above.");
-    for (const o of [
-      { reality: true, listLabel: 'x' },
-      { reality: true, listLabel: null },
-      { reality: false, listLabel: null },
-    ])
+    const plain = { reality: false, list: null };
+    expect(text(plain)).toBe("One of this node's addresses above.");
+    for (const o of [managed, byHand, unknown, plain])
       expect(text(o)).not.toMatch(/—|\bnames?\b|needs you/i);
   });
 

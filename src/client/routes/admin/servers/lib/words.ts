@@ -286,28 +286,26 @@ export interface LinePart {
 /**
  * What members get on a transport FCP fronts, said in place of the Host FCP
  * keeps for it (`splitAddresses().owned`): one of the node's addresses (the
- * Addresses section) and, on REALITY, an SNI of the transport's SNI list, or
- * of the SNIs set by hand when no list manages it (`listLabel` null). Reads
- * under "Addresses members get" and under "... will get once live".
+ * Addresses section) and, on REALITY, an SNI. `list` says where the SNI comes
+ * from: the SNI list that manages the transport, `null` when none does (its
+ * SNIs are set by hand), or `'unknown'` while that has not been read or the
+ * read failed. Unknown is never said as "set by hand": the line then names the
+ * transport's SNIs only, and the SNIs section says what could not be read.
+ * Reads under "Addresses members get" and under "... will get once live".
  */
-export function frontedAddressWords(o: { reality: boolean; listLabel: string | null }): LinePart[] {
+export function frontedAddressWords(o: {
+  reality: boolean;
+  list: { label: string } | null | 'unknown';
+}): LinePart[] {
   const addresses: LinePart = { text: "this node's addresses above", to: 'addresses' };
   if (!o.reality) return [{ text: 'One of ' }, addresses, { text: '.' }];
-  return o.listLabel
-    ? [
-        { text: 'One of ' },
-        addresses,
-        { text: ', with an SNI from the SNI list ' },
-        { text: o.listLabel, to: 'list' },
-        { text: '.' },
-      ]
-    : [
-        { text: 'One of ' },
-        addresses,
-        { text: ', with one of ' },
-        { text: 'its SNIs', to: 'snis' },
-        { text: '.' },
-      ];
+  const sni: LinePart[] =
+    o.list === 'unknown'
+      ? [{ text: ', with one of ' }, { text: 'its SNIs', to: 'snis' }]
+      : o.list
+        ? [{ text: ', with an SNI from the SNI list ' }, { text: o.list.label, to: 'list' }]
+        : [{ text: ', with one of ' }, { text: 'the SNIs set on it by hand', to: 'snis' }];
+  return [{ text: 'One of ' }, addresses, ...sni, { text: '.' }];
 }
 
 /**

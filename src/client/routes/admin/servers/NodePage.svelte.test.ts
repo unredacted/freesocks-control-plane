@@ -329,12 +329,31 @@ describe('a fronted transport: what members get', () => {
     expect(router.search).toContain('section=addresses');
   });
 
-  test('no SNI list manages the transport: the line points at the SNIs section', async () => {
-    const p = await page([address('node-a-relay', { fcpOwned: true })]);
+  test('no SNI list manages the transport: its SNIs are set by hand, in the SNIs section', async () => {
+    const byHand = { ...managed, transports: [{ ...managed.transports[0]!, list: null }] };
+    const p = await page([address('node-a-relay', { fcpOwned: true })], { sni: byHand });
     expect(p.line?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
-      "One of this node's addresses above, with one of its SNIs.",
+      "One of this node's addresses above, with one of the SNIs set on it by hand.",
     );
     expect([...p.line!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+      '#node-addresses',
+      '#node-snis',
+    ]);
+  });
+
+  test('a failed SNI read is never said as set by hand', async () => {
+    // No answer for the SNI read: whether a list manages the transport is not known.
+    const p = await page([address('node-a-relay', { fcpOwned: true })]);
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await tick();
+    }
+    const line = p.section.querySelector('[data-testid="fronted-addresses"]')!;
+    expect(line.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      "One of this node's addresses above, with one of its SNIs.",
+    );
+    expect(line.textContent).not.toMatch(/by hand|SNI list/);
+    expect([...line.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
       '#node-addresses',
       '#node-snis',
     ]);

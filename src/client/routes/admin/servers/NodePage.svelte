@@ -423,12 +423,16 @@
                 {#if split.owned.length > 0}
                   <!-- FCP keeps one Host for a fronted transport, as a template: members
                        never get it as it stands, and it is not edited by hand. -->
+                  <!-- Which SNI list manages it is known only once the SNI read answered:
+                       a pending or failed read is never said as "set by hand". -->
                   {@const list =
-                    sniTransports.data?.transports.find(
-                      (t) => t.transportUuid === inbound.transportUuid,
-                    )?.list ?? null}
+                    sniTransports.isError || !sniTransports.data
+                      ? ('unknown' as const)
+                      : (sniTransports.data.transports.find(
+                          (t) => t.transportUuid === inbound.transportUuid,
+                        )?.list ?? null)}
                   <p class="mt-1" data-testid="fronted-addresses">
-                    {#each frontedAddressWords( { reality: inbound.security === 'reality', listLabel: list?.label ?? null } ) as part, i (i)}{#if part.to === 'list' && list}<Link
+                    {#each frontedAddressWords( { reality: inbound.security === 'reality', list } ) as part, i (i)}{#if part.to === 'list' && list && list !== 'unknown'}<Link
                           href={edgesPaths.family(list.slug)}
                           class="text-primary underline underline-offset-4">{part.text}</Link
                         >{:else if part.to === 'addresses' || part.to === 'snis'}{@const to =

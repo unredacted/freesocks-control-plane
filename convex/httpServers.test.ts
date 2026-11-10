@@ -552,9 +552,14 @@ describe('/api/v1/admin/servers', () => {
       port: 443,
       inbound: reality,
     });
-    const ownedOf = (tree: ServerTree) =>
+    // A second node serves the same transport: a Host that is not pinned lists
+    // under both, and nothing fronts this one.
+    panel.nodes.push({ ...panel.nodes[0]!, uuid: 'n-2', name: 'node-two', address: '192.0.2.11' });
+    const ownedOf = (tree: ServerTree, node = 'node-one') =>
       Object.fromEntries(
-        tree.nodes[0]!.transports[0]!.addresses.map((a) => [a.addressUuid, a.fcpOwned]),
+        tree.nodes
+          .find((n) => n.name === node)!
+          .transports[0]!.addresses.map((a) => [a.addressUuid, a.fcpOwned]),
       );
     // Nothing fronts the node: every Host is the operator's.
     let tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
@@ -573,6 +578,9 @@ describe('/api/v1/admin/servers', () => {
     });
     tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
     expect(ownedOf(tree)).toEqual({ 'h-1': true, 'h-hand': false });
+    // Under the node nothing fronts, the same Host is not its template: its
+    // members get no pool address, so the page must not say they do.
+    expect(ownedOf(tree, 'node-two')).toEqual({ 'h-1': false, 'h-hand': false });
     expect(
       Object.fromEntries(tree.addresses.map((a) => [a.addressUuid, a.fcpOwned])),
     ).toMatchObject({ 'h-1': true, 'h-hand': false });

@@ -1487,11 +1487,14 @@ bottom border would give the scrolling bar a vertical scroll bar):
   (the operator's own fronts apart), and Add a transport. For a transport FCP fronts, the Host
   FCP keeps on the backend is a template (one address and one SNI that FCP writes and re-points
   by itself), not what a member gets, and an edit of it is refused (`servers.host_edge_owned`).
-  The tree marks it (`AddressView.fcpOwned`: the Host of one of the origin's listeners), and the
-  page says one line in its place: one of this node's addresses above (a link to Addresses) and,
-  on REALITY, an SNI from the transport's SNI list (a link to the list, or to SNIs when no list
-  manages the transport). Addresses made by hand still list under it and open the address
-  dialog.
+  The tree marks it (`AddressView.fcpOwned`: the Host of a listener of the origin that fronts
+  THIS node; a Host that is not pinned lists under every node serving its transport, and under a
+  node nothing fronts it stays an ordinary address), and the page says one line in its place: one
+  of this node's addresses above (a link to Addresses) and, on REALITY, an SNI from the
+  transport's SNI list (a link to the list), or one of the SNIs set on it by hand when no list
+  manages it (a link to SNIs). While the SNI read has not answered or failed, the line says "one
+  of its SNIs" only, never "by hand". Addresses made by hand still list under it and open the
+  address dialog.
 - **SNIs**: each REALITY transport's SNIs with their one next step (manage, add suggestions, send,
   test).
 - **Modes**: its mode and whether members can pick it, the mode groups each transport is in, and
