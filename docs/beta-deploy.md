@@ -522,8 +522,8 @@ Put the new `siteKey` / `secretKey` into `.env.convex` as `CAP_SITE_KEY` /
 > `<meta name="csp-nonce">`; `main.ts` hands it to `window.CAP_SCRIPT_NONCE`,
 > which the widget stamps on the srcdoc script), and **`'unsafe-eval'`** lets
 > the probes run (without it they throw, the probe silently returns null, and
-> the widget reports `instr_timeout` after 20 s). Neither grant opens an
-> access to the member page: `CAP_ISOLATE=true` removes `allow-same-origin`, so
+> the widget reports `instr_timeout` after 20 s). `CAP_ISOLATE=true` removes
+> `allow-same-origin`, so
 > the frame cannot read member cookies, storage or interactions. Keep behavior
 > scoring, automated-interaction blocking and agent blocking off on the key;
 > those modes reject isolated frames. Instrumentation + the proof-of-work challenge + the
