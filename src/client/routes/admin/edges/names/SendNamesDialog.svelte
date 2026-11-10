@@ -5,6 +5,11 @@
    * the operations ledger. Every node on the profile restarts Xray once; no
    * member gets a new name until a test on a node proves it accepts them.
    *
+   * Behind a port with no fronted node the send reaches no member (SNIs are
+   * handed out only through fronted addresses): the dialog says so beside the
+   * restart line and the confirm stops being the primary button. The send
+   * stays possible.
+   *
    * Props: open (bindable), transport (managed: it has an SNI list).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
@@ -17,7 +22,7 @@
   import { invalidateServers } from '@client/lib/serversApi';
   import type { SniRolloutPlan, SniTransport } from '../../../../../shared/contracts/sni';
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
-  import { sendPlanWords } from './lib/transportWords';
+  import { sendPlanWords, sendReachWords, sentWords } from './lib/transportWords';
   import { sniErrorWords } from './lib/words';
 
   let { open = $bindable(false), transport }: { open: boolean; transport: SniTransport } = $props();
@@ -27,6 +32,8 @@
   let plan = $state<SniRolloutPlan | null>(null);
   let planError = $state<string | null>(null);
   let busy = $state(false);
+  // The send restarts Xray and reaches no member (no fronted node behind the port).
+  let reach = $derived(plan ? sendReachWords(plan, transport) : null);
   $effect(() => {
     if (!open || !transport.list) return;
     plan = null;
@@ -42,11 +49,7 @@
     try {
       const r = await startRollout(transport.list.bindingId);
       open = false;
-      toast.success(
-        r.rolloutId
-          ? 'Sent. Once the backend has the SNIs, test one on the node.'
-          : 'The backend already had exactly these SNIs.',
-      );
+      toast.success(sentWords(!!r.rolloutId, transport));
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
@@ -74,6 +77,14 @@
         {#each sendPlanWords(plan, transport) as line (line)}
           <p>{line}</p>
         {/each}
+        {#if reach}
+          <p
+            class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 font-medium"
+            role="alert"
+          >
+            {reach}
+          </p>
+        {/if}
         {#if plan.added.length + plan.removed.length > 0}
           <details>
             <summary class="text-muted-foreground cursor-pointer">The SNIs</summary>
@@ -89,8 +100,12 @@
     </div>
     <Dialog.Footer class={STICKY_FOOTER}>
       <Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
-      <Button disabled={busy || !plan?.changed} onclick={send}>
-        {busy ? 'Sending…' : 'Send to the node'}
+      <Button
+        variant={reach ? 'outline' : 'default'}
+        disabled={busy || !plan?.changed}
+        onclick={send}
+      >
+        {busy ? 'Sending…' : reach ? 'Send anyway' : 'Send to the node'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

@@ -715,6 +715,9 @@ export const seedCutover = internalAction({
     // The clean-up walks every member who answered, page by page in its own
     // transactions: scheduled, so a page that fails never fails the deploy.
     await ctx.scheduler.runAfter(0, internal.memberCountry.cleanStoredCountries, {});
+    // Then count the keys per country for the Countries pages (the first
+    // deploy that ships the counter builds it here; a daily cron keeps it).
+    await ctx.scheduler.runAfter(60_000, internal.countryKeyCounts.reconcile, {});
     await ctx.runMutation(internal.ownExits.refresh, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
     const clients = await ctx.runMutation(internal.seed.seedClients, {});

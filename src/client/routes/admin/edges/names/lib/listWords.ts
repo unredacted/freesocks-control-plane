@@ -5,7 +5,9 @@
  * come from the server (`delivery` per name, `usableCandidate` per find):
  *
  *   Suggested -> Being checked -> Waiting to be sent -> Waiting for a test
- *   -> In use. Off the way: Failing, Retired, Burned, Ignored, Not usable.
+ *   -> In use. Off the way: Failing, Retired, Burned, Ignored, Not usable, and
+ *   On the node (sent, but no node behind its port is fronted, so no member
+ *   gets it).
  *
  * Three filters: what needs you, what is in use, everything.
  */
@@ -25,6 +27,8 @@ export type ListRowState =
   | 'checking'
   | 'to_send'
   | 'idle'
+  /** On the node, and no member gets it: no node behind its port is fronted. */
+  | 'on_node'
   | 'waiting_test'
   | 'in_use'
   | 'failing'
@@ -56,6 +60,7 @@ const ORDER: ListRowState[] = [
   'failing',
   'checking',
   'in_use',
+  'on_node',
   'idle',
   'not_usable',
   'ignored',
@@ -68,6 +73,7 @@ export const STATE_LABEL: Record<ListRowState, string> = {
   checking: 'Being checked',
   to_send: 'Waiting to be sent',
   idle: 'Checked',
+  on_node: 'On the node',
   waiting_test: 'Waiting for a test',
   in_use: 'In use',
   failing: 'Failing',
@@ -126,15 +132,30 @@ function nameRow(n: SniNameRow, bound: boolean): ListRow {
     case 'checking':
       return make('checking', 'grey', 'Being checked against the cover site.');
     case 'to_send':
-      return make('to_send', 'amber', 'Checked. Waiting to be sent to the node.');
-    case 'idle':
       return make(
-        'idle',
-        'grey',
-        bound
-          ? 'Checked. It goes to the node with the next send.'
-          : 'Checked. Not used by any port yet.',
+        'to_send',
+        'amber',
+        // Bound, and no port it is used on has a fronted node: a send reaches nobody.
+        d.nodes === 0
+          ? 'Checked. Waiting to be sent to the node. No node behind its port is fronted, so no member would get it.'
+          : 'Checked. Waiting to be sent to the node.',
       );
+    case 'idle':
+      if (!bound) return make('idle', 'grey', 'Checked. Not used by any port yet.');
+      // Sent already: it never reads "goes with the next send" once it is there.
+      if (d.onNode)
+        return d.nodes === 0
+          ? make(
+              'on_node',
+              'grey',
+              'On the node. No member gets it, because no node behind its port is fronted.',
+            )
+          : make(
+              'on_node',
+              'grey',
+              'On the node. No member gets it yet: the next send puts it up for a test.',
+            );
+      return make('idle', 'grey', 'Checked. It goes to the node with the next send.');
     case 'waiting_test':
       return make(
         'waiting_test',

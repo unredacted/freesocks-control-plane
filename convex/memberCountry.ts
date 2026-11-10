@@ -15,6 +15,10 @@
  *    stored country at write time;
  *  - a transient country (detection off) is stored nowhere.
  *
+ * The same writes keep the per-country key counts (lib/countryKeyCounts.ts):
+ * `setStoredCountry` here, and in subscriptions.ts a key issued with a carried
+ * country, a key replaced (its grace) and a key deleted.
+ *
  * Nothing here takes a client address: the HTTP actions compare it with the
  * own-exit set (lib/ownExits.ts) and pass only a boolean.
  */
@@ -43,6 +47,7 @@ import { familyOfMode, familyOfPlacement, familyReads, memberFamilyOf } from './
 import { EMPTY_OWN_EXITS, type OwnExits } from './lib/ownExits';
 import { OWN_EXITS_STATE_KEY } from './ownExits';
 import { invalidateCopies } from './mirrorCopies';
+import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { recordHeartbeat } from './cronHeartbeat';
 
 const DAY = 86_400_000;
@@ -178,6 +183,8 @@ export async function setStoredCountry(
     ...(bump ? { countryRev: (sub.countryRev ?? 0) + 1 } : {}),
   };
   await ctx.db.patch(sub._id, patch);
+  // The per-country key counts move with the row (lib/countryKeyCounts.ts).
+  await bumpCountryKeysForRow(ctx, sub, { ...sub, ...patch } as Doc<'subscriptions'>);
   // A mirror's body is rendered for the stored country (convex/storage.ts):
   // rendered again now, not when the sweep comes round.
   if (bump && sub.state === 'active' && sub.subscriptionMirrors.length > 0) {

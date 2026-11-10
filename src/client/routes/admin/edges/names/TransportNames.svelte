@@ -15,6 +15,10 @@
    * says what FCP's own test of the send found on this node; "Test one SNI"
    * stays the button.
    *
+   * Behind a port with no fronted node nothing sent reaches a member, so the
+   * steps that feed it (add suggestions, send) say so and their button is not
+   * the primary one.
+   *
    * A step a switch holds back says which switch, with a link to it. The rest
    * (the SNI list, looking for more SNIs, stopping, editing by hand when FCP
    * does not manage them) sits in "More". The SNIs the port lists now are one
@@ -51,6 +55,7 @@
     lookedWords,
     namesStatus,
     namesStep,
+    reachesNobody,
     STEP_BUTTON,
     stepWords,
   } from './lib/transportWords';
@@ -80,6 +85,12 @@
   let step = $derived(transport && switches ? namesStep(transport, switches, nodeUuid) : null);
   let status = $derived(transport ? namesStatus(transport, nodeUuid) : null);
   let button = $derived(step ? (STEP_BUTTON[step.kind] ?? null) : null);
+  // A step that only feeds a port nobody is fronted behind is not the thing to do next.
+  let quiet = $derived(
+    !!transport &&
+      reachesNobody(transport) &&
+      (step?.kind === 'send' || step?.kind === 'send_again' || step?.kind === 'add_suggestions'),
+  );
   // FCP's own test of the send on this node (switch `edge.sni.autoConfirm`).
   let autoLine = $derived(step && switches ? autoTestWords(step, switches.autoTest) : null);
 
@@ -184,7 +195,9 @@
       </div>
       <div class="flex shrink-0 flex-wrap items-center gap-2">
         {#if button}
-          <Button disabled={busy} onclick={next}>{button}</Button>
+          <Button variant={quiet ? 'outline' : 'default'} disabled={busy} onclick={next}>
+            {button}
+          </Button>
         {/if}
         {#if transport.list || onEditByHand}
           <DropdownMenu.Root>

@@ -3,8 +3,11 @@
    * Admin -> Servers -> Countries (`/admin/servers/countries`): every country on
    * the censored-country list with how many published addresses and SNIs work
    * or are blocked there, nodes at risk, how many members there hold a blocked
-   * address, and when the outside probes from there fall short (not asked, or
-   * a source gone quiet and why). Each row opens the country (CountryPage).
+   * address, how many keys are set to it (the member's answer, or FCP's guess:
+   * counts only, ./keyWords.ts), and when the outside probes from there fall
+   * short (not asked, or a source gone quiet and why). Each row opens the
+   * country (CountryPage). Under the rows: the keys no country owns (the
+   * opt-out, keys with neither) and what the counts leave out.
    *
    * Below the rows: the list itself (CensoredCountriesCard, "Add a country"),
    * and the Delivery card ("Where members connect from", CountryDeliveryCard).
@@ -35,6 +38,7 @@
     totalsLine,
   } from './words';
   import { sniSummaryLine } from './sniWords';
+  import { keysLine, keysNotes } from './keyWords';
 
   const summary = countryViewSummaryQuery();
   let now = $derived(summary.data?.generatedAt ?? Date.now());
@@ -97,6 +101,7 @@
           summary.data.switches.probes,
           now,
         )}
+        {@const keys = keysLine(c.keys, summary.data.keys.counted)}
         <li>
           <Link
             href={edgesPaths.country(c.country)}
@@ -106,6 +111,9 @@
             <span class="min-w-0 flex-1">
               <span class="block font-medium">{countryLabel(c.country)}</span>
               <span class="text-muted-foreground block text-sm">{totalsLine(c.totals)}</span>
+              {#if keys}
+                <span class="text-muted-foreground block text-sm tabular-nums">{keys}</span>
+              {/if}
               <span class="text-muted-foreground block text-sm">
                 {#if c.totals.originsAtRisk > 0}
                   <span class="text-destructive font-medium">
@@ -151,6 +159,13 @@
       {/each}
     </ul>
   {/if}
+  <!-- Whatever the list holds: the opt-out and the keys with neither are no country's. -->
+  <section class="text-muted-foreground mt-4 space-y-1 text-sm" aria-label="Keys by country">
+    <h2 class="text-foreground font-medium">Keys by country</h2>
+    {#each keysNotes(summary.data.keys, now) as line (line)}
+      <p class="tabular-nums">{line}</p>
+    {/each}
+  </section>
 {/if}
 
 <div class="mt-8 space-y-6">

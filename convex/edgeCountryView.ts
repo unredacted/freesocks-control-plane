@@ -29,6 +29,7 @@ import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { usableSources } from './lib/sniConfig';
 import { resolveMemberCountryConfig } from './memberCountry';
 import { countryExitLabels } from './countryExits';
+import { readCountryKeys, type CountryKeysView } from './lib/countryKeyCounts';
 import { publishedEdgesOf, deliveryStyleOf, latencyContextOf } from './edgeRender';
 import { listenersOf } from './relayListeners';
 import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/render';
@@ -795,6 +796,12 @@ function listedOf(st: Settings, country: string) {
     : null;
 }
 
+/** One country's numbers out of the key counts, with when the rest was last counted. */
+function countryKeysOf(keys: CountryKeysView, country: string) {
+  const own = keys.byCountry[country] ?? { answered: 0, guessed: 0 };
+  return { counted: keys.counted, countedAt: keys.countedAt, ...own };
+}
+
 /**
  * The summary's frame: what no country changes (the switches, how many
  * origins are enabled) and the listed countries, in list order. Each
@@ -811,12 +818,16 @@ export const summaryHead = internalQuery({
       .query('relays')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect();
+    const countries = st.censored.list.map((c) => c.code);
     return {
       generatedAt: Date.now(),
       switches: st.switches,
       controls: st.controls,
       origins: enabled.length,
-      countries: st.censored.list.map((c) => c.code),
+      countries,
+      // How many keys are set to each listed country (lib/countryKeyCounts.ts):
+      // numbers from a maintained counter, never a read of the keys.
+      keys: await readCountryKeys(ctx.db, countries),
     };
   },
 });
@@ -881,6 +892,10 @@ export const country = internalQuery({
       // Where new keys on Automatic of members who chose this country go
       // (docs/edges.md "Exit location by country"); counts no member.
       exits: await countryExitLabels(ctx.db, code),
+      // How many keys are set to this country (docs/edges.md "Keys by country").
+      // Per-country numbers are for listed countries only: a country off the
+      // list gets none (its guesses are in the summary's one "other" number).
+      keys: countryKeysOf(await readCountryKeys(ctx.db, listed ? [code] : []), code),
       // How the newest name-check batch from here found its Globalping probes.
       namePool: currentNamePool(await readNamePool(ctx.db, code), {
         at: now,

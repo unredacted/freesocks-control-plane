@@ -264,9 +264,9 @@ describe('the transports of a backend', () => {
       await (await call('GET', 'families/vless-relay-a')).json(),
     );
     expect(Object.fromEntries(detail.names.map((n) => [n.name, n.delivery]))).toEqual({
-      'a.example': { state: 'in_use', inUseOn: 1, nodes: 1 },
-      'b.example': { state: 'in_use', inUseOn: 1, nodes: 1 },
-      'c.example': { state: 'waiting_test', inUseOn: 0, nodes: 1 },
+      'a.example': { state: 'in_use', inUseOn: 1, nodes: 1, onNode: true },
+      'b.example': { state: 'in_use', inUseOn: 1, nodes: 1, onNode: true },
+      'c.example': { state: 'waiting_test', inUseOn: 0, nodes: 1, onNode: true },
     });
     expect(detail.suggestions).toBe(0);
     // The list of families counts the same way.
@@ -306,6 +306,26 @@ describe('the transports of a backend', () => {
     );
     expect(done).toMatchObject({ family: 'spare', created: false, imported: { added: 2 } });
     expect(await t.run((ctx) => ctx.db.query('sniFamilies').collect())).toHaveLength(1);
+  });
+});
+
+describe('a node that serves members', () => {
+  test('only an enabled origin with a deployed, enabled listener hands SNIs out', async () => {
+    const { t, relayId, listenerId, view } = await seed();
+    const serving = async () => (await view()).transports[0]!.nodes.map((n) => n.serving);
+    expect(await serving()).toEqual([true]);
+    // Each of these leaves the node listed (it is still fronted) and out of service.
+    await t.run((ctx) => ctx.db.patch(relayId, { enabled: false }));
+    expect(await serving()).toEqual([false]);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(relayId, { enabled: true });
+      await ctx.db.patch(listenerId, { enabled: false });
+    });
+    expect(await serving()).toEqual([false]);
+    await t.run((ctx) => ctx.db.patch(listenerId, { enabled: true, deployed: false }));
+    expect(await serving()).toEqual([false]);
+    await t.run((ctx) => ctx.db.patch(listenerId, { deployed: true }));
+    expect(await serving()).toEqual([true]);
   });
 });
 

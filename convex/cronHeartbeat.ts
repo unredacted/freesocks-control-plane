@@ -298,6 +298,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: "Forget members' guessed countries past their sticky window",
   },
+  {
+    name: 'country-keys-reconcile',
+    everyMs: DAY,
+    description: 'Recount how many keys are set to each country',
+  },
 ];
 
 /**

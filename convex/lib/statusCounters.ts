@@ -47,6 +47,12 @@ export interface CounterSpec<C extends Record<string, number>, T extends TableNa
    *  the first reconcile creates the row and overwrites anything bumps would
    *  have built). */
   createOnBump: boolean;
+  /**
+   * Keys beyond `zero` the counter may hold (a counter keyed by something not
+   * known in advance, such as a country). Absent: only the keys of `zero`.
+   * A key it holds reads 0 until something counts under it.
+   */
+  dynamicKey?: (key: string) => boolean;
 }
 
 interface ReconcileState<C> {
@@ -68,16 +74,26 @@ type CounterState<C> = {
   reconcile?: ReconcileState<C>;
 };
 
-function pickCounts<C extends Record<string, number>>(zero: C, raw: unknown): C {
+function pickCounts<C extends Record<string, number>>(
+  zero: C,
+  raw: unknown,
+  dynamicKey?: (key: string) => boolean,
+): C {
   const out = { ...zero };
   if (raw && typeof raw === 'object') {
-    for (const k of Object.keys(zero) as (keyof C)[]) {
+    const keys = dynamicKey
+      ? [...Object.keys(zero), ...Object.keys(raw).filter((k) => !(k in zero) && dynamicKey(k))]
+      : Object.keys(zero);
+    for (const k of keys as (keyof C)[]) {
       const v = (raw as Record<string, unknown>)[k as string];
       if (typeof v === 'number' && Number.isFinite(v)) out[k] = v as C[keyof C];
     }
   }
   return out;
 }
+
+/** A count that may not be there yet (a dynamic key nothing counted under). */
+const at = <C extends Record<string, number>>(counts: C, k: keyof C): number => counts[k] ?? 0;
 
 function parseState<C extends Record<string, number>, T extends TableNames>(
   spec: CounterSpec<C, T>,
@@ -86,7 +102,7 @@ function parseState<C extends Record<string, number>, T extends TableNames>(
   try {
     const raw = JSON.parse(value) as Record<string, unknown>;
     const st: CounterState<C> = {
-      counts: pickCounts(spec.zero, raw),
+      counts: pickCounts(spec.zero, raw, spec.dynamicKey),
       initialized: typeof raw.initialized === 'boolean' ? raw.initialized : spec.legacyInitialized,
       runSeq: typeof raw.runSeq === 'number' ? raw.runSeq : 0,
     };
@@ -96,8 +112,8 @@ function parseState<C extends Record<string, number>, T extends TableNames>(
         token: rec.token,
         startTs: rec.startTs,
         scanPos: typeof rec.scanPos === 'number' ? rec.scanPos : -1,
-        scanned: pickCounts(spec.zero, rec.scanned),
-        journal: pickCounts(spec.zero, rec.journal),
+        scanned: pickCounts(spec.zero, rec.scanned, spec.dynamicKey),
+        journal: pickCounts(spec.zero, rec.journal, spec.dynamicKey),
       };
     }
     return st;
@@ -171,8 +187,9 @@ export async function applyCounterDeltas<C extends Record<string, number>, T ext
       rec != null && (it.creationTime > rec.startTs || it.creationTime <= rec.scanPos);
     for (const [k, d] of Object.entries(it.delta) as [keyof C, number | undefined][]) {
       if (!d) continue;
-      st.counts[k] = Math.max(0, st.counts[k] + d) as C[keyof C];
-      if (journal && rec) rec.journal[k] = (rec.journal[k] + d) as C[keyof C];
+      if (!(k in spec.zero) && !spec.dynamicKey?.(k as string)) continue;
+      st.counts[k] = Math.max(0, at(st.counts, k) + d) as C[keyof C];
+      if (journal && rec) rec.journal[k] = (at(rec.journal, k) + d) as C[keyof C];
     }
   }
   await writeState(ctx, spec, st, row?._id);
@@ -228,7 +245,7 @@ export async function beginCounterReconcile<C extends Record<string, number>, T 
 export async function scanCounterPage<C extends Record<string, number>, T extends TableNames>(
   ctx: MutationCtx,
   spec: CounterSpec<C, T>,
-  tally: (row: Doc<T>) => Partial<C>,
+  tally: (row: Doc<T>) => Partial<C> | Promise<Partial<C>>,
   pageSize: number,
 ): Promise<{ done: boolean; rows: number }> {
   const row = await readRow(ctx.db, spec.key);
@@ -262,8 +279,10 @@ export async function scanCounterPage<C extends Record<string, number>, T extend
     rows = rows.concat((twins as Doc<T>[]).filter((r) => !seen.has(r._id as string)));
   }
   for (const r of rows) {
-    for (const [k, d] of Object.entries(tally(r)) as [keyof C, number | undefined][]) {
-      if (d) rec.scanned[k] = (rec.scanned[k] + d) as C[keyof C];
+    for (const [k, d] of Object.entries(await tally(r)) as [keyof C, number | undefined][]) {
+      if (!d) continue;
+      if (!(k in spec.zero) && !spec.dynamicKey?.(k as string)) continue;
+      rec.scanned[k] = (at(rec.scanned, k) + d) as C[keyof C];
     }
   }
   const done = !full || last >= rec.startTs;
@@ -287,8 +306,15 @@ export async function finishCounterReconcile<
   // = the scan is incomplete. Either way, writing would publish a partial count.
   if (!rec || rec.token !== token || rec.scanPos < rec.startTs) return false;
   const counts = { ...spec.zero };
-  for (const k of Object.keys(spec.zero) as (keyof C)[]) {
-    counts[k] = Math.max(0, rec.scanned[k] + rec.journal[k]) as C[keyof C];
+  const keys = new Set([
+    ...Object.keys(spec.zero),
+    ...Object.keys(rec.scanned),
+    ...Object.keys(rec.journal),
+  ]);
+  for (const k of keys as Set<keyof C>) {
+    const n = Math.max(0, at(rec.scanned, k) + at(rec.journal, k));
+    // A dynamic key nothing counts under any more is dropped, not kept at 0.
+    if (n > 0 || k in spec.zero) counts[k] = n as C[keyof C];
   }
   await writeState(ctx, spec, { counts, initialized: true, runSeq: st.runSeq }, row._id);
   return true;

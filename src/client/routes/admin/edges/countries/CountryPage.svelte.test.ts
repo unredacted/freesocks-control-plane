@@ -84,6 +84,7 @@ function view(over: Partial<CountryViewResponse> = {}): CountryViewResponse {
     snis: [],
     meantFor: [],
     exits: [],
+    keys: { counted: true, countedAt: Date.now() - 3_600_000, answered: 180, guessed: 32 },
     namePool: null,
     sources: [],
     ...over,
@@ -145,6 +146,38 @@ describe('CountryPage', () => {
     expect(text()).toContain('Edges are checked from here. SNIs are not checked from inside.');
     expect(text()).toContain('Least-loaded location.');
     expect(text()).toContain('Mark an address for this country');
+  });
+
+  test('Summary says how many keys are set to the country, and what that leaves out', () => {
+    open('/admin/servers/countries/AA', view());
+    expect(text()).toContain(
+      "212 keys are set to this country: 180 by the member's own answer, 32 by FCP's guess.",
+    );
+    expect(text()).toContain('A key of a privacy mode carries no country');
+    expect(text()).toContain('never answered and was never guessed is counted for no country');
+    // Counts only: nothing leads from the number to a key or a member.
+    const card = document.querySelector('[aria-label="Keys set to this country"]')!;
+    expect(card.querySelector('a, button')).toBeNull();
+  });
+
+  test('a country off the list gets no count of its own', () => {
+    open(
+      '/admin/servers/countries/AA',
+      view({ listed: null, keys: { counted: true, countedAt: 1, answered: 0, guessed: 0 } }),
+    );
+    expect(text()).toContain(
+      'Keys are counted per country only for countries on the censored-country list.',
+    );
+    expect(text()).not.toContain('No key is set to this country.');
+  });
+
+  test('before the first count it says so, never zero', () => {
+    open(
+      '/admin/servers/countries/AA',
+      view({ keys: { counted: false, countedAt: null, answered: 0, guessed: 0 } }),
+    );
+    expect(text()).toContain('Keys by country are not counted yet.');
+    expect(text()).not.toContain('No key is set to this country.');
   });
 
   test("SNIs: the country's own list comes first", () => {

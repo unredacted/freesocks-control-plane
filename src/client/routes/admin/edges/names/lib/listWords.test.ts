@@ -42,7 +42,7 @@ function name(n: string, o: Partial<SniNameRow> = {}): SniNameRow {
     suspectIn: [],
     probeMarkedIn: [],
     vantage: [],
-    delivery: { state: 'in_use', inUseOn: 1, nodes: 1 },
+    delivery: { state: 'in_use', inUseOn: 1, nodes: 1, onNode: true },
     ...o,
   };
 }
@@ -85,21 +85,25 @@ describe('one list', () => {
   const rows = listRows(
     [
       name('a.site.example'),
-      name('b.site.example', { delivery: { state: 'waiting_test', inUseOn: 1, nodes: 2 } }),
+      name('b.site.example', {
+        delivery: { state: 'waiting_test', inUseOn: 1, nodes: 2, onNode: true },
+      }),
       name('c.site.example', {
         qualification: 'pending',
-        delivery: { state: 'checking', inUseOn: 0, nodes: 2 },
+        delivery: { state: 'checking', inUseOn: 0, nodes: 2, onNode: false },
       }),
       name('d.site.example', {
         qualification: 'failed',
         code: 'q_cert',
-        delivery: { state: 'failing', inUseOn: 0, nodes: 2 },
+        delivery: { state: 'failing', inUseOn: 0, nodes: 2, onNode: false },
       }),
       name('e.site.example', {
         status: 'retired',
-        delivery: { state: 'off', inUseOn: 0, nodes: 2 },
+        delivery: { state: 'off', inUseOn: 0, nodes: 2, onNode: false },
       }),
-      name('f.site.example', { delivery: { state: 'to_send', inUseOn: 0, nodes: 2 } }),
+      name('f.site.example', {
+        delivery: { state: 'to_send', inUseOn: 0, nodes: 2, onNode: false },
+      }),
     ],
     [
       found('new.site.example'),
@@ -164,11 +168,47 @@ describe('one list', () => {
 
   test('a list no port uses says so', () => {
     const r = listRows(
-      [name('a.site.example', { delivery: { state: 'idle', inUseOn: 0, nodes: 0 } })],
+      [
+        name('a.site.example', {
+          delivery: { state: 'idle', inUseOn: 0, nodes: 0, onNode: false },
+        }),
+      ],
       [],
       false,
     );
     expect(r[0]!.sentence).toBe('Checked. Not used by any port yet.');
+  });
+
+  test('an SNI already on the node never reads "goes with the next send"', () => {
+    const row = (delivery: SniNameRow['delivery']) =>
+      listRows([name('a.site.example', { delivery })], [], true)[0]!;
+    // Sent to a port with no fronted node: on the node, and no member gets it.
+    const sent = row({ state: 'idle', inUseOn: 0, nodes: 0, onNode: true });
+    expect(sent.state).toBe('on_node');
+    expect(STATE_LABEL[sent.state]).toBe('On the node');
+    expect(sent.sentence).toBe(
+      'On the node. No member gets it, because no node behind its port is fronted.',
+    );
+    expect(sent.dot).toBe('grey');
+    // Nothing to do about the SNI itself, and no member has it.
+    expect(matchesListFilter(sent, 'needs_you')).toBe(false);
+    expect(matchesListFilter(sent, 'in_use')).toBe(false);
+    // On the node behind a fronted node, outside a send FCP saw through.
+    expect(row({ state: 'idle', inUseOn: 0, nodes: 2, onNode: true }).sentence).toBe(
+      'On the node. No member gets it yet: the next send puts it up for a test.',
+    );
+    // Only an SNI that is not on the node waits for a send.
+    const waits = row({ state: 'idle', inUseOn: 0, nodes: 0, onNode: false });
+    expect(waits.state).toBe('idle');
+    expect(waits.sentence).toBe('Checked. It goes to the node with the next send.');
+    // Waiting for a send that would reach nobody says so; behind a fronted node it does not.
+    expect(row({ state: 'to_send', inUseOn: 0, nodes: 0, onNode: false }).sentence).toBe(
+      'Checked. Waiting to be sent to the node. No node behind its port is fronted, so no member would get it.',
+    );
+    expect(row({ state: 'to_send', inUseOn: 0, nodes: 1, onNode: false }).sentence).toBe(
+      'Checked. Waiting to be sent to the node.',
+    );
+    for (const r of [sent, waits]) expect(r.sentence).not.toMatch(/—|protected|names?\b/i);
   });
 });
 

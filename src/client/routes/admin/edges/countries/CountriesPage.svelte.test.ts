@@ -14,6 +14,29 @@ const loaded = <T>(data: T) => ({
   refetch: () => Promise.resolve(),
 });
 
+const ZERO = { proven: 0, blocked: 0, unknown: 0 };
+/** One listed country as the summary gives it, with its key counts. */
+const country = (code: string, keys: { answered: number; guessed: number }) => ({
+  country: code,
+  listed: { checkEdges: true, checkNamesInside: false, nameChecksRun: false },
+  probes: { asked: true, windowMs: 0, sources: [] },
+  totals: { addresses: ZERO, names: ZERO, originsAtRisk: 0, lastEvidenceAt: null },
+  worstOnBlocked: null,
+  meantFor: { locations: 0, blocked: 0 },
+  snis: { used: 0, onlyHere: 0, preferred: 0 },
+  keys,
+});
+const summary = vi.hoisted(() => ({
+  countries: [] as unknown[],
+  keys: {
+    counted: false,
+    countedAt: null as number | null,
+    optOut: 0,
+    neither: 0,
+    otherGuessed: 0,
+  },
+}));
+
 vi.mock('@client/lib/edgesApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@client/lib/edgesApi')>()),
   countryViewSummaryQuery: () =>
@@ -30,7 +53,8 @@ vi.mock('@client/lib/edgesApi', async (importOriginal) => ({
       },
       controls: [],
       origins: 0,
-      countries: [],
+      countries: summary.countries,
+      keys: summary.keys,
       sources: [],
     }),
 }));
@@ -65,6 +89,8 @@ afterEach(() => {
   if (app) unmount(app);
   app = null;
   vi.restoreAllMocks();
+  summary.countries = [];
+  summary.keys = { counted: false, countedAt: null, optOut: 0, neither: 0, otherGuessed: 0 };
 });
 
 const button = (label: string) =>
@@ -84,6 +110,63 @@ describe('CountriesPage', () => {
     expect(text).toContain('Exit location for each country');
     expect(button('Add a country')).toBeDefined();
     expect(button('Save delivery')?.disabled).toBe(true);
+  });
+
+  test('each country says how many keys are set to it, with what no country owns below', () => {
+    summary.countries = [
+      country('AA', { answered: 1180, guessed: 32 }),
+      country('BB', { answered: 0, guessed: 0 }),
+    ];
+    summary.keys = {
+      counted: true,
+      countedAt: Date.now() - 2 * 3_600_000,
+      optOut: 40,
+      neither: 20150,
+      otherGuessed: 0,
+    };
+    app = mountWithQuery(new QueryClient(), CountriesPage, {});
+    flushSync();
+    const rows = [...document.querySelectorAll('ul[aria-label="Countries"] > li')].map(
+      (li) => li.textContent ?? '',
+    );
+    expect(rows[0]).toContain(
+      "1,212 keys are set to it: 1,180 by the member's own answer, 32 by FCP's guess.",
+    );
+    expect(rows[1]).toContain('No key is set to it.');
+    const below = document.querySelector('section[aria-label="Keys by country"]')!;
+    expect(below.textContent).toContain('40 keys have the opt-out');
+    expect(below.textContent).toContain(
+      '20,150 keys of freedom modes have no answer and no guess.',
+    );
+    expect(below.textContent).toContain('A key of a privacy mode carries no country');
+    // Counts only: the numbers lead to no key and no member.
+    expect(below.querySelector('a, button')).toBeNull();
+  });
+
+  test('with no country on the list the keys no country owns are still shown', () => {
+    summary.keys = {
+      counted: true,
+      countedAt: Date.now(),
+      optOut: 3,
+      neither: 12,
+      otherGuessed: 0,
+    };
+    app = mountWithQuery(new QueryClient(), CountriesPage, {});
+    flushSync();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('No country is on the censored-country list.');
+    const below = document.querySelector('section[aria-label="Keys by country"]')!;
+    expect(below.textContent).toContain('3 keys have the opt-out');
+    expect(below.textContent).toContain('12 keys of freedom modes have no answer and no guess.');
+  });
+
+  test('before the first count a row gives no number, and the page says why', () => {
+    summary.countries = [country('AA', { answered: 0, guessed: 0 })];
+    app = mountWithQuery(new QueryClient(), CountriesPage, {});
+    flushSync();
+    const text = document.body.textContent ?? '';
+    expect(text).not.toContain('No key is set to it.');
+    expect(text).toContain('Keys by country are not counted yet.');
   });
 
   test('Delivery saves only its own settings', async () => {

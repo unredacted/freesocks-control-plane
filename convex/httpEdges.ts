@@ -666,12 +666,18 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     const rows = await mapBounded(head.countries, COUNTRY_SUMMARY_PARALLEL, (country) =>
       ctx.runQuery(internal.edgeCountryView.summaryRow, { country }),
     );
+    const { byCountry, ...keys } = head.keys;
     return json({
       generatedAt: head.generatedAt,
       switches: head.switches,
       controls: head.controls,
       origins: head.origins,
-      countries: rows.filter((r) => r !== null),
+      countries: rows
+        .filter((r) => r !== null)
+        // How many keys are set to it: two numbers, nothing about any key.
+        .map((r) => ({ ...r, keys: byCountry[r.country] ?? { answered: 0, guessed: 0 } })),
+      // The numbers no country owns: the opt-out, and Freedom keys with neither.
+      keys,
       sources: sources.sources,
     });
   }
