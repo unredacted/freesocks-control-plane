@@ -536,6 +536,55 @@ describe('/api/v1/admin/servers', () => {
       nodeUuids: [],
     });
     expect(AddressView.parse(older).operatorFront).toBe(false);
+    // The same for the mark of a Host FCP keeps.
+    const { fcpOwned: _owned, ...before } = AddressView.parse(older);
+    expect(AddressView.parse(before).fcpOwned).toBe(false);
+  });
+
+  test('the Host FCP keeps for a fronted transport is marked, under its node and in the backend-wide list', async () => {
+    const { t, panel, call } = await seed();
+    const reality = { configProfileUuid: 'p-1', configProfileInboundUuid: 'i-reality' };
+    // A second Host on the same transport, made by hand.
+    panel.hosts.push({
+      uuid: 'h-hand',
+      remark: 'by-hand',
+      address: '198.51.100.30',
+      port: 443,
+      inbound: reality,
+    });
+    // A second node serves the same transport: a Host that is not pinned lists
+    // under both, and nothing fronts this one.
+    panel.nodes.push({ ...panel.nodes[0]!, uuid: 'n-2', name: 'node-two', address: '192.0.2.11' });
+    const ownedOf = (tree: ServerTree, node = 'node-one') =>
+      Object.fromEntries(
+        tree.nodes
+          .find((n) => n.name === node)!
+          .transports[0]!.addresses.map((a) => [a.addressUuid, a.fcpOwned]),
+      );
+    // Nothing fronts the node: every Host is the operator's.
+    let tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
+    expect(ownedOf(tree)).toEqual({ 'h-1': false, 'h-hand': false });
+
+    // An origin fronts it, and its listener keeps one Host as its template.
+    const { relayId } = await registerRelay(t, { listeners: [realityListener()] });
+    await t.run(async (ctx) => {
+      const listener = (await ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+        .first())!;
+      await ctx.db.patch(listener._id, {
+        host: { state: 'present', uuid: 'h-1', ownership: 'fcp' },
+      });
+    });
+    tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
+    expect(ownedOf(tree)).toEqual({ 'h-1': true, 'h-hand': false });
+    // Under the node nothing fronts, the same Host is not its template: its
+    // members get no pool address, so the page must not say they do.
+    expect(ownedOf(tree, 'node-two')).toEqual({ 'h-1': false, 'h-hand': false });
+    expect(
+      Object.fromEntries(tree.addresses.map((a) => [a.addressUuid, a.fcpOwned])),
+    ).toMatchObject({ 'h-1': true, 'h-hand': false });
+    // An edit of that Host is refused (`servers.host_edge_owned`; backendWrites.test.ts).
   });
 
   test('a REALITY transport with no minClientVer on Xray 26.7.28 is marked as refusing sing-box and Mihomo on that node; 1.8.1 admits them', async () => {

@@ -10,6 +10,7 @@
  * steps after it (rollout, test link, receipt) are the existing routes.
  * Audit payloads carry slugs and counts only, never a hostname.
  */
+import { sniFamilyBySlug } from './lib/edges/sni/slug';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -374,10 +375,7 @@ export const manage = internalMutation({
     let f: Doc<'sniFamilies'>;
     let created = false;
     if (a.family) {
-      const found = await ctx.db
-        .query('sniFamilies')
-        .withIndex('by_slug', (q) => q.eq('slug', a.family!))
-        .unique();
+      const found = await sniFamilyBySlug(ctx.db, a.family!);
       if (!found) return refuse('not_found', 'No such family');
       // Only a family no transport uses: another transport's would take these names too.
       const used = await ctx.db
@@ -392,10 +390,7 @@ export const manage = internalMutation({
       const base = familySlugForTransport(i.tag);
       let slug = base;
       for (let n = 2; ; n++) {
-        const taken = await ctx.db
-          .query('sniFamilies')
-          .withIndex('by_slug', (q) => q.eq('slug', slug))
-          .unique();
+        const taken = await sniFamilyBySlug(ctx.db, slug);
         if (!taken && !isReservedSniListSlug(slug)) break;
         slug = `${base}-${n}`;
       }

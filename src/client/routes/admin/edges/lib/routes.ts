@@ -5,7 +5,7 @@
  * paths are spelled: pages and shared components build links through
  * `edgesPaths`, the section resolves a pathname through `resolveEdgesRoute`.
  *
- *   /admin/servers                                  Overview (today: the fronted nodes and what needs you)
+ *   /admin/servers                                  Overview (today: the fronted nodes and the action needed)
  *   /admin/servers/nodes?columns=technical          All origins: the Nodes table with its technical columns
  *                                                   (`edgesPaths.overview`; `?add=origin` opens "Add an origin by hand").
  *                                                   The old `/admin/servers/origins` redirects there.

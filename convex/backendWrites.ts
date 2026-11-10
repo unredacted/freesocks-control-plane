@@ -11,6 +11,7 @@
  * mode group, and every Host write, do not. The first kind also claims those
  * profiles and nodes and holds the claims until the nodes show the work ran.
  */
+import { sniFamilyBySlug } from './lib/edges/sni/slug';
 import { ConvexError, v } from 'convex/values';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -1245,10 +1246,7 @@ export const requestLoggingPatch = internalMutation({
 export const familyForTemplate = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, { slug }) => {
-    const family = await ctx.db
-      .query('sniFamilies')
-      .withIndex('by_slug', (q) => q.eq('slug', slug))
-      .unique();
+    const family = await sniFamilyBySlug(ctx.db, slug);
     // A family turned off gives no transport its names, as setup refuses it.
     if (!family || !family.enabled) return null;
     const names = (

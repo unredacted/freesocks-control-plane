@@ -84,10 +84,10 @@
       <AdminListState error={edgeError} onRetry={onEdgeRetry} />
     {/if}
     {#if rows.length === 0 && edgeError}
-      <!-- Nothing else to list; never "Nothing needs you" while a source is unread. -->
+      <!-- Nothing else to list; never "No action needed" while a source is unread. -->
     {:else if rows.length === 0}
       <p class="text-muted-foreground rounded-lg border border-dashed p-6 text-center text-sm">
-        Nothing needs you.
+        No action needed.
       </p>
     {:else}
       <ul class="space-y-2" aria-label="Action needed">

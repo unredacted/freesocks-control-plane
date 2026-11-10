@@ -19,6 +19,7 @@
  *
  * Audit payloads carry slugs and COUNTS only, never a name or an address.
  */
+import { sniFamilyBySlug } from './lib/edges/sni/slug';
 import { ConvexError, v } from 'convex/values';
 import {
   internalMutation,
@@ -149,10 +150,7 @@ async function scopeOf(
   family: Doc<'sniFamilies'> | null;
 }> {
   if (a.family) {
-    const f = await db
-      .query('sniFamilies')
-      .withIndex('by_slug', (q) => q.eq('slug', a.family!))
-      .unique();
+    const f = await sniFamilyBySlug(db, a.family!);
     if (!f) return refuse('not_found', 'No such family');
     const network = f.networkId ? await db.get(f.networkId) : null;
     return {
@@ -376,10 +374,7 @@ export const importCandidates = internalMutation({
           .unique();
         if (!net) proposals.networks.push({ slug: n.slug, label: n.label, asns: n.asns });
         for (const f of n.families) {
-          const fam = await ctx.db
-            .query('sniFamilies')
-            .withIndex('by_slug', (q) => q.eq('slug', f.slug))
-            .unique();
+          const fam = await sniFamilyBySlug(ctx.db, f.slug);
           if (fam) {
             sum(
               await upsertNames(
@@ -1105,10 +1100,7 @@ export const releaseChecks = internalMutation({
 export const certTarget = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, a) => {
-    const f = await ctx.db
-      .query('sniFamilies')
-      .withIndex('by_slug', (q) => q.eq('slug', a.slug))
-      .unique();
+    const f = await sniFamilyBySlug(ctx.db, a.slug);
     if (!f) return refuse('not_found', 'No such family');
     const cfg = await resolveSniHuntConfig(ctx.db);
     if (!cfg.enabled) return refuse('edge.sni.hunt.off', 'Finding names is switched off');

@@ -209,6 +209,186 @@ describe('the node page', () => {
   });
 });
 
+describe('a fronted transport: what members get', () => {
+  const TREE = '/api/v1/admin/servers/panel-a/tree';
+  const SUMMARY = '/api/v1/admin/servers/summary';
+  const SNI = '/api/v1/admin/edges/sni/transports?backend=panel-a';
+  const address = (remark: string, over: Record<string, unknown> = {}) => ({
+    addressUuid: `h-${remark}`,
+    remark,
+    address: `${remark}.example`,
+    port: 443,
+    sni: 'template-sni.example',
+    host: null,
+    path: null,
+    alpn: null,
+    fingerprint: null,
+    securityLayer: null,
+    isDisabled: false,
+    isHidden: false,
+    tag: null,
+    viewPosition: 0,
+    configProfileUuid: 'p',
+    transportUuid: 't-1',
+    nodeUuids: [],
+    operatorFront: false,
+    fcpOwned: false,
+    ...over,
+  });
+  const managed = {
+    switches: {
+      names: true,
+      findNames: false,
+      backendChanges: true,
+      backendSetUp: true,
+      autoTest: 'off',
+    },
+    transports: [
+      {
+        transportUuid: 't-1',
+        tag: 'reality-in',
+        profileUuid: 'p',
+        profileName: 'Default',
+        port: 443,
+        coverSite: 'cover.example:443',
+        listed: 1,
+        profileNodes: [{ nodeUuid: 'n-1', name: 'node-a' }],
+        list: {
+          slug: 'shared-cover',
+          label: 'Shared cover',
+          enabled: true,
+          bindingId: 'bind-1',
+          counts: {
+            inUse: 1,
+            waitingTest: 0,
+            toSend: 0,
+            idle: 0,
+            checking: 0,
+            failing: 0,
+            off: 0,
+          },
+          suggestions: 0,
+        },
+        send: null,
+        nodes: [],
+        sameCoverSite: [],
+      },
+    ],
+  };
+  type Tree = { nodes: { transports: { addresses: unknown[]; security: string }[] }[] };
+  const saved = { tree: '', summary: '' };
+
+  /** The page with these addresses on the node's one transport, changes allowed. */
+  async function page(addresses: unknown[], over: { security?: string; sni?: unknown } = {}) {
+    saved.tree = JSON.stringify(ANSWERS[TREE]);
+    saved.summary = JSON.stringify(ANSWERS[SUMMARY]);
+    const tree = JSON.parse(saved.tree) as Tree;
+    tree.nodes[0]!.transports[0]!.addresses = addresses;
+    if (over.security) tree.nodes[0]!.transports[0]!.security = over.security;
+    ANSWERS[TREE] = tree;
+    const summary = JSON.parse(saved.summary) as { config: Record<string, boolean> };
+    summary.config['manage.enabled'] = true;
+    ANSWERS[SUMMARY] = summary;
+    if (over.sni !== undefined) ANSWERS[SNI] = over.sni;
+    await mount('/admin/servers/nodes/n-1?backend=panel-a', NodePage as never, { uuid: 'n-1' });
+    const section = document.getElementById('node-transports')!;
+    return {
+      section,
+      text: (section.textContent ?? '').replace(/\s+/g, ' '),
+      line: section.querySelector('[data-testid="fronted-addresses"]'),
+      buttons: [...section.querySelectorAll('button')].map((b) => b.textContent?.trim()),
+    };
+  }
+  afterEach(() => {
+    ANSWERS[TREE] = JSON.parse(saved.tree);
+    ANSWERS[SUMMARY] = JSON.parse(saved.summary);
+    delete ANSWERS[SNI];
+  });
+
+  test("the Host FCP keeps is not an address to edit: one line says the node's addresses and its SNI list", async () => {
+    const p = await page([address('node-a-relay', { fcpOwned: true })], { sni: managed });
+    expect(p.line?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      "One of this node's addresses above, with an SNI from the SNI list Shared cover.",
+    );
+    // The template's own remark, address and SNI are not shown as what members get.
+    expect(p.text).not.toContain('node-a-relay');
+    expect(p.text).not.toContain('template-sni.example');
+    expect(p.text).not.toContain('None yet.');
+    expect(p.buttons).not.toContain('node-a-relay');
+    const links = [...p.line!.querySelectorAll('a')].map((a) => [
+      a.textContent?.trim(),
+      a.getAttribute('href'),
+    ]);
+    expect(links).toEqual([
+      ["this node's addresses above", '#node-addresses'],
+      ['Shared cover', '/admin/servers/snis/lists/shared-cover'],
+    ]);
+    // The first link goes to the Addresses section of this page.
+    p.line!.querySelector('a')!.click();
+    await tick();
+    expect(router.search).toContain('section=addresses');
+  });
+
+  test('no SNI list manages the transport: its SNIs are set by hand, in the SNIs section', async () => {
+    const byHand = { ...managed, transports: [{ ...managed.transports[0]!, list: null }] };
+    const p = await page([address('node-a-relay', { fcpOwned: true })], { sni: byHand });
+    expect(p.line?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      "One of this node's addresses above, with one of the SNIs set on it by hand.",
+    );
+    expect([...p.line!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+      '#node-addresses',
+      '#node-snis',
+    ]);
+  });
+
+  test('a failed SNI read is never said as set by hand', async () => {
+    // No answer for the SNI read: whether a list manages the transport is not known.
+    const p = await page([address('node-a-relay', { fcpOwned: true })]);
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await tick();
+    }
+    const line = p.section.querySelector('[data-testid="fronted-addresses"]')!;
+    expect(line.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      "One of this node's addresses above, with one of its SNIs.",
+    );
+    expect(line.textContent).not.toMatch(/by hand|SNI list/);
+    expect([...line.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+      '#node-addresses',
+      '#node-snis',
+    ]);
+  });
+
+  test('a transport without SNIs says the addresses only', async () => {
+    const p = await page([address('node-a-relay', { fcpOwned: true })], { security: 'tls' });
+    expect(p.line?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      "One of this node's addresses above.",
+    );
+  });
+
+  test('addresses made by hand and the operator fronts stay as they were', async () => {
+    const p = await page(
+      [
+        address('node-a-relay', { fcpOwned: true }),
+        address('by-hand'),
+        address('own-lb', { operatorFront: true }),
+      ],
+      { sni: managed },
+    );
+    expect(p.line).not.toBeNull();
+    expect(p.buttons).toEqual(expect.arrayContaining(['by-hand', 'own-lb', 'Add an address']));
+    expect(p.buttons).not.toContain('node-a-relay');
+    expect(p.text).toContain("Your own fronts, left out of members' subscriptions");
+  });
+
+  test('a node nothing fronts lists its addresses as before, with no line', async () => {
+    const p = await page([address('by-hand')]);
+    expect(p.line).toBeNull();
+    expect(p.buttons).toContain('by-hand');
+    expect(p.text).toContain('by-hand.example:443 · template-sni.example');
+  });
+});
+
 describe('review fixes', () => {
   test('a failed edge summary read is an error with Retry, never "reach this node directly"', async () => {
     failing.add('/api/v1/admin/edges/summary');

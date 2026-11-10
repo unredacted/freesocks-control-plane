@@ -14,7 +14,10 @@
    *                node", which opens the protect sheet here (`?front=1`)
    *   Transports   port changes, each transport with Change port and the
    *                addresses members get (and the operator's own fronts apart),
-   *                Add a transport
+   *                Add a transport. A transport FCP fronts says in one line
+   *                that members get the node's addresses above and an SNI of
+   *                its SNI list, in place of the Host FCP keeps for it
+   *                (`AddressView.fcpOwned`: a template, not edited by hand)
    *   SNIs         each REALITY transport's SNIs and their one next step
    *                (TransportNames: manage, add suggestions, send, test)
    *   Modes        its mode, whether members can pick it, the mode groups each
@@ -48,6 +51,7 @@
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import { edgeSummaryQuery, invalidateOverview, relayLookupQuery } from '@client/lib/edgesApi';
   import { transportsQuery } from '@client/lib/sniApi';
+  import { edgesPaths } from '../edges/lib/routes';
   import TransportNames from '../edges/names/TransportNames.svelte';
   import OriginNotices from '../edges/relay/OriginNotices.svelte';
   import NodeActivity from '../edges/simple/NodeActivity.svelte';
@@ -72,6 +76,7 @@
   import { tagOfName, transportName } from '@client/lib/transportName';
   import {
     countryLabel,
+    frontedAddressWords,
     frontsHint,
     inboundSummary,
     intentRestarting,
@@ -415,8 +420,36 @@
                 <h3 class="text-muted-foreground text-xs font-medium uppercase">
                   {notLiveYet ? 'Addresses members will get once live' : 'Addresses members get'}
                 </h3>
+                {#if split.owned.length > 0}
+                  <!-- FCP keeps one Host for a fronted transport, as a template: members
+                       never get it as it stands, and it is not edited by hand. -->
+                  <!-- Which SNI list manages it is known only once the SNI read answered:
+                       a pending or failed read is never said as "set by hand". -->
+                  {@const list =
+                    sniTransports.isError || !sniTransports.data
+                      ? ('unknown' as const)
+                      : (sniTransports.data.transports.find(
+                          (t) => t.transportUuid === inbound.transportUuid,
+                        )?.list ?? null)}
+                  <p class="mt-1" data-testid="fronted-addresses">
+                    {#each frontedAddressWords( { reality: inbound.security === 'reality', list } ) as part, i (i)}{#if part.to === 'list' && list && list !== 'unknown'}<Link
+                          href={edgesPaths.family(list.slug)}
+                          class="text-primary underline underline-offset-4">{part.text}</Link
+                        >{:else if part.to === 'addresses' || part.to === 'snis'}{@const to =
+                          part.to}<a
+                          href={`#${sectionId(to)}`}
+                          class="text-primary underline underline-offset-4"
+                          onclick={(e) => {
+                            e.preventDefault();
+                            nav.pick(to);
+                          }}>{part.text}</a
+                        >{:else}{part.text}{/if}{/each}
+                  </p>
+                {/if}
                 {#if split.members.length === 0}
-                  <p class="text-muted-foreground">None yet.</p>
+                  {#if split.owned.length === 0}
+                    <p class="text-muted-foreground">None yet.</p>
+                  {/if}
                 {:else}
                   <ul class="mt-1 space-y-0.5">
                     {#each split.members as host (host.addressUuid)}

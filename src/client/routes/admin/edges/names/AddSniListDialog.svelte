@@ -355,7 +355,7 @@
               id={`${uid}-slug-help`}
               class={slugIssue ? 'text-destructive text-sm' : 'text-muted-foreground text-sm'}
             >
-              {slugIssue ?? "The list page's address. It never changes."}
+              {slugIssue ?? "The list page's address. Renaming the list changes it."}
             </p>
           </div>
         {/if}

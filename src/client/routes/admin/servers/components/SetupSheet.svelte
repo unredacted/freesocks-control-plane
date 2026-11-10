@@ -203,6 +203,15 @@
     r.shape.transport === 'reality' || r.shape.transport === 'xhttp-reality';
   const knownModes = $derived(catalog.data?.modes ?? []);
   const familyRows = $derived((families.data?.families ?? []).filter((f) => f.enabled));
+  // A saved setup names its SNI list by the slug the list had then, and a
+  // rename moves the slug. The old one still resolves, so the row keeps it
+  // (re-sending it changes nothing); these find the list it names now.
+  const listOf = (slug: string | undefined) =>
+    (families.data?.families ?? []).find(
+      (f) => f.slug === slug || (!!slug && f.formerSlugs.includes(slug)),
+    );
+  const optionSlug = (f: { slug: string; formerSlugs: string[] }, picked: string | undefined) =>
+    picked && f.formerSlugs.includes(picked) ? picked : f.slug;
 
   function setShape(r: Row, key: string) {
     const s = MODE_SHAPES.find((m) => shapeKey(m) === key);
@@ -342,7 +351,7 @@
               {@const plain = [
                 shapeWords(m.shape),
                 m.transport ? `port ${m.transport.port}` : null,
-                m.familySlug ? `SNIs from ${m.familySlug}` : null,
+                m.familySlug ? `SNIs from ${listOf(m.familySlug)?.slug ?? m.familySlug}` : null,
                 m.group.renamedFrom ? `renamed from ${m.group.renamedFrom}` : null,
               ]
                 .filter(Boolean)
@@ -454,7 +463,7 @@
                         >
                           <option value={undefined}>Pick an SNI list</option>
                           {#each familyRows as f (f.slug)}
-                            <option value={f.slug}
+                            <option value={optionSlug(f, r.familySlug)}
                               >{f.label} ({f.target.address}, {f.counts.ready} usable)</option
                             >
                           {/each}

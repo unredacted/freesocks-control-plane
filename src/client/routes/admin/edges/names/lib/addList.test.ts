@@ -8,6 +8,7 @@ import {
   slugFor,
   slugProblem,
 } from './addList';
+import { SNI_LIST_SLUG, sniListSlugFor } from '../../../../../../shared/contracts/sni';
 
 describe('slugFor', () => {
   test('a cover site suggests its short id', () => {
@@ -23,6 +24,20 @@ describe('slugFor', () => {
     expect(slugFor('[2001:db8::1]')).toBe('2001-db8-1');
     expect(slugFor('[2001:db8::1]:8443')).toBe('2001-db8-1');
     expect(slugFor('192.0.2.1:8443')).toBe('192-0-2-1');
+  });
+});
+
+describe('sniListSlugFor: the one rule for a suggested short id and for a rename', () => {
+  test("a list's name gives its slug the way a cover site does", () => {
+    expect(sniListSlugFor('  Shared cover A  ')).toBe('shared-cover-a');
+    // The name the dialog suggests for a cover site gives the slug it suggests.
+    expect(sniListSlugFor('site.example')).toBe(slugFor('www.site.example'));
+    expect(sniListSlugFor('A / B: second')).toBe('a-b-second');
+    expect(sniListSlugFor('x'.repeat(60))).toBe('x'.repeat(40));
+    // No letter or digit: no slug (the server refuses such a rename).
+    expect(sniListSlugFor(' *** ')).toBe('');
+    for (const name of ['Shared cover A', 'site.example', 'x'.repeat(60), '9 lives'])
+      expect(sniListSlugFor(name)).toMatch(SNI_LIST_SLUG);
   });
 });
 

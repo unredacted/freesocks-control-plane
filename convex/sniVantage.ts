@@ -14,6 +14,7 @@
  * Audit payloads carry slugs, the country, the source and counts, never a
  * hostname or an address.
  */
+import { sniFamilyBySlug } from './lib/edges/sni/slug';
 import { ConvexError, v } from 'convex/values';
 import {
   internalMutation,
@@ -1171,10 +1172,7 @@ export function evidenceShape(ev: Doc<'sniVantageEvidence'>) {
 // --- the operator's buttons -------------------------------------------------------------------------
 
 async function familyNames(db: Db, slug: string, names: readonly string[]) {
-  const f = await db
-    .query('sniFamilies')
-    .withIndex('by_slug', (q) => q.eq('slug', slug))
-    .unique();
+  const f = await sniFamilyBySlug(db, slug);
   if (!f) return refuse('not_found', 'No such family');
   const wanted = [...new Set(names.map((n) => normalizeName(n)).filter((n): n is string => !!n))];
   const rows: Doc<'sniNames'>[] = [];

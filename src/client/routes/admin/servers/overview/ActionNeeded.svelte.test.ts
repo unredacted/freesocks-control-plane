@@ -113,11 +113,11 @@ describe('The merged Action needed list', () => {
     });
     flushSync();
     expect(document.querySelectorAll('ul[aria-label="Action needed"] > li')).toHaveLength(3);
-    expect(document.body.textContent).not.toMatch(/Nothing needs you/);
+    expect(document.body.textContent).not.toMatch(/No action needed/);
     expect(button('Retry')).toBeDefined();
   });
 
-  test('with only the failed edge read, it never says nothing needs you', () => {
+  test('with only the failed edge read, it never says no action is needed', () => {
     client = new QueryClient();
     app = mountWithQuery(client, ActionNeeded, {
       rows: [],
@@ -125,7 +125,7 @@ describe('The merged Action needed list', () => {
       edgeError: new Error('down'),
     });
     flushSync();
-    expect(document.body.textContent).not.toMatch(/Nothing needs you/);
+    expect(document.body.textContent).not.toMatch(/No action needed/);
   });
 
   test('beyond max, the rest wait behind Show all', () => {

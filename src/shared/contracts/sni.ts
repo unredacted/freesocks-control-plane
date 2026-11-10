@@ -75,6 +75,27 @@ export const SNI_LIST_RESERVED_SLUGS = ['find', 'checks', 'settings'] as const;
 export const isReservedSniListSlug = (slug: string): boolean =>
   (SNI_LIST_RESERVED_SLUGS as readonly string[]).includes(slug);
 
+/** What an SNI list's slug looks like: lowercase letters, digits and dashes, up to 40. */
+export const SNI_LIST_SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+/**
+ * The slug a piece of text gives (a list's name, or its cover site's host):
+ * `Shared cover A` -> `shared-cover-a`, `www.site.example` -> `site-example`.
+ * '' when the text has no letter or digit. The create dialog suggests a slug
+ * with it, and a rename moves a list's slug with it (the list's page is
+ * `/admin/servers/snis/lists/<slug>`).
+ */
+export function sniListSlugFor(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '');
+}
+
 /** `PATCH …/sni/config`: any subset, the vantage block nested. */
 /** The countries are not patched here: they come from the censored-country list. */
 export type SniConfigPatch = Partial<Omit<SniConfig, 'curatedCountries'>> & {
@@ -139,7 +160,10 @@ export type SniDeliveryCounts = z.infer<typeof SniDeliveryCounts>;
 
 export const SniFamilySummary = z.object({
   id: z.string(),
+  /** The list's address. A rename moves it with the name (`sniListSlugFor`). */
   slug: z.string(),
+  /** Slugs it held before a rename, newest last: each still resolves to this list. */
+  formerSlugs: z.array(z.string()).default([]),
   label: z.string(),
   target: z.object({ kind: z.string(), address: z.string(), port: z.number() }).passthrough(),
   enabled: z.boolean(),
@@ -269,6 +293,14 @@ export const SniFamilyDetail = z.object({
   suggestions: z.number().default(0),
 });
 export type SniFamilyDetail = z.infer<typeof SniFamilyDetail>;
+
+/**
+ * `PATCH families/{slug}`: the list's slug after the change. A new name moves
+ * the slug, so a caller holding the old one learns the new one here (the old
+ * one keeps resolving).
+ */
+export const SniFamilyUpdated = z.object({ ok: z.boolean().default(true), slug: z.string() });
+export type SniFamilyUpdated = z.infer<typeof SniFamilyUpdated>;
 
 export const SniImportResult = z.object({
   added: z.number(),

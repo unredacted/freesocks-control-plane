@@ -10,8 +10,10 @@
    * Picked SNIs can be checked again, retired (confirmed: it states the SNI
    * drain, `edge.sniDrainMinutes`), brought back, burned (typed), or marked
    * for a curated country. Adding SNIs by hand and the list's settings sit
-   * below, folded away. "Rename" by the title changes the list's name only
-   * (components/NameDialog): its slug is this page's link and never changes.
+   * below, folded away. "Rename" by the title changes the list's name
+   * (components/NameDialog), and its slug with it: the page moves to the new
+   * address (replacing this history entry). An address the list had before
+   * still opens it and lands on the one it has now.
    *
    * Wording lives in ./lib/listWords.ts, ./lib/transportWords.ts and
    * ./lib/words.ts (pure, unit-tested).
@@ -99,6 +101,13 @@
   const qc = useQueryClient();
   const uid = $props.id();
   const family = familyQuery(() => slug);
+  // The list answers to slugs it held before a rename: land on the one it has now.
+  const here = (to: string) =>
+    router.navigate(`${edgesPaths.family(to)}${router.search}`, { replace: true });
+  $effect(() => {
+    const current = family.data?.family.slug;
+    if (current && current !== slug) here(current);
+  });
   const config = sniConfigQuery();
   const codeOf = (e: unknown) => (e instanceof ApiCallError ? e.payload.error.code : null);
   const SELECT = 'border-border bg-background min-h-9 rounded-md border px-2 py-1.5 text-sm';
@@ -824,10 +833,14 @@
     bind:open={renameOpen}
     name={f.label}
     title={`Rename ${f.label}`}
-    description="Only admins see this name. Nothing else changes, and nothing is sent to a node."
+    description="Only admins see this name. This page's address follows it, and the old address keeps working. Nothing is sent to a node."
     empty="Give the list a name."
     saved="List renamed"
-    save={(label) => updateFamily(slug, { label }).then(() => invalidateSni(qc))}
+    save={(label) =>
+      updateFamily(slug, { label }).then((r) => {
+        invalidateSni(qc);
+        if (r.slug !== slug) here(r.slug);
+      })}
     errorWords={(e) => sniErrorWords(codeOf(e))}
   />
 {/if}

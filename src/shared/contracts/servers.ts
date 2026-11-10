@@ -79,6 +79,16 @@ export const AddressView = z.object({
    * it then).
    */
   operatorFront: z.boolean().default(false),
+  /**
+   * The Host FCP keeps for a fronted transport (a listener's Host): a template
+   * FCP writes and re-points by itself, never an address a member gets as it
+   * stands. Members get one of the node's pool addresses and, on REALITY, an
+   * SNI of the transport's SNI list. Not edited by hand (`servers.host_edge_owned`).
+   * Under a node: true only for the Host of the origin that fronts THAT node.
+   * A Host that is not pinned lists under every node serving its transport,
+   * and under another node it is not that node's template.
+   */
+  fcpOwned: z.boolean().default(false),
 });
 export type AddressView = z.infer<typeof AddressView>;
 

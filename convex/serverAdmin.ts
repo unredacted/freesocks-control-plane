@@ -258,8 +258,16 @@ function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
   };
 }
 
-/** `isFront`: whether it is an operator front the node's members no longer get (`leftOutFronts`). */
-function mapHost(h: Doc<'panelHosts'>, isFront?: (h: Doc<'panelHosts'>) => boolean) {
+/**
+ * `isFront`: whether it is an operator front the node's members no longer get
+ * (`leftOutFronts`). `fcpOwned`: the Hosts FCP keeps for a fronted transport
+ * (`listenerHosts`: under a node, those of the origin that fronts it).
+ */
+function mapHost(
+  h: Doc<'panelHosts'>,
+  fcpOwned: ReadonlySet<string>,
+  isFront?: (h: Doc<'panelHosts'>) => boolean,
+) {
   return {
     addressUuid: h.hostUuid,
     remark: h.remark,
@@ -279,6 +287,58 @@ function mapHost(h: Doc<'panelHosts'>, isFront?: (h: Doc<'panelHosts'>) => boole
     transportUuid: h.configProfileInboundUuid ?? null,
     nodeUuids: h.nodeUuids,
     operatorFront: isFront?.(h) ?? false,
+    fcpOwned: fcpOwned.has(h.hostUuid),
+  };
+}
+
+/**
+ * The Hosts FCP keeps on this backend, one per fronted transport of a node (a
+ * listener's Host): a template FCP writes and re-points by itself. A member's
+ * subscription never carries it as it stands: the render gives each member one
+ * of the node's pool addresses and, on REALITY, an SNI of the transport's
+ * list. An operator's edit of it is refused (`servers.host_edge_owned`).
+ *
+ * `all`: every such Host of the backend. `ofNode`: those of the origin that
+ * fronts THAT node (by the node's uuid, else its name), or of an origin that
+ * fronts the whole backend. A Host is listed under every node that serves its
+ * transport unless it is pinned, so under another node the same Host is not
+ * that node's template: nothing says its members get pool addresses.
+ */
+async function listenerHosts(
+  db: DatabaseReader,
+  sid: Id<'backendServers'>,
+): Promise<{
+  all: ReadonlySet<string>;
+  ofNode: (n: Pick<Doc<'panelNodes'>, 'nodeUuid' | 'name'>) => ReadonlySet<string>;
+}> {
+  const all = new Set<string>();
+  const owners: { origin: Doc<'relays'>['origin']; uuids: string[] }[] = [];
+  const relays = await db
+    .query('relays')
+    .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+    .collect(); // small operator table
+  for (const r of relays) {
+    const uuids: string[] = [];
+    for (const l of await db
+      .query('relayListeners')
+      .withIndex('by_relay', (q) => q.eq('relayId', r._id))
+      .collect())
+      if (l.host?.uuid) uuids.push(l.host.uuid);
+    for (const u of uuids) all.add(u);
+    if (uuids.length > 0) owners.push({ origin: r.origin, uuids });
+  }
+  const fronts = (
+    origin: Doc<'relays'>['origin'],
+    n: Pick<Doc<'panelNodes'>, 'nodeUuid' | 'name'>,
+  ) =>
+    origin.kind === 'backend-server' ||
+    (origin.kind === 'panel-node' &&
+      (origin.nodeUuid
+        ? origin.nodeUuid === n.nodeUuid
+        : origin.nodeName === originNameOf(n.name)));
+  return {
+    all,
+    ofNode: (n) => new Set(owners.filter((o) => fronts(o.origin, n)).flatMap((o) => o.uuids)),
   };
 }
 
@@ -368,6 +428,7 @@ export const tree = internalQuery({
         .unique(),
     ]);
     const frontsOf = await leftOutFronts(ctx.db, sid, nodes);
+    const fcpHosts = await listenerHosts(ctx.db, sid);
     const profileBy = new Map(profiles.map((p) => [p.profileUuid, p]));
     const usedProfiles = new Set<string>();
     const placedHosts = new Set<string>();
@@ -380,6 +441,7 @@ export const tree = internalQuery({
         const profile = n.configProfileUuid ? profileBy.get(n.configProfileUuid) : undefined;
         if (profile) usedProfiles.add(profile.profileUuid);
         const active = new Set(n.activeInboundUuids);
+        const fcpOwned = fcpHosts.ofNode(n);
         const transports = (profile?.inbounds ?? [])
           .filter((i) => active.has(i.inboundUuid))
           .map((i) => {
@@ -397,7 +459,7 @@ export const tree = internalQuery({
                 : null,
               addresses: mine
                 .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
-                .map((h) => mapHost(h, frontsOf.get(n.nodeUuid)?.isFront)),
+                .map((h) => mapHost(h, fcpOwned, frontsOf.get(n.nodeUuid)?.isFront)),
               modeGroups: squads
                 .filter((sq) => sq.inboundUuids.includes(i.inboundUuid))
                 .map((sq) => ({ groupUuid: sq.squadUuid, name: sq.name })),
@@ -454,7 +516,7 @@ export const tree = internalQuery({
         })),
       addresses: hosts
         .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
-        .map((h) => mapHost(h)),
+        .map((h) => mapHost(h, fcpHosts.all)),
       unattached: {
         profiles: profiles.filter((p) => !usedProfiles.has(p.profileUuid)).map((p) => p.name),
         addresses: hosts.filter((h) => !placedHosts.has(h.hostUuid)).map((h) => h.remark),

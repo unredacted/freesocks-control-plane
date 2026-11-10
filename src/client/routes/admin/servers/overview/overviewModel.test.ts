@@ -305,10 +305,10 @@ describe('mergeAttention', () => {
 
 describe('statusSentence', () => {
   const fleet = { protected: 4, total: 5 };
-  test('nodes online, fronted, and what needs you', () => {
+  test('nodes online, fronted, and the actions needed', () => {
     expect(statusSentence({ nodes: { online: 6, total: 6 }, fleet, rows: [] })).toEqual({
       dot: 'green',
-      text: '6 nodes online, 4 fronted. Nothing needs you.',
+      text: '6 nodes online, 4 fronted. No action needed.',
     });
     expect(
       statusSentence({
@@ -316,14 +316,14 @@ describe('statusSentence', () => {
         fleet,
         rows: [{ severity: 'warning' }, { severity: 'info' }],
       }),
-    ).toEqual({ dot: 'amber', text: '5 of 6 nodes online, 4 fronted. 2 things need you.' });
+    ).toEqual({ dot: 'amber', text: '5 of 6 nodes online, 4 fronted. 2 actions needed.' });
     expect(
       statusSentence({
         nodes: { online: 1, total: 1 },
         fleet: null,
         rows: [{ severity: 'critical' }],
       }),
-    ).toEqual({ dot: 'red', text: '1 node online. 1 thing needs you.' });
+    ).toEqual({ dot: 'red', text: '1 node online. 1 action needed.' });
   });
 
   test('no node reachable is red; nothing at all is grey', () => {
@@ -332,25 +332,25 @@ describe('statusSentence', () => {
     );
     expect(statusSentence({ nodes: null, fleet: null, rows: [] })).toEqual({
       dot: 'grey',
-      text: 'No nodes yet. Nothing needs you.',
+      text: 'No nodes yet. No action needed.',
     });
     expect(statusSentence({ nodes: null, fleet: { protected: 2, total: 2 }, rows: [] })).toEqual({
       dot: 'green',
-      text: '2 nodes fronted. Nothing needs you.',
+      text: '2 nodes fronted. No action needed.',
     });
   });
 
   test('a loaded empty fleet says "0 fronted"; not loaded says nothing about fronting', () => {
     const nodes = { online: 3, total: 3 };
     expect(statusSentence({ nodes, fleet: { protected: 0, total: 0 }, rows: [] }).text).toBe(
-      '3 nodes online, 0 fronted. Nothing needs you.',
+      '3 nodes online, 0 fronted. No action needed.',
     );
     expect(statusSentence({ nodes, fleet: null, rows: [] }).text).toBe(
-      '3 nodes online. Nothing needs you.',
+      '3 nodes online. No action needed.',
     );
     expect(statusSentence({ nodes: null, fleet: { protected: 0, total: 0 }, rows: [] })).toEqual({
       dot: 'grey',
-      text: 'No nodes yet. Nothing needs you.',
+      text: 'No nodes yet. No action needed.',
     });
   });
 
@@ -364,7 +364,7 @@ describe('statusSentence', () => {
         rows: [{ severity: 'critical' }],
         nodesUnread: true,
       }),
-    ).toEqual({ dot: 'red', text: 'Node status could not be read. 1 thing needs you.' });
+    ).toEqual({ dot: 'red', text: 'Node status could not be read. 1 action needed.' });
   });
 });
 

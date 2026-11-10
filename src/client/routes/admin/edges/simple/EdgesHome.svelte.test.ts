@@ -138,7 +138,7 @@ describe('Overview', () => {
 
     const text = document.body.textContent ?? '';
     expect(document.querySelector('[role="status"]')?.textContent).toMatch(
-      /1 node online\. 2 things need you\./,
+      /1 node online\. 2 actions needed\./,
     );
     // Edge attention and the backend's hold, in one list.
     const rows = document.querySelectorAll('ul[aria-label="Action needed"] > li');
@@ -174,7 +174,7 @@ describe('Overview', () => {
     flags.panelOk = false;
     await mountHome();
     expect(document.querySelector('[role="status"]')?.textContent).toMatch(
-      /Node status could not be read\. 3 things need you\./,
+      /Node status could not be read\. 3 actions needed\./,
     );
     expect(document.body.textContent).toMatch(/The panel could not be read/);
   });
