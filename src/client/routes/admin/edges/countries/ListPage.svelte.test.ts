@@ -141,7 +141,7 @@ describe('ListPage, Prefer its SNIs', () => {
     versions: [],
     edges: null,
     preferSwitch: true,
-    prefer: { inUse: 2, preferred: 0, curated: true },
+    prefer: { inUse: 2, preferred: 0, curated: true, legacyPick: 0 },
     ...over,
   });
   const prefer = () =>

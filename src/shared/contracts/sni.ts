@@ -248,9 +248,10 @@ export const SniNameRow = z.object({
   /** The enabled, fresh country lists holding the name. */
   onLists: z.array(HuntListFact).default([]),
   /**
-   * The censored countries where an allowlist that prefers its SNIs holds it
-   * (docs/edges.md "Names on a country's allowlist"): members there get it
-   * before SNIs nobody has judged, unless a mark decides there.
+   * The censored countries where an allowlist puts it first now (docs/edges.md
+   * "Names on a country's allowlist"), from the copies on the transports in
+   * service: members there get it before SNIs nobody has judged, unless a mark
+   * decides there. Empty for an SNI no transport in service carries.
    */
   preferredIn: z.array(z.string()).default([]),
   /** Where it stands on its way to members, across the family's transports. */

@@ -309,11 +309,16 @@ export function marksWaitLine(
 /** The short badge of a list that prefers its SNIs. */
 export const PREFER_BADGE = 'Prefers its SNIs';
 
-/** Under the switch: what is true now. */
-export function preferLine(on: boolean, country: string): string {
-  return on
+/**
+ * Under the switch: what is true now. `counted` is false while something holds
+ * the preference back (`preferWaitsLine` says what), so the line never claims
+ * members get anything first then.
+ */
+export function preferLine(on: boolean, country: string, counted = true): string {
+  if (!on) return 'Off. This list changes nothing members get.';
+  return counted
     ? `On. Members in ${countryShort(country)} get the SNIs on this list before ones nobody has judged there.`
-    : 'Off. This list changes nothing members get.';
+    : 'On for this list, but not in effect now.';
 }
 
 /** Why a list that prefers its SNIs puts nothing first now, or null when it counts. */
@@ -332,7 +337,7 @@ export function preferWaitsLine(
   return null;
 }
 
-type PreferCounts = { inUse: number; preferred: number } | null;
+type PreferCounts = { inUse: number; preferred: number; legacyPick?: number } | null;
 
 /** How many SNIs in use the list holds, and how many members there get first now. */
 export function preferCountsLine(c: PreferCounts, country: string): string {
@@ -363,13 +368,23 @@ export function preferConfirm(
   country: string,
 ): { title: string; body: string; confirmLabel: string } {
   const where = countryShort(country);
-  const held =
-    c && c.inUse > 0
+  // Not counted (too many SNIs in use) is not "none": say so.
+  const held = !c
+    ? `Too many SNIs are in use to count the ones on it. Members in ${where} get every one of them first at their next refresh.`
+    : c.inUse > 0
       ? `${plural(c.inUse, 'SNI', 'SNIs')} in use ${c.inUse === 1 ? 'is' : 'are'} on it. Members in ${where} get ${c.inUse === 1 ? 'it' : 'them'} first at their next refresh.`
       : `No SNI in use is on it yet. One that joins it later is given first in ${where}.`;
+  // A transport on the old SNI pick moves to the stable one with its first
+  // preferred SNI, which picks again for every member of it, once.
+  const legacy = c?.legacyPick ?? 0;
+  const elsewhere = !c
+    ? 'A transport still on the old SNI pick moves to the stable one, which gives all its members new SNIs once. Otherwise members elsewhere get what they got.'
+    : legacy > 0
+      ? `${plural(legacy, 'transport', 'transports')} carrying ${c.inUse === 1 ? 'it' : 'them'} ${legacy === 1 ? 'is' : 'are'} still on the old SNI pick and ${legacy === 1 ? 'moves' : 'move'} to the stable one: all ${legacy === 1 ? 'its' : 'their'} members, in every country, get new SNIs once. Other members elsewhere get what they got.`
+      : 'Members elsewhere get what they got.';
   return {
     title: `Prefer this list’s SNIs in ${where}?`,
-    body: `${held} Members elsewhere get what they got.`,
+    body: `${held} ${elsewhere}`,
     confirmLabel: 'Prefer its SNIs',
   };
 }

@@ -37,6 +37,7 @@ import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
 import { bumpFactsGen, schedulePreference } from './countryListFacts';
 import { resolveSniConfig } from './lib/sniConfig';
+import { protocolUsesSni } from './lib/edges/protocols';
 import { feedViews, startFeedRuns, startPendingFeeds, sweepFeeds } from './countryListFeeds';
 import {
   edgeCountsOf,
@@ -298,40 +299,60 @@ const PREFER_NAMES_CAP = 1500;
  * An allowlist's page, "Prefer its SNIs" (docs/edges.md "Names on a country's
  * allowlist"): how many SNIs in use this list holds (from the family names'
  * stored facts, so only what evidence reads), how many of them members in its
- * country are given first now (the listeners' own copies), and whether that
- * country is on the censored-country list at all. Null for a block list, and
+ * country are given first now (the listeners' own copies), how many transports
+ * carrying them are still on the old SNI pick, and whether that country is on
+ * the censored-country list at all. Only listeners in service count. Null for a block list, and
  * when more names are in use than one query may look up.
  */
 async function preferCountsOf(
   db: DatabaseReader,
   list: List,
-): Promise<{ inUse: number; preferred: number; curated: boolean } | null> {
+): Promise<{ inUse: number; preferred: number; curated: boolean; legacyPick: number } | null> {
   if (list.regime !== 'allowlist') return null;
   const { curatedCountries } = await resolveSniConfig(db);
-  // name -> a listener's copy says members in the list's country get it first.
-  const names = new Map<string, boolean>();
+  // Only what members are handed: a listener in service on an enabled origin
+  // (as the country view counts it). name -> whether a copy says members in
+  // the list's country get it first, and the listeners carrying it.
+  const names = new Map<string, { first: boolean; legacy: Set<string> }>();
+  const originOn = new Map<string, boolean>();
   for (const l of await db.query('relayListeners').collect()) {
-    if (l.retired) continue;
+    if (l.retired || !l.enabled || !l.deployed) continue;
+    if (!originOn.has(l.relayId))
+      originOn.set(l.relayId, (await db.get(l.relayId))?.enabled === true);
+    if (!originOn.get(l.relayId)) continue;
+    const legacy = protocolUsesSni(l) && l.sniPick !== 'hrw1';
     for (const n of l.tlsNames ?? []) {
       if (n.status !== 'active') continue;
       const first =
         (n.listedIn ?? []).includes(list.country) && !(n.blockedIn ?? []).includes(list.country);
-      names.set(n.name, (names.get(n.name) ?? false) || first);
+      const row = names.get(n.name) ?? { first: false, legacy: new Set<string>() };
+      row.first ||= first;
+      if (legacy) row.legacy.add(l._id);
+      names.set(n.name, row);
     }
   }
   if (names.size > PREFER_NAMES_CAP) return null;
   let inUse = 0;
   let preferred = 0;
-  for (const [name, first] of names) {
+  // Transports still on the old pick that carry one of the list's SNIs: the
+  // first preference moves each onto `hrw1`, which re-picks for all its members.
+  const legacy = new Set<string>();
+  for (const [name, at] of names) {
     const row = await db
       .query('sniNames')
       .withIndex('by_name', (q) => q.eq('name', name))
       .first();
     if (!(row?.onLists ?? []).some((f) => f.listId === list._id)) continue;
     inUse++;
-    if (first) preferred++;
+    if (at.first) preferred++;
+    for (const id of at.legacy) legacy.add(id);
   }
-  return { inUse, preferred, curated: curatedCountries.includes(list.country) };
+  return {
+    inUse,
+    preferred,
+    curated: curatedCountries.includes(list.country),
+    legacyPick: legacy.size,
+  };
 }
 
 /**

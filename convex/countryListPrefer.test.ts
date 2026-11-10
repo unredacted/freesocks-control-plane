@@ -350,16 +350,21 @@ describe('an allowlist that prefers its names', () => {
     // Both switches off: the list holds one SNI in use, and nobody gets it first.
     expect(await detail()).toMatchObject({
       preferSwitch: false,
-      prefer: { inUse: 1, preferred: 0, curated: true },
+      // The listener is still on the old pick: the first preference will move it.
+      prefer: { inUse: 1, preferred: 0, curated: true, legacyPick: 1 },
     });
     expect(await preferredIn()).toEqual({ 'x.example.com': [], 'y.example.com': [] });
 
     await preferOn();
     await call('PATCH', `lists/${id}`, { preferNames: true });
+    // The switches are on, but the pass has not run: the pages say what the
+    // listeners carry, not what they will.
+    expect(await preferredIn()).toEqual({ 'x.example.com': [], 'y.example.com': [] });
+    expect((await detail()).prefer).toMatchObject({ preferred: 0 });
     await settle();
     expect(await detail()).toMatchObject({
       preferSwitch: true,
-      prefer: { inUse: 1, preferred: 1, curated: true },
+      prefer: { inUse: 1, preferred: 1, curated: true, legacyPick: 0 },
     });
     expect(await preferredIn()).toEqual({ 'x.example.com': ['RU'], 'y.example.com': [] });
 
@@ -370,13 +375,35 @@ describe('an allowlist that prefers its names', () => {
       country: 'RU',
       state: 'blocked',
     });
-    expect((await detail()).prefer).toEqual({ inUse: 1, preferred: 0, curated: true });
+    expect((await detail()).prefer).toEqual({
+      inUse: 1,
+      preferred: 0,
+      curated: true,
+      legacyPick: 0,
+    });
+
+    // A listener out of service hands nothing to members: it counts for nothing.
+    await t.run(async (ctx) => {
+      const l = (await ctx.db.query('relayListeners').first())!;
+      await ctx.db.patch(l._id, { enabled: false });
+    });
+    expect((await detail()).prefer).toMatchObject({ inUse: 0, preferred: 0 });
+    expect(await preferredIn()).toEqual({ 'x.example.com': [], 'y.example.com': [] });
+    await t.run(async (ctx) => {
+      const l = (await ctx.db.query('relayListeners').first())!;
+      await ctx.db.patch(l._id, { enabled: true });
+    });
 
     // A block list has no counts; a list for a country off the censored list says so.
     const block = await create('blocklist');
     expect((await detail(block)).prefer).toBeNull();
     const far = await create('allowlist', 'NZ');
-    expect((await detail(far)).prefer).toEqual({ inUse: 0, preferred: 0, curated: false });
+    expect((await detail(far)).prefer).toEqual({
+      inUse: 0,
+      preferred: 0,
+      curated: false,
+      legacyPick: 0,
+    });
   });
 
   test('only a list of what works can prefer its names, and one that becomes a block list stops', async () => {

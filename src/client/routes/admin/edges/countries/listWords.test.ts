@@ -199,6 +199,9 @@ describe('an allowlist that prefers its SNIs', () => {
       'On. Members in Iran get the SNIs on this list before ones nobody has judged there.',
     );
     expect(preferLine(false, 'IR')).toBe('Off. This list changes nothing members get.');
+    // Held back by something else: it never claims members get anything first.
+    expect(preferLine(true, 'IR', false)).toBe('On for this list, but not in effect now.');
+    expect(preferLine(false, 'IR', false)).toBe('Off. This list changes nothing members get.');
   });
 
   test('says what holds it back, the deployment switch first', () => {
@@ -248,7 +251,17 @@ describe('an allowlist that prefers its SNIs', () => {
     expect(preferConfirm({ inUse: 0, preferred: 0 }, 'IR').body).toBe(
       'No SNI in use is on it yet. One that joins it later is given first in Iran. Members elsewhere get what they got.',
     );
-    expect(preferConfirm(null, 'IR').body).toMatch(/^No SNI in use is on it yet/);
+    // Not counted is not none.
+    expect(preferConfirm(null, 'IR').body).toBe(
+      'Too many SNIs are in use to count the ones on it. Members in Iran get every one of them first at their next refresh. A transport still on the old SNI pick moves to the stable one, which gives all its members new SNIs once. Otherwise members elsewhere get what they got.',
+    );
+    // A transport on the old pick is moved, and that reaches members everywhere.
+    expect(preferConfirm({ inUse: 2, preferred: 0, legacyPick: 1 }, 'IR').body).toBe(
+      '2 SNIs in use are on it. Members in Iran get them first at their next refresh. 1 transport carrying them is still on the old SNI pick and moves to the stable one: all its members, in every country, get new SNIs once. Other members elsewhere get what they got.',
+    );
+    expect(preferConfirm({ inUse: 2, preferred: 0, legacyPick: 2 }, 'IR').body).toMatch(
+      /2 transports carrying them are still on the old SNI pick and move to the stable one: all their members/,
+    );
   });
 
   test('the copy has no em-dash and says SNI', () => {

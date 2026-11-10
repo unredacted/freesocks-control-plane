@@ -77,7 +77,7 @@
         <h2 class="text-base font-medium">
           <label for={`${uid}-prefer`}>Prefer its SNIs</label>
         </h2>
-        <p class="text-muted-foreground">{preferLine(list.preferNames, list.country)}</p>
+        <p class="text-muted-foreground">{preferLine(list.preferNames, list.country, !waits)}</p>
       </div>
       <Switch
         id={`${uid}-prefer`}
