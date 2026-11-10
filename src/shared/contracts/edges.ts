@@ -3376,6 +3376,20 @@ export const ProviderSetView = z.object({
     .default(null),
   /** Each spare (and retiring address): whether putting it in use now would get it a slot. */
   spares: z.array(z.object({ edgeId: z.string(), takesSlot: z.boolean() })).default([]),
+  /**
+   * Why automatic upkeep starts no new address for `missing` (null: it does):
+   * `account_spend_cap_reached` with how many addresses the account's monthly
+   * cap fits and how many are wanted there, `outside_approved_shape` (a missing
+   * location is outside what the node was approved for), or `pool_reserved`.
+   */
+  upkeepHold: z
+    .object({
+      code: z.string(),
+      capFits: z.number().optional(),
+      capWanted: z.number().optional(),
+    })
+    .nullable()
+    .default(null),
   /** Locations that could be added (they carry at least one transport of the node). */
   available: z.array(
     z.object({

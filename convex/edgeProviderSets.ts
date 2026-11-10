@@ -63,6 +63,8 @@ import { listenersOf } from './relayListeners';
 import { boundToRelay, startReprotect } from './edgeSetupRuns';
 import { EDGE_LIVE_STATUSES, publishedCount } from './lib/edges/pool';
 import { AUDIENCE_NEEDS_SPREAD } from './edgeAudiences';
+import { upkeepFillRefusalOf, type UpkeepFillRefusal } from './edgeRotations';
+import { SPEND_CAP_REACHED, capRoomAt } from './edgePlans';
 
 const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
 
@@ -83,8 +85,28 @@ const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
  * until a first address there is tested), `pool` how many of its free slots
  * that holds, and
  * `spares` whether each spare (or retiring address) would get a slot if put in
- * use now (`takesSlot`: false = it would stay a spare). Names are admin-only.
+ * use now (`takesSlot`: false = it would stay a spare). `upkeepHold` says why
+ * automatic upkeep starts no new address for what is missing (null: it does):
+ * the account's monthly cap, with how many addresses the cap fits and how many
+ * are wanted there, or a missing location outside what the node was approved
+ * for. Names are admin-only.
  */
+
+/** What every node using the account still lacks there (the deficit's targets in its locations). */
+async function missingInAccount(
+  db: import('./_generated/server').DatabaseReader,
+  accountId: Id<'edgeProviderAccounts'>,
+): Promise<number> {
+  let n = 0;
+  for (const r of await db.query('relays').collect()) {
+    if (!r.enabled || r.deleting || !r.providerSet) continue;
+    const s = await setStateOf(db, r);
+    for (const t of s.targets)
+      if (s.picks?.find((p) => p.pick.locationId === t.locationId)?.account._id === accountId) n++;
+  }
+  return n;
+}
+
 export const view = internalQuery({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
@@ -265,6 +287,36 @@ export const view = internalQuery({
           publishedRefOf(e, keyOf.get(e.listenerId as string) ?? ''),
         ),
       }));
+    // Why upkeep starts nothing for what is missing (it then never fails, so
+    // only this says it): the cap, in addresses, or the node's approval.
+    let upkeepHold: {
+      code: UpkeepFillRefusal;
+      capFits?: number;
+      capWanted?: number;
+    } | null = null;
+    if (relay.providerSet && state.deficit > 0 && !relay.setupOwned) {
+      const code = await upkeepFillRefusalOf(ctx, relay);
+      if (code) upkeepHold = { code };
+      if (code === SPEND_CAP_REACHED) {
+        const at = state.targets
+          .map((t) => pickRows.find((r) => r.location._id === t.locationId))
+          .find((r) => typeof r?.account.cost?.monthlyCap === 'number');
+        const room = at
+          ? await capRoomAt(
+              ctx,
+              at.account,
+              at.location,
+              relay.providerSet.find((p) => p.locationId === at.location._id)?.options,
+            )
+          : null;
+        if (at && room)
+          upkeepHold = {
+            code,
+            capFits: room.fits,
+            capWanted: room.staying + (await missingInAccount(ctx.db, at.account._id)),
+          };
+      }
+    }
     return {
       hasSet: !!relay.providerSet,
       websocketNode: state.websocketNode,
@@ -281,6 +333,7 @@ export const view = internalQuery({
         ...slotsOf(state, relay),
       },
       spares,
+      upkeepHold,
       available,
       regions,
     };

@@ -2995,6 +2995,24 @@ address without a spare"). A missing
 location at its account's or its own live-edge cap, or out of today's allocations, holds the
 slot the same way (nothing is started that selection would refuse).
 
+Two more causes hold a fill, and upkeep starts nothing for them either (the same
+`upkeepFillRefusal`), so no run fails and the hour's hold above never begins:
+
+- `account_spend_cap_reached`: one more address would pass the monthly cap of every account that
+  could take it (a spare is held the same way). The pass that first finds room under the cap (a
+  drained address was destroyed, the cap was raised) starts the fill, five minutes later at most.
+  A replacement is made before the blocked address goes, so a node needs room for one address
+  more than it holds; a cap that fits exactly that leaves no room for a refill until the drained
+  address is destroyed.
+- `outside_approved_shape`: what the node lacks is in a location outside what the node was
+  approved for (§ Operations safety, "Approval shape in automatic work"). Selection names the
+  approval for it; it no longer answers `pool_reserved`.
+
+Since nothing fails, these are said where the operator looks: attention `pool_below_desired`
+carries the cause as its `code` (action `open_account` for the cap, `open_relay` for the
+approval) and, for the cap, the facts `capFits` and `capWanted`; the node's Providers card
+replaces "automatic upkeep adds them" with the cause (`upkeepHold` on `GET relays/{id}/providers`).
+
 **Retention** (separate daily crons, `convex/retention.ts`): `retention-edges` prunes
 `destroyed` edges after 30 days, `retention-edge-rotations` terminal rotations after 90, and the
 workflow sweeps (`retention-panel-ops`, `-sni-rollouts`, `-edge-setup-runs`,
@@ -3097,7 +3115,12 @@ run parked at `node_not_approved` (action `open_node`, its Servers page).
 outside a guided setup run, picks only a spare or an account whose shape (listener, account,
 template) fits the enrolled node's approval; nothing fitting fails the selection with
 `outside_approved_shape`, and an automatic start (detector, reconcile) is refused with
-`edge.outside_approved_shape` instead of failing every tick. Where the run publishes, the
+`edge.outside_approved_shape` instead of failing every tick. The same code is given to a fill
+whose held slot is for a location outside the shape (the fitting ones could only make a spare):
+upkeep then starts nothing and the node's row and card say so (§ "Reconcile cron"). A node approved without a per-listener review (an adopted
+node, an older review) has the shape its members are served through NOW
+(`nodeActivation.publicationAdmission`): a location whose last address left is no longer in
+it, so automatic work cannot make an address there again until the node is reviewed. Where the run publishes, the
 approval is checked again: out of shape, the paid-for edge stays a standby and a replace leaves
 its target served (the finalize drains a target only after a real swap); as a candidate of the
 node's running activation it is recorded as one, except for a replace, whose replacement must be
@@ -6258,6 +6281,19 @@ the account (`account_spend_cap_reached`), selection passes over it (named or au
 preflight says so, and the edge insert refuses it last. An account at its cap raises attention
 `account_spend_cap`.
 
+A refusal by the cap is about the account, never about a place: it holds no location
+(`relays.refusedLocations` is written only for a create the provider refused) and cools none,
+so every location of the account is refused alike and none ranks behind another afterwards.
+Upkeep asks before it starts (§ "Reconcile cron"): while the cap would refuse the address it
+starts no run. **The cap in addresses** (`edgePlans.capRoomAt`): `capFits` is how many addresses
+the cap fits, the live ones FCP manages there plus how many more at the price of one in the
+location that lacks one (an account over its cap fits fewer than it holds); `capWanted` is how
+many are wanted, the live ones that stay (not draining, being destroyed, failed or cancelled)
+plus what every node using the account still lacks there. Attention `pool_below_desired` (code
+`account_spend_cap_reached`), a failed run the cap refused (`rotation_failed` with that code)
+and the node's Providers card say both numbers: "The cap fits 6 addresses, 8 wanted" is a cap
+set too low for the fleet, not a fault to wait out.
+
 **Selection** keeps its priorities (the lower number is tried first); between accounts of the
 same priority it prefers the cheaper edge among those priced in the same currency (each account
 ranks by cost within its currency; one whose price is not known ranks with the cheapest, so
@@ -6315,7 +6351,17 @@ before its addresses are published (`edge.pick_switch_late` after). Go-live reco
 **Selection with a set**: the set's usable picks, minus cooling ones and ones that just refused
 a create for this node for automatic work (§ "A location that refused a create"), ranked
 by what they add for the listener: lowers the deficit, a provider not yet published for it, a
-location not yet published for it, set order, fewest live edges (`pickLocation`). Automatic
+location not yet published for it, set order, fewest live edges (`pickLocation`). A replace is
+judged against the pool as it will be once its target left (the target is taken out of what is
+published before the ranking): the replacement of a location's last address lowers the deficit
+there, so it is built in that same location. Judged with the target still counted, nothing
+lowered the deficit and set order sent every replacement to the first pick; the location was
+left empty, the pool was then expanded by one to refill it (§ Publication), and the node held
+one address more after every such replace. A location meant for a country (§ "Locations meant
+for a country") so keeps an address for it when that country blocks the one it had. A target
+whose location keeps another address goes where the node lacks one, else by set order as
+before; a location that still cools is passed over as before, so a second block there inside
+the cooldown moves the replacement away. Automatic
 work picks only trusted locations, and an automatic fill (upkeep's provision meant to go in
 use) whose free slots are all held for the deficit takes only a pick that lowers it: anything
 else would be bought to stay a spare, so it is refused (`pool_reserved`) and upkeep does not

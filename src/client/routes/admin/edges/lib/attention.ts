@@ -287,6 +287,13 @@ export function attentionFactsLine(item: AttentionItem): string {
   const wanted = num('wanted');
   const inUse = num('inUse');
   if (wanted !== null && inUse !== null) out.push(`${inUse} of ${wanted} in use`);
+  // A monthly spend cap in addresses: how many it fits and how many are wanted.
+  const capFits = num('capFits');
+  const capWanted = num('capWanted');
+  if (capFits !== null && capWanted !== null)
+    out.push(
+      `The cap fits ${capFits} ${capFits === 1 ? 'address' : 'addresses'}, ${capWanted} wanted`,
+    );
   const standbys = num('standbys');
   if (standbys !== null && standbys > 0)
     out.push(`${standbys} ${standbys === 1 ? 'standby' : 'standbys'} ready`);

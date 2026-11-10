@@ -2428,6 +2428,28 @@ describe('automatic work on a live node stays in its approved shape', () => {
       ),
     );
     expect(inSet.account?.id).toBe(other);
+    // What the set now lacks (an address at the added pick) is outside what the
+    // node was approved for. A fill that goes in use cannot be made there, and
+    // one anywhere else could only be a spare: the selection names the approval
+    // (it said `pool_reserved`, so upkeep bought nothing and nobody was told why).
+    const wantedBefore = (await t.run((c) => c.db.get(live.relayId)))!.desiredPublished;
+    await t.mutation(internal.relays.ensureCapacity, { relayId: live.relayId });
+    expect(await select('provision')).toMatchObject({
+      account: null,
+      accountFailure: 'outside_approved_shape',
+    });
+    expect(await t.query(internal.edgeRotations.upkeepFillRefusal, { relayId: live.relayId })).toBe(
+      'outside_approved_shape',
+    );
+    const lacking = await t.query(internal.edgeOperator.attention, {});
+    expect(lacking.items.find((i) => i.kind === 'pool_below_desired')).toMatchObject({
+      code: 'outside_approved_shape',
+      action: 'open_relay',
+    });
+    expect(
+      (await t.query(internal.edgeProviderSets.view, { relayId: live.relayId }))!.upkeepHold,
+    ).toEqual({ code: 'outside_approved_shape' });
+    await t.run((c) => c.db.patch(live.relayId, { desiredPublished: wantedBefore }));
     // (Back to the set the node went live with.)
     await t.run(async (c) => {
       const relay = (await c.db.get(live.relayId))!;

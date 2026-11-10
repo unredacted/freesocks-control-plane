@@ -265,6 +265,47 @@ export async function capRefusal(
   return atCap(spend) || passesCap(spend, each, adding) ? SPEND_CAP_REACHED : null;
 }
 
+/** An account's monthly cap counted in addresses (attention and the node page say it). */
+export interface CapRoom {
+  /** Addresses the cap fits: the live ones FCP manages plus how many more at this price. */
+  fits: number;
+  /** Live managed addresses that stay (not draining, being destroyed, failed or cancelled). */
+  staying: number;
+}
+
+/** Statuses of an address on its way out: it still costs, but nobody wants it. */
+const LEAVING_STATUSES = new Set(['draining', 'destroying', 'failed', 'cancelled']);
+
+/**
+ * How many addresses the account's monthly cap fits, counted with what one
+ * more costs at `location` (the node's options there), and how many it holds
+ * that stay. Null without a cap, or when one more has no price in the cap's
+ * currency (nothing to count with). An account over its cap fits fewer than
+ * it holds.
+ */
+export async function capRoomAt(
+  ctx: { db: DatabaseReader },
+  account: Account,
+  location: Location,
+  options?: string,
+): Promise<CapRoom | null> {
+  if (typeof account.cost?.monthlyCap !== 'number') return null;
+  const size = await sizeAt(
+    ctx,
+    account,
+    location,
+    options !== undefined ? parseOptionValues(options) : null,
+  );
+  const { cost: each } = await edgeCostAt(ctx.db, account, location._id, size);
+  const edges = await managedLiveEdgesOf(ctx.db, account._id);
+  const spend = await spendOf(ctx, account, edges);
+  if (spend.cap === null || !each.monthly || each.currency !== spend.currency) return null;
+  return {
+    fits: spend.edges + Math.floor((spend.cap - spend.monthly + 1e-6) / each.monthly),
+    staying: edges.filter((e) => !LEAVING_STATUSES.has(e.status)).length,
+  };
+}
+
 // --- admin views -----------------------------------------------------------------------
 
 /**
