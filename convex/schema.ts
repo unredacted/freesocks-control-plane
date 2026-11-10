@@ -946,6 +946,11 @@ export default defineSchema({
     // the bytes an open connection moves (lib/revocationWatch.ts). Absent = no
     // drain (deleted at once, as before).
     revokeDrainUntil: v.optional(v.number()),
+    // Every Hysteria group this key was ever placed in (lib/hysteriaGroups.ts),
+    // never cleared: a connection opened while it was there outlives a revoke
+    // and an in-place switch away, so the revocation watch covers the key by
+    // what it was issued into, not by the current mode pools.
+    hysteriaGroups: v.optional(v.array(v.string())),
   })
     .index('by_user', ['userId'])
     // (userId, state): the active-subscription resolvers hit this directly

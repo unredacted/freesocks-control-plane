@@ -3,20 +3,26 @@
  * outlived the revocation. docs/backends.md "Revoking a key with an open
  * Hysteria connection"; the decision rule is pure in lib/revocationWatch.ts.
  *
- *  - `start`: a Hysteria key FCP just disabled (a lapsed membership, an admin
- *    disable, a delete that drains first) is watched.
+ *  - `start`: a key FCP just disabled (a lapsed membership, an admin disable,
+ *    a delete that drains first) that was ever in a Hysteria group
+ *    (`subscriptions.hysteriaGroups`) is watched. A key revoked again starts a
+ *    new window.
  *  - `sweep` (cron `revocation-watch`): reads each due watch's bytes; growth
- *    past `revocation.leakBytes` after the settle time asks for a cut of the
- *    key's node(s); then runs the cuts that are due (at most one restart per
- *    node per `revocation.cutMinIntervalMinutes`).
+ *    past `revocation.leakBytes` after the settle time marks it leaked and asks
+ *    for a cut of the node(s) behind its Hysteria groups; then runs the cuts
+ *    that are due (at most one restart per node per
+ *    `revocation.cutMinIntervalMinutes`). Before a restart, every key waiting
+ *    on that node is read again: one that is gone or enabled again no longer
+ *    counts, and a node nobody still waits on is not restarted.
  *  - `afterAdminDisable`: an admin disable also cuts at once when the key was
- *    online recently (`revocation.adminDisableCutsNow`).
+ *    online recently (`revocation.adminDisableCutsNow`); that cut counts as one
+ *    of the key's cuts.
  *  - `drainPlan` / `beginDrain`: the teardown path disables a Hysteria key and
  *    deletes it only after `revocation.drainMinutes`.
  *
- * Everything is off unless `revocation.watch` is on. Only Hysteria-placed keys
- * on a backend that can restart a node are watched: the other transports
- * authenticate every connection (REVOKE_REACHES_OPEN_SESSIONS).
+ * Everything is off unless `revocation.watch` is on. Only keys on a backend
+ * that can restart a node are watched: the other transports authenticate every
+ * connection (REVOKE_REACHES_OPEN_SESSIONS).
  */
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
@@ -32,7 +38,7 @@ import {
 import { runWithCronOutcome } from './cronHeartbeat';
 import { writeAuditLog } from './lib/audit';
 import { CAPABILITIES, REVOKE_REACHES_OPEN_SESSIONS } from './lib/backends/capabilities';
-import { poolFromConfig } from './lib/remnawavePlacement';
+import { isHysteriaGroup } from './lib/hysteriaGroups';
 import {
   CHECK_EVERY_MS,
   CUT_RETRY_MS,
@@ -46,10 +52,11 @@ import {
   type Probe,
   type RevocationConfig,
 } from './lib/revocationWatch';
-import { HYSTERIA_MODE_IDS } from '../src/shared/hysteriaModes';
 
 const WATCH_PAGE = 50;
 const CUT_PAGE = 20;
+const WAITER_PAGE = 200;
+const RESTART_BATCH = 100;
 
 const reasonV = v.union(v.literal('lapsed'), v.literal('admin'), v.literal('teardown'));
 
@@ -72,22 +79,18 @@ async function configOf(ctx: QueryCtx): Promise<RevocationConfig> {
 }
 
 /**
- * Whether a revocation of this key leaves an open connection served: a
- * Hysteria-placed key (its primary placement is in a Hysteria mode's pool) on a
- * backend that can restart a node.
+ * The Hysteria groups whose nodes a revocation of this key must reach: what
+ * the key was ever placed in (`hysteriaGroups`, kept at issuance and on every
+ * in-place switch). A row written before that field existed falls back to its
+ * current primary group, when that group is a Hysteria one.
  */
-async function needsWatch(ctx: QueryCtx, sub: Doc<'subscriptions'>): Promise<boolean> {
-  if (REVOKE_REACHES_OPEN_SESSIONS.hysteria) return false;
-  if (!CAPABILITIES[sub.backend].nodeRestart) return false;
-  if (!sub.backendServerId || !sub.backendPlacement) return false;
-  for (const slug of HYSTERIA_MODE_IDS) {
-    const row = await ctx.db
-      .query('modePlacements')
-      .withIndex('by_mode_backend', (q) => q.eq('modeSlug', slug).eq('backend', sub.backend))
-      .unique();
-    if (row && poolFromConfig(row.config).includes(sub.backendPlacement)) return true;
-  }
-  return false;
+async function watchGroups(ctx: QueryCtx, sub: Doc<'subscriptions'>): Promise<string[]> {
+  if (REVOKE_REACHES_OPEN_SESSIONS.hysteria) return [];
+  if (!CAPABILITIES[sub.backend].nodeRestart || !sub.backendServerId) return [];
+  if (sub.hysteriaGroups?.length) return [...sub.hysteriaGroups];
+  return (await isHysteriaGroup(ctx.db, sub.backend, sub.backendPlacement))
+    ? [sub.backendPlacement!]
+    : [];
 }
 
 async function subByBackendUser(
@@ -108,19 +111,37 @@ async function startWatch(
   const cfg = await configOf(ctx);
   if (!cfg.enabled) return null;
   const sub = await subByBackendUser(ctx, backendUserId);
-  if (!sub || !(await needsWatch(ctx, sub))) return null;
+  if (!sub) return null;
+  const groups = await watchGroups(ctx, sub);
+  if (groups.length === 0) return null;
+  const now = Date.now();
   const existing = await ctx.db
     .query('revocationWatches')
     .withIndex('by_backend_user', (q) => q.eq('backendUserId', backendUserId))
     .first();
-  if (existing) return existing._id;
-  const now = Date.now();
+  if (existing) {
+    // Revoked again (it may have been enabled in between): a new window, a new
+    // baseline and a fresh cut count. A cut already waiting stays waiting.
+    const leaked = existing.state === 'leaked';
+    await ctx.db.patch(existing._id, {
+      reason,
+      placements: groups,
+      revokedAt: now,
+      settleUntil: now + SETTLE_MS,
+      baselineBytes: undefined,
+      cuts: 0,
+      state: leaked ? 'leaked' : 'watching',
+      nextCheckAt: leaked ? now + cfg.watchMs : now + SETTLE_MS,
+      updatedAt: now,
+    });
+    return existing._id;
+  }
   return ctx.db.insert('revocationWatches', {
     subscriptionId: sub._id,
     backend: sub.backend,
     backendUserId,
     backendServerId: sub.backendServerId!,
-    placements: [sub.backendPlacement!, ...(sub.backendExtraPlacements ?? [])],
+    placements: groups,
     reason,
     revokedAt: now,
     settleUntil: now + SETTLE_MS,
@@ -133,7 +154,7 @@ async function startWatch(
 
 /**
  * Start watching a key FCP just disabled. A no-op (null) when the watch is
- * off or the key needs none; an existing watch is kept as it is.
+ * off or the key needs none; a key already watched starts a new window.
  */
 export const start = internalMutation({
   args: { backendUserId: v.string(), reason: reasonV },
@@ -162,7 +183,7 @@ export const drainPlan = internalQuery({
         : { kind: 'wait', until: sub.revokeDrainUntil };
     }
     const cfg = await configOf(ctx);
-    if (!cfg.enabled || !(await needsWatch(ctx, sub))) return { kind: 'now' };
+    if (!cfg.enabled || (await watchGroups(ctx, sub)).length === 0) return { kind: 'now' };
     return { kind: 'start' };
   },
 });
@@ -182,7 +203,7 @@ export const beginDrain = internalMutation({
   },
 });
 
-// --- the sweep --------------------------------------------------------------
+// --- watches ----------------------------------------------------------------
 
 export const listDueWatches = internalQuery({
   args: { now: v.number(), limit: v.number() },
@@ -199,6 +220,61 @@ export const listDueWatches = internalQuery({
     return out;
   },
 });
+
+async function requestCutRow(
+  ctx: MutationCtx,
+  backendServerId: Id<'backendServers'>,
+  nodeUuid: string,
+  bypassInterval: boolean,
+): Promise<void> {
+  const now = Date.now();
+  const row = await ctx.db
+    .query('nodeSessionCuts')
+    .withIndex('by_server_node', (q) =>
+      q.eq('backendServerId', backendServerId).eq('nodeUuid', nodeUuid),
+    )
+    .unique();
+  if (!row) {
+    await ctx.db.insert('nodeSessionCuts', {
+      backendServerId,
+      nodeUuid,
+      pendingSince: now,
+      ...(bypassInterval ? { bypassInterval: true } : {}),
+      leakedKeys: 1,
+      updatedAt: now,
+    });
+    return;
+  }
+  await ctx.db.patch(row._id, {
+    pendingSince: row.pendingSince ?? now,
+    ...(bypassInterval ? { bypassInterval: true } : {}),
+    leakedKeys: row.leakedKeys + 1,
+    updatedAt: now,
+  });
+}
+
+/** Mark a watch leaked on these nodes and ask for their cut. */
+async function markLeaked(
+  ctx: MutationCtx,
+  w: Doc<'revocationWatches'>,
+  nodeUuids: string[],
+  bytes: number | undefined,
+  bypassInterval: boolean,
+  cfg: RevocationConfig,
+): Promise<void> {
+  const now = Date.now();
+  // Re-read when its cut has run (restartWatches moves it back to watching) or
+  // at the window's end; meanwhile nothing new is learned.
+  await ctx.db.patch(w._id, {
+    state: 'leaked',
+    ...(bytes !== undefined ? { lastBytes: bytes } : {}),
+    nodeUuids,
+    nextCheckAt: w.revokedAt + cfg.watchMs,
+    updatedAt: now,
+  });
+  for (const nodeUuid of nodeUuids)
+    await requestCutRow(ctx, w.backendServerId, nodeUuid, bypassInterval);
+}
 
 /** Apply one decision to a watch (and audit what an operator should see). */
 export const applyDecision = internalMutation({
@@ -238,16 +314,7 @@ export const applyDecision = internalMutation({
         return null;
       case 'leaked': {
         const nodes = nodeUuids ?? [];
-        // Re-read when the cut has run (finishCut moves it back to watching) or
-        // at the window's end; meanwhile nothing new is learned.
-        await ctx.db.patch(watchId, {
-          state: 'leaked',
-          lastBytes: d.bytes,
-          nodeUuids: nodes,
-          nextCheckAt: w.revokedAt + cfg.watchMs,
-          updatedAt: now,
-        });
-        for (const nodeUuid of nodes) await requestCutRow(ctx, w.backendServerId, nodeUuid, false);
+        await markLeaked(ctx, w, nodes, d.bytes, false, cfg);
         await writeAuditLog(ctx, {
           actorType: 'system',
           action: 'revocation.leak_seen',
@@ -283,37 +350,65 @@ export const applyDecision = internalMutation({
   },
 });
 
-async function requestCutRow(
-  ctx: MutationCtx,
-  backendServerId: Id<'backendServers'>,
-  nodeUuid: string,
-  bypassInterval: boolean,
-): Promise<void> {
-  const now = Date.now();
-  const row = await ctx.db
-    .query('nodeSessionCuts')
-    .withIndex('by_server_node', (q) =>
-      q.eq('backendServerId', backendServerId).eq('nodeUuid', nodeUuid),
-    )
-    .unique();
-  if (!row) {
-    await ctx.db.insert('nodeSessionCuts', {
-      backendServerId,
-      nodeUuid,
-      pendingSince: now,
-      ...(bypassInterval ? { bypassInterval: true } : {}),
-      leakedKeys: 1,
-      updatedAt: now,
-    });
-    return;
-  }
-  await ctx.db.patch(row._id, {
-    pendingSince: row.pendingSince ?? now,
-    ...(bypassInterval ? { bypassInterval: true } : {}),
-    leakedKeys: row.leakedKeys + 1,
-    updatedAt: now,
-  });
-}
+/** An admin cut: the watch is leaked on these nodes, and their cut skips the interval. */
+export const markLeakedNow = internalMutation({
+  args: { watchId: v.id('revocationWatches'), nodeUuids: v.array(v.string()) },
+  handler: async (ctx, { watchId, nodeUuids }) => {
+    const w = await ctx.db.get(watchId);
+    if (!w) return null;
+    await markLeaked(ctx, w, nodeUuids, undefined, true, await configOf(ctx));
+    return null;
+  },
+});
+
+/**
+ * One page of the leaked watches on an instance that wait on this node (a
+ * watch names its nodes in an array, so the page is filtered here; the walk
+ * goes over every leaked watch of the instance, page by page).
+ */
+export const waitersPage = internalQuery({
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, { backendServerId, nodeUuid, cursor }) => {
+    const page = await ctx.db
+      .query('revocationWatches')
+      .withIndex('by_server_state', (q) =>
+        q.eq('backendServerId', backendServerId).eq('state', 'leaked'),
+      )
+      .paginate({ cursor, numItems: WAITER_PAGE });
+    return {
+      waiters: page.page.filter((w) => (w.nodeUuids ?? []).includes(nodeUuid)),
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
+  },
+});
+
+/** After a cut: these watches start over (a new settle time and baseline), one cut counted. */
+export const restartWatches = internalMutation({
+  args: { watchIds: v.array(v.id('revocationWatches')) },
+  handler: async (ctx, { watchIds }) => {
+    const now = Date.now();
+    for (const id of watchIds) {
+      const w = await ctx.db.get(id);
+      if (!w || w.state !== 'leaked') continue;
+      await ctx.db.patch(id, {
+        state: 'watching',
+        cuts: w.cuts + 1,
+        baselineBytes: undefined,
+        settleUntil: now + SETTLE_MS,
+        nextCheckAt: now + SETTLE_MS,
+        updatedAt: now,
+      });
+    }
+    return null;
+  },
+});
+
+// --- cuts -------------------------------------------------------------------
 
 export const requestCut = internalMutation({
   args: {
@@ -350,10 +445,25 @@ export const claimCut = internalMutation({
   },
 });
 
-/**
- * A cut ran (or failed). On success every watch it was for starts over: a key
- * whose bytes still grow after the restart is served by something else.
- */
+/** Nobody still waits on this node: no restart. */
+export const dropCut = internalMutation({
+  args: { id: v.id('nodeSessionCuts') },
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    await ctx.db.patch(id, {
+      pendingSince: undefined,
+      bypassInterval: undefined,
+      claimAt: undefined,
+      retryAfter: undefined,
+      leakedKeys: 0,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/** A cut ran (or the ledger refused it / it failed: tried again after CUT_RETRY_MS). */
 export const finishCut = internalMutation({
   args: { id: v.id('nodeSessionCuts'), ok: v.boolean() },
   handler: async (ctx, { id, ok }) => {
@@ -363,25 +473,6 @@ export const finishCut = internalMutation({
     const server = await ctx.db.get(row.backendServerId);
     const backend = server?.backend;
     if (!ok) {
-      // Nothing still waits on this node (its keys' watches ended): drop it
-      // instead of retrying a restart nobody needs.
-      const waiting = await ctx.db
-        .query('revocationWatches')
-        .withIndex('by_server_state', (q) =>
-          q.eq('backendServerId', row.backendServerId).eq('state', 'leaked'),
-        )
-        .take(500);
-      if (!waiting.some((w) => (w.nodeUuids ?? []).includes(row.nodeUuid))) {
-        await ctx.db.patch(id, {
-          pendingSince: undefined,
-          bypassInterval: undefined,
-          claimAt: undefined,
-          leakedKeys: 0,
-          lastError: 'restart_failed',
-          updatedAt: now,
-        });
-        return null;
-      }
       await ctx.db.patch(id, {
         claimAt: undefined,
         retryAfter: now + CUT_RETRY_MS,
@@ -407,23 +498,6 @@ export const finishCut = internalMutation({
       lastCutAt: now,
       updatedAt: now,
     });
-    const leaked = await ctx.db
-      .query('revocationWatches')
-      .withIndex('by_server_state', (q) =>
-        q.eq('backendServerId', row.backendServerId).eq('state', 'leaked'),
-      )
-      .take(500);
-    for (const w of leaked) {
-      if (!(w.nodeUuids ?? []).includes(row.nodeUuid)) continue;
-      await ctx.db.patch(w._id, {
-        state: 'watching',
-        cuts: w.cuts + 1,
-        baselineBytes: undefined,
-        settleUntil: now + SETTLE_MS,
-        nextCheckAt: now + SETTLE_MS,
-        updatedAt: now,
-      });
-    }
     await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'revocation.node_cut',
@@ -450,12 +524,53 @@ async function probeOf(ctx: ActionCtx, w: Doc<'revocationWatches'>): Promise<Pro
   }
 }
 
-/** Run every cut that is due now. */
-async function runDueCuts(ctx: ActionCtx): Promise<number> {
+/**
+ * The keys still waiting on a node, read again: a key the backend no longer
+ * knows, or that is enabled again, stops waiting (its watch ends). A key that
+ * cannot be read right now keeps waiting.
+ */
+async function liveWaiters(
+  ctx: ActionCtx,
+  row: Doc<'nodeSessionCuts'>,
+): Promise<Id<'revocationWatches'>[]> {
+  const live: Id<'revocationWatches'>[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const page: {
+      waiters: Doc<'revocationWatches'>[];
+      isDone: boolean;
+      continueCursor: string;
+    } = await ctx.runQuery(internal.revocationWatches.waitersPage, {
+      backendServerId: row.backendServerId,
+      nodeUuid: row.nodeUuid,
+      cursor,
+    });
+    for (const w of page.waiters) {
+      const probe = await probeOf(ctx, w);
+      if (probe && (probe.gone || probe.status === 'active' || probe.status === 'ACTIVE')) {
+        await ctx.runMutation(internal.revocationWatches.applyDecision, {
+          watchId: w._id,
+          decision: { kind: 'close', reason: probe.gone ? 'gone' : 'enabled' },
+        });
+      } else live.push(w._id);
+    }
+    if (page.isDone) return live;
+    cursor = page.continueCursor;
+  }
+}
+
+/** Run every cut that is due now, for the keys that still wait on it. */
+async function runDueCuts(ctx: ActionCtx, cfg: RevocationConfig): Promise<number> {
   let ran = 0;
   for (const row of await ctx.runQuery(internal.revocationWatches.listPendingCuts, {
     limit: CUT_PAGE,
   })) {
+    if (!cutDue(row, Date.now(), cfg)) continue;
+    const waiters = await liveWaiters(ctx, row);
+    if (waiters.length === 0) {
+      await ctx.runMutation(internal.revocationWatches.dropCut, { id: row._id });
+      continue;
+    }
     if (!(await ctx.runMutation(internal.revocationWatches.claimCut, { id: row._id }))) continue;
     let ok = false;
     try {
@@ -467,7 +582,12 @@ async function runDueCuts(ctx: ActionCtx): Promise<number> {
       ok = false;
     }
     await ctx.runMutation(internal.revocationWatches.finishCut, { id: row._id, ok });
-    if (ok) ran++;
+    if (!ok) continue;
+    ran++;
+    for (let i = 0; i < waiters.length; i += RESTART_BATCH)
+      await ctx.runMutation(internal.revocationWatches.restartWatches, {
+        watchIds: waiters.slice(i, i + RESTART_BATCH),
+      });
   }
   return ran;
 }
@@ -509,7 +629,7 @@ export const sweep = internalAction({
           try {
             nodes = await ctx.runAction(internal.backends.placementNodes, {
               backendServerId: w.backendServerId,
-              placements: w.placements.slice(0, 1),
+              placements: w.placements,
             });
           } catch {
             /* the node list is unreadable now: retried next round */
@@ -534,14 +654,15 @@ export const sweep = internalAction({
           decision: d,
         });
       }
-      const cuts = await runDueCuts(ctx);
+      const cuts = await runDueCuts(ctx, cfg);
       return { checked: due.length, leaked, cuts };
     }),
 });
 
 /**
  * After an admin disabled a key: watch it, and cut its node(s) at once when the
- * key was online recently (`revocation.adminDisableCutsNow`). Never throws.
+ * key was online recently (`revocation.adminDisableCutsNow`). That cut counts
+ * as one of the key's cuts, and a refused one is retried. Never throws.
  */
 export const afterAdminDisable = internalAction({
   args: { backendUserId: v.string() },
@@ -562,18 +683,17 @@ export const afterAdminDisable = internalAction({
     try {
       nodes = await ctx.runAction(internal.backends.placementNodes, {
         backendServerId: w.backendServerId,
-        placements: w.placements.slice(0, 1),
+        placements: w.placements,
       });
     } catch {
       return { watched: true, cut: false }; // the watch still catches traffic later
     }
     if (nodes.length === 0) return { watched: true, cut: false };
-    await ctx.runMutation(internal.revocationWatches.requestCut, {
-      backendServerId: w.backendServerId,
+    await ctx.runMutation(internal.revocationWatches.markLeakedNow, {
+      watchId,
       nodeUuids: nodes,
-      bypassInterval: true,
     });
-    return { watched: true, cut: (await runDueCuts(ctx)) > 0 };
+    return { watched: true, cut: (await runDueCuts(ctx, cfg)) > 0 };
   },
 });
 

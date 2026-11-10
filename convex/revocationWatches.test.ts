@@ -258,7 +258,8 @@ describe('revocation watch', () => {
       await t.mutation(internal.revocationWatches.start, { backendUserId: HY1, reason: 'admin' }),
     ).toBe(id);
     const [w] = await watches();
-    expect(w).toMatchObject({ state: 'watching', placements: [HY_SQUAD, REALITY_SQUAD], cuts: 0 });
+    // Only the Hysteria groups: their nodes are what a cut restarts.
+    expect(w).toMatchObject({ state: 'watching', placements: [HY_SQUAD], cuts: 0 });
   });
 
   test('a disabled key that keeps moving bytes restarts its node, once, through the ledger', async () => {
@@ -417,6 +418,9 @@ describe('revocation watch', () => {
     await key(HY2, HY_SQUAD);
     panel.users.get(HY1)!.onlineAt = new Date(Date.now() - 2 * MIN).toISOString();
     panel.users.get(HY2)!.onlineAt = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    // The admin flow disables the key at the backend first.
+    panel.users.get(HY1)!.status = 'DISABLED';
+    panel.users.get(HY2)!.status = 'DISABLED';
     expect(
       await t.action(internal.revocationWatches.afterAdminDisable, { backendUserId: HY2 }),
     ).toEqual({ watched: true, cut: false });
@@ -436,5 +440,148 @@ describe('revocation watch', () => {
       await t.action(internal.revocationWatches.afterAdminDisable, { backendUserId: HY1 }),
     ).toEqual({ watched: true, cut: false });
     expect(panel.restarts).toHaveLength(0);
+  });
+
+  test('issuance and an in-place switch remember the Hysteria groups; a pool change does not drop the watch', async () => {
+    const { t, serverId, watches } = await seed();
+    await setWatch(t, true);
+    const userId = await t.run((ctx) =>
+      ctx.db
+        .query('users')
+        .first()
+        .then((u) => u?._id),
+    );
+    const uid =
+      userId ??
+      (await t.run(async (ctx) =>
+        ctx.db.insert('users', {
+          tierId: (await ctx.db.query('tiers').first())!._id,
+          status: 'active',
+          updatedAt: Date.now(),
+        }),
+      ));
+    const subId = await t.mutation(internal.subscriptions.insertSubscription, {
+      userId: uid,
+      backend: 'remnawave',
+      backendUserId: HY1,
+      backendShortId: 's-hy1',
+      backendServerId: serverId,
+      subscriptionUrl: 'https://panel.example/sub/hy1',
+      subscriptionMirrors: [],
+      placement: HY_SQUAD,
+      extraPlacements: [REALITY_SQUAD],
+    });
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.hysteriaGroups).toEqual([HY_SQUAD]);
+    // Switched away in place: the Hysteria group is kept (a connection opened there is still open).
+    await t.mutation(internal.subscriptions.setPlacementAndClearCache, {
+      subscriptionId: subId,
+      placement: REALITY_SQUAD,
+    });
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.hysteriaGroups).toEqual([HY_SQUAD]);
+    // The operator unbinds the group from the Hysteria mode: the key is still watched, by its group.
+    await t.run(async (ctx) => {
+      for (const r of await ctx.db.query('modePlacements').collect()) await ctx.db.delete(r._id);
+    });
+    await t.mutation(internal.revocationWatches.start, { backendUserId: HY1, reason: 'lapsed' });
+    expect(await watches()).toMatchObject([{ placements: [HY_SQUAD] }]);
+  });
+
+  test('a key revoked again starts a new window, a new baseline and no cuts', async () => {
+    const { t, panel, key, watches, later } = await seed();
+    await setWatch(t, true);
+    await key(HY1, HY_SQUAD);
+    panel.users.get(HY1)!.status = 'DISABLED';
+    await t.mutation(internal.revocationWatches.start, { backendUserId: HY1, reason: 'lapsed' });
+    later(SETTLE_MS + 1);
+    await t.action(internal.revocationWatches.sweep, {});
+    panel.users.get(HY1)!.used += 10 * 1024 * 1024;
+    later(6 * MIN);
+    await t.action(internal.revocationWatches.sweep, {});
+    expect((await watches())[0]).toMatchObject({ state: 'watching', cuts: 1 });
+    later(60 * MIN);
+    await t.mutation(internal.revocationWatches.start, { backendUserId: HY1, reason: 'admin' });
+    const [w] = await watches();
+    expect(w).toMatchObject({ state: 'watching', cuts: 0, reason: 'admin' });
+    expect(w!.baselineBytes).toBeUndefined();
+    expect(w!.revokedAt).toBe(Date.now());
+  });
+
+  test('an admin cut counts as one of the key’s cuts, and a refused one is retried', async () => {
+    const { t, panel, key, watches, later } = await seed();
+    await setWatch(t, true);
+    await key(HY1, HY_SQUAD);
+    panel.users.get(HY1)!.onlineAt = new Date(Date.now() - MIN).toISOString();
+    panel.users.get(HY1)!.status = 'DISABLED';
+    panel.failRestart = true;
+    expect(
+      await t.action(internal.revocationWatches.afterAdminDisable, { backendUserId: HY1 }),
+    ).toEqual({ watched: true, cut: false });
+    expect((await watches())[0]).toMatchObject({ state: 'leaked', nodeUuids: ['n-1'] });
+    panel.failRestart = false;
+    later(16 * MIN);
+    expect((await t.action(internal.revocationWatches.sweep, {})).cuts).toBe(1);
+    expect((await watches())[0]).toMatchObject({ state: 'watching', cuts: 1 });
+  });
+
+  test('a cut waiting while the watch was off is not run for a key enabled again meanwhile', async () => {
+    const { t, panel, key, later } = await seed();
+    await setWatch(t, true);
+    await key(HY1, HY_SQUAD);
+    await key(HY2, HY_SQUAD);
+    for (const id of [HY1, HY2]) panel.users.get(id)!.status = 'DISABLED';
+    // One cut runs, so the next leak on the node waits out the interval.
+    await t.mutation(internal.revocationWatches.start, { backendUserId: HY1, reason: 'lapsed' });
+    later(SETTLE_MS + 1);
+    await t.action(internal.revocationWatches.sweep, {});
+    panel.users.get(HY1)!.used += 10 * 1024 * 1024;
+    later(6 * MIN);
+    await t.action(internal.revocationWatches.sweep, {});
+    expect(panel.restarts).toHaveLength(1);
+    panel.lastStatusChange = 't1';
+    const [op] = await t.run((ctx) => ctx.db.query('panelOps').collect());
+    await t.action(internal.backendWrites.observe, { opId: op!._id });
+    await t.mutation(internal.revocationWatches.start, { backendUserId: HY2, reason: 'lapsed' });
+    later(SETTLE_MS + 1);
+    await t.action(internal.revocationWatches.sweep, {});
+    panel.users.get(HY2)!.used += 10 * 1024 * 1024;
+    later(6 * MIN);
+    await t.action(internal.revocationWatches.sweep, {});
+    expect(panel.restarts).toHaveLength(1); // waiting for the interval
+    // The watch goes off, the key is enabled again, the watch comes back on.
+    await setWatch(t, false);
+    panel.users.get(HY2)!.status = 'ACTIVE';
+    later(40 * MIN);
+    await t.action(internal.revocationWatches.sweep, {});
+    await setWatch(t, true);
+    await t.action(internal.revocationWatches.sweep, {});
+    expect(panel.restarts).toHaveLength(1); // no stale restart
+    const [cut] = await t.run((ctx) => ctx.db.query('nodeSessionCuts').collect());
+    expect(cut!.pendingSince).toBeUndefined();
+  });
+
+  test('removing the backend server purges its watches and cuts', async () => {
+    const { t, serverId, panel, key, later } = await seed();
+    await setWatch(t, true);
+    await key(HY1, HY_SQUAD);
+    panel.users.get(HY1)!.status = 'DISABLED';
+    await t.mutation(internal.revocationWatches.start, { backendUserId: HY1, reason: 'lapsed' });
+    later(SETTLE_MS + 1);
+    await t.action(internal.revocationWatches.sweep, {});
+    panel.users.get(HY1)!.used += 10 * 1024 * 1024;
+    later(6 * MIN);
+    await t.action(internal.revocationWatches.sweep, {});
+    await t.run(async (ctx) => {
+      for (const s of await ctx.db.query('subscriptions').collect()) await ctx.db.delete(s._id);
+      await ctx.db.delete(serverId);
+    });
+    await t.mutation(internal.serverAdmin.purgeRemovedBackend, {
+      backendServerId: serverId,
+      dryRun: false,
+    });
+    const left = await t.run(async (ctx) => [
+      ...(await ctx.db.query('revocationWatches').collect()),
+      ...(await ctx.db.query('nodeSessionCuts').collect()),
+    ]);
+    expect(left).toHaveLength(0);
   });
 });

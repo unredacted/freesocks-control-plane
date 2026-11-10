@@ -691,6 +691,15 @@ default** (Admin → Settings → Revoked Hysteria keys):
   a Hysteria key off first (`subscriptions.revokeDrainUntil`) and deletes it
   `revocation.drainMinutes` (60) later, while the watch reads it. An idle free account's
   reclaim deletes at once: its key was idle.
+- **Which keys:** a subscription remembers every Hysteria group it was ever placed in
+  (`subscriptions.hysteriaGroups`, set at issuance and on every in-place switch, never
+  cleared), so a key is watched by what it was issued into even after an operator changes
+  the mode's pool or the member switches away in place. A cut restarts only the nodes
+  behind those groups. A key revoked again starts a new window, baseline and cut count.
+- **Before every restart** each key waiting on the node is read again (all of them, page by
+  page): one the backend no longer knows or that is enabled again stops waiting, and a node
+  nobody still waits on is not restarted. An admin cut counts as one of the key's cuts and
+  is retried like any other. Removing a backend server purges its watches and cuts.
 - **Left open:** a connection that stays idle (keepalive only) through the whole drain and
   carries traffic only after the delete is not seen. The fix for that is in the node
   core: close a removed user's connections, which a later core release may do.
