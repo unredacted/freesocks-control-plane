@@ -941,6 +941,11 @@ export default defineSchema({
     // After TOMBSTONE_MAX_ATTEMPTS the row is abandoned (marked deleted + audit).
     tombstoneRetryAfter: v.optional(v.number()),
     tombstoneAttempts: v.optional(v.number()),
+    // A Hysteria key on its way out is disabled first and deleted only after
+    // this (`revocation.drainMinutes`), so the revocation watch can still read
+    // the bytes an open connection moves (lib/revocationWatch.ts). Absent = no
+    // drain (deleted at once, as before).
+    revokeDrainUntil: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     // (userId, state): the active-subscription resolvers hit this directly
@@ -1450,6 +1455,54 @@ export default defineSchema({
   // mode group's accessible nodes via GET /api/nodes. The least-loaded placement is
   // chosen at issuance. Stats-only, no secrets; pool MEMBERSHIP (which mode groups a
   // mode may use) lives in the appSettings namespace, never here.
+  // The revocation watch (convex/revocationWatches.ts, lib/revocationWatch.ts,
+  // docs/backends.md "Revoking a key with an open Hysteria connection"): one
+  // row per revoked Hysteria key while it is watched. A Hysteria connection
+  // opened before the revocation stays served until the node's core restarts,
+  // so a revoked key that keeps moving bytes asks for a cut of its node(s).
+  // Deleted when the watch ends (key gone, enabled again, window over).
+  revocationWatches: defineTable({
+    subscriptionId: v.id('subscriptions'),
+    backend: backendId,
+    backendUserId: v.string(),
+    backendServerId: v.id('backendServers'),
+    // The key's placements (primary first): its node(s) are read at cut time.
+    placements: v.array(v.string()),
+    reason: v.union(v.literal('lapsed'), v.literal('admin'), v.literal('teardown')),
+    revokedAt: v.number(),
+    settleUntil: v.number(),
+    baselineBytes: v.optional(v.number()),
+    lastBytes: v.optional(v.number()),
+    nextCheckAt: v.number(),
+    state: v.union(v.literal('watching'), v.literal('leaked'), v.literal('stuck')),
+    cuts: v.number(),
+    nodeUuids: v.optional(v.array(v.string())),
+    updatedAt: v.number(),
+  })
+    .index('by_state_next', ['state', 'nextCheckAt'])
+    .index('by_backend_user', ['backendUserId'])
+    .index('by_server_state', ['backendServerId', 'state']),
+
+  // A node whose core is to be restarted to cut leaked sessions, one row per
+  // (instance, node): a pending cut, the last one, and a claim while it runs.
+  // Many leaks on one node fold into one restart; at most one restart per
+  // `revocation.cutMinIntervalMinutes` unless an admin disable asked for now.
+  nodeSessionCuts: defineTable({
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    pendingSince: v.optional(v.number()),
+    bypassInterval: v.optional(v.boolean()),
+    leakedKeys: v.number(),
+    lastCutAt: v.optional(v.number()),
+    claimAt: v.optional(v.number()),
+    // After a refused or failed restart: not tried again before this.
+    retryAfter: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index('by_server_node', ['backendServerId', 'nodeUuid'])
+    .index('by_pending', ['pendingSince']),
+
   remnawaveNodeStats: defineTable({
     backendServerId: v.id('backendServers'),
     placement: v.string(), // the internal-mode group uuid

@@ -36,6 +36,11 @@ crons.interval('donation-bonus-reconcile', { hours: 1 }, internal.donations.appl
 // stored as the card's "last check" (appState `logging:lastCheck`).
 crons.interval('logging-privacy', { hours: 1 }, internal.backendServers.autoHardenLogging, {});
 
+// The revocation watch (docs/backends.md "Revoking a key with an open Hysteria
+// connection"): read revoked Hysteria keys' bytes; restart a node whose revoked
+// key keeps moving them. A no-op unless revocation.watch is on.
+crons.interval('revocation-watch', { minutes: 5 }, internal.revocationWatches.sweep, {});
+
 // Deactivate + RETAIN idle free users (reclaim the key, keep the row on the free
 // tier, reactivatable on return); never deletes — manual purgeInactiveFree removes.
 crons.daily(

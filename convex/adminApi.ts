@@ -895,6 +895,16 @@ export const runUserOp = internalAction({
             active: false,
           });
           await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
+          // A Hysteria connection opened before the disable stays served: watch
+          // the key and, when it was online recently, cut its node now
+          // (revocationWatches.ts; a no-op unless revocation.watch is on).
+          try {
+            await ctx.runAction(internal.revocationWatches.afterAdminDisable, {
+              backendUserId: sub.backendUserId,
+            });
+          } catch {
+            /* the disable stands; the sweep still watches the key */
+          }
         } catch {
           // Local state is authoritative, but the key may still route on the
           // backend — flag the drift so the admin sees the push didn't land.

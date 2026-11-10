@@ -4,6 +4,7 @@ import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { internal } from './_generated/api';
+import { REVOCATION_DEFAULTS } from './lib/revocationWatch';
 
 /**
  * Compiled-in defaults so an install with no rows still behaves. Mirrors
@@ -79,6 +80,12 @@ export const SETTINGS_DEFAULTS = {
   // slugs the picker suggests, in order; the first one the member's backend
   // serves wins over the status-page matrix. Edited on Admin → Connection modes.
   'delivery.country.modes': [] as Array<{ country: string; modes: string[] }>,
+  // The revocation watch (lib/revocationWatch.ts, docs/backends.md "Revoking a
+  // key with an open Hysteria connection"): a Hysteria connection opened before
+  // a key is disabled or deleted stays served until the node's core restarts.
+  // On: revoked Hysteria keys are watched and a node is restarted when one keeps
+  // moving bytes. Off (default): nothing is watched, deletes are immediate.
+  ...REVOCATION_DEFAULTS,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA
