@@ -1888,6 +1888,8 @@ export const CountryViewName = z.object({
   markAt: z.number().nullable(),
   /** A member there may be offered it (on an `hrw1` transport never one blocked there). */
   offered: z.boolean(),
+  /** An allowlist that prefers its SNIs puts it first for members there. */
+  preferred: z.boolean().default(false),
   /** The other censored countries it is blocked in (the transport's copies). */
   blockedElsewhere: z.array(z.string()).default([]),
   checks: z
@@ -1942,6 +1944,10 @@ export const CountryViewSni = z.object({
   handed: z.number(),
   /** Transports in use offering it to members there. */
   transports: z.number(),
+  /** An allowlist that prefers its SNIs puts it first for members there. */
+  preferred: z.boolean().default(false),
+  /** What speaks against that and waits for a person: the checks from inside, or members' reports. */
+  preferDoubt: z.enum(['checks', 'reports']).nullable().default(null),
 });
 export type CountryViewSni = z.infer<typeof CountryViewSni>;
 
@@ -2116,7 +2122,9 @@ export const CountryViewSummaryResponse = z.object({
         blocked: 0,
       }),
       /** SNIs members there may get, and how many of them only there. */
-      snis: z.object({ used: z.number(), onlyHere: z.number() }).default({ used: 0, onlyHere: 0 }),
+      snis: z
+        .object({ used: z.number(), onlyHere: z.number(), preferred: z.number().default(0) })
+        .default({ used: 0, onlyHere: 0, preferred: 0 }),
     }),
   ),
   /** Each probe source in use: working, failing, Globalping's cap (`GET probes/sources`). */

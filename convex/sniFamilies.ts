@@ -413,6 +413,23 @@ export const detail = internalQuery({
         ]);
       }
     const labels = await listLabels(ctx.db);
+    // Where an allowlist puts each name first now (docs/edges.md "Names on a country's allowlist").
+    // From the copies on the listeners in service: what selection reads now, so
+    // the page never runs ahead of (or behind) the pass that writes them.
+    const preferredIn = new Map<string, Set<string>>();
+    const originOn = new Map<string, boolean>();
+    for (const l of await ctx.db.query('relayListeners').collect()) {
+      if (l.retired || !l.enabled || !l.deployed || l.sniPick !== 'hrw1') continue;
+      if (!originOn.has(l.relayId))
+        originOn.set(l.relayId, (await ctx.db.get(l.relayId))?.enabled === true);
+      if (!originOn.get(l.relayId)) continue;
+      for (const n of l.tlsNames ?? []) {
+        if (n.status !== 'active' || !n.listedIn?.length) continue;
+        const at = preferredIn.get(n.name) ?? new Set<string>();
+        for (const c of n.listedIn) at.add(c);
+        preferredIn.set(n.name, at);
+      }
+    }
     // Who said "use anyway" (an admin's display name, for the page).
     const admins = new Map<Id<'adminUsers'>, string>();
     for (const n of names) {
@@ -445,6 +462,7 @@ export const detail = internalQuery({
         ),
         name: n.name,
         onLists: onListsView(n.onLists, labels),
+        preferredIn: [...(preferredIn.get(n.name) ?? [])].sort(),
         seq: n.seq,
         status: n.status,
         qualification: n.qualification.state,

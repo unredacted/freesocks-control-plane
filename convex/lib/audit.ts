@@ -68,6 +68,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // the local row was marked deleted so the sweep moves on, but the backend
   // key may still exist — the operator's manual cleanup queue.
   'subscription.tombstone_abandoned': ['backend', 'backendUserId', 'attempts'],
+  // The revocation watch (convex/revocationWatches.ts): a revoked Hysteria key
+  // kept moving bytes after its revocation (an open connection outlived it),
+  // the node restart that cut it, a restart that failed, and a key still
+  // moving after the last allowed cut. Counts and the reason only.
+  'revocation.leak_seen': ['backend', 'reason', 'moved', 'cuts', 'nodeCount'],
+  'revocation.stuck': ['backend', 'reason', 'moved', 'cuts'],
+  'revocation.node_cut': ['backend', 'leakedKeys', 'bypassInterval'],
+  'revocation.node_cut_failed': ['backend', 'error'],
   // The donation fleet re-cap finished INCOMPLETE (a backend was down mid-run or
   // the page cap hit): the applied marker was deliberately NOT set, so the next
   // hourly run re-pushes. Surfaced because the start-of-run heartbeat alone

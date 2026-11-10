@@ -196,10 +196,34 @@ export async function issueNewSubscription(
 export async function deleteSubscriptionEverywhere(
   ctx: ActionCtx,
   input: { backend: BackendId; backendUserId: string },
-): Promise<void> {
+  opts: { drain?: boolean } = {},
+): Promise<{ kind: 'deleted' } | { kind: 'draining'; until: number }> {
   const sub = await ctx.runQuery(internal.subscriptions.byBackendUserId, {
     backendUserId: input.backendUserId,
   });
+  // 0. The revocation drain (lib/revocationWatch.ts): a Hysteria connection
+  //    opened before the delete would stay served and, once the key is gone,
+  //    unseen. With `drain`, such a key is disabled first and deleted only after
+  //    `revocation.drainMinutes`, while the revocation watch reads its bytes.
+  if (opts.drain && sub) {
+    const plan = await ctx.runQuery(internal.revocationWatches.drainPlan, {
+      subscriptionId: sub._id,
+    });
+    if (plan.kind === 'wait') return { kind: 'draining', until: plan.until };
+    if (plan.kind === 'start') {
+      // A throw here propagates like a failed delete: the sweep retries.
+      await ctx.runAction(internal.backends.setUserStatus, {
+        backend: input.backend,
+        backendUserId: input.backendUserId,
+        active: false,
+        backendServerId: sub.backendServerId,
+      });
+      const until = await ctx.runMutation(internal.revocationWatches.beginDrain, {
+        subscriptionId: sub._id,
+      });
+      if (until !== null) return { kind: 'draining', until };
+    }
+  }
   // 1. Delete the backend user first. A throw here propagates (the caller's
   //    sweep counts this as not-removed and retries next tick) and we do NOT
   //    touch local state, so the key never silently keeps routing.
@@ -233,4 +257,5 @@ export async function deleteSubscriptionEverywhere(
       });
     }
   }
+  return { kind: 'deleted' };
 }

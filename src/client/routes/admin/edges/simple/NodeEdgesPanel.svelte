@@ -366,6 +366,13 @@
     if (candidates.length === 1) replacing = { kind, edge: candidates[0]!, spareEdgeId };
     else if (candidates.length > 1) choosing = { kind, candidates, spareEdgeId };
   }
+  /** The address picked in "Which address?": the choice is read before it is cleared. */
+  function pick(edge: EdgeAdmin) {
+    if (!choosing) return;
+    const { kind, spareEdgeId } = choosing;
+    choosing = null;
+    replacing = { kind, edge, spareEdgeId };
+  }
   // A retiring address: end its drain now, or keep it as a spare.
   let ending = $state<{ edge: EdgeAdmin; action: 'delete' | 'keep' } | null>(null);
   const canEndDrains = $derived(
@@ -778,7 +785,6 @@
     />
   {/if}
   {#if choosing}
-    {@const { kind, candidates, spareEdgeId } = choosing}
     <ActionConfirm
       open={true}
       title="Which address?"
@@ -789,16 +795,9 @@
       onClose={() => (choosing = null)}
     >
       <div class="flex flex-col gap-2">
-        {#each candidates as e (e.id)}
-          <Button
-            variant="outline"
-            size="sm"
-            onclick={() => {
-              choosing = null;
-              replacing = { kind, edge: e, spareEdgeId };
-            }}
-          >
-            {e.addresses.hostname ?? e.addresses.v4 ?? e.addresses.v6 ?? e.name}
+        {#each choosing.candidates as e (e.id)}
+          <Button variant="outline" size="sm" onclick={() => pick(e)}>
+            {addressOf(e)}
           </Button>
         {/each}
       </div>

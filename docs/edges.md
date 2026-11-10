@@ -4348,6 +4348,22 @@ the order without lists at their next refresh. Before deploying a build from bef
 `countryListFacts:clearForRollback` turns the switch off and strips `listedIn` and `preferNames`
 (an older schema refuses them).
 
+In the admin: an allowlist's page has **Prefer its SNIs** (it asks before turning on, since that
+changes what members get), says what holds the preference back (the deployment switch, the lists
+switch, the list off, stale or without a version, a country off the censored-country list), and
+counts the SNIs in use the list holds and how many members there get first now (`GET lists/{id}`
+`preferSwitch`, `prefer`; only transports in service on an enabled origin count; at most 1,500
+SNIs in use are looked up, more reads "too many", never "none"). The question before turning on
+says when a transport carrying them is still on the old SNI pick (`prefer.legacyPick`): its first
+preferred SNI moves it onto `hrw1`, which picks again for all its members, in every country, once. A list
+that prefers its SNIs carries a badge wherever lists are listed. A country's SNI card marks each
+SNI a list puts first there (`CountryViewSni.preferred`, counted in the countries list) and an
+SNI list's page says, per country, where a list puts each SNI first (`SniNameRow.preferredIn`,
+read from the copies on the transports in service, so it says what members get now).
+Both say when something speaks against it and waits for a person: the checks from inside suggest
+blocked and nobody applied it, or members' reports single the SNI out. The preference stands until
+a mark is made; nothing here un-prefers by itself.
+
 **Edge addresses against allowlists** (`convex/countryListEdges.ts`, rules in
 `lib/edges/lists/edgeMarks.ts`). Under a whitelist both the dialled address and the server name must
 be listed. An allowlist with **Check edge addresses against it** on (`countryLists.watchEdges`, off

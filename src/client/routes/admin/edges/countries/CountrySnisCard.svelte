@@ -2,8 +2,9 @@
   /**
    * The SNIs of one country, once over every node and
    * transport in use (`CountryViewResponse.snis`): each with its name list,
-   * what it counts as there, how many members there are handed it, and
-   * whether it is shared, only for this country, or not used there.
+   * what it counts as there, how many members there are handed it,
+   * whether it is shared, only for this country, or not used there, and
+   * whether a list of what works puts it first there.
    * Read only: marks are made on the name list's page.
    *
    * Props: code: string (ISO 3166-1 alpha-2), snis: CountryViewSni[]
@@ -21,6 +22,8 @@
     SNI_CARD_INTRO,
     sniCardTitle,
     sniHandedLine,
+    sniPreferLine,
+    SNI_PREFER_BADGE,
     sniScopeBadge,
     sniScopeLine,
     sniVerdictLine,
@@ -46,6 +49,7 @@
         {#each snis as s (s.name)}
           {@const words = STATE_WORDS[s.state]}
           {@const badge = sniScopeBadge(s, code)}
+          {@const prefer = sniPreferLine(s)}
           <li class="space-y-0.5 px-3 py-2">
             <div class="flex flex-wrap items-center gap-2">
               <StatusDot dot={words.dot} />
@@ -62,12 +66,24 @@
               {#if badge}
                 <Badge variant={s.scope === 'not_here' ? 'outline' : 'secondary'}>{badge}</Badge>
               {/if}
+              {#if prefer}
+                <Badge variant="secondary">{SNI_PREFER_BADGE}</Badge>
+              {/if}
             </div>
             <p class="text-muted-foreground">{sniScopeLine(s, code)}</p>
             <p class="text-muted-foreground">
               {sniVerdictLine(s)}
               {sniHandedLine(s) ?? ''}
             </p>
+            {#if prefer}
+              <p
+                class={s.preferDoubt
+                  ? 'text-amber-700 dark:text-amber-400'
+                  : 'text-muted-foreground'}
+              >
+                {prefer}
+              </p>
+            {/if}
           </li>
         {/each}
       </ul>

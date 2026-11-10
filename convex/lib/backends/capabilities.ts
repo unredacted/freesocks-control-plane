@@ -72,6 +72,11 @@ export interface BackendCapabilities {
    *  backend's config profile carries them and its nodes listen on UDP. Only
    *  meaningful where FCP sets the backend up. */
   udpTransports: boolean;
+  /** Open connections on the node(s) behind a placement can be cut by
+   *  restarting the node (placementNodes + backendWrites.restartNode): the revocation
+   *  watch's cut (docs/backends.md "Revoking a key with an open Hysteria
+   *  connection"). */
+  nodeRestart: boolean;
 }
 
 export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
@@ -94,6 +99,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     backendSetup: true,
     userLookupByUsername: true,
     udpTransports: true,
+    nodeRestart: true,
   },
   outline: {
     placement: false,
@@ -114,8 +120,23 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     backendSetup: false,
     userLookupByUsername: false,
     udpTransports: false,
+    nodeRestart: false,
   },
 };
+
+/**
+ * Whether disabling or deleting a key reaches a connection the member's app
+ * opened BEFORE the revocation, per transport, on the node core the fleet
+ * runs. REALITY, XHTTP and WebSocket authenticate every connection (and the
+ * node drops a removed user's TCP connections), so a revoked key's next
+ * connection is refused. Hysteria authenticates once per QUIC connection and
+ * the core never closes it when the user is removed (measured on a real node,
+ * docs/backends.md), so the revocation watch covers Hysteria keys. Flip to
+ * true once the node core closes a removed user's Hysteria connections.
+ */
+export const REVOKE_REACHES_OPEN_SESSIONS = {
+  hysteria: false,
+} as const;
 
 export function capabilitiesOf(backend: BackendId): BackendCapabilities {
   return CAPABILITIES[backend];

@@ -997,6 +997,36 @@ async function rowsOfBackend(
           .take(cap),
       ),
     ],
+    // The revocation watch's rows (convex/revocationWatches.ts): a watch per
+    // revoked key and a pending or past cut per node of this backend.
+    [
+      'revocationWatches',
+      ids(
+        (
+          await Promise.all(
+            (['watching', 'leaked', 'stuck'] as const).map((state) =>
+              db
+                .query('revocationWatches')
+                .withIndex('by_server_state', (q) =>
+                  q.eq('backendServerId', sid).eq('state', state),
+                )
+                .take(cap),
+            ),
+          )
+        )
+          .flat()
+          .slice(0, cap),
+      ),
+    ],
+    [
+      'nodeSessionCuts',
+      ids(
+        await db
+          .query('nodeSessionCuts')
+          .withIndex('by_server_node', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
     ['panelNodeIntents', ids(intents)],
     ['sniInboundBindings', ids(bindings)],
     [

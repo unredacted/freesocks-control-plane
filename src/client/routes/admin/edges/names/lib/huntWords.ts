@@ -11,6 +11,7 @@ import {
   type SniHuntCtRow,
   type SniHuntImported,
   type SniHuntOverview,
+  type SniNameRow,
 } from '../../../../../../shared/contracts/sni';
 import { CHECK_WORDS, type Dot } from './words';
 
@@ -154,6 +155,50 @@ export function listWords(facts: readonly HuntListFact[]): string[] {
     else out.push(`${cc}: on a block list (${block.join(', ')})`);
   }
   return out;
+}
+
+/** One line about an SNI an allowlist puts first in a country; `doubt` = something speaks against it. */
+export interface PreferLine {
+  text: string;
+  doubt: boolean;
+}
+
+/**
+ * Where an allowlist that prefers its SNIs puts this one first (docs/edges.md
+ * "Names on a country's allowlist"), one line per country: what members there
+ * get, which mark decides instead, and what speaks against it (the checks
+ * from inside, members' reports) and waits for a person.
+ */
+export function preferLines(
+  n: Pick<SniNameRow, 'preferredIn' | 'blockedIn' | 'provenIn' | 'vantage' | 'suspectIn'>,
+): PreferLine[] {
+  return [...n.preferredIn].sort().map((cc) => {
+    if (n.blockedIn.includes(cc))
+      return {
+        text: `${cc}: on a list that prefers its SNIs, but marked Blocked there. Members there never get it.`,
+        doubt: false,
+      };
+    if (n.provenIn.includes(cc))
+      return {
+        text: `${cc}: on a list that prefers its SNIs, and marked Works there. The mark already puts it first.`,
+        doubt: false,
+      };
+    const checks = n.vantage.find((v) => v.country === cc);
+    if (checks?.suggestion === 'blocked' && checks.provenance === 'probe')
+      return {
+        text: `${cc}: on a list of what works there, but the checks from inside say blocked. Members there still get it first until it is marked Blocked there.`,
+        doubt: true,
+      };
+    if (n.suspectIn.includes(cc))
+      return {
+        text: `${cc}: on a list of what works there, but members there report it more than other SNIs. Members there still get it first.`,
+        doubt: true,
+      };
+    return {
+      text: `${cc}: on a list of what works there that prefers its SNIs. Members there get it before SNIs nobody has judged.`,
+      doubt: false,
+    };
+  });
 }
 
 /** OONI for the site (apex and www): context only, never scored for another name. */

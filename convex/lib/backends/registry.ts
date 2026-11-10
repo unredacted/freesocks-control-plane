@@ -53,6 +53,7 @@ import {
   remnawaveDeleteHost,
   remnawaveSetHostDisabled,
   remnawaveGetNodeInventory,
+  remnawavePlacementNodes,
   remnawaveListNodeInbounds,
   remnawaveObservePanel,
   remnawaveListModeGroups,
@@ -194,6 +195,11 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // crash between the create and the store with it; null = no such user.
   // Absent for backends without a name lookup (Outline keys have no unique name).
   findUserByUsername?(config: C, username: string): Promise<IssuedUser | null>;
+  // Optional: the nodes serving one placement. With `backendWrites.restartNode`
+  // the revocation watch cuts the open connections of a revoked key there
+  // (a restart of each node's core). Absent where a key is not homed to a node
+  // (Outline).
+  placementNodes?(config: C, placement: string): Promise<string[]>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -261,6 +267,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
     userCredential: remnawaveUserCredential,
   },
   findUserByUsername: (c, username) => remnawaveFindUserByUsername(c, username),
+  placementNodes: (c, placement) => remnawavePlacementNodes(c, placement),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),
   health: (c) => remnawaveHealth(c),

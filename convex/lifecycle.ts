@@ -693,6 +693,16 @@ export const runGraceSweep = internalAction({
             await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: true });
             continue;
           }
+          // A Hysteria connection opened before the disable stays served: watch
+          // the key (revocationWatches.ts; a no-op unless revocation.watch is on).
+          try {
+            await ctx.runMutation(internal.revocationWatches.start, {
+              backendUserId: st.backendUserId,
+              reason: 'lapsed',
+            });
+          } catch {
+            /* the watch is a backstop; the disable stands */
+          }
         }
         await ctx.runMutation(internal.lifecycle.applyDisableTransition, { userId });
         await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
@@ -762,6 +772,17 @@ export const deferTombstone = internalMutation({
   },
 });
 
+/** Hold a tombstone until its revocation drain ends (lib/revocationWatch.ts); not a failure. */
+export const deferTombstoneForDrain = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), retryAfter: v.number() },
+  handler: async (ctx, { subscriptionId, retryAfter }) => {
+    const row = await ctx.db.get(subscriptionId);
+    if (!row || row.state !== 'disabled') return null;
+    await ctx.db.patch(subscriptionId, { tombstoneRetryAfter: retryAfter, updatedAt: Date.now() });
+    return null;
+  },
+});
+
 /** Cron: hard-delete subscriptions whose 24h regenerate/switch grace has passed. */
 export const sweepTombstones = internalAction({
   args: { limit: v.optional(v.number()) },
@@ -774,10 +795,19 @@ export const sweepTombstones = internalAction({
       let removed = 0;
       for (const d of due) {
         try {
-          await deleteSubscriptionEverywhere(ctx, {
-            backend: d.backend,
-            backendUserId: d.backendUserId,
-          });
+          const out = await deleteSubscriptionEverywhere(
+            ctx,
+            { backend: d.backend, backendUserId: d.backendUserId },
+            { drain: true },
+          );
+          if (out.kind === 'draining') {
+            // A Hysteria key: disabled now, deleted after its drain (no attempt counted).
+            await ctx.runMutation(internal.lifecycle.deferTombstoneForDrain, {
+              subscriptionId: d.subscriptionId,
+              retryAfter: out.until,
+            });
+            continue;
+          }
           removed++;
         } catch {
           const attempts = d.attempts + 1;

@@ -1168,6 +1168,24 @@ const RealtimeNodesResponse = z
  * timeouts — slow at fleet mode group counts); the cron runs it every 10 min
  * best-effort.
  */
+/**
+ * The nodes that serve one mode group (placement): the backend's
+ * `accessible-nodes` read for that group. The revocation watch uses it to find
+ * the node(s) to restart when a revoked key's open connection keeps moving
+ * bytes (docs/backends.md "Revoking a key with an open Hysteria connection").
+ */
+export async function remnawavePlacementNodes(
+  cfg: RemnawaveConfig,
+  placement: string,
+): Promise<string[]> {
+  const res = await call(cfg, {
+    method: 'GET',
+    path: `/api/internal-squads/${encodeURIComponent(placement)}/accessible-nodes`,
+    schema: AccessibleNodesResponse,
+  });
+  return res.accessibleNodes.map((n) => n.uuid);
+}
+
 export async function remnawaveGetNodeStats(cfg: RemnawaveConfig): Promise<NodeStats[]> {
   const squads = await call(cfg, {
     method: 'GET',

@@ -26,6 +26,7 @@ import {
 function name(n: string, o: Partial<SniNameRow> = {}): SniNameRow {
   return {
     onLists: [],
+    preferredIn: [],
     name: n,
     seq: 1,
     status: 'active',

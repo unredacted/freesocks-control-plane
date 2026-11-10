@@ -227,6 +227,23 @@ export const CountryListDetail = z.object({
     })
     .nullable()
     .default(null),
+  /** `edge.lists.preferNames`: off, no list changes what members get. */
+  preferSwitch: z.boolean().default(false),
+  /**
+   * An allowlist's SNIs in use: how many it holds, how many of them members in
+   * its country are given first now, and whether that country is on the
+   * censored-country list (null: a block list, or too many SNIs to count).
+   */
+  prefer: z
+    .object({
+      inUse: z.number(),
+      preferred: z.number(),
+      curated: z.boolean(),
+      /** Transports carrying them that are still on the old SNI pick (the first preference moves them). */
+      legacyPick: z.number().default(0),
+    })
+    .nullable()
+    .default(null),
 });
 export type CountryListDetail = z.infer<typeof CountryListDetail>;
 
