@@ -94,7 +94,7 @@ import {
   collectStartBlockers,
   rotationListenerKey,
   selectionContext,
-  upkeepFillRefusalOf,
+  upkeepFillHoldOf,
 } from './edgeRotations';
 import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
 import { accountOptionDefaultsOf } from './lib/edges/choices';
@@ -1236,8 +1236,13 @@ export const attention = internalQuery({
     // (those that stay plus what each node still lacks there). The rows that
     // say it are completed once every origin was read.
     const missingAt = new Map<string, number>();
-    const capOfRelay = new Map<string, { accountId: string; room: CapRoom }>();
-    const capRows: Array<{ item: AttentionItem; relayId: string }> = [];
+    type CapAt = { accountId: Id<'edgeProviderAccounts'>; locationId: Id<'edgeLocations'> };
+    // A set node's first pick with a cap (where it lacks an address first): the
+    // fallback for a failed run's row once the cap has room again.
+    const cappedPickOf = new Map<string, CapAt>();
+    const capRows: Array<{ item: AttentionItem; relay: Relay; at: CapAt }> = [];
+    // Runs the cap refused: where it refused is asked once every origin was read.
+    const capFailed: Array<{ item: AttentionItem; relay: Relay; run: Doc<'edgeRotations'> }> = [];
     for (const relay of relays) {
       if (relay.deleting) {
         const state = await bindingStateOf(ctx.db, relay);
@@ -1703,8 +1708,7 @@ export const attention = internalQuery({
         items.push(failed);
         // Refused by the account's monthly cap: the row says how many
         // addresses the cap fits and how many are wanted.
-        if (last.outcome === SPEND_CAP_REACHED)
-          capRows.push({ item: failed, relayId: relay._id as string });
+        if (last.outcome === SPEND_CAP_REACHED) capFailed.push({ item: failed, relay, run: last });
       }
       for (const e of edges) {
         if (e.publication !== 'published' || (e.layer ?? 'l4') !== 'l7') continue;
@@ -1901,9 +1905,9 @@ export const attention = internalQuery({
       // slot is taken and no expansion can make room. Only a rebalance
       // (unpublishing a duplicate) frees a slot, and that is the operator's call.
       const setState = await setStateOf(ctx.db, relay);
-      // What this node still lacks, per account, and the cap of the account its
-      // next address would be made in (the first missing location's, else the
-      // first pick's that has a cap).
+      // What this node still lacks, per account, and its first pick with a cap
+      // (the first missing location's, else the first pick's). No read here:
+      // the cap is counted only for the rows that say it, after the loop.
       if (relay.enabled && setState.picks) {
         const rowAt = (locationId: string | null) =>
           locationId ? setState.picks!.find((p) => p.pick.locationId === locationId) : undefined;
@@ -1919,16 +1923,11 @@ export const attention = internalQuery({
           ...setState.targets.map((t) => rowAt(t.locationId)),
           ...setState.picks,
         ].find((row) => typeof row?.account.cost?.monthlyCap === 'number');
-        const room = capped
-          ? await capRoomAt(
-              ctx,
-              capped.account,
-              capped.location,
-              relay.providerSet?.find((p) => p.locationId === capped.location._id)?.options,
-            )
-          : null;
-        if (capped && room)
-          capOfRelay.set(relay._id as string, { accountId: capped.account._id as string, room });
+        if (capped)
+          cappedPickOf.set(relay._id as string, {
+            accountId: capped.account._id,
+            locationId: capped.location._id,
+          });
       }
       const capacity = requiredPoolSize({
         desiredPublished: relay.desiredPublished,
@@ -2202,9 +2201,15 @@ export const attention = internalQuery({
         // the operator can change: the account's monthly cap, or a missing
         // location outside what the node was approved for. Upkeep starts
         // nothing then (`upkeepFillRefusalOf`), so the row says which.
-        const fill =
+        // Asked about the transport upkeep's next fill names (`firstFill`).
+        const hold =
           standbys === 0 && !untrustedOnly && !relay.setupOwned
-            ? await upkeepFillRefusalOf(ctx, relay)
+            ? await upkeepFillHoldOf(ctx, relay, { firstFill: true })
+            : null;
+        const fill = hold?.code ?? null;
+        const capAt =
+          fill === SPEND_CAP_REACHED
+            ? (hold?.capAt ?? cappedPickOf.get(relay._id as string) ?? null)
             : null;
         const below: AttentionItem = {
           ...base(relay),
@@ -2222,27 +2227,60 @@ export const attention = internalQuery({
             ? 'publish'
             : standbys > 0 || untrustedOnly || fill === 'outside_approved_shape'
               ? 'open_relay'
-              : fill === SPEND_CAP_REACHED && capOfRelay.has(relay._id as string)
+              : capAt
                 ? 'open_account'
                 : 'provision',
           since: null,
         };
-        if (fill === SPEND_CAP_REACHED) {
-          const cap = capOfRelay.get(relay._id as string);
-          if (cap) below.accountId = cap.accountId;
-          capRows.push({ item: below, relayId: relay._id as string });
+        if (capAt) {
+          below.accountId = capAt.accountId as string;
+          capRows.push({ item: below, relay, at: capAt });
         }
         items.push(below);
       }
     }
-    // The cap in addresses, now that every node's missing ones are counted.
-    for (const { item, relayId } of capRows) {
-      const cap = capOfRelay.get(relayId);
-      if (!cap) continue;
+    // The cap in addresses, now that every node's missing ones are counted. A
+    // run the cap refused: where the cap refuses the same run now, else (the
+    // cap has room again) the node's first pick with a cap.
+    for (const { item, relay, run } of capFailed) {
+      const listener = run.listenerId ? await ctx.db.get(run.listenerId) : null;
+      const hold = await upkeepFillHoldOf(ctx, relay, {
+        publishOnDone: !isSpareProvision(run),
+        ...(listener && !listener.retired ? { listenerId: listener._id } : {}),
+      });
+      const at = hold?.capAt ?? cappedPickOf.get(relay._id as string);
+      if (at) capRows.push({ item, relay, at });
+    }
+    // One scan of an account's edges, and one count per (account, location,
+    // options), however many rows and nodes share them.
+    const accountEdges = new Map<string, Doc<'edges'>[]>();
+    const rooms = new Map<string, CapRoom | null>();
+    for (const { item, relay, at } of capRows) {
+      const options = relay.providerSet?.find((p) => p.locationId === at.locationId)?.options;
+      const key = `${at.accountId}|${at.locationId}|${options ?? ''}`;
+      if (!rooms.has(key)) {
+        const [account, location] = await Promise.all([
+          ctx.db.get(at.accountId),
+          ctx.db.get(at.locationId),
+        ]);
+        rooms.set(
+          key,
+          account && location
+            ? await capRoomAt(ctx, account, location, options, accountEdges)
+            : null,
+        );
+      }
+      const room = rooms.get(key);
+      if (!room) continue;
+      // A node without a set lacks addresses in no location of its own: its
+      // shortfall counts for the account that refused it.
+      const own = relay.providerSet
+        ? 0
+        : Math.max(0, relay.desiredPublished - publishedCount(relay.publishedEdgeIds));
       item.facts = {
         ...item.facts,
-        capFits: cap.room.fits,
-        capWanted: cap.room.staying + (missingAt.get(cap.accountId) ?? 0),
+        capFits: room.fits,
+        capWanted: room.staying + (missingAt.get(at.accountId as string) ?? 0) + own,
       };
     }
     // A location meant for a country that is blocked there (docs/edges.md

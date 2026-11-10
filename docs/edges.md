@@ -3012,6 +3012,9 @@ Since nothing fails, these are said where the operator looks: attention `pool_be
 carries the cause as its `code` (action `open_account` for the cap, `open_relay` for the
 approval) and, for the cap, the facts `capFits` and `capWanted`; the node's Providers card
 replaces "automatic upkeep adds them" with the cause (`upkeepHold` on `GET relays/{id}/providers`).
+Both ask about the run upkeep would start (`upkeepFillHoldOf {firstFill}`): the first transport
+with no address in use while a slot is free, as step 5a names it, else the origin-wide fill. A
+node without a provider set gets the same row, with the account whose cap refused it.
 
 **Retention** (separate daily crons, `convex/retention.ts`): `retention-edges` prunes
 `destroyed` edges after 30 days, `retention-edge-rotations` terminal rotations after 90, and the
@@ -3116,8 +3119,9 @@ outside a guided setup run, picks only a spare or an account whose shape (listen
 template) fits the enrolled node's approval; nothing fitting fails the selection with
 `outside_approved_shape`, and an automatic start (detector, reconcile) is refused with
 `edge.outside_approved_shape` instead of failing every tick. The same code is given to a fill
-whose held slot is for a location outside the shape (the fitting ones could only make a spare):
-upkeep then starts nothing and the node's row and card say so (§ "Reconcile cron"). A node approved without a per-listener review (an adopted
+whose held slot is for a location outside the shape (the fitting ones could only make a spare),
+and to a count's fill at such a location (`onlyLocationId`: the fitting picks are other
+locations): upkeep then starts nothing and the node's row and card say so (§ "Reconcile cron"). A node approved without a per-listener review (an adopted
 node, an older review) has the shape its members are served through NOW
 (`nodeActivation.publicationAdmission`): a location whose last address left is no longer in
 it, so automatic work cannot make an address there again until the node is reviewed. Where the run publishes, the
@@ -6287,9 +6291,11 @@ so every location of the account is refused alike and none ranks behind another 
 Upkeep asks before it starts (§ "Reconcile cron"): while the cap would refuse the address it
 starts no run. **The cap in addresses** (`edgePlans.capRoomAt`): `capFits` is how many addresses
 the cap fits, the live ones FCP manages there plus how many more at the price of one in the
-location that lacks one (an account over its cap fits fewer than it holds); `capWanted` is how
-many are wanted, the live ones that stay (not draining, being destroyed, failed or cancelled)
-plus what every node using the account still lacks there. Attention `pool_below_desired` (code
+location that lacks one (an account over its cap fits fewer than it holds, never fewer than
+none; `pricing.capFitsOf`); `capWanted` is how many are wanted, the live ones that stay (not
+draining, being destroyed, failed or cancelled) plus what every node using the account still
+lacks there (a node without a set: what its pool lacks). Attention counts it only for the rows
+that say it, with one scan of an account's addresses however many nodes share it. Attention `pool_below_desired` (code
 `account_spend_cap_reached`), a failed run the cap refused (`rotation_failed` with that code)
 and the node's Providers card say both numbers: "The cap fits 6 addresses, 8 wanted" is a cap
 set too low for the fleet, not a fault to wait out.

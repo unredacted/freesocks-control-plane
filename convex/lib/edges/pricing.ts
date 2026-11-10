@@ -266,6 +266,17 @@ export function passesCap(spend: SpendView, each: EdgeCost, adding: number): boo
   return cents(spend.monthly + add) > spend.cap;
 }
 
+/**
+ * How many edges the cap fits: the live ones plus how many more at `each` a
+ * month. An account over its cap fits fewer than it holds, never fewer than
+ * none (dearer edges far over the cap would otherwise count below zero). Null
+ * without a cap, or when one more has no price in the cap's currency.
+ */
+export function capFitsOf(spend: SpendView, each: EdgeCost): number | null {
+  if (spend.cap === null || !each.monthly || each.currency !== spend.currency) return null;
+  return Math.max(0, spend.edges + Math.floor((spend.cap - spend.monthly + 1e-6) / each.monthly));
+}
+
 /** Whether the account is already at or past its cap (no new edge fits, whatever it costs). */
 export function atCap(spend: SpendView): boolean {
   return spend.cap !== null && spend.monthly >= spend.cap;

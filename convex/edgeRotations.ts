@@ -69,7 +69,13 @@ import {
   type HostTarget,
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
-import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
+import {
+  allocatePoolIndex,
+  freeSlotCount,
+  uncoveredListeners,
+  withEdgeAt,
+  withoutEdge,
+} from './lib/edges/pool';
 import {
   checkPickOptions,
   relayHasReality,
@@ -427,24 +433,61 @@ export const autoProvisionBackingOff = internalQuery({
 export type UpkeepFillRefusal =
   'pool_reserved' | 'outside_approved_shape' | typeof SPEND_CAP_REACHED;
 
-export async function upkeepFillRefusalOf(
+/** What `upkeepFillHoldOf` is asked about (the reconcile's own arguments). */
+export interface UpkeepFillRequest {
+  listenerId?: Id<'relayListeners'>;
+  onlyLocationId?: Id<'edgeLocations'>;
+  audience?: string[];
+  /** False: a spare (it takes no slot, so nothing is reserved for it). Default true. */
+  publishOnDone?: boolean;
+  /**
+   * No transport named: ask about the one upkeep's next fill names (the
+   * reconcile's step 5a: the first transport with no address in use, while a
+   * slot is free; else none, the origin-wide fill). The rows that say what
+   * holds upkeep then judge the run upkeep would start, not another transport's.
+   */
+  firstFill?: boolean;
+}
+
+/** The transport the reconcile's listener-aware fill (step 5a) would name now, if any. */
+async function firstFillListenerOf(
   ctx: { db: QueryCtx['db'] },
   origin: Origin,
-  a: {
-    listenerId?: Id<'relayListeners'>;
-    onlyLocationId?: Id<'edgeLocations'>;
-    audience?: string[];
-    /** False: a spare (it takes no slot, so nothing is reserved for it). Default true. */
-    publishOnDone?: boolean;
-  } = {},
-): Promise<UpkeepFillRefusal | null> {
+): Promise<Id<'relayListeners'> | undefined> {
+  if (freeSlotCount(origin.publishedEdgeIds, origin.desiredPublished) <= 0) return undefined;
+  const rows = [...(await listenersOf(ctx, origin._id))].sort((a, b) =>
+    a.listenerKey.localeCompare(b.listenerKey),
+  );
+  return uncoveredListeners(
+    rows.map((l) => ({
+      id: l._id,
+      templateEdgeId: l.templateEdgeId ?? null,
+      deployed: l.deployed,
+      enabled: l.enabled,
+      retired: l.retired,
+    })),
+  )[0]?.id;
+}
+
+/**
+ * `upkeepFillRefusalOf` with where the cap refused (`capAt`: the first
+ * location one more address would pass its account's cap in), for the rows
+ * that count the cap in addresses.
+ */
+export async function upkeepFillHoldOf(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+  a: UpkeepFillRequest = {},
+): Promise<{ code: UpkeepFillRefusal; capAt?: SelectionContext['capAt'] } | null> {
+  const listenerId =
+    a.listenerId ?? (a.firstFill ? await firstFillListenerOf(ctx, origin) : undefined);
   const sel = await selectionContext(
     ctx,
     {
       kind: 'provision',
       trigger: 'reconcile',
       publishOnDone: a.publishOnDone !== false,
-      ...(a.listenerId ? { listenerId: a.listenerId } : {}),
+      ...(listenerId ? { listenerId } : {}),
       ...(a.onlyLocationId ? { onlyLocationId: a.onlyLocationId } : {}),
       ...(a.audience?.length ? { audience: a.audience } : {}),
     },
@@ -453,12 +496,21 @@ export async function upkeepFillRefusalOf(
     await resolveEdgeConfig(ctx.db),
   );
   if (sel.account || sel.standbyId) return null;
-  if (sel.accountFailure === SPEND_CAP_REACHED) return SPEND_CAP_REACHED;
+  if (sel.accountFailure === SPEND_CAP_REACHED)
+    return { code: SPEND_CAP_REACHED, ...(sel.capAt ? { capAt: sel.capAt } : {}) };
   // The two below are about a node's set and its approval.
   if (!origin.providerSet) return null;
   return sel.accountFailure === 'pool_reserved' || sel.accountFailure === 'outside_approved_shape'
-    ? sel.accountFailure
+    ? { code: sel.accountFailure }
     : null;
+}
+
+export async function upkeepFillRefusalOf(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+  a: UpkeepFillRequest = {},
+): Promise<UpkeepFillRefusal | null> {
+  return (await upkeepFillHoldOf(ctx, origin, a))?.code ?? null;
 }
 
 export const upkeepFillRefusal = internalQuery({
@@ -3711,6 +3763,11 @@ export async function edgeFitsPick(
 export interface SelectionContext {
   listener: Doc<'relayListeners'> | null;
   standbyId: Id<'edges'> | null;
+  /**
+   * With `account_spend_cap_reached` from the automatic pick: the first
+   * location one more address would pass its account's monthly cap in.
+   */
+  capAt?: { accountId: Id<'edgeProviderAccounts'>; locationId: Id<'edgeLocations'> };
   account: {
     id: Id<'edgeProviderAccounts'>;
     /** Where the new edge is created (frozen on it at plan time). */
@@ -4239,6 +4296,7 @@ export async function selectionContext(
   let certificateRefused: string | null = null;
   let sizeRefused: string | null = null;
   let spendRefused: string | null = null;
+  let spendRefusedAt: SelectionContext['capAt'];
   let offNetwork = 0;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
@@ -4303,6 +4361,7 @@ export async function selectionContext(
       // Nor one whose edge would take the account past its monthly cap.
       if (spend && (atCap(spend) || passesCap(spend, cost, 1))) {
         spendRefused = spendRefused ?? SPEND_CAP_REACHED;
+        spendRefusedAt = spendRefusedAt ?? { accountId: a._id, locationId: loc._id };
         continue;
       }
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
@@ -4453,12 +4512,15 @@ export async function selectionContext(
       template: null,
     };
   // A fill whose held slot is for a location outside what the node was
-  // approved for: the approval is why nothing can be picked, and a new review
-  // is the way forward. Said as such, never as `pool_reserved` (which told
-  // nobody why upkeep bought nothing).
+  // approved for, or a count's fill at such a location (`onlyLocationId`: the
+  // fitting ones are other locations, so none is left to pick): the approval
+  // is why nothing can be picked, and a new review is the way forward. Said
+  // as such, never as `pool_reserved` (which told nobody why upkeep bought
+  // nothing) or as a run that starts only to fail.
   if (
     !picked.ok &&
-    picked.code === 'pool_reserved' &&
+    (picked.code === 'pool_reserved' ||
+      (!!rotation.onlyLocationId && picked.code === 'no_account_for_provider')) &&
     shapeCandidates.length > 0 &&
     (await pickAmong([...candidates, ...shapeCandidates])).ok
   )
@@ -4469,31 +4531,34 @@ export async function selectionContext(
       accountFailure: 'outside_approved_shape',
       template: null,
     };
-  if (!picked.ok)
+  if (!picked.ok) {
+    // Every account that could front the listener is outside what the node
+    // was approved for: a new review is the way forward, not another account.
+    // Nothing left but accounts whose fronts could get no certificate: say so.
+    // A refused create set aside what would have been picked: that first.
+    const accountFailure =
+      picked.code === 'locations_refused'
+        ? picked.code
+        : candidates.length === 0 && outsideShape > 0
+          ? 'outside_approved_shape'
+          : candidates.length === 0 && certificateRefused
+            ? certificateRefused
+            : candidates.length === 0 && sizeRefused
+              ? sizeRefused
+              : candidates.length === 0 && spendRefused
+                ? spendRefused
+                : candidates.length === 0 && offNetwork > 0
+                  ? 'off_network'
+                  : picked.code;
     return {
       listener,
       standbyId: null,
       account: null,
-      // Every account that could front the listener is outside what the node
-      // was approved for: a new review is the way forward, not another account.
-      // Nothing left but accounts whose fronts could get no certificate: say so.
-      // A refused create set aside what would have been picked: that first.
-      accountFailure:
-        picked.code === 'locations_refused'
-          ? picked.code
-          : candidates.length === 0 && outsideShape > 0
-            ? 'outside_approved_shape'
-            : candidates.length === 0 && certificateRefused
-              ? certificateRefused
-              : candidates.length === 0 && sizeRefused
-                ? sizeRefused
-                : candidates.length === 0 && spendRefused
-                  ? spendRefused
-                  : candidates.length === 0 && offNetwork > 0
-                    ? 'off_network'
-                    : picked.code,
+      accountFailure,
+      ...(accountFailure === SPEND_CAP_REACHED && spendRefusedAt ? { capAt: spendRefusedAt } : {}),
       template: null,
     };
+  }
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
   const location = (await ctx.db.get(picked.account.locationId as Id<'edgeLocations'>))!;
   const template = await resolveBuildFor(

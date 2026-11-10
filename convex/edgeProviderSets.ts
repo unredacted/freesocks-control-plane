@@ -63,7 +63,7 @@ import { listenersOf } from './relayListeners';
 import { boundToRelay, startReprotect } from './edgeSetupRuns';
 import { EDGE_LIVE_STATUSES, publishedCount } from './lib/edges/pool';
 import { AUDIENCE_NEEDS_SPREAD } from './edgeAudiences';
-import { upkeepFillRefusalOf, type UpkeepFillRefusal } from './edgeRotations';
+import { upkeepFillHoldOf, type UpkeepFillRefusal } from './edgeRotations';
 import { SPEND_CAP_REACHED, capRoomAt } from './edgePlans';
 
 const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
@@ -295,25 +295,29 @@ export const view = internalQuery({
       capWanted?: number;
     } | null = null;
     if (relay.providerSet && state.deficit > 0 && !relay.setupOwned) {
-      const code = await upkeepFillRefusalOf(ctx, relay);
-      if (code) upkeepHold = { code };
-      if (code === SPEND_CAP_REACHED) {
-        const at = state.targets
-          .map((t) => pickRows.find((r) => r.location._id === t.locationId))
-          .find((r) => typeof r?.account.cost?.monthlyCap === 'number');
-        const room = at
-          ? await capRoomAt(
-              ctx,
-              at.account,
-              at.location,
-              relay.providerSet.find((p) => p.locationId === at.location._id)?.options,
-            )
-          : null;
-        if (at && room)
+      // Asked about the transport upkeep's next fill names (`firstFill`).
+      const hold = await upkeepFillHoldOf(ctx, relay, { firstFill: true });
+      if (hold) upkeepHold = { code: hold.code };
+      if (hold?.code === SPEND_CAP_REACHED && hold.capAt) {
+        const at = hold.capAt;
+        const [account, location] = await Promise.all([
+          ctx.db.get(at.accountId),
+          ctx.db.get(at.locationId),
+        ]);
+        const room =
+          account && location
+            ? await capRoomAt(
+                ctx,
+                account,
+                location,
+                relay.providerSet.find((p) => p.locationId === at.locationId)?.options,
+              )
+            : null;
+        if (room)
           upkeepHold = {
-            code,
+            code: hold.code,
             capFits: room.fits,
-            capWanted: room.staying + (await missingInAccount(ctx.db, at.account._id)),
+            capWanted: room.staying + (await missingInAccount(ctx.db, at.accountId)),
           };
       }
     }

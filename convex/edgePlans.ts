@@ -35,6 +35,7 @@ import {
   PLANS_RETRY_MS,
   PLANS_STALE_MS,
   atCap,
+  capFitsOf,
   costSettingsProblem,
   edgeCostOf,
   monthlyOf,
@@ -281,13 +282,15 @@ const LEAVING_STATUSES = new Set(['draining', 'destroying', 'failed', 'cancelled
  * more costs at `location` (the node's options there), and how many it holds
  * that stay. Null without a cap, or when one more has no price in the cap's
  * currency (nothing to count with). An account over its cap fits fewer than
- * it holds.
+ * it holds, never fewer than none.
  */
 export async function capRoomAt(
   ctx: { db: DatabaseReader },
   account: Account,
   location: Location,
   options?: string,
+  /** The account's managed live edges, kept between calls of one read (one scan per account). */
+  cache?: Map<string, Doc<'edges'>[]>,
 ): Promise<CapRoom | null> {
   if (typeof account.cost?.monthlyCap !== 'number') return null;
   const size = await sizeAt(
@@ -297,11 +300,13 @@ export async function capRoomAt(
     options !== undefined ? parseOptionValues(options) : null,
   );
   const { cost: each } = await edgeCostAt(ctx.db, account, location._id, size);
-  const edges = await managedLiveEdgesOf(ctx.db, account._id);
-  const spend = await spendOf(ctx, account, edges);
-  if (spend.cap === null || !each.monthly || each.currency !== spend.currency) return null;
+  const edges =
+    cache?.get(account._id as string) ?? (await managedLiveEdgesOf(ctx.db, account._id));
+  cache?.set(account._id as string, edges);
+  const fits = capFitsOf(await spendOf(ctx, account, edges), each);
+  if (fits === null) return null;
   return {
-    fits: spend.edges + Math.floor((spend.cap - spend.monthly + 1e-6) / each.monthly),
+    fits,
     staying: edges.filter((e) => !LEAVING_STATUSES.has(e.status)).length,
   };
 }

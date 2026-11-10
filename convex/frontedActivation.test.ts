@@ -2441,6 +2441,31 @@ describe('automatic work on a live node stays in its approved shape', () => {
     expect(await t.query(internal.edgeRotations.upkeepFillRefusal, { relayId: live.relayId })).toBe(
       'outside_approved_shape',
     );
+    // A count's fill at that location (`onlyLocationId`) is named the same way:
+    // the fitting picks are other locations, so no run is started only to fail.
+    const onlyThere = await t.run(async (ctx) =>
+      selectionContext(
+        ctx,
+        {
+          kind: 'provision',
+          trigger: 'reconcile',
+          listenerId: e1.listenerId,
+          publishOnDone: true,
+          onlyLocationId: otherLocation,
+        },
+        (await ctx.db.get(live.relayId))!,
+        null,
+        await resolveEdgeConfig(ctx.db),
+      ),
+    );
+    expect(onlyThere).toMatchObject({ account: null, accountFailure: 'outside_approved_shape' });
+    expect(
+      await t.query(internal.edgeRotations.upkeepFillRefusal, {
+        relayId: live.relayId,
+        listenerId: e1.listenerId,
+        onlyLocationId: otherLocation,
+      }),
+    ).toBe('outside_approved_shape');
     const lacking = await t.query(internal.edgeOperator.attention, {});
     expect(lacking.items.find((i) => i.kind === 'pool_below_desired')).toMatchObject({
       code: 'outside_approved_shape',

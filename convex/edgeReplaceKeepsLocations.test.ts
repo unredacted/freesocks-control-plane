@@ -21,6 +21,7 @@ import { selectionContext } from './edgeRotations';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import {
   createAccount,
+  FIXTURE_CONFIG_PROFILE,
   insertPanelServer,
   realityListener,
   registerRelay,
@@ -105,7 +106,7 @@ async function world(opts: { desired?: number } = {}) {
     await t.run((ctx) => ctx.db.patch(edgeId as Id<'edges'>, { managed: true }));
     return edgeId as Id<'edges'>;
   };
-  return { t, accountId, relayId, listenerId, a, b, c, address };
+  return { t, accountId, relayId, otherRelayId: other.relayId, listenerId, a, b, c, address };
 }
 
 /** Where the detector's replacement of `targetEdgeId` would be built. */
@@ -183,6 +184,8 @@ describe('the monthly cap and the refill of a location that lost its address', (
     const w = await world({ desired: 5 });
     for (let i = 0; i < 3; i++) await w.address(w.a);
     for (let i = 3; i < live; i++) await w.address(w.a, { elsewhere: true });
+    // The other node holds what it wants (unless a test says otherwise).
+    await w.t.run((ctx) => ctx.db.patch(w.otherRelayId, { desiredPublished: live - 3 }));
     return w;
   }
   const otherNodesAddress = (w: Awaited<ReturnType<typeof world>>) =>
@@ -306,6 +309,71 @@ describe('the monthly cap and the refill of a location that lost its address', (
       code: 'account_spend_cap_reached',
       facts: { kind: 'provision', spare: false, capFits: 6, capWanted: 8 },
     });
+  });
+
+  test('a node without locations of its own gets the same row', async () => {
+    const w = await emptied(6);
+    // The other node (no provider set) wants one address more than it holds.
+    await w.t.run((ctx) => ctx.db.patch(w.otherRelayId, { desiredPublished: 4 }));
+    const { items } = await w.t.query(internal.edgeOperator.attention, {});
+    const below = items.find(
+      (i) => i.kind === 'pool_below_desired' && i.relayId === (w.otherRelayId as string),
+    );
+    // Six stay, the first node lacks two, and this one lacks one of its own.
+    expect(below).toMatchObject({
+      code: 'account_spend_cap_reached',
+      action: 'open_account',
+      accountId: w.accountId,
+      facts: { published: 3, desired: 4, capFits: 6, capWanted: 9 },
+    });
+  });
+
+  test('the row judges the transport upkeep would fill, not another one', async () => {
+    const w = await emptied(6);
+    // A third node: transport `a` takes any account and has its address in an
+    // account with no cap; transport `z` takes only the capped account and has
+    // none. Upkeep's next fill is for `z`, and the cap refuses it.
+    const free = await createAccount(w.t, { name: 'acct-free', qualified: true });
+    await w.t.mutation(internal.edgeProviderAccounts.recordTest, { id: free, ok: true });
+    const third = await registerRelay(w.t, {
+      slug: 'node-three',
+      nodeName: 'node-three',
+      originAddress: '203.0.113.30',
+      listeners: [
+        realityListener(),
+        realityListener({
+          listenerKey: 'z',
+          originPort: 8443,
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_Z',
+            configProfileUuid: FIXTURE_CONFIG_PROFILE,
+            configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
+          },
+          providerScope: { provider: 'gcore', accountId: w.accountId },
+        }),
+      ],
+    });
+    await w.t.mutation(internal.relays.adoptEdge, {
+      relayId: third.relayId,
+      listenerId: third.listenerIds.a!,
+      ipv4: '198.51.100.90',
+      accountId: free,
+      publish: true,
+      verified: true,
+    });
+    expect(
+      await w.t.query(internal.edgeRotations.upkeepFillRefusal, {
+        relayId: third.relayId,
+        listenerId: third.listenerIds.z!,
+      }),
+    ).toBe('account_spend_cap_reached');
+    const { items } = await w.t.query(internal.edgeOperator.attention, {});
+    expect(
+      items.find((i) => i.kind === 'pool_below_desired' && i.relayId === (third.relayId as string)),
+    ).toMatchObject({ code: 'account_spend_cap_reached', accountId: w.accountId });
+    // And upkeep starts nothing for it.
+    await upkeep(w.t);
+    expect(await rotationsOf(w.t, third.relayId)).toEqual([]);
   });
 
   test('with room under the cap the node page says upkeep adds them', async () => {
