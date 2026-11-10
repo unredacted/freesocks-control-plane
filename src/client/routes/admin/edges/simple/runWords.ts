@@ -634,20 +634,35 @@ export function runPickLines(
 }
 
 /**
+ * A monthly cap counted in addresses: how many it fits and how many are
+ * wanted (the ones that stay plus the missing ones). A replacement is made
+ * before the blocked address goes, so it needs room for one more. Empty when
+ * the numbers are not known.
+ */
+export function capRoomWords(room: { capFits?: number; capWanted?: number }): string {
+  const { capFits: fits, capWanted: wanted } = room;
+  if (typeof fits !== 'number' || typeof wanted !== 'number') return '';
+  return `The cap fits ${plural(fits, 'address', 'addresses')} and ${wanted} ${wanted === 1 ? 'is' : 'are'} wanted, and a replacement needs room for one more.`;
+}
+
+/**
  * A node's provider set in words (the node page's card): per location, then the
  * locations that hold one of its addresses outside the set (`outside`: the set
  * changes only when a run goes live, so the spare of a re-protect that failed
  * sits there), then what members miss. What is still missing names its
  * locations, and says who adds it: automatic upkeep only when `upkeepAdds`
  * (`upkeepAddsMissing`) and the location is trusted (else a spare made there
- * by hand and tested), else nothing on its own, with the two ways on.
+ * by hand and tested), else nothing on its own, with the two ways on. When
+ * upkeep is on but holds back (`upkeepHold`), the note says what holds it: the
+ * account's monthly cap with how many addresses it fits and how many are
+ * wanted, or a location outside what the node was approved for.
  */
 export function providerPickWords(
   view: Pick<
     ProviderSetView,
     'picks' | 'reduced' | 'coolingOnly' | 'uncarried' | 'deficit' | 'hasSet'
   > &
-    Partial<Pick<ProviderSetView, 'outside' | 'missing'>>,
+    Partial<Pick<ProviderSetView, 'outside' | 'missing' | 'upkeepHold'>>,
   opts: { nameOf?: (listenerKey: string) => string; now?: number; upkeepAdds?: boolean } = {},
 ): {
   picks: Array<{
@@ -713,14 +728,19 @@ export function providerPickWords(
     ];
     const what = `${plural(view.deficit, 'address is', 'addresses are')} still missing${places.length > 0 ? ` (${places.join(', ')})` : ''}`;
     const it = view.deficit === 1 ? 'it' : 'them';
+    const hold = opts.upkeepAdds ? (view.upkeepHold ?? null) : null;
     notes.push(
       opts.upkeepAdds && untrusted.length > 0
         ? `${what}. Automatic upkeep adds none in a location until an address there is tested. Add a spare in ${untrusted.join(', ')} and test it.`
-        : opts.upkeepAdds
-          ? `${what}; automatic upkeep adds ${it}.`
-          : places.length > 0
-            ? `${what}. Nothing adds ${it} on its own. Add a spare there, or remove ${places.length === 1 ? 'the location' : 'those locations'}.`
-            : `${what}. Nothing adds ${it} on its own. Add a spare address.`,
+        : hold?.code === 'account_spend_cap_reached'
+          ? `${what}. The account's monthly spend cap holds ${it} back. ${capRoomWords(hold)} Raise the cap on the account, or remove an address.`
+          : hold?.code === 'outside_approved_shape'
+            ? `${what}. Automatic upkeep cannot add ${it}: the node was not approved for an address there. Review and approve the node again.`
+            : opts.upkeepAdds
+              ? `${what}; automatic upkeep adds ${it}.`
+              : places.length > 0
+                ? `${what}. Nothing adds ${it} on its own. Add a spare there, or remove ${places.length === 1 ? 'the location' : 'those locations'}.`
+                : `${what}. Nothing adds ${it} on its own. Add a spare address.`,
     );
   }
   return { picks, outside, notes };

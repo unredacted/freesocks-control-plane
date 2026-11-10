@@ -22,7 +22,8 @@
  *     fill a slot while a spare that would take it awaits its test (or, with
  *     `autoPublishStandby` off, the operator's publish), nor one that could
  *     not take it (`upkeepFillRefusal`: the slot is held for a set location
- *     automatic work cannot use yet);
+ *     automatic work cannot use yet), nor one the account's monthly cap would
+ *     refuse (no run is started only to fail);
  *  6. finish origin deletes once every managed edge is destroyed.
  *
  * A quarantined origin is hands-off: nothing here describes, drops, destroys or
@@ -562,15 +563,19 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           return;
         // Nor is an address bought to fill a slot it could not take: every free
         // slot is held for a location of the set automatic work cannot use yet
-        // (an untrusted one gets its first address by hand, tested).
+        // (an untrusted one gets its first address by hand, tested; one outside
+        // what the node was approved for needs a new review). Nor is a run
+        // started that would only fail on the account's monthly cap: nothing
+        // fails, so the first pass with room under the cap starts it
+        // (attention `pool_below_desired` says what holds it meanwhile).
         if (
-          publishOnDone &&
-          (await ctx.runQuery(internal.edgeRotations.upkeepFillRefusal, {
+          await ctx.runQuery(internal.edgeRotations.upkeepFillRefusal, {
             relayId: origin._id,
+            publishOnDone,
             ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
             ...(onlyLocationId ? { onlyLocationId } : {}),
             ...(audience?.length ? { audience } : {}),
-          }))
+          })
         )
           return;
         await ctx.runMutation(internal.edgeRotations.start, {

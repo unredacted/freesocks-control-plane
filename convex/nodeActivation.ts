@@ -25,7 +25,9 @@ import { verificationListenersOf } from './lib/edges/verificationContext';
 import { certificateDigest } from './lib/edges/choices';
 import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
-import type { Values } from './lib/edges/providers/options';
+import { parseOptionValues, type Values } from './lib/edges/providers/options';
+import { assignedPicksOf, locationAssigned } from './lib/edges/assignedLocation';
+import { resolveBuildFor } from './edgeTemplates';
 import { assertAdmission } from './lib/edges/maintenance';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -1911,8 +1913,74 @@ export async function publicationAdmission(
   const shape = committedShape?.listeners
     ? committedShape
     : { listeners: await servedListenersOf(ctx, intent) };
-  if (!publicationFits(shape, pub)) return { kind: 'refused', code: 'servers.node_not_approved' };
-  return { kind: 'committed' };
+  if (publicationFits(shape, pub)) return { kind: 'committed' };
+  // No per-listener review on record: a location an operator assigned to the
+  // node is part of what it was approved for (`assignedLocationFits`). A node
+  // with a stored review keeps exactly the shape that review names.
+  if (!committedShape?.listeners && (await assignedLocationFits(ctx, intent, shape.listeners, pub)))
+    return { kind: 'committed' };
+  return { kind: 'refused', code: 'servers.node_not_approved' };
+}
+
+/**
+ * Whether a publication fits a node approved WITHOUT a per-listener review (an
+ * adopted node, an older review) by the locations its operator assigned to it.
+ * Such a node's shape is read from what its members are served through now, so
+ * a location whose last address left dropped out of it, and nothing, by hand
+ * or automatic, could put an address in use there again. The location must be
+ * assigned to the node (`locationAssigned`: one of its picks, or trusted by
+ * hand; never one switched off or untrusted by hand), and everything else
+ * must be what the node already serves:
+ *  - the same transport and the same account as an address in use;
+ *  - the same certificate, by the review's own rule;
+ *  - the same template: the address is built with what its location builds
+ *    for this node NOW, from the same template as that address in use, which
+ *    is itself built with what its own location builds now. Only the
+ *    location's own regional values may differ. After a template edit (or with
+ *    other options than the pick's) nothing fits until the node is reviewed.
+ */
+async function assignedLocationFits(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+  served: readonly ReviewListener[],
+  pub: PublicationShape,
+): Promise<boolean> {
+  if (!pub.accountId || !pub.locationId || !pub.templateHash) return false;
+  const relay = await relayForBackendNode(ctx.db, intent.backendServerId, intent.name);
+  if (!relay || relay.origin.kind !== 'panel-node' || relay.origin.nodeName !== intent.name)
+    return false;
+  const [account, location] = await Promise.all([
+    ctx.db.get(pub.accountId as Id<'edgeProviderAccounts'>),
+    ctx.db.get(pub.locationId as Id<'edgeLocations'>),
+  ]);
+  if (!account || !location || location.accountId !== account._id) return false;
+  if (!locationAssigned(location, await assignedPicksOf(ctx.db, relay))) return false;
+  // What an address at a location is built with for this node: the location's
+  // template with the node's options at that pick (none without a pick).
+  const builtAt = (at: Doc<'edgeLocations'>) => {
+    const raw = relay.providerSet?.find((p) => p.locationId === at._id)?.options;
+    return resolveBuildFor(
+      ctx,
+      account.provider,
+      null,
+      account.defaultTemplateId ?? null,
+      account._id,
+      at,
+      raw !== undefined ? parseOptionValues(raw) : null,
+    );
+  };
+  const here = await builtAt(location);
+  if (here.hash !== pub.templateHash) return false;
+  for (const s of served) {
+    if (s.listenerKey !== pub.listenerKey || s.accountId !== pub.accountId) continue;
+    if (!s.locationId || !s.templateHash) continue;
+    if (s.certificate !== undefined && s.certificate !== pub.certificate) continue;
+    const at = await ctx.db.get(s.locationId as Id<'edgeLocations'>);
+    if (!at || at.accountId !== account._id) continue;
+    const there = await builtAt(at);
+    if (there.id === here.id && there.hash === s.templateHash) return true;
+  }
+  return false;
 }
 
 /** Each listener of a fronted node with the account and template of its template edge (what is served). */

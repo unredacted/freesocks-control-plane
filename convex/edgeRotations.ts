@@ -69,7 +69,13 @@ import {
   type HostTarget,
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
-import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
+import {
+  allocatePoolIndex,
+  freeSlotCount,
+  uncoveredListeners,
+  withEdgeAt,
+  withoutEdge,
+} from './lib/edges/pool';
 import {
   checkPickOptions,
   relayHasReality,
@@ -122,6 +128,7 @@ import {
   slotsOf,
   withCooling,
 } from './lib/edges/setState';
+import { coverageDeficit } from './lib/edges/providerSet';
 import {
   REFUSED_LOCATION_HOLD_MS,
   refusedLocationsOf,
@@ -410,40 +417,113 @@ export const autoProvisionBackingOff = internalQuery({
 });
 
 /**
- * Why upkeep must not buy an address to fill a free pool slot of this origin
- * now, read fresh, or null: `pool_reserved` when every free slot is held for
- * what the node's set lacks and no location automatic work may use lowers it
- * (the missing location is not trusted yet, or full): what selection would
- * pick could only ever be a spare (docs/edges.md § "Provider sets").
+ * Why upkeep must not start a provision on this origin now, read fresh, or
+ * null: the run would buy nothing it could use, or fail at its selection.
+ *  - `pool_reserved`: every free slot is held for what the node's set lacks
+ *    and no location automatic work may use lowers it (the missing location
+ *    is not trusted yet, or full): what selection would pick could only ever
+ *    be a spare (docs/edges.md § "Provider sets").
+ *  - `outside_approved_shape`: what the node lacks is in a location outside
+ *    what the node was approved for; a new review is the way forward.
+ *  - `account_spend_cap_reached`: one more address would pass the monthly
+ *    cap of every account that could take it. Nothing is started, so nothing
+ *    fails and no back-off holds the next pass: the first one with room under
+ *    the cap (a drained address was destroyed, the cap was raised) starts it.
  */
+export type UpkeepFillRefusal =
+  'pool_reserved' | 'outside_approved_shape' | typeof SPEND_CAP_REACHED;
+
+/** What `upkeepFillHoldOf` is asked about (the reconcile's own arguments). */
+export interface UpkeepFillRequest {
+  listenerId?: Id<'relayListeners'>;
+  onlyLocationId?: Id<'edgeLocations'>;
+  audience?: string[];
+  /** False: a spare (it takes no slot, so nothing is reserved for it). Default true. */
+  publishOnDone?: boolean;
+  /**
+   * No transport named: ask about the one upkeep's next fill names (the
+   * reconcile's step 5a: the first transport with no address in use, while a
+   * slot is free; else none, the origin-wide fill). The rows that say what
+   * holds upkeep then judge the run upkeep would start, not another transport's.
+   */
+  firstFill?: boolean;
+}
+
+/** The transport the reconcile's listener-aware fill (step 5a) would name now, if any. */
+async function firstFillListenerOf(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+): Promise<Id<'relayListeners'> | undefined> {
+  if (freeSlotCount(origin.publishedEdgeIds, origin.desiredPublished) <= 0) return undefined;
+  const rows = [...(await listenersOf(ctx, origin._id))].sort((a, b) =>
+    a.listenerKey.localeCompare(b.listenerKey),
+  );
+  return uncoveredListeners(
+    rows.map((l) => ({
+      id: l._id,
+      templateEdgeId: l.templateEdgeId ?? null,
+      deployed: l.deployed,
+      enabled: l.enabled,
+      retired: l.retired,
+    })),
+  )[0]?.id;
+}
+
+/**
+ * `upkeepFillRefusalOf` with where the cap refused (`capAt`: the first
+ * location one more address would pass its account's cap in), for the rows
+ * that count the cap in addresses.
+ */
+export async function upkeepFillHoldOf(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+  a: UpkeepFillRequest = {},
+): Promise<{ code: UpkeepFillRefusal; capAt?: SelectionContext['capAt'] } | null> {
+  const listenerId =
+    a.listenerId ?? (a.firstFill ? await firstFillListenerOf(ctx, origin) : undefined);
+  const sel = await selectionContext(
+    ctx,
+    {
+      kind: 'provision',
+      trigger: 'reconcile',
+      publishOnDone: a.publishOnDone !== false,
+      ...(listenerId ? { listenerId } : {}),
+      ...(a.onlyLocationId ? { onlyLocationId: a.onlyLocationId } : {}),
+      ...(a.audience?.length ? { audience: a.audience } : {}),
+    },
+    origin,
+    null,
+    await resolveEdgeConfig(ctx.db),
+  );
+  if (sel.account || sel.standbyId) return null;
+  if (sel.accountFailure === SPEND_CAP_REACHED)
+    return { code: SPEND_CAP_REACHED, ...(sel.capAt ? { capAt: sel.capAt } : {}) };
+  // The two below are about a node's set and its approval.
+  if (!origin.providerSet) return null;
+  return sel.accountFailure === 'pool_reserved' || sel.accountFailure === 'outside_approved_shape'
+    ? { code: sel.accountFailure }
+    : null;
+}
+
+export async function upkeepFillRefusalOf(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+  a: UpkeepFillRequest = {},
+): Promise<UpkeepFillRefusal | null> {
+  return (await upkeepFillHoldOf(ctx, origin, a))?.code ?? null;
+}
+
 export const upkeepFillRefusal = internalQuery({
   args: {
     relayId: v.id('relays'),
     listenerId: v.optional(v.id('relayListeners')),
     onlyLocationId: v.optional(v.id('edgeLocations')),
     audience: v.optional(v.array(v.string())),
+    publishOnDone: v.optional(v.boolean()),
   },
-  handler: async (
-    ctx,
-    { relayId, listenerId, onlyLocationId, audience },
-  ): Promise<'pool_reserved' | null> => {
+  handler: async (ctx, { relayId, ...a }): Promise<UpkeepFillRefusal | null> => {
     const origin = await ctx.db.get(relayId);
-    if (!origin?.providerSet) return null;
-    const sel = await selectionContext(
-      ctx,
-      {
-        kind: 'provision',
-        trigger: 'reconcile',
-        publishOnDone: true,
-        ...(listenerId ? { listenerId } : {}),
-        ...(onlyLocationId ? { onlyLocationId } : {}),
-        ...(audience?.length ? { audience } : {}),
-      },
-      origin,
-      null,
-      await resolveEdgeConfig(ctx.db),
-    );
-    return sel.accountFailure === 'pool_reserved' ? 'pool_reserved' : null;
+    return origin ? upkeepFillRefusalOf(ctx, origin, a) : null;
   },
 });
 
@@ -3683,6 +3763,11 @@ export async function edgeFitsPick(
 export interface SelectionContext {
   listener: Doc<'relayListeners'> | null;
   standbyId: Id<'edges'> | null;
+  /**
+   * With `account_spend_cap_reached` from the automatic pick: the first
+   * location one more address would pass its account's monthly cap in.
+   */
+  capAt?: { accountId: Id<'edgeProviderAccounts'>; locationId: Id<'edgeLocations'> };
   account: {
     id: Id<'edgeProviderAccounts'>;
     /** Where the new edge is created (frozen on it at plan time). */
@@ -4201,13 +4286,17 @@ export async function selectionContext(
   // brings its budget, live cap and priority; the location its trust and cap.
   // A location the node's automatic work keeps out of after a refused create
   // is set aside (`refusedCandidates`): only to name why nothing was picked.
+  // One outside what the node was approved for is set aside the same way
+  // (`shapeCandidates`): never picked, only named when it is why nothing was.
   const candidates: AccountCandidate[] = [];
   const refusedCandidates: AccountCandidate[] = [];
+  const shapeCandidates: AccountCandidate[] = [];
   const keyOfLocation = new Map<string, string>();
   let outsideShape = 0;
   let certificateRefused: string | null = null;
   let sizeRefused: string | null = null;
   let spendRefused: string | null = null;
+  let spendRefusedAt: SelectionContext['capAt'];
   let offNetwork = 0;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
@@ -4272,9 +4361,11 @@ export async function selectionContext(
       // Nor one whose edge would take the account past its monthly cap.
       if (spend && (atCap(spend) || passesCap(spend, cost, 1))) {
         spendRefused = spendRefused ?? SPEND_CAP_REACHED;
+        spendRefusedAt = spendRefusedAt ?? { accountId: a._id, locationId: loc._id };
         continue;
       }
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
+      let inShape = true;
       if (underApproval) {
         const tpl = await resolveBuildFor(
           ctx,
@@ -4285,19 +4376,20 @@ export async function selectionContext(
           loc,
           await choicesFor(ctx, rotation, origin, loc._id),
         );
-        if (
-          !(await fitsApproval(
-            a._id as string,
-            loc._id as string,
-            tpl.hash,
-            await certificateAt(a, loc._id),
-          ))
-        ) {
-          outsideShape++;
-          continue;
-        }
+        inShape = await fitsApproval(
+          a._id as string,
+          loc._id as string,
+          tpl.hash,
+          await certificateAt(a, loc._id),
+        );
+        if (!inShape) outsideShape++;
       }
-      (refused.has(loc._id as string) ? refusedCandidates : candidates).push({
+      (!inShape
+        ? shapeCandidates
+        : refused.has(loc._id as string)
+          ? refusedCandidates
+          : candidates
+      ).push({
         id: a._id as string,
         locationId: loc._id as string,
         provider: a.provider,
@@ -4336,7 +4428,22 @@ export async function selectionContext(
             origin.providerPreference ?? null,
           );
     const order = origin.providerSet.map((p) => p.locationId as string);
-    const state = await setStateOf(ctx.db, origin, now);
+    const read = await setStateOf(ctx.db, origin, now);
+    // A replace swaps its target out, so what a new address adds is judged
+    // against the pool as it will be without it: the replacement of a
+    // location's last address then lowers the deficit there and stays in that
+    // location, instead of going to the first pick and leaving the location
+    // empty (which grew the pool by one address for every such replace).
+    const leaving =
+      rotation.kind === 'replace' && targetEdge?.publication === 'published'
+        ? (targetEdge._id as string)
+        : null;
+    const staying = leaving
+      ? read.published.filter((p) => (p.edgeId as string) !== leaving)
+      : read.published;
+    const state = leaving
+      ? { ...read, published: staying, deficit: coverageDeficit(read.requirement, staying) }
+      : read;
     const mine = state.published.filter((p) => p.listenerKey === listener.listenerKey);
     const setCandidates: SetLocationCandidate[] = [];
     let coolingOnly = 0;
@@ -4404,31 +4511,54 @@ export async function selectionContext(
       accountFailure: 'no_assigned_location',
       template: null,
     };
-  if (!picked.ok)
+  // A fill whose held slot is for a location outside what the node was
+  // approved for, or a count's fill at such a location (`onlyLocationId`: the
+  // fitting ones are other locations, so none is left to pick): the approval
+  // is why nothing can be picked, and a new review is the way forward. Said
+  // as such, never as `pool_reserved` (which told nobody why upkeep bought
+  // nothing) or as a run that starts only to fail.
+  if (
+    !picked.ok &&
+    (picked.code === 'pool_reserved' ||
+      (!!rotation.onlyLocationId && picked.code === 'no_account_for_provider')) &&
+    shapeCandidates.length > 0 &&
+    (await pickAmong([...candidates, ...shapeCandidates])).ok
+  )
     return {
       listener,
       standbyId: null,
       account: null,
-      // Every account that could front the listener is outside what the node
-      // was approved for: a new review is the way forward, not another account.
-      // Nothing left but accounts whose fronts could get no certificate: say so.
-      // A refused create set aside what would have been picked: that first.
-      accountFailure:
-        picked.code === 'locations_refused'
-          ? picked.code
-          : candidates.length === 0 && outsideShape > 0
-            ? 'outside_approved_shape'
-            : candidates.length === 0 && certificateRefused
-              ? certificateRefused
-              : candidates.length === 0 && sizeRefused
-                ? sizeRefused
-                : candidates.length === 0 && spendRefused
-                  ? spendRefused
-                  : candidates.length === 0 && offNetwork > 0
-                    ? 'off_network'
-                    : picked.code,
+      accountFailure: 'outside_approved_shape',
       template: null,
     };
+  if (!picked.ok) {
+    // Every account that could front the listener is outside what the node
+    // was approved for: a new review is the way forward, not another account.
+    // Nothing left but accounts whose fronts could get no certificate: say so.
+    // A refused create set aside what would have been picked: that first.
+    const accountFailure =
+      picked.code === 'locations_refused'
+        ? picked.code
+        : candidates.length === 0 && outsideShape > 0
+          ? 'outside_approved_shape'
+          : candidates.length === 0 && certificateRefused
+            ? certificateRefused
+            : candidates.length === 0 && sizeRefused
+              ? sizeRefused
+              : candidates.length === 0 && spendRefused
+                ? spendRefused
+                : candidates.length === 0 && offNetwork > 0
+                  ? 'off_network'
+                  : picked.code;
+    return {
+      listener,
+      standbyId: null,
+      account: null,
+      accountFailure,
+      ...(accountFailure === SPEND_CAP_REACHED && spendRefusedAt ? { capAt: spendRefusedAt } : {}),
+      template: null,
+    };
+  }
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
   const location = (await ctx.db.get(picked.account.locationId as Id<'edgeLocations'>))!;
   const template = await resolveBuildFor(

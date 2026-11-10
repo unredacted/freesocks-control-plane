@@ -35,6 +35,7 @@ import {
   PLANS_RETRY_MS,
   PLANS_STALE_MS,
   atCap,
+  capFitsOf,
   costSettingsProblem,
   edgeCostOf,
   monthlyOf,
@@ -263,6 +264,51 @@ export async function capRefusal(
   if (typeof account.cost?.monthlyCap !== 'number') return null;
   const spend = await spendOf(ctx, account);
   return atCap(spend) || passesCap(spend, each, adding) ? SPEND_CAP_REACHED : null;
+}
+
+/** An account's monthly cap counted in addresses (attention and the node page say it). */
+export interface CapRoom {
+  /** Addresses the cap fits: the live ones FCP manages plus how many more at this price. */
+  fits: number;
+  /** Live managed addresses that stay (not draining, being destroyed, failed or cancelled). */
+  staying: number;
+}
+
+/** Statuses of an address on its way out: it still costs, but nobody wants it. */
+const LEAVING_STATUSES = new Set(['draining', 'destroying', 'failed', 'cancelled']);
+
+/**
+ * How many addresses the account's monthly cap fits, counted with what one
+ * more costs at `location` (the node's options there), and how many it holds
+ * that stay. Null without a cap, or when one more has no price in the cap's
+ * currency (nothing to count with). An account over its cap fits fewer than
+ * it holds, never fewer than none.
+ */
+export async function capRoomAt(
+  ctx: { db: DatabaseReader },
+  account: Account,
+  location: Location,
+  options?: string,
+  /** The account's managed live edges, kept between calls of one read (one scan per account). */
+  cache?: Map<string, Doc<'edges'>[]>,
+): Promise<CapRoom | null> {
+  if (typeof account.cost?.monthlyCap !== 'number') return null;
+  const size = await sizeAt(
+    ctx,
+    account,
+    location,
+    options !== undefined ? parseOptionValues(options) : null,
+  );
+  const { cost: each } = await edgeCostAt(ctx.db, account, location._id, size);
+  const edges =
+    cache?.get(account._id as string) ?? (await managedLiveEdgesOf(ctx.db, account._id));
+  cache?.set(account._id as string, edges);
+  const fits = capFitsOf(await spendOf(ctx, account, edges), each);
+  if (fits === null) return null;
+  return {
+    fits,
+    staying: edges.filter((e) => !LEAVING_STATUSES.has(e.status)).length,
+  };
 }
 
 // --- admin views -----------------------------------------------------------------------

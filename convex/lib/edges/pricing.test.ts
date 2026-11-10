@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   HOURS_PER_MONTH,
   atCap,
+  capFitsOf,
   costTieKeys,
   costSettingsProblem,
   edgeCostOf,
@@ -148,6 +149,22 @@ describe('totals and the cap', () => {
     expect(atCap({ ...spend, monthly: 40 })).toBe(true);
     // No cap: never.
     expect(passesCap(spendViewOf(null, [{ cost: eur, count: 100 }]), eur, 100)).toBe(false);
+  });
+
+  test('the cap in edges: the live ones plus how many more fit, never below zero', () => {
+    const at = (monthly: number) => ({ ...eur, monthly });
+    const capped = (cap: number, each: number, count: number) =>
+      spendViewOf({ paid: 'list', currency: 'EUR', monthlyCap: cap }, [{ cost: at(each), count }]);
+    expect(capFitsOf(capped(60, 10, 5), at(10))).toBe(6);
+    expect(capFitsOf(capped(60, 10, 6), at(10))).toBe(6);
+    // Over its cap: fewer than it holds.
+    expect(capFitsOf(capped(60, 10, 8), at(10))).toBe(6);
+    // Dearer edges far over the cap, counted with a cheap one: none, not fewer than none.
+    expect(capFitsOf(capped(10, 100, 2), at(10))).toBe(0);
+    // Nothing to count with: no cap, no price, another currency.
+    expect(capFitsOf(spendViewOf(null, [{ cost: at(10), count: 1 }]), at(10))).toBeNull();
+    expect(capFitsOf(capped(60, 10, 1), unknown)).toBeNull();
+    expect(capFitsOf(capped(60, 10, 1), usd)).toBeNull();
   });
 
   test('the tie-break keys: a rank by cost within each priority and currency; unknown ranks first', () => {
