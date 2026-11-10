@@ -2997,6 +2997,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.list.published': 'Country list version in use',
   'edge.list.held': 'Country list version held',
   'edge.list.failed': 'Country list update failed',
+  'edge.list.prefer.applied': 'SNIs preferred from country lists changed',
   'relay.slot.upsert': 'Node slot saved',
   'relay.slot.retire': 'Node slot retired',
   'relay.host.lost': 'Address missing from the backend',

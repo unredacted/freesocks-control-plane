@@ -274,6 +274,12 @@ export interface EdgeConfig {
     staleDays: number;
     /** How often a new list fetches its source. */
     defaultFetchHours: number;
+    /**
+     * Members in a list's country get the server names of its allowlists before
+     * ones nobody has judged there (docs/edges.md "Names on a country's
+     * allowlist"). Ships off, and each list opts in too (`preferNames`).
+     */
+    preferNames: boolean;
   };
   render: {
     /** Master switch for FCP-rendered origin endpoints; off = the backend body passes through. */
@@ -441,6 +447,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     heldDays: 14,
     staleDays: 30,
     defaultFetchHours: 24,
+    preferNames: false,
   },
   render: {
     enabled: false,
@@ -619,6 +626,7 @@ export const EDGE_KEYS = {
   'lists.heldDays': 'edge.lists.heldDays',
   'lists.staleDays': 'edge.lists.staleDays',
   'lists.defaultFetchHours': 'edge.lists.defaultFetchHours',
+  'lists.preferNames': 'edge.lists.preferNames',
   'render.enabled': 'edge.render.enabled',
   'render.namesPerEndpoint': 'edge.render.namesPerEndpoint',
   'render.backupNames': 'edge.render.backupNames',
@@ -863,6 +871,7 @@ export function sanitizeRelayConfig(
         168,
         D.lists.defaultFetchHours,
       ),
+      preferNames: sanitizeBool(raw['lists.preferNames'], D.lists.preferNames),
     },
     render: {
       enabled: sanitizeBool(raw['render.enabled'], D.render.enabled),

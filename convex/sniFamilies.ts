@@ -48,7 +48,12 @@ import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { clientCheckReadiness } from './edgeClientCheck';
 import { decide, listBlocks, resolveSuggestion, suggest, type Mark } from './lib/edges/sni/vantage';
 import { listLabels, onListsView } from './lib/edges/lists/facts';
-import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/sni/marks';
+import {
+  auditPickForMarks,
+  marksOfName,
+  pickForJudgedNames,
+  preferContext,
+} from './lib/edges/sni/marks';
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
 import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
@@ -683,6 +688,11 @@ export const remove = internalMutation({
     else await ctx.db.delete(f._id);
     // Names found for it go with it (docs/edges.md "Finding names").
     await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, { familyId: f._id });
+    // A name left on a listener (unbinding leaves names on origins) lost the
+    // stored list facts its allowlist preference was copied from: the copy goes
+    // too (docs/edges.md "Names on a country's allowlist").
+    if (names.some((n) => n.status !== 'burned' && (n.onLists?.length ?? 0) > 0))
+      await ctx.scheduler.runAfter(0, internal.countryListFacts.applyPreference, {});
     await audit(ctx, 'edge.sni.family.delete', a.actorAdminId, {
       slug: f.slug,
       nameCount: names.length,
@@ -905,6 +915,7 @@ export async function writeCountryMarks(
   }
   // Copy the marks onto every listener entry for these names.
   const touched = new Set(wanted);
+  const prefer = await preferContext(ctx.db, now);
   const listeners = await ctx.db.query('relayListeners').collect();
   const relays = new Set<Id<'relays'>>();
   let switched = 0;
@@ -918,8 +929,8 @@ export async function writeCountryMarks(
         next.push(n);
         continue;
       }
-      const { blockedIn: _b, provenIn: _p, ...rest } = n;
-      next.push({ ...rest, ...(await countryMarks(ctx, n.name)) });
+      const { blockedIn: _b, provenIn: _p, listedIn: _l, ...rest } = n;
+      next.push({ ...rest, ...(await marksOfName(ctx.db, n.name, prefer)) });
     }
     // A judged name only counts on the growth-stable pick (lib/edges/sni/marks.ts).
     const pick = pickForJudgedNames(l.sniPick, next);

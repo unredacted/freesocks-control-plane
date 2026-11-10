@@ -2285,6 +2285,7 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
           : {}),
         ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
         ...(typeof body.watchEdges === 'boolean' ? { watchEdges: body.watchEdges } : {}),
+        ...(typeof body.preferNames === 'boolean' ? { preferNames: body.preferNames } : {}),
         ...act,
       }),
     );

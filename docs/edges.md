@@ -3587,11 +3587,11 @@ once settled; a listener it changes moves its origin's epoch).
 **Selecting** (`countryTier`, `convex/lib/edges/assignment.ts`; a listener on `hrw1`, which
 every listener with a judged name is):
 
-| The member is             | They are offered                                                                                                                                                                                                              |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| in a curated country      | **Never** a name blocked there. Names proven there first; names nobody has judged there fill the remaining slots. With three or more proven names they hold only proven ones.                                                 |
-| anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country. Only when no edge has one are names blocked somewhere offered, as the last resort, fewest countries first.                                              |
-| reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are (asked at sign-up and for a mirror with `delivery.country.ask`). |
+| The member is             | They are offered                                                                                                                                                                                                                                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| in a curated country      | **Never** a name blocked there. Names proven there first, then names on an allowlist there that prefers its names (§ Country lists, "Names on a country's allowlist"; off by default); names nobody has judged there fill the remaining slots. With three or more proven names they hold only proven ones. |
+| anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country. Only when no edge has one are names blocked somewhere offered, as the last resort, fewest countries first.                                                                                                                           |
+| reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are (asked at sign-up and for a mirror with `delivery.country.ask`).                                                                              |
 
 Each tier keeps the rendezvous order, so the stability properties hold inside it. An endpoint's
 further names, and the backup's, spread over names the other endpoint does not carry only
@@ -4154,8 +4154,9 @@ A **country list** is a community list of names and addresses reported to **work
 (an allowlist, such as the names and ranges a network still lets through when it shuts most of the
 internet down) or to be **blocked** there (a blocklist). FCP follows it, keeps each change as a
 version, and holds a version that looks wrong until a person looks at it. Lists are **evidence
-only**: nothing here changes what members get. No list, source or address is named in the code or
-the docs: lists are data an operator enters.
+only**: nothing here changes what members get, except where an operator turns on "Names on a
+country's allowlist" (below; two switches, both off). No list, source or address is named in the
+code or the docs: lists are data an operator enters.
 
 **What a list is** (`countryLists`, `convex/countryLists.ts`): a label, an ISO country, the regime
 (`allowlist` / `blocklist`), optional operator networks (ASNs; empty means some networks in the
@@ -4274,6 +4275,48 @@ page then shows a row for it). Lists never suggest `proven`. **Apply** records i
 mark; `autoApply` passes no list, so a list is never acted on without a person. `reason` keeps its
 one meaning: why nothing is suggested.
 
+**Names on a country's allowlist** (`lib/edges/lists/prefer.ts`, `lib/edges/sni/marks.ts`
+`preferContext`, `convex/countryListFacts.ts` `applyPreference`). Ships dormant:
+`edge.lists.preferNames` is off and no list opts in. With it on, an allowlist with **Prefer its
+names** on (`countryLists.preferNames`; `PATCH lists/{id} {preferNames}`; a block list is refused
+with `edge.list.prefer_allowlist_only`, and a list that becomes one stops) puts its names ahead for
+members in its country: **proven there, then on such a list, then not judged**. It is the one place
+a list changes what members get, and it is kept weaker than a judgement on purpose:
+
+- **Never a mark.** Nothing is written to `sniNameCountry`, and lists still never suggest
+  `proven`. A name blocked there is never offered, listed or not; a name proven there stays first.
+- **Only names FCP already serves.** A list can reorder the active names of a listener for one
+  country. It cannot add a name: a name gets onto a listener only through its family, whose target
+  must serve it (qualification), so most of a list never applies. A CDN-fronted transport presents
+  the CDN's name and is not touched. Under a real allowlist the dialled address must be listed
+  too, which this does not change (below, "Edge addresses against allowlists").
+- **Only what evidence reads.** The list must be on, fresh and have a version in use, with
+  `edge.lists.enabled` on; its country must be on the censored-country list; and no block list for
+  that country may hold the name (lists that disagree prefer nothing). A held version changes
+  nothing: the version in use keeps counting until a person decides.
+- **Only family names.** The rule reads the name's stored `onLists`; a name no family holds has
+  none. A list's networks are not read: FCP knows a member's country, not their network, so a
+  list for some networks prefers for every member in the country.
+
+The pick reads a listener's own entries, so the preference is copied onto them as `listedIn` (the
+countries), beside `blockedIn` and `provenIn`, by every writer that copies marks
+(`withCountryMarks`: registration, a reactivated name, a rollout's activation, a mark). When the
+family names' facts have been refreshed (a version in use, an edited, removed, stale or fresh list,
+the lists switch), and when either prefer switch or the censored-country list changes,
+`applyPreference` goes over the listeners. **Only a listener whose names really change is
+written**, and its origin's epoch moves once: a list version that touches none of the names in use
+moves nobody. A change re-ranks only members whose country is that one; the universal pool and the
+mirrors read blocks only and get what they got. A listed name counts as judged for the pick: its
+listener moves onto `hrw1` once (audited, § "Names for the member's country") and bodies there are
+country-shaped (not cached for an inferred country). Audit: `edge.list.prefer.applied` (how many
+listeners and origins changed, how many moved onto `hrw1`; never a name), and `changed` on
+`admin.edge.list.update`.
+
+Turning `edge.lists.preferNames` off clears every copy at the next pass and members are back on
+the order without lists at their next refresh. Before deploying a build from before this,
+`countryListFacts:clearForRollback` turns the switch off and strips `listedIn` and `preferNames`
+(an older schema refuses them).
+
 **Edge addresses against allowlists** (`convex/countryListEdges.ts`, rules in
 `lib/edges/lists/edgeMarks.ts`). Under a whitelist both the dialled address and the server name must
 be listed. An allowlist with **Check edge addresses against it** on (`countryLists.watchEdges`, off
@@ -4292,8 +4335,8 @@ address. It runs when the list-facts generation moves (a version going into use,
 the switch), when a list starts or stops being watched, and at the end of each hourly
 `country-lists` pass; a start while one runs makes it go round once more. Only a list that is on,
 fresh and has a version in use is read, and nothing while `edge.lists.enabled` is off: a mark of a
-list that is not read is kept, unchanged, until it is. Evidence only, like every list: nothing
-changes what members get, and FCP never replaces an address because a list dropped it.
+list that is not read is kept, unchanged, until it is. Evidence only: this changes nothing members
+get, and FCP never replaces an address because a list dropped it.
 
 An active address that was listed and is no longer raises the warning attention item
 **`list_address_left`** (`list_address_left:<edgeId>:<listId>:<family>`, facts `list`, `country`,
@@ -4312,7 +4355,7 @@ how the active edges' addresses stand.
 Retention keeps a version row any mark was last checked against (a list that stopped being watched
 keeps its marks), so a mark can always say which version it was checked against; a removed list
 takes its marks along. Routes: `GET lists/marks?edge={edgeId}` (read), `PATCH lists/{id}
-{watchEdges}`, `POST lists/{id}/marks/{markId}/seen {leftAt}` (only an address that left,
+{watchEdges}` (and `{preferNames}`, above), `POST lists/{id}/marks/{markId}/seen {leftAt}` (only an address that left,
 `edge.list.mark_not_left` otherwise). Audit: `admin.edge.list.mark_seen` (ids and the family).
 
 ### Finding names

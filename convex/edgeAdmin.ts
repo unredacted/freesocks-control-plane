@@ -11,7 +11,7 @@ import { verificationListenerOf } from './lib/edges/verificationContext';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { bumpFactsGen } from './countryListFacts';
+import { bumpFactsGen, schedulePreference } from './countryListFacts';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
@@ -224,6 +224,9 @@ export const patchConfig = internalMutation({
     // Country lists switched on or off, or a new stale window: what evidence reads moved.
     if (changedKeys.some((k) => k === 'lists.enabled' || k === 'lists.staleDays'))
       await bumpFactsGen(ctx);
+    // Allowlists start or stop putting their names first: the listeners follow.
+    // (With a facts refresh above, they are looked at after it too.)
+    if (changedKeys.includes('lists.preferNames')) await schedulePreference(ctx);
     // Switched on: feeds that waited take the version in use.
     if (changedKeys.includes('lists.enabled'))
       await ctx.scheduler.runAfter(0, internal.countryListFeeds.startPending, {});

@@ -81,6 +81,7 @@ const LIST: CountryListView = {
   fresh: false,
   feeds: [],
   watchEdges: false,
+  preferNames: false,
 };
 
 let app: ReturnType<typeof mountWithQuery> | null = null;

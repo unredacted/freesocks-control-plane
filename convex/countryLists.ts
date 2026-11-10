@@ -35,7 +35,7 @@ import { normalizeAsn } from './lib/edges/networks';
 import { siteOf } from './lib/edges/sni/hunt/sources';
 import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
-import { bumpFactsGen } from './countryListFacts';
+import { bumpFactsGen, schedulePreference } from './countryListFacts';
 import { feedViews, startFeedRuns, startPendingFeeds, sweepFeeds } from './countryListFeeds';
 import {
   edgeCountsOf,
@@ -240,6 +240,7 @@ async function listView(db: DatabaseReader, list: List, staleDays: number, now: 
     fresh: isFresh(list, staleDays, now),
     feeds: await feedViews(db, list),
     watchEdges: list.regime === 'allowlist' && list.watchEdges === true,
+    preferNames: list.regime === 'allowlist' && list.preferNames === true,
   };
 }
 
@@ -374,6 +375,7 @@ export const update = internalMutation({
     fetchEveryHours: v.optional(v.number()),
     enabled: v.optional(v.boolean()),
     watchEdges: v.optional(v.boolean()),
+    preferNames: v.optional(v.boolean()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -429,12 +431,29 @@ export const update = internalMutation({
       patch.watchEdges = false;
       changed.push('watchEdges');
     }
+    if (a.preferNames !== undefined) {
+      // Only a list of what works can put a name first.
+      if (a.preferNames && (patch.regime ?? list.regime) !== 'allowlist')
+        refuse('edge.list.prefer_allowlist_only', 'Only a list of what works can prefer its names');
+      patch.preferNames = a.preferNames;
+      changed.push('preferNames');
+    } else if (patch.regime === 'blocklist' && list.preferNames) {
+      patch.preferNames = false;
+      changed.push('preferNames');
+    }
     await ctx.db.patch(list._id, patch);
     // What evidence reads moves with these: every stored fact is looked at again
     // (and every edge address with them).
     if (changed.some((c) => ['country', 'regime', 'enabled', 'url'].includes(c)))
       await bumpFactsGen(ctx);
     else if (changed.includes('watchEdges')) await startEdgeRecheck(ctx);
+    // Its switch moved and no stored fact did: the listeners are looked at now.
+    // (A change above refreshes the facts first, and the listeners after them.)
+    if (
+      changed.includes('preferNames') &&
+      !changed.some((c) => ['country', 'regime', 'enabled', 'url'].includes(c))
+    )
+      await schedulePreference(ctx);
     // Switched on: feeds that waited take the version in use.
     if (a.enabled === true && !list.enabled)
       await startPendingFeeds(ctx, (await ctx.db.get(list._id))!);

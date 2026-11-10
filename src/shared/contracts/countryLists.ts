@@ -192,6 +192,12 @@ export const CountryListView = z.object({
   feeds: z.array(CountryListFeed).default([]),
   /** An allowlist FCP checks every edge address against (docs/edges.md "Edge addresses against allowlists"). */
   watchEdges: z.boolean().default(false),
+  /**
+   * An allowlist whose names members in its country get before ones nobody has
+   * judged there (docs/edges.md "Names on a country's allowlist"). Counts only
+   * while `edge.lists.preferNames` is on too.
+   */
+  preferNames: z.boolean().default(false),
 });
 export type CountryListView = z.infer<typeof CountryListView>;
 
@@ -247,6 +253,7 @@ export const CountryListPatch = z.object({
   fetchEveryHours: z.number().optional(),
   enabled: z.boolean().optional(),
   watchEdges: z.boolean().optional(),
+  preferNames: z.boolean().optional(),
 });
 export type CountryListPatch = z.infer<typeof CountryListPatch>;
 
