@@ -482,7 +482,7 @@ site key, and put the **site key** + **secret** into `.env.convex` as
 deployer (`docker compose ... up -d`) so the env applies.
 
 **Key protocol.** Cap creates a key with protocol `hashwx` unless told
-otherwise; `sha256-pow` works too. The bundled widget (`@cap.js/widget` 0.1.58
+otherwise; `sha256-pow` works too. The bundled widget (`@cap.js/widget` 0.1.61
 with `@cap.js/wasm` 0.0.8, pinned exactly) solves both, from same-origin WASM
 (`src/client/lib/cap-wasm-config.ts`: `cap_wasm_bg.wasm` for `sha256-pow`,
 `hashwx.wasm` for `hashwx`), under the strict member CSP above. An older widget
@@ -523,9 +523,10 @@ Put the new `siteKey` / `secretKey` into `.env.convex` as `CAP_SITE_KEY` /
 > which the widget stamps on the srcdoc script), and **`'unsafe-eval'`** lets
 > the probes run (without it they throw, the probe silently returns null, and
 > the widget reports `instr_timeout` after 20 s). Neither grant opens an
-> injection door: the nonce is unguessable and regenerated every response, and
-> eval is only reachable from code that is already executing — inline script
-> injection stays blocked. Instrumentation + the proof-of-work challenge + the
+> access to the member page: `CAP_ISOLATE=true` removes `allow-same-origin`, so
+> the frame cannot read member cookies, storage or interactions. Keep behavior
+> scoring, automated-interaction blocking and agent blocking off on the key;
+> those modes reject isolated frames. Instrumentation + the proof-of-work challenge + the
 > DB-driven per-IP rate limits (A1/W2) together are the anti-abuse stack.
 
 If the fronting proxy is down or not yet configured, the dashboard also binds

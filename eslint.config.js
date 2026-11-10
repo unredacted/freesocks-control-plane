@@ -11,6 +11,7 @@ export default [
   {
     ignores: [
       'dist/**',
+      'tests/cap/dist/**',
       'dist-bun/**',
       'node_modules/**',
       'src/lib/paraglide/**', // Paraglide-compiled output (generated, gitignored)

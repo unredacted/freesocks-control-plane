@@ -32,7 +32,7 @@
     "test:integration:hysteria": "bash scripts/compat/hysteria.sh",
     "test:integration:client-check": "bash scripts/compat/client-check.sh",
     "test:integration:s3": "bash scripts/s3-integration.sh",
-    "test:integration:cap": "vitest run --config vitest.integration.config.ts convex/lib/captcha.integration.test.ts",
+    "test:integration:cap": "bun --no-env-file scripts/cap-integration.mjs",
     "selfhost:up": "docker compose --env-file .env.docker up -d",
     "selfhost:down": "docker compose --env-file .env.docker down",
     "selfhost:admin-key": "docker compose --env-file .env.docker exec backend ./generate_admin_key.sh",
@@ -46,7 +46,8 @@
     "i18n:review": "bun run scripts/i18n-review-packet.ts",
     "verifier:pin": "bun scripts/gen-verifier-pin.mjs",
     "test:compat": "bun --no-env-file scripts/compat/run.ts",
-    "test:compat:browser": "playwright test --config tests/compat/playwright.config.ts"
+    "test:compat:browser": "playwright test --config tests/compat/playwright.config.ts",
+    "test:integration:cap:live": "vitest run --config vitest.integration.config.ts convex/lib/captcha.integration.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-acm": "3.1164.0",
