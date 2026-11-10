@@ -2375,9 +2375,9 @@ qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
   and each fronted node's timeline run in a component that draws nothing (`BackendFeed`,
   `TimelineFeed`) and hand their data up, sharing the other pages' cache. Top to bottom:
   - **One status sentence** with a dot and "Updated N s ago": nodes online across every
-    backend, how many are fronted (the attention response's `fleet`), and how many things need
-    you ("6 nodes online, 4 fronted. 2 things need you."; a loaded empty fleet reads "0
-    fronted"). A backend whose last panel read failed is not counted (its cached `online` flags
+    backend, how many are fronted (the attention response's `fleet`), and how many actions are
+    needed ("6 nodes online, 4 fronted. 2 actions needed.", or "No action needed."; a loaded
+    empty fleet reads "0 fronted"). A backend whose last panel read failed is not counted (its cached `online` flags
     are not current). Red for a critical row or no node reachable, amber for any row, a node
     offline, or a source that could not be read. "Updated N s ago" is the oldest read of
     everything shown (edge summary and attention, countries, providers, each backend's queries).
@@ -2389,8 +2389,8 @@ qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
     `attention` cannot be read, its error and Retry show inline and the other rows still list);
     each backend's failed panel read ("The panel could not be read"), holds (Release), setup, stored keys that do not match, edits made on the backend
     (Seen it), addresses that point at nothing, changes of unknown outcome, port changes waiting
-    on you, and switched-on nodes that serve members without being enrolled; SNI lists that need you
-    (`namesNeedsYou`); countries where a node has no working address or a location set for it is
+    on you, and switched-on nodes that serve members without being enrolled; SNI lists with a next
+    step (`namesNeedsYou`); countries where a node has no working address or a location set for it is
     blocked; provider accounts at or close to their cost cap. A chip names the backend (only
     with more than one), the country, the provider or "SNIs". Five rows, then "Show all".
   - **Readiness** (the fleet `setup-status` checklist), only while setup is incomplete.
@@ -3644,8 +3644,36 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
 `POST families/{slug}/vantage` and `POST families/{slug}/vantage/apply` (§ Checks from inside a
 country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**; a change
-to a list (`edge.sni.family.update`) records which fields moved (`changed`: label, enabled,
-requireH2, network), never the label itself.
+to a list (`edge.sni.family.update`) records which fields moved (`changed`: label, slug, enabled,
+requireH2, network), never the label itself; when the slug moved, `slug` is the new one and
+`formerSlug` the one it left.
+
+#### Renaming a list
+
+A list's slug is its address: its page (`/admin/servers/snis/lists/<slug>`) and every
+`families/{slug}` route. A rename moves the slug with the name. `PATCH families/{slug} {label}`
+derives the new slug from the new label by the rule the create dialog suggests a short id with
+(`sniListSlugFor` in `src/shared/contracts/sni.ts`: lower case, every run of other characters a
+dash, at most 40) and checks it like a new list's. It refuses, changing nothing, when the name
+gives no slug (no letter or digit: `edge.sni.slug_empty`), the address of an SNIs page (`find`,
+`checks`, `settings`: `edge.sni.slug_reserved`), or a slug another list has or had
+(`edge.sni.slug_taken`). A clash is never settled by a suffix: the operator picks another name.
+The answer is `{ok, slug}` with the slug after the change, so a caller learns where the list
+lives now. A label that gives the slug the list already has (or the same label again) moves
+nothing.
+
+The slug a list leaves stays on its row (`sniFamilies.formerSlugs`, newest last, also in
+`GET families` and `GET families/{slug}` as `formerSlugs`) and **keeps resolving**: every read of
+a list by slug goes through one resolver (`sniFamilyBySlug`, `convex/lib/edges/sni/slug.ts`),
+which takes the slug a list has now, else one it held before. So an old page link, an alert's
+link, an audit row, a backend's saved setup (`panelSetups` keeps the slug each REALITY mode was
+set up with; re-sending it changes nothing), a seed file and an API caller that still hold the
+old slug all find the same list. The page itself lands on the current address, replacing the
+history entry, both after a rename and when it is opened at an old one. A slug a list holds, now
+or before, is not free: a new list cannot take it and no other list can be renamed onto it. A
+list may take back a slug it held (the one it leaves joins the former ones). Deleting the list
+frees them all. Stored rows are not rewritten: audit rows stay as written, and the setup sheet
+shows the list a saved setup names by whichever slug it was saved with.
 
 ### What members' reports say about a name
 
@@ -4510,7 +4538,8 @@ values for a seed's missing list on Find more (its short id locked: importing th
 the list by it). The form (`POST sni/families`) has the cover site (a hostname, or an IPv4 or IPv6
 literal) and port, a name and a short id that follow the cover site until edited, HTTP/2 only, and
 the network.
-The cover site is fixed at creation.
+The cover site is fixed at creation; the short id follows the name on a rename (§ Renaming a
+list).
 
 - Lists: the switch for `edge.sni.enabled` ("SNI lists") at the top, its line saying what is
   true now, and under it, while it is on, "Test new SNIs with FCP's client check"
@@ -4520,8 +4549,9 @@ The cover site is fixed at creation.
   waiting for a test, to send, being checked, checked, failing, suggestions, and how many ports use
   it); "Add an SNI list".
 - An SNI list's page: "Rename" by its title changes its name (`label`, up to 80 characters; only
-  admins see it; `components/NameDialog.svelte`). The slug is the page's link and never changes,
-  and nothing is sent to a node. Then where it is used, one block per port
+  admins see it; `components/NameDialog.svelte`). The page's address follows the name (§ Renaming
+  a list): the page lands on the new address, the old one keeps working, and a name whose address
+  is taken or reserved is refused in the dialog. Nothing is sent to a node. Then where it is used, one block per port
   (`names/FamilyPort.svelte`) with the node page's status line and next step for every node at once, then each node behind the
   port with what its members get and, where names wait for a test there, "Test one name". Then
   **one list** of its names and the names found for it (`names/lib/listWords.ts`), each with one

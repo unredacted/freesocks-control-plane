@@ -27,6 +27,7 @@
  * (`checkChange`): what its nodes and members rely on stays, the origin-name
  * zone changes in place, and an added mode runs the setup again.
  */
+import { sniFamilyBySlug } from './lib/edges/sni/slug';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
@@ -412,10 +413,7 @@ export const start = internalMutation({
       if (!known.has(m.slug))
         refuse('servers.mode_unknown', `No connection mode "${m.slug}" exists. Add it first`);
       if (!isReality(m.shape)) continue;
-      const family = await ctx.db
-        .query('sniFamilies')
-        .withIndex('by_slug', (q) => q.eq('slug', m.familySlug!))
-        .unique();
+      const family = await sniFamilyBySlug(ctx.db, m.familySlug!);
       if (!family || !family.enabled)
         refuse('servers.family_missing', `Mode ${m.name} names a family that does not exist`);
     }
@@ -624,10 +622,7 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
   > = {};
   for (const m of row.modes) {
     if (!m.familySlug || families[m.familySlug]) continue;
-    const family = await ctx.db
-      .query('sniFamilies')
-      .withIndex('by_slug', (q) => q.eq('slug', m.familySlug!))
-      .unique();
+    const family = await sniFamilyBySlug(ctx.db, m.familySlug!);
     if (!family) continue;
     const names = (
       await ctx.db

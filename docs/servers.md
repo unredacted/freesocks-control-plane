@@ -584,7 +584,9 @@ secret. Each step is idempotent and re-enterable; an interrupted attempt is resu
 `DEFAULT_MODE_SETUP`; editable, a table, not a fixed set). Each names the connection mode it
 feeds (`slug`, which must exist in the catalog), the group on the backend (`name`, 2 to 20 plain
 characters; the transport tag is that name upper-cased), a **shape** and, for REALITY transports,
-the **server-name family** whose target and names the transport carries:
+the **server-name family** whose target and names the transport carries (named by its slug; a
+list renamed since still resolves by the slug the setup was saved with, docs/edges.md "Renaming a
+list"):
 
 | Mode (default)     | Shape                       | Transport                                           | Members reach it        |
 | ------------------ | --------------------------- | --------------------------------------------------- | ----------------------- |
@@ -1465,7 +1467,10 @@ ledger's node create (`POST {slug}/nodes`, sent once).
 its name, "machine · country · backend" (the backend only when there is more than one), its
 status sentence and the node actions. A sticky section bar (`components/SectionBar.svelte`, the
 rules in `servers/lib/nodeSections.ts`) jumps within one scroll and names the section in the
-address (`?section=summary|addresses|transports|snis|modes|activity|details`):
+address (`?section=summary|addresses|transports|snis|modes|activity|details`). The bar scrolls
+sideways on a narrow screen and never up and down: the rule under it is an inset shadow and each
+link's underline is drawn over it, so no link sticks out of the bar (a link pulled a pixel over a
+bottom border would give the scrolling bar a vertical scroll bar):
 
 - **Summary**: the profile it runs, a rename, its notes, what its origin says first (the
   quarantine resolver, that it is being deleted, a running rotation with Watch it:
@@ -1479,7 +1484,14 @@ address (`?section=summary|addresses|transports|snis|modes|activity|details`):
   per-node automatic switch. A node nothing fronts gets "Front this node" instead, which opens the
   protect sheet on this page (`?front=1`); its run then shows in Summary.
 - **Transports**: port changes, each transport with Change port and the addresses members get
-  (the operator's own fronts apart), and Add a transport.
+  (the operator's own fronts apart), and Add a transport. For a transport FCP fronts, the Host
+  FCP keeps on the backend is a template (one address and one SNI that FCP writes and re-points
+  by itself), not what a member gets, and an edit of it is refused (`servers.host_edge_owned`).
+  The tree marks it (`AddressView.fcpOwned`: the Host of one of the origin's listeners), and the
+  page says one line in its place: one of this node's addresses above (a link to Addresses) and,
+  on REALITY, an SNI from the transport's SNI list (a link to the list, or to SNIs when no list
+  manages the transport). Addresses made by hand still list under it and open the address
+  dialog.
 - **SNIs**: each REALITY transport's SNIs with their one next step (manage, add suggestions, send,
   test).
 - **Modes**: its mode and whether members can pick it, the mode groups each transport is in, and

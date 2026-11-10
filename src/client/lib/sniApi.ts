@@ -14,6 +14,7 @@ import {
   SniConfigView,
   SniFamilyDetail,
   SniFamilyList,
+  SniFamilyUpdated,
   SniImportResult,
   SniReceiptConfirmed,
   SniRolloutPlan,
@@ -57,10 +58,11 @@ export const createFamily = (family: {
   /** A network's slug: the target and every name must resolve inside it. */
   network?: string;
 }) => apiClient.post(`${BASE}/families`, family, Loose);
+/** Answers the list's slug after the change: a new `label` moves it (the old one keeps resolving). */
 export const updateFamily = (
   slug: string,
   fields: { label?: string; enabled?: boolean; requireH2?: boolean; network?: string | null },
-) => apiClient.patch(`${BASE}/families/${enc(slug)}`, fields, Loose);
+) => apiClient.patch(`${BASE}/families/${enc(slug)}`, fields, SniFamilyUpdated);
 
 // --- networks (docs/edges.md "Networks") ----------------------------------------------------
 const NETWORKS = '/api/v1/admin/edges/networks';

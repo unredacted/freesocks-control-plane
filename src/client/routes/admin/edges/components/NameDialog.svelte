@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * Rename one thing whose name only admins see (a name list, a location):
-   * its name now prefilled, then Save or Cancel. What the name belongs to
-   * keeps its slug or id, so `save` sends the new name only.
+   * its name now prefilled, then Save or Cancel. `save` sends the new name
+   * only; what else follows the name (an SNI list's address) is the caller's.
    *
    * Props:
    *   open: boolean (bindable)

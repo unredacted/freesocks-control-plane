@@ -175,6 +175,7 @@ describe('the SNIs page', () => {
   const summary = (o: Partial<SniFamilySummary> = {}): SniFamilySummary => ({
     id: 'f',
     slug: 'f',
+    formerSlugs: [],
     label: 'List',
     target: { kind: 'static', address: 'site.example', port: 443 },
     enabled: true,

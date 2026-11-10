@@ -207,7 +207,7 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
   >();
   for (const n of tree.nodes)
     for (const i of n.transports) {
-      const noAddress = splitAddresses(i.addresses).members.length === 0;
+      const noAddress = !reachesMembers(i.addresses);
       const noGroup = i.modeGroups.length === 0;
       if (!noAddress && !noGroup) continue;
       const at = unused.get(i.tag) ?? { nodes: [], noAddress: false, noGroup: false, groups: [] };
@@ -242,7 +242,7 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
 export function nodeNotes(n: Pick<NodeView, 'transports'>): string[] {
   const out: string[] = [];
   for (const i of n.transports) {
-    const noAddress = splitAddresses(i.addresses).members.length === 0;
+    const noAddress = !reachesMembers(i.addresses);
     if (noAddress && i.modeGroups.length === 0)
       out.push(`${i.tag} has no address for members and is in no mode group.`);
     else if (noAddress) out.push(`${i.tag} has no address for members.`);
@@ -253,17 +253,61 @@ export function nodeNotes(n: Pick<NodeView, 'transports'>): string[] {
 }
 
 /**
- * A transport's addresses on one node: the ones members get, and the
- * operator's own fronts (a load balancer made by hand) that members no longer
- * get because the node is bound to its edges. Order is kept.
+ * A transport's addresses on one node, in order:
+ *   members  made by hand, and members get them as they stand
+ *   fronts   the operator's own fronts (a load balancer made by hand) that
+ *            members no longer get because the node is bound to its edges
+ *   owned    the Host FCP keeps for a fronted transport. Not an address a
+ *            member gets as it stands, and not edited by hand: members get one
+ *            of the node's pool addresses instead (`frontedAddressWords`).
  */
-export function splitAddresses<A extends Pick<AddressView, 'operatorFront'>>(
-  addresses: readonly A[],
-): { members: A[]; fronts: A[] } {
+export function splitAddresses<
+  A extends Pick<AddressView, 'operatorFront'> & Partial<Pick<AddressView, 'fcpOwned'>>,
+>(addresses: readonly A[]): { members: A[]; fronts: A[]; owned: A[] } {
   return {
-    members: addresses.filter((a) => !a.operatorFront),
+    members: addresses.filter((a) => !a.operatorFront && !a.fcpOwned),
     fronts: addresses.filter((a) => a.operatorFront),
+    owned: addresses.filter((a) => !a.operatorFront && !!a.fcpOwned),
   };
+}
+
+/** Whether members get any address on a transport: one made by hand, or the node's own through FCP. */
+function reachesMembers(addresses: Parameters<typeof splitAddresses>[0]): boolean {
+  const split = splitAddresses(addresses);
+  return split.members.length + split.owned.length > 0;
+}
+
+/** One piece of a line: plain words, or a link to a section of the page or to the SNI list. */
+export interface LinePart {
+  text: string;
+  to?: 'addresses' | 'snis' | 'list';
+}
+
+/**
+ * What members get on a transport FCP fronts, said in place of the Host FCP
+ * keeps for it (`splitAddresses().owned`): one of the node's addresses (the
+ * Addresses section) and, on REALITY, an SNI of the transport's SNI list, or
+ * of the SNIs set by hand when no list manages it (`listLabel` null). Reads
+ * under "Addresses members get" and under "... will get once live".
+ */
+export function frontedAddressWords(o: { reality: boolean; listLabel: string | null }): LinePart[] {
+  const addresses: LinePart = { text: "this node's addresses above", to: 'addresses' };
+  if (!o.reality) return [{ text: 'One of ' }, addresses, { text: '.' }];
+  return o.listLabel
+    ? [
+        { text: 'One of ' },
+        addresses,
+        { text: ', with an SNI from the SNI list ' },
+        { text: o.listLabel, to: 'list' },
+        { text: '.' },
+      ]
+    : [
+        { text: 'One of ' },
+        addresses,
+        { text: ', with one of ' },
+        { text: 'its SNIs', to: 'snis' },
+        { text: '.' },
+      ];
 }
 
 /**

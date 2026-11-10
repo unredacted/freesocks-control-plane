@@ -13,7 +13,7 @@
    * hand, Add an origin by hand). Adopting a node that already serves members
    * is on its row.
    *
-   * Above the table each backend says its status and what needs you
+   * Above the table each backend says its status and the action needed
    * (components/BackendStatus.svelte); below it come its set-up-once parts
    * (components/BackendDetails.svelte: Backend setup, Mode groups, Recent
    * changes), then the two panel switches in the footer.

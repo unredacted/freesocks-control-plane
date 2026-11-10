@@ -801,29 +801,116 @@ describe('audit and scopes', () => {
     expect(rows[1].payload).toEqual({ slug: 'fam-a', added: 1, rejected: 0 });
   });
 
-  test('a rename keeps the slug and audits what changed, never the name', async () => {
+  test('a rename moves the slug with the name and audits what changed, never the name', async () => {
     const { t, call } = await seed();
     await call('POST', 'families', family);
-    expect((await call('PATCH', 'families/fam-a', { label: '  Shared cover A  ' })).status).toBe(
-      200,
-    );
+    const renamed = await call('PATCH', 'families/fam-a', { label: '  Shared cover A  ' });
+    expect(renamed.status).toBe(200);
+    // The answer carries the new slug: the page (and an API caller) moves to it.
+    expect(await renamed.json()).toEqual({ ok: true, slug: 'shared-cover-a' });
     const listed = await (await call('GET', 'families')).json();
     expect(listed.families).toEqual([
-      expect.objectContaining({ slug: 'fam-a', label: 'Shared cover A' }),
+      expect.objectContaining({
+        slug: 'shared-cover-a',
+        formerSlugs: ['fam-a'],
+        label: 'Shared cover A',
+      }),
     ]);
     // The same name again, then switched off: only what moved is recorded.
-    await call('PATCH', 'families/fam-a', { label: 'Shared cover A', enabled: false });
-    // An empty name falls back to the slug.
-    await call('PATCH', 'families/fam-a', { label: '   ' });
-    const detail = await (await call('GET', 'families/fam-a')).json();
-    expect(detail.family).toMatchObject({ slug: 'fam-a', label: 'fam-a' });
+    await call('PATCH', 'families/shared-cover-a', { label: 'Shared cover A', enabled: false });
+    // An empty name falls back to the slug, which then stays where it is.
+    await call('PATCH', 'families/shared-cover-a', { label: '   ' });
+    const detail = await (await call('GET', 'families/shared-cover-a')).json();
+    expect(detail.family).toMatchObject({ slug: 'shared-cover-a', label: 'shared-cover-a' });
     const rows = (await auditRows(t)).filter((r) => r.action === 'edge.sni.family.update');
     expect(rows.map((r) => r.payload)).toEqual([
-      { slug: 'fam-a', changed: ['label'] },
-      { slug: 'fam-a', changed: ['enabled'] },
-      { slug: 'fam-a', changed: ['label'] },
+      { slug: 'shared-cover-a', formerSlug: 'fam-a', changed: ['label', 'slug'] },
+      { slug: 'shared-cover-a', changed: ['enabled'] },
+      { slug: 'shared-cover-a', changed: ['label'] },
     ]);
     expect(JSON.stringify(rows.map((r) => r.payload))).not.toContain('Shared cover');
+  });
+
+  test('the slug a list held before a rename still resolves, on every route', async () => {
+    const { t, call } = await seed();
+    await call('POST', 'families', family);
+    await call('PATCH', 'families/fam-a', { label: 'Shared cover A' });
+    // Reads: the old slug answers with the list as it is now.
+    const old = await call('GET', 'families/fam-a');
+    expect(old.status).toBe(200);
+    expect((await old.json()).family).toMatchObject({
+      slug: 'shared-cover-a',
+      formerSlugs: ['fam-a'],
+    });
+    // Writes through the old slug land on the same list.
+    expect(
+      (await call('POST', 'families/fam-a/names', { lines: ['one.target.example'] })).status,
+    ).toBe(200);
+    expect((await call('PATCH', 'families/fam-a', { enabled: false })).status).toBe(200);
+    const now = await (await call('GET', 'families/shared-cover-a')).json();
+    expect(now.family.enabled).toBe(false);
+    expect(now.names.map((n: { name: string }) => n.name)).toEqual(['one.target.example']);
+    // Every other reader of a list by slug (a saved setup, a seed, a template) finds it too.
+    const resolved = await t.run(async (ctx) => {
+      const { sniFamilyBySlug } = await import('./lib/edges/sni/slug');
+      return {
+        former: (await sniFamilyBySlug(ctx.db, 'fam-a'))?.slug,
+        current: (await sniFamilyBySlug(ctx.db, 'shared-cover-a'))?.slug,
+        unknown: await sniFamilyBySlug(ctx.db, 'never-was'),
+      };
+    });
+    expect(resolved).toEqual({
+      former: 'shared-cover-a',
+      current: 'shared-cover-a',
+      unknown: null,
+    });
+    // A second rename keeps both; the list is still one row.
+    await call('PATCH', 'families/fam-a', { label: 'Third name' });
+    const listed = await (await call('GET', 'families')).json();
+    expect(listed.families).toEqual([
+      expect.objectContaining({ slug: 'third-name', formerSlugs: ['fam-a', 'shared-cover-a'] }),
+    ]);
+    // A delete through an old slug removes it, and frees every slug it held.
+    expect((await call('DELETE', 'families/shared-cover-a')).status).toBe(200);
+    expect((await call('GET', 'families/fam-a')).status).toBe(404);
+    expect((await call('POST', 'families', family)).status).toBe(200);
+  });
+
+  test('a rename onto a slug another list has, or had, is refused; a list may take its own back', async () => {
+    const { call } = await seed();
+    await call('POST', 'families', family);
+    await call('PATCH', 'families/fam-a', { label: 'Second' });
+    // The slug it left is held: no new list takes it.
+    expect((await call('POST', 'families', family)).status).toBe(409);
+    await call('POST', 'families', { ...family, slug: 'fam-b', label: 'Family B' });
+    // Another list's slug now, and one another list held before: refused, never suffixed.
+    for (const label of ['Second', 'Fam A']) {
+      const res = await call('PATCH', 'families/fam-b', { label });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('edge.sni.slug_taken');
+    }
+    const b = await (await call('GET', 'families/fam-b')).json();
+    expect(b.family).toMatchObject({ slug: 'fam-b', label: 'Family B', formerSlugs: [] });
+    // Its own former slug is its to take back, and the one it leaves is kept.
+    const back = await call('PATCH', 'families/second', { label: 'fam a' });
+    expect(await back.json()).toEqual({ ok: true, slug: 'fam-a' });
+    const a = await (await call('GET', 'families/second')).json();
+    expect(a.family).toMatchObject({ slug: 'fam-a', label: 'fam a', formerSlugs: ['second'] });
+  });
+
+  test('a name that gives no slug, or the address of an SNIs page, is refused', async () => {
+    const { t, call } = await seed();
+    await call('POST', 'families', family);
+    for (const label of ['Find', 'Settings', 'checks']) {
+      const res = await call('PATCH', 'families/fam-a', { label });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('edge.sni.slug_reserved');
+    }
+    const none = await call('PATCH', 'families/fam-a', { label: '***' });
+    expect((await none.json()).error.code).toBe('edge.sni.slug_empty');
+    const detail = await (await call('GET', 'families/fam-a')).json();
+    expect(detail.family).toMatchObject({ slug: 'fam-a', label: 'Family A', formerSlugs: [] });
+    expect((await auditRows(t)).filter((r) => r.action === 'edge.sni.family.update')).toEqual([]);
   });
 
   test('the switches are a settings-scope surface', async () => {

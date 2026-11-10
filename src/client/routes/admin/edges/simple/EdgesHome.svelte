@@ -224,7 +224,7 @@
     }),
   );
 
-  // The test card opened from a "Needs you" row (a spare, a retest, a go-live check).
+  // The test card opened from an Action needed row (a spare, a retest, a go-live check).
   let testEdgeIds = $state<string[]>([]);
   let testRelayId = $state<string | null>(null);
   let testRelaySlug = $state<string | null>(null);
@@ -309,7 +309,7 @@
   <TimelineFeed id={r.relay.id} slug={r.relay.slug} onReport={onTimeline} />
 {/each}
 
-<SectionHeader title="Overview" description="What needs you, and the switches that run the fleet.">
+<SectionHeader title="Overview" description="Action needed, and the switches that run the fleet.">
   {#snippet actions()}
     {#if rows.length > 0}
       <Button onclick={openProtect}>

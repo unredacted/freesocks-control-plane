@@ -13,6 +13,7 @@
  * the list's version, or of a feed taken away, stops; a stalled one is picked
  * up by the daily sweep. Candidates a run added stay when it stops.
  */
+import { sniFamilyBySlug } from './lib/edges/sni/slug';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, type DatabaseReader, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -224,10 +225,7 @@ export const setFeeds = internalMutation({
         if (!n) refuse('not_found', 'No such network');
         feeds.push({ networkId: n._id });
       } else if (f.family) {
-        const fam = await ctx.db
-          .query('sniFamilies')
-          .withIndex('by_slug', (q) => q.eq('slug', f.family!))
-          .unique();
+        const fam = await sniFamilyBySlug(ctx.db, f.family!);
         if (!fam) refuse('not_found', 'No such family');
         feeds.push({ familyId: fam._id });
       } else refuse('validation', 'A feed is a network or a family');

@@ -3363,7 +3363,12 @@ export default defineSchema({
   // stands out. A FAMILY is therefore a target plus the names it serves, each
   // checked against that target before it may be used.
   sniFamilies: defineTable({
+    // The list's address (its page and its API routes). A rename moves it with
+    // the name (lib/edges/sni/slug.ts).
     slug: v.string(),
+    // Slugs it held before a rename, newest last. Each still resolves to this
+    // list, and no other list may take one while it is held here.
+    formerSlugs: v.optional(v.array(v.string())),
     label: v.string(),
     // `static` = one fixed site. `sni-router` (a target on the node that follows
     // the presented name) is reserved so adding it needs no migration.

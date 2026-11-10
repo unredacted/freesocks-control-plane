@@ -423,7 +423,7 @@ export interface StatusInput {
   nodesUnread?: boolean;
 }
 
-/** "6 nodes online, 4 fronted. 2 things need you." and its dot. */
+/** "6 nodes online, 4 fronted. 2 actions needed." and its dot. */
 export function statusSentence(s: StatusInput): { dot: Dot; text: string } {
   const parts: string[] = [];
   // A loaded empty fleet is "0 fronted", not "not known".
@@ -443,9 +443,7 @@ export function statusSentence(s: StatusInput): { dot: Dot; text: string } {
     parts.push('No nodes yet.');
   }
   const count = s.rows.length;
-  parts.push(
-    count === 0 ? 'Nothing needs you.' : `${plural(count, 'thing needs', 'things need')} you.`,
-  );
+  parts.push(count === 0 ? 'No action needed.' : `${plural(count, 'action')} needed.`);
   const empty = !(s.nodes && s.nodes.total > 0) && !(s.fleet && s.fleet.total > 0);
   let dot: Dot = 'green';
   if (

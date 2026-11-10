@@ -13,7 +13,9 @@
  *   seedFrom(proposal)       the dialog for a seed's missing list (its short id locked)
  */
 import {
+  SNI_LIST_SLUG,
   isReservedSniListSlug,
+  sniListSlugFor,
   type SniHuntImported,
   type SniTransport,
 } from '../../../../../../shared/contracts/sni';
@@ -52,8 +54,6 @@ export interface ListDraft {
   network: string;
 }
 
-const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
-
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
 /** A cover site without the brackets of an IPv6 literal: `[2001:db8::1]` -> `2001:db8::1`. */
@@ -90,12 +90,7 @@ export function slugFor(coverSite: string): string {
     : (site.match(/:/g) ?? []).length === 1
       ? site.replace(/:\d+$/, '')
       : site;
-  return host
-    .replace(/^www\./, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/, '');
+  return sniListSlugFor(host);
 }
 
 /** The form's first values. A cover site with no short id or name given suggests both. */
@@ -115,7 +110,7 @@ export function draftFrom(p: ListPrefill = {}): ListDraft {
 export function slugProblem(slug: string): string | null {
   const s = slug.trim();
   if (s === '') return 'Give it a short id.';
-  if (!SLUG.test(s))
+  if (!SNI_LIST_SLUG.test(s))
     return 'Lowercase letters, digits and dashes, up to 40, starting with one of the first two.';
   if (isReservedSniListSlug(s)) return `"${s}" is the address of an SNIs page. Pick another.`;
   return null;

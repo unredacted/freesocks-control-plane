@@ -32,7 +32,8 @@ import {
   type Qualification,
 } from './lib/edges/sni/family';
 import { parseRealityTarget } from './lib/edges/inboundMapping';
-import { isReservedSniListSlug } from '../src/shared/contracts/sni';
+import { SNI_LIST_SLUG, isReservedSniListSlug } from '../src/shared/contracts/sni';
+import { renamedSlug, sniFamilyBySlug, withFormerSlug } from './lib/edges/sni/slug';
 import {
   resolveSniConfig,
   resolveSniHuntConfig,
@@ -63,7 +64,6 @@ const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
 };
 const actor = { actorAdminId: v.optional(v.id('adminUsers')) };
-const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 async function audit(
   ctx: MutationCtx,
@@ -80,12 +80,9 @@ async function audit(
   });
 }
 
+/** The family at a slug: its slug now, or one it held before a rename. */
 async function familyBySlug(ctx: { db: QueryCtx['db'] }, slug: string) {
-  const f = await ctx.db
-    .query('sniFamilies')
-    .withIndex('by_slug', (q) => q.eq('slug', slug))
-    .unique();
-  return f ?? refuse('not_found', 'No such family');
+  return (await sniFamilyBySlug(ctx.db, slug)) ?? refuse('not_found', 'No such family');
 }
 
 const namesOf = (ctx: { db: QueryCtx['db'] }, familyId: Id<'sniFamilies'>) =>
@@ -177,6 +174,8 @@ function summarize(
   return {
     id: f._id as string,
     slug: f.slug,
+    // Slugs it held before a rename: each still opens it (lib/edges/sni/slug.ts).
+    formerSlugs: f.formerSlugs ?? [],
     label: f.label,
     target: f.target,
     enabled: f.enabled,
@@ -503,15 +502,13 @@ export async function insertFamily(
     actorAdminId?: Id<'adminUsers'>;
   },
 ): Promise<Doc<'sniFamilies'>> {
-  if (!SLUG.test(a.slug)) refuse('validation', 'A slug is lowercase letters, digits and dashes');
+  if (!SNI_LIST_SLUG.test(a.slug))
+    refuse('validation', 'A slug is lowercase letters, digits and dashes');
   // The SNIs tab's own views sit beside the lists at /admin/servers/snis/<slug>.
   if (isReservedSniListSlug(a.slug))
     refuse('validation', 'That slug is the address of an SNIs page. Pick another');
-  const exists = await ctx.db
-    .query('sniFamilies')
-    .withIndex('by_slug', (q) => q.eq('slug', a.slug))
-    .unique();
-  if (exists) refuse('conflict', 'A family with that slug exists');
+  // Taken by a list now, or held by one that was renamed (its old address still opens it).
+  if (await sniFamilyBySlug(ctx.db, a.slug)) refuse('conflict', 'A family with that slug exists');
   const target = checkTarget(a.targetAddress, a.targetPort);
   const networkId = a.network ? await networkIdOfSlug(ctx.db, a.network) : null;
   const id = await ctx.db.insert('sniFamilies', {
@@ -533,7 +530,12 @@ export async function insertFamily(
 }
 
 /**
- * Label, the enabled switch, the HTTP/2 requirement and the network. The
+ * Label, the enabled switch, the HTTP/2 requirement and the network. A new
+ * label moves the SLUG with it (lib/edges/sni/slug.ts): the slug is the list
+ * page's address, derived from the name by the rule the create dialog uses and
+ * checked like a new list's; a slug another list holds is refused, never
+ * suffixed. The slug it leaves stays on the row and keeps resolving. Answers
+ * the slug after the change. The
  * TARGET is immutable: every name was qualified against it, and a transport's
  * allowlist is only safe for the target it was built for. A different target
  * is a new family. The network changes only while no transport is bound (a
@@ -555,9 +557,27 @@ export const update = internalMutation({
     // What actually moved, for the audit row (the field names, never the label:
     // it can name the cover site).
     const changed: string[] = [];
+    let slug = f.slug;
     if (a.label !== undefined) {
       patch.label = a.label.trim().slice(0, 80) || f.slug;
-      if (patch.label !== f.label) changed.push('label');
+      if (patch.label !== f.label) {
+        changed.push('label');
+        const next = renamedSlug(patch.label);
+        if (!next.ok) return refuse(next.code, next.message);
+        if (next.slug !== f.slug) {
+          // Another list has it, or held it before its own rename.
+          const holder = await sniFamilyBySlug(ctx.db, next.slug);
+          if (holder && holder._id !== f._id)
+            refuse(
+              'edge.sni.slug_taken',
+              'Another list has, or had, the address this name gives. Pick another name',
+            );
+          slug = next.slug;
+          patch.slug = slug;
+          patch.formerSlugs = withFormerSlug(f, slug);
+          changed.push('slug');
+        }
+      }
     }
     if (a.enabled !== undefined) {
       patch.enabled = a.enabled;
@@ -629,11 +649,12 @@ export const update = internalMutation({
       });
     await ctx.db.patch(f._id, patch);
     await audit(ctx, 'edge.sni.family.update', a.actorAdminId, {
-      slug: f.slug,
+      slug,
+      ...(slug !== f.slug ? { formerSlug: f.slug } : {}),
       ...(a.network !== undefined ? { network: a.network ?? 'none' } : {}),
       changed,
     });
-    return { ok: true as const };
+    return { ok: true as const, slug };
   },
 });
 

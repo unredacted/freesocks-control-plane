@@ -41,6 +41,7 @@ import {
   parseNames,
   serverErrorWords,
   serverNamesLabel,
+  frontedAddressWords,
   frontsHint,
   splitAddresses,
 } from './words';
@@ -223,6 +224,7 @@ describe('what the page says', () => {
     ).toEqual({
       members: [a('node-one-relay-a', false)],
       fronts: [a('lb-1', true), a('lb-2', true)],
+      owned: [],
     });
     expect(frontsHint(1)).toBe(
       "Members now get this node's edges. When its traffic stops, delete this front at the provider and its address here.",
@@ -237,6 +239,53 @@ describe('what the page says', () => {
     expect(frontsHint(1, { stale: 0, total: 9 })).toBe(
       "Members now get this node's edges, and every key on it has fetched since go-live. An app sharing a key, or reading the backend's own subscription address, may still use this front. When its traffic stops, delete this front at the provider and its address here.",
     );
+  });
+
+  test('the Host FCP keeps for a fronted transport is apart: not an address a member gets as it stands', () => {
+    const a = (remark: string, over: object = {}) => ({ remark, operatorFront: false, ...over });
+    const owned = a('node-one-relay', { fcpOwned: true });
+    expect(splitAddresses([owned, a('by-hand'), a('lb-1', { operatorFront: true })])).toEqual({
+      members: [a('by-hand')],
+      fronts: [a('lb-1', { operatorFront: true })],
+      owned: [owned],
+    });
+    // Members still get an address on it (the node's own, through FCP): no "no address" note.
+    expect(nodeNotes(node({ transports: [inbound({ addresses: [owned] })] }) as never)).toEqual([]);
+  });
+
+  test('what members get on a fronted transport, in one line with its links', () => {
+    const text = (o: Parameters<typeof frontedAddressWords>[0]) =>
+      frontedAddressWords(o)
+        .map((p) => p.text)
+        .join('');
+    const links = (o: Parameters<typeof frontedAddressWords>[0]) =>
+      frontedAddressWords(o)
+        .filter((p) => p.to)
+        .map((p) => [p.text, p.to]);
+    // A REALITY transport an SNI list manages: the addresses above and the list.
+    expect(text({ reality: true, listLabel: 'Shared cover' })).toBe(
+      "One of this node's addresses above, with an SNI from the SNI list Shared cover.",
+    );
+    expect(links({ reality: true, listLabel: 'Shared cover' })).toEqual([
+      ["this node's addresses above", 'addresses'],
+      ['Shared cover', 'list'],
+    ]);
+    // SNIs set by hand: the SNIs section of the page.
+    expect(text({ reality: true, listLabel: null })).toBe(
+      "One of this node's addresses above, with one of its SNIs.",
+    );
+    expect(links({ reality: true, listLabel: null })).toEqual([
+      ["this node's addresses above", 'addresses'],
+      ['its SNIs', 'snis'],
+    ]);
+    // No SNIs of its own (a WebSocket transport behind its edges).
+    expect(text({ reality: false, listLabel: null })).toBe("One of this node's addresses above.");
+    for (const o of [
+      { reality: true, listLabel: 'x' },
+      { reality: true, listLabel: null },
+      { reality: false, listLabel: null },
+    ])
+      expect(text(o)).not.toMatch(/—|\bnames?\b|needs you/i);
   });
 
   test('a transport whose only addresses are fronts left out has none for members', () => {

@@ -662,8 +662,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Server-name families: slugs and COUNTS only, never a hostname.
   'edge.sni.config.update': ['changedKeys'],
   'edge.sni.family.create': ['slug', 'targetKind', 'network'],
-  // `changed`: the fields that moved (label, enabled, requireH2, network), never the label itself.
-  'edge.sni.family.update': ['slug', 'network', 'changed'],
+  // `changed`: the fields that moved (label, slug, enabled, requireH2, network), never the label itself.
+  // A rename moves the slug: `slug` is the new one, `formerSlug` the one it left.
+  'edge.sni.family.update': ['slug', 'formerSlug', 'network', 'changed'],
   'edge.sni.family.delete': ['slug', 'nameCount'],
   'edge.sni.names.import': ['slug', 'added', 'rejected'],
   // Finding names (docs/edges.md "Finding names"): counts and slugs, never a name.

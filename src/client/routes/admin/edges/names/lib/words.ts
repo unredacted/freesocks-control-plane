@@ -258,6 +258,11 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.cap': 'This SNI list is full.',
   'edge.sni.disabled': 'SNI lists are turned off. Turn them on first.',
   'edge.sni.family_in_use': 'A port still uses this SNI list. Stop managing it there first.',
+  // Renaming a list moves its address (docs/edges.md "Renaming a list").
+  'edge.sni.slug_taken':
+    'Another SNI list has, or had, the address this name gives. Pick another name.',
+  'edge.sni.slug_reserved': 'That name gives the address of an SNIs page. Pick another name.',
+  'edge.sni.slug_empty': "The list's address comes from its name. Use a letter or a digit in it.",
   'edge.sni.target_mismatch': "The port's cover site is not this list's cover site.",
   'edge.sni.binding_changed': 'This port changed since the page loaded. Reload and look again.',
   'edge.sni.profile_moved':
