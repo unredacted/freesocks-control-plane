@@ -253,9 +253,10 @@ describe.skipIf(!ENABLED)('remnawave managed node: Hysteria beside REALITY (inte
     for (const u of created.profiles) await quiet(api('DELETE', `config-profiles/${u}`));
   });
 
+  let issueSeq = 0;
   const issue = async (inSquads: string[]) => {
     const issued = await remnawaveIssueUser(cfg, {
-      username: `fcp_hy_${RUN}_${created.users.length}`,
+      username: `fcp_hy_${RUN}_${++issueSeq}`,
       placement: inSquads[0]!,
       extraPlacements: inSquads.slice(1),
       tag: 'MEMBER',
@@ -390,13 +391,26 @@ describe.skipIf(!ENABLED)('remnawave managed node: Hysteria beside REALITY (inte
     const t0 = Date.now();
     const bytes = async () => (await remnawaveGetUser(cfg, disabled.id)).usedTrafficBytes ?? 0;
     // Let bytes counted before the disable land, then take the baseline (the
-    // watch's settle time does the same).
-    await sleep(60_000);
+    // watch's settle time does the same). Traffic keeps flowing meanwhile: a
+    // quiet client's QUIC connection ends at its idle timeout (30 s; this
+    // client sends no keepalive, an app does), and its redial is refused.
+    const keepBusy = async (ms: number) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        await connects(0);
+        await connects(1);
+        await sleep(3000);
+      }
+    };
+    await keepBusy(60_000);
+    expect(await connects(0), 'the disabled key’s open connection was cut').toBe(true);
+    expect(await connects(1), 'the deleted key’s open connection was cut').toBe(true);
     const baseline = await bytes();
     // Both open connections keep carrying requests; the disabled key's bytes grow.
     const grew = await until(
       async () => {
         for (let i = 0; i < 10; i++) await connects(0);
+        await connects(1);
         return (await bytes()) > baseline;
       },
       240_000,
