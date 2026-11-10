@@ -175,6 +175,7 @@ async function load(db: Db): Promise<Loaded> {
             ...(n.drainUntil ? { drainUntil: n.drainUntil } : {}),
             blockedIn: n.blockedIn ?? [],
             provenIn: n.provenIn ?? [],
+            listedIn: n.listedIn ?? [],
           })),
         })),
         published,

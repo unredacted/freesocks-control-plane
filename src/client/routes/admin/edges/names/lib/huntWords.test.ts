@@ -24,12 +24,14 @@ import {
   scoreWords,
   siteOoniWords,
   sweepWords,
+  preferLines,
 } from './huntWords';
 import {
   HUNT_SOURCES,
   HUNT_STATES,
   usableCandidate,
   type SniCandidateRow,
+  type SniVantageRow,
 } from '../../../../../../shared/contracts/sni';
 
 const base: SniCandidateRow = {
@@ -230,5 +232,94 @@ describe('find names words', () => {
     ).toBe('2 SNIs added, 1 already here, 1 already in an SNI list.');
     expect(parsePlace(' us ', ' Springfield ')).toEqual({ country: 'US', city: 'Springfield' });
     expect(parsePlace('USA', '')).toBeNull();
+  });
+});
+
+describe('an SNI on a list that prefers its SNIs', () => {
+  const vantage = (over: Partial<SniVantageRow>): SniVantageRow => ({
+    country: 'RU',
+    latest: 'failing',
+    suggestion: null,
+    reason: null,
+    provenance: null,
+    decision: 'none',
+    okVantages: 0,
+    okNetworks: 0,
+    failVantages: 0,
+    failNetworks: 0,
+    pathFailures: 0,
+    reportsAgree: false,
+    lastAt: null,
+    lastOkAt: null,
+    lastRequestedAt: null,
+    ...over,
+  });
+  const n = (over: Partial<Parameters<typeof preferLines>[0]> = {}) => ({
+    preferredIn: ['RU'],
+    blockedIn: [] as string[],
+    provenIn: [] as string[],
+    vantage: [] as SniVantageRow[],
+    suspectIn: [] as string[],
+    ...over,
+  });
+
+  test('nothing to say where no list prefers it', () => {
+    expect(preferLines(n({ preferredIn: [] }))).toEqual([]);
+  });
+
+  test('says what members there get, one line per country', () => {
+    expect(preferLines(n({ preferredIn: ['RU', 'IR'] }))).toEqual([
+      {
+        text: 'IR: on a list of what works there that prefers its SNIs. Members there get it before SNIs nobody has judged.',
+        doubt: false,
+      },
+      {
+        text: 'RU: on a list of what works there that prefers its SNIs. Members there get it before SNIs nobody has judged.',
+        doubt: false,
+      },
+    ]);
+  });
+
+  test('a mark decides instead of the list', () => {
+    expect(preferLines(n({ blockedIn: ['RU'] }))[0]).toEqual({
+      text: 'RU: on a list that prefers its SNIs, but marked Blocked there. Members there never get it.',
+      doubt: false,
+    });
+    expect(preferLines(n({ provenIn: ['RU'] }))[0]).toEqual({
+      text: 'RU: on a list that prefers its SNIs, and marked Works there. The mark already puts it first.',
+      doubt: false,
+    });
+  });
+
+  test('the checks from inside or members’ reports speaking against it ask for a person', () => {
+    expect(
+      preferLines(
+        n({
+          vantage: [vantage({ suggestion: 'blocked', provenance: 'probe', decision: 'suggest' })],
+        }),
+      )[0],
+    ).toEqual({
+      text: 'RU: on a list of what works there, but the checks from inside say blocked. Members there still get it first until it is marked Blocked there.',
+      doubt: true,
+    });
+    expect(preferLines(n({ suspectIn: ['RU'] }))[0]).toEqual({
+      text: 'RU: on a list of what works there, but members there report it more than other SNIs. Members there still get it first.',
+      doubt: true,
+    });
+    // The checks in another country say nothing about this one.
+    expect(
+      preferLines(
+        n({
+          vantage: [
+            vantage({
+              country: 'IR',
+              suggestion: 'blocked',
+              provenance: 'probe',
+              decision: 'suggest',
+            }),
+          ],
+        }),
+      )[0]!.doubt,
+    ).toBe(false);
   });
 });

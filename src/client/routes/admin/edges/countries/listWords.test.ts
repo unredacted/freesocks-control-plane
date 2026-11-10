@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { CountryListHoldReason, type CountryListVersion } from '@shared/contracts/countryLists';
+import {
+  CountryListHoldReason,
+  type CountryListVersion,
+  type CountryListView,
+} from '@shared/contracts/countryLists';
 import { edgesPaths, resolveEdgesRoute } from '../lib/routes';
 import { resolveSectionRoute, tabOf } from '../../servers/lib/routes';
 import { parseAsns } from '../names/lib/words';
@@ -15,6 +19,13 @@ import {
   marksWaitLine,
   OUTCOME_WORDS,
   parseLookup,
+  PREFER_BADGE,
+  PREFER_RULES,
+  preferConfirm,
+  preferCountsLine,
+  preferLine,
+  preferNetworksLine,
+  preferWaitsLine,
   REGIME_WORDS,
   sourceLine,
   STATUS_WORDS,
@@ -171,6 +182,103 @@ describe('edge addresses against a list', () => {
       'edge.list.prefer_allowlist_only',
     ])
       expect(listErrorWords(e)).not.toBe(listErrorWords('nope'));
+  });
+});
+
+describe('an allowlist that prefers its SNIs', () => {
+  const l = {
+    enabled: true,
+    fresh: true,
+    active: {} as CountryListView['active'],
+    country: 'IR',
+  };
+  const on = { listsOn: true, preferSwitch: true, curated: true };
+
+  test('the switch says what members get', () => {
+    expect(preferLine(true, 'IR')).toBe(
+      'On. Members in Iran get the SNIs on this list before ones nobody has judged there.',
+    );
+    expect(preferLine(false, 'IR')).toBe('Off. This list changes nothing members get.');
+    // Held back by something else: it never claims members get anything first.
+    expect(preferLine(true, 'IR', false)).toBe('On for this list, but not in effect now.');
+    expect(preferLine(false, 'IR', false)).toBe('Off. This list changes nothing members get.');
+  });
+
+  test('says what holds it back, the deployment switch first', () => {
+    expect(preferWaitsLine(l, on)).toBeNull();
+    expect(preferWaitsLine(l, { ...on, preferSwitch: false })).toBe(
+      'Nothing is preferred until "Prefer SNIs on allowlists" is on in Settings, Country lists.',
+    );
+    expect(preferWaitsLine(l, { ...on, listsOn: false })).toMatch(/^Country lists are off/);
+    expect(preferWaitsLine({ ...l, enabled: false }, on)).toMatch(/^This list is off/);
+    expect(preferWaitsLine({ ...l, active: null }, on)).toMatch(/^No version is in use yet/);
+    expect(preferWaitsLine({ ...l, fresh: false }, on)).toMatch(/^This list is stale/);
+    expect(preferWaitsLine(l, { ...on, curated: false })).toBe(
+      'Iran is not on the censored-country list: nothing is preferred there.',
+    );
+  });
+
+  test('counts the SNIs in use it holds and the ones given first', () => {
+    expect(preferCountsLine(null, 'IR')).toBe('Too many SNIs are in use to count them here.');
+    expect(preferCountsLine({ inUse: 0, preferred: 0 }, 'IR')).toBe(
+      'No SNI in use is on this list, so it puts nothing first.',
+    );
+    expect(preferCountsLine({ inUse: 1, preferred: 1 }, 'IR')).toBe(
+      '1 SNI in use is on this list. Members in Iran get it first now.',
+    );
+    expect(preferCountsLine({ inUse: 3, preferred: 3 }, 'IR')).toBe(
+      '3 SNIs in use are on this list. Members in Iran get them first now.',
+    );
+    expect(preferCountsLine({ inUse: 3, preferred: 2 }, 'IR')).toBe(
+      '3 SNIs in use are on this list. Members in Iran get 2 of them first now.',
+    );
+    expect(preferCountsLine({ inUse: 3, preferred: 0 }, 'IR')).toBe(
+      '3 SNIs in use are on this list. Members in Iran get none of them first now.',
+    );
+  });
+
+  test('a list for some networks still counts for the whole country', () => {
+    expect(preferNetworksLine({ networks: [] })).toBeNull();
+    expect(preferNetworksLine({ networks: [64500] })).toMatch(/counts for every member there/);
+  });
+
+  test('asks before it changes what members get', () => {
+    expect(preferConfirm({ inUse: 2, preferred: 0 }, 'IR')).toEqual({
+      title: 'Prefer this list’s SNIs in Iran?',
+      body: '2 SNIs in use are on it. Members in Iran get them first at their next refresh. Members elsewhere get what they got.',
+      confirmLabel: 'Prefer its SNIs',
+    });
+    expect(preferConfirm({ inUse: 0, preferred: 0 }, 'IR').body).toBe(
+      'No SNI in use is on it yet. One that joins it later is given first in Iran. Members elsewhere get what they got.',
+    );
+    // Not counted is not none.
+    expect(preferConfirm(null, 'IR').body).toBe(
+      'Too many SNIs are in use to count the ones on it. Members in Iran get every one of them first at their next refresh. A transport still on the old SNI pick moves to the stable one, which gives all its members new SNIs once. Otherwise members elsewhere get what they got.',
+    );
+    // A transport on the old pick is moved, and that reaches members everywhere.
+    expect(preferConfirm({ inUse: 2, preferred: 0, legacyPick: 1 }, 'IR').body).toBe(
+      '2 SNIs in use are on it. Members in Iran get them first at their next refresh. 1 transport carrying them is still on the old SNI pick and moves to the stable one: all its members, in every country, get new SNIs once. Other members elsewhere get what they got.',
+    );
+    expect(preferConfirm({ inUse: 2, preferred: 0, legacyPick: 2 }, 'IR').body).toMatch(
+      /2 transports carrying them are still on the old SNI pick and move to the stable one: all their members/,
+    );
+  });
+
+  test('the copy has no em-dash and says SNI', () => {
+    const copy = [
+      PREFER_BADGE,
+      PREFER_RULES,
+      preferLine(true, 'IR'),
+      preferLine(false, 'IR'),
+      preferWaitsLine(l, { ...on, preferSwitch: false })!,
+      preferCountsLine({ inUse: 3, preferred: 2 }, 'IR'),
+      preferNetworksLine({ networks: [1] })!,
+      preferConfirm({ inUse: 2, preferred: 0 }, 'IR').body,
+    ];
+    for (const line of copy) {
+      expect(line).not.toContain(String.fromCharCode(0x2014));
+      expect(line).not.toMatch(/server name/i);
+    }
   });
 });
 

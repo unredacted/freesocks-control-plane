@@ -4,8 +4,8 @@
    * from and when its source last confirmed it, a version waiting for you
    * (why it waits, what changed, Use it or Throw it away), the version in
    * use, fetch now or paste a new copy, where its names go, whether edge
-   * addresses are checked against it (an allowlist), the version history, and
-   * a lookup.
+   * addresses are checked against it and whether its SNIs are preferred for
+   * members in its country (an allowlist), the version history, and a lookup.
    *
    * Props:
    *   id: string    the list's id
@@ -37,6 +37,7 @@
   import ListEdges from './ListEdges.svelte';
   import ListFeeds from './ListFeeds.svelte';
   import ListLookup from './ListLookup.svelte';
+  import ListPrefer from './ListPrefer.svelte';
   import { countryLabel } from './words';
   import {
     countsLine,
@@ -46,6 +47,7 @@
     holdReasonWords,
     listBadge,
     listErrorWords,
+    PREFER_BADGE,
     outcomeFailed,
     outcomeWords,
     REGIME_WORDS,
@@ -118,6 +120,7 @@
   >
     {#snippet badges()}
       <Badge variant={badge.tone}>{badge.label}</Badge>
+      {#if l.preferNames}<Badge variant="secondary">{PREFER_BADGE}</Badge>{/if}
     {/snippet}
     {#snippet actions()}
       <Button size="sm" variant="outline" disabled={busy} onclick={() => (editing = true)}>
@@ -257,6 +260,12 @@
   <ListFeeds list={l} />
   {#if l.regime === 'allowlist'}
     <ListEdges list={l} switchOn={detail.data.enabled} counts={detail.data.edges} />
+    <ListPrefer
+      list={l}
+      listsOn={detail.data.enabled}
+      preferSwitch={detail.data.preferSwitch}
+      counts={detail.data.prefer}
+    />
   {/if}
 
   {#if detail.data.versions.length > 0}
@@ -286,7 +295,9 @@
   <ConfirmDialog
     bind:open={removeOpen}
     title={`Remove the list ${l.label}?`}
-    body="Its versions and history go too. Nothing that members get changes."
+    body={l.preferNames
+      ? 'Its versions and history go too. Its SNIs are no longer preferred for members in its country.'
+      : 'Its versions and history go too. Nothing that members get changes.'}
     confirmLabel="Remove list"
     danger
     onConfirm={async () => {

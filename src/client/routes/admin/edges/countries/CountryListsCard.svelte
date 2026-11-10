@@ -10,7 +10,7 @@
   import Link from '@client/components/Link.svelte';
   import { countryListsQuery } from '@client/lib/countryListsApi';
   import { edgesPaths } from '../lib/routes';
-  import { countsLine, listBadge, REGIME_WORDS } from './listWords';
+  import { countsLine, listBadge, PREFER_BADGE, REGIME_WORDS } from './listWords';
 
   let { code }: { code: string } = $props();
   const lists = countryListsQuery(() => code);
@@ -35,6 +35,7 @@
               {l.label}
             </Link>
             <Badge variant={badge.tone}>{badge.label}</Badge>
+            {#if l.preferNames}<Badge variant="secondary">{PREFER_BADGE}</Badge>{/if}
             <span class="text-muted-foreground">
               {REGIME_WORDS[l.regime].label}. {l.active ? countsLine(l.active.counts) : ''}
             </span>

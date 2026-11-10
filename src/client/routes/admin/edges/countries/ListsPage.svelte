@@ -20,7 +20,14 @@
   import ListDialog from './ListDialog.svelte';
   import ListLookup from './ListLookup.svelte';
   import { countryLabel } from './words';
-  import { countsLine, freshnessLine, listBadge, REGIME_WORDS, sourceLine } from './listWords';
+  import {
+    countsLine,
+    freshnessLine,
+    listBadge,
+    PREFER_BADGE,
+    REGIME_WORDS,
+    sourceLine,
+  } from './listWords';
 
   const lists = countryListsQuery();
   let adding = $state(false);
@@ -31,7 +38,7 @@
 
 <SectionHeader
   title="Country lists"
-  description="Community lists of hostnames and addresses that work, or are blocked, in a country. FCP keeps each change as a version and holds any that looks wrong for you. Lists are evidence only and never change what members get."
+  description="Community lists of hostnames and addresses that work, or are blocked, in a country. FCP keeps each change as a version and holds any that looks wrong for you. Lists are evidence only, unless you set a list of what works to prefer its SNIs."
 >
   {#snippet actions()}
     <Button size="sm" onclick={() => (adding = true)}>Add a list</Button>
@@ -73,6 +80,7 @@
               <span class="flex flex-wrap items-center gap-2">
                 <span class="font-medium">{l.label}</span>
                 <Badge variant={badge.tone}>{badge.label}</Badge>
+                {#if l.preferNames}<Badge variant="secondary">{PREFER_BADGE}</Badge>{/if}
               </span>
               <span class="text-muted-foreground block text-sm">
                 {countryLabel(l.country)}, {REGIME_WORDS[l.regime].label.toLowerCase()}.

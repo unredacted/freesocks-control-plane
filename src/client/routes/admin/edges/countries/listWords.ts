@@ -12,6 +12,7 @@ import type {
   EdgeListMarks,
 } from '@shared/contracts/countryLists';
 import { relativeTime } from '../lib/time';
+import { countryShort } from './sniWords';
 
 export const REGIME_WORDS: Record<CountryListRegime, { label: string; explain: string }> = {
   allowlist: {
@@ -301,4 +302,89 @@ export function marksWaitLine(
   if (!l.enabled) return 'Not checked now: this list is off.';
   if (!l.fresh) return 'Not checked now: this list is stale.';
   return 'Not checked now.';
+}
+
+// --- an allowlist that prefers its SNIs (docs/edges.md "Names on a country's allowlist") --------
+
+/** The short badge of a list that prefers its SNIs. */
+export const PREFER_BADGE = 'Prefers its SNIs';
+
+/**
+ * Under the switch: what is true now. `counted` is false while something holds
+ * the preference back (`preferWaitsLine` says what), so the line never claims
+ * members get anything first then.
+ */
+export function preferLine(on: boolean, country: string, counted = true): string {
+  if (!on) return 'Off. This list changes nothing members get.';
+  return counted
+    ? `On. Members in ${countryShort(country)} get the SNIs on this list before ones nobody has judged there.`
+    : 'On for this list, but not in effect now.';
+}
+
+/** Why a list that prefers its SNIs puts nothing first now, or null when it counts. */
+export function preferWaitsLine(
+  l: Pick<CountryListView, 'enabled' | 'fresh' | 'active' | 'country'>,
+  o: { listsOn: boolean; preferSwitch: boolean; curated: boolean },
+): string | null {
+  if (!o.preferSwitch)
+    return 'Nothing is preferred until "Prefer SNIs on allowlists" is on in Settings, Country lists.';
+  if (!o.listsOn) return 'Country lists are off: nothing is preferred until they are on.';
+  if (!l.enabled) return 'This list is off: nothing is preferred until it is on.';
+  if (!l.active) return 'No version is in use yet: nothing is preferred until one is.';
+  if (!l.fresh) return 'This list is stale: nothing is preferred until its source confirms it.';
+  if (!o.curated)
+    return `${countryShort(l.country)} is not on the censored-country list: nothing is preferred there.`;
+  return null;
+}
+
+type PreferCounts = { inUse: number; preferred: number; legacyPick?: number } | null;
+
+/** How many SNIs in use the list holds, and how many members there get first now. */
+export function preferCountsLine(c: PreferCounts, country: string): string {
+  if (!c) return 'Too many SNIs are in use to count them here.';
+  if (c.inUse === 0) return 'No SNI in use is on this list, so it puts nothing first.';
+  const held = `${plural(c.inUse, 'SNI', 'SNIs')} in use ${c.inUse === 1 ? 'is' : 'are'} on this list.`;
+  const where = countryShort(country);
+  if (c.preferred === 0) return `${held} Members in ${where} get none of them first now.`;
+  return c.preferred === c.inUse
+    ? `${held} Members in ${where} get ${c.inUse === 1 ? 'it' : 'them'} first now.`
+    : `${held} Members in ${where} get ${c.preferred.toLocaleString('en')} of them first now.`;
+}
+
+/** A list for some networks still counts for the whole country. */
+export function preferNetworksLine(l: Pick<CountryListView, 'networks'>): string | null {
+  return l.networks.length > 0
+    ? 'This list covers some networks only. FCP knows a member’s country, not their network, so it counts for every member there.'
+    : null;
+}
+
+/** What still decides before a list does. */
+export const PREFER_RULES =
+  'An SNI marked Works there still comes first, and one marked Blocked there is never given. Only an SNI on an SNI list counts. A block list for the same country that holds it cancels it.';
+
+/** The question before the switch goes on: it changes what members get. */
+export function preferConfirm(
+  c: PreferCounts,
+  country: string,
+): { title: string; body: string; confirmLabel: string } {
+  const where = countryShort(country);
+  // Not counted (too many SNIs in use) is not "none": say so.
+  const held = !c
+    ? `Too many SNIs are in use to count the ones on it. Members in ${where} get every one of them first at their next refresh.`
+    : c.inUse > 0
+      ? `${plural(c.inUse, 'SNI', 'SNIs')} in use ${c.inUse === 1 ? 'is' : 'are'} on it. Members in ${where} get ${c.inUse === 1 ? 'it' : 'them'} first at their next refresh.`
+      : `No SNI in use is on it yet. One that joins it later is given first in ${where}.`;
+  // A transport on the old SNI pick moves to the stable one with its first
+  // preferred SNI, which picks again for every member of it, once.
+  const legacy = c?.legacyPick ?? 0;
+  const elsewhere = !c
+    ? 'A transport still on the old SNI pick moves to the stable one, which gives all its members new SNIs once. Otherwise members elsewhere get what they got.'
+    : legacy > 0
+      ? `${plural(legacy, 'transport', 'transports')} carrying ${c.inUse === 1 ? 'it' : 'them'} ${legacy === 1 ? 'is' : 'are'} still on the old SNI pick and ${legacy === 1 ? 'moves' : 'move'} to the stable one: all ${legacy === 1 ? 'its' : 'their'} members, in every country, get new SNIs once. Other members elsewhere get what they got.`
+      : 'Members elsewhere get what they got.';
+  return {
+    title: `Prefer this list’s SNIs in ${where}?`,
+    body: `${held} ${elsewhere}`,
+    confirmLabel: 'Prefer its SNIs',
+  };
 }
