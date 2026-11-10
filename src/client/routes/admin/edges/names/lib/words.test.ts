@@ -41,7 +41,7 @@ const name = (over: Record<string, unknown> = {}) => ({
   onLists: [],
   preferredIn: [],
   vantage: [] as SniVantageRow[],
-  delivery: { state: 'in_use' as const, inUseOn: 1, nodes: 1 },
+  delivery: { state: 'in_use' as const, inUseOn: 1, nodes: 1, onNode: true },
   ...over,
 });
 describe('networks', () => {

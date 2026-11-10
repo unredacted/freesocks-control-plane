@@ -264,9 +264,9 @@ describe('the transports of a backend', () => {
       await (await call('GET', 'families/vless-relay-a')).json(),
     );
     expect(Object.fromEntries(detail.names.map((n) => [n.name, n.delivery]))).toEqual({
-      'a.example': { state: 'in_use', inUseOn: 1, nodes: 1 },
-      'b.example': { state: 'in_use', inUseOn: 1, nodes: 1 },
-      'c.example': { state: 'waiting_test', inUseOn: 0, nodes: 1 },
+      'a.example': { state: 'in_use', inUseOn: 1, nodes: 1, onNode: true },
+      'b.example': { state: 'in_use', inUseOn: 1, nodes: 1, onNode: true },
+      'c.example': { state: 'waiting_test', inUseOn: 0, nodes: 1, onNode: true },
     });
     expect(detail.suggestions).toBe(0);
     // The list of families counts the same way.

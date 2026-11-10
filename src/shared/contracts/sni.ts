@@ -215,6 +215,8 @@ export const SniNameDelivery = z.object({
   inUseOn: z.number(),
   /** How many protected nodes its transports have. */
   nodes: z.number(),
+  /** A transport lists it on the backend now: it is on the node, whoever gets it. */
+  onNode: z.boolean().default(false),
 });
 export type SniNameDelivery = z.infer<typeof SniNameDelivery>;
 
@@ -255,7 +257,7 @@ export const SniNameRow = z.object({
    */
   preferredIn: z.array(z.string()).default([]),
   /** Where it stands on its way to members, across the family's transports. */
-  delivery: SniNameDelivery.default({ state: 'idle', inUseOn: 0, nodes: 0 }),
+  delivery: SniNameDelivery.default({ state: 'idle', inUseOn: 0, nodes: 0, onNode: false }),
 });
 export type SniNameRow = z.infer<typeof SniNameRow>;
 

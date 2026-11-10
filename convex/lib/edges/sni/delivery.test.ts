@@ -45,11 +45,17 @@ describe('a name on its way to members', () => {
       provable: new Set(['a.example', 'b.example', 'c.example']),
       nodes: two,
     });
-    expect(nameDelivery(usable('a.example'), f)).toEqual({ state: 'in_use', inUseOn: 2, nodes: 2 });
+    expect(nameDelivery(usable('a.example'), f)).toEqual({
+      state: 'in_use',
+      inUseOn: 2,
+      nodes: 2,
+      onNode: true,
+    });
     expect(nameDelivery(usable('b.example'), f)).toEqual({
       state: 'waiting_test',
       inUseOn: 1,
       nodes: 2,
+      onNode: true,
     });
     expect(nameDelivery(usable('c.example'), f).state).toBe('waiting_test');
   });
@@ -68,7 +74,30 @@ describe('a name on its way to members', () => {
     // In use on one node, not provable: in use (partly).
     expect(
       nameDelivery(usable('n.example'), facts({ nodes: [new Set(['n.example']), new Set()] })),
-    ).toEqual({ state: 'in_use', inUseOn: 1, nodes: 2 });
+    ).toEqual({ state: 'in_use', inUseOn: 1, nodes: 2, onNode: false });
+  });
+
+  test('on the node behind a port with no fronted node: idle, and said to be on the node', () => {
+    // A confirmed send put it on the backend, but no node behind the port is
+    // fronted, so no test can prove it and no member gets it.
+    const f = facts({
+      onBackend: new Set(['n.example']),
+      provable: new Set(['n.example']),
+      nodes: [],
+    });
+    expect(nameDelivery(usable('n.example'), f)).toEqual({
+      state: 'idle',
+      inUseOn: 0,
+      nodes: 0,
+      onNode: true,
+    });
+    // Not sent yet: it waits for a send, and is not on the node.
+    expect(nameDelivery(usable('m.example'), f)).toMatchObject({ state: 'to_send', onNode: false });
+    // A list no port uses is on no node.
+    expect(nameDelivery(usable('n.example'), facts({ bound: false }))).toMatchObject({
+      state: 'idle',
+      onNode: false,
+    });
   });
 
   test('the counts add up every state, and each node counts only usable names', () => {
@@ -102,7 +131,7 @@ describe('a name on its way to members', () => {
 
 describe('a family bound to several transports', () => {
   test('each transport answers for itself; the step still needed somewhere wins', () => {
-    const unbound = { state: 'idle' as const, inUseOn: 0, nodes: 0 };
+    const unbound = { state: 'idle' as const, inUseOn: 0, nodes: 0, onNode: false };
     // A rollout confirmed on transport A only: proof there, a send still due on B.
     const onA = nameDelivery(
       usable('c.example'),
@@ -118,6 +147,7 @@ describe('a family bound to several transports', () => {
       state: 'waiting_test',
       inUseOn: 0,
       nodes: 2,
+      onNode: true,
     });
     // In use on A, to send on B: still a send to make.
     const used = nameDelivery(usable('c.example'), facts({ nodes: [new Set(['c.example'])] }));
@@ -125,6 +155,7 @@ describe('a family bound to several transports', () => {
       state: 'to_send',
       inUseOn: 1,
       nodes: 2,
+      onNode: false,
     });
     // In use everywhere it can be: in use.
     expect(combineDeliveries([used, used], unbound).state).toBe('in_use');

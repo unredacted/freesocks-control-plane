@@ -96,6 +96,16 @@ export function namesStep(
   return { kind: 'done' };
 }
 
+/**
+ * No node behind the port is fronted. FCP hands SNIs out only through fronted
+ * addresses, so nothing sent to such a port reaches a member: a send there
+ * only restarts Xray.
+ */
+export const reachesNobody = (t: Pick<SniTransport, 'nodes'>): boolean => t.nodes.length === 0;
+
+/** Said wherever a step would put SNIs on a port that hands them to nobody. */
+const NOBODY = 'No node behind this port is fronted, so no member would get them.';
+
 /** The button for a step, or null when the step is waiting or done. */
 export const STEP_BUTTON: Partial<Record<NamesStep['kind'], string>> = {
   manage: 'Add an SNI list',
@@ -171,9 +181,9 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
     case 'sending':
       return 'Sending the SNIs to the backend. The node restarts Xray once to take them.';
     case 'send':
-      return `${plural(t.list?.counts.toSend ?? 0, 'checked SNI')} ${(t.list?.counts.toSend ?? 0) === 1 ? 'is' : 'are'} not on the node yet.${shared}`;
+      return `${plural(t.list?.counts.toSend ?? 0, 'checked SNI')} ${(t.list?.counts.toSend ?? 0) === 1 ? 'is' : 'are'} not on the node yet.${shared}${reachesNobody(t) ? ` ${NOBODY} A send only restarts Xray.` : ''}`;
     case 'send_again':
-      return 'The last send did not go through. See Servers, Recent changes, then send again.';
+      return `The last send did not go through. See Servers, Recent changes, then send again.${reachesNobody(t) ? ` ${NOBODY}` : ''}`;
     case 'send_blocked':
       return step.why === 'backend_changes_off'
         ? 'Changes to the backend are off, so these SNIs cannot reach the node.'
@@ -189,7 +199,7 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
     case 'test_needs_address':
       return 'The node has the new SNIs, but none of its addresses has been tried yet. Try one on its Edges first. A test needs an address that already works.';
     case 'add_suggestions':
-      return `FCP found ${plural(step.count, 'more SNI')} the cover site serves.`;
+      return `FCP found ${plural(step.count, 'more SNI')} the cover site serves.${reachesNobody(t) ? ` ${NOBODY}` : ''}`;
     case 'checking':
       return `Checking ${plural(step.count, 'SNI')} against the cover site. This takes a few minutes.`;
     case 'done':
@@ -245,7 +255,8 @@ export function sendPlanWords(p: SniRolloutPlan, t: SniTransport): string[] {
       ? `Every node on the profile ${t.profileName} (${nodes} nodes) restarts Xray once. People connected there reconnect within a few seconds.`
       : 'The node restarts Xray once. People connected there reconnect within a few seconds.',
   );
-  if (p.added.length)
+  // Behind a port with no fronted node there is no test to pass (`sendReachWords`).
+  if (p.added.length && !reachesNobody(t))
     out.push(
       p.witness
         ? 'Members get the new SNIs once a test on the node passes. One test proves all of them.'
@@ -257,6 +268,29 @@ export function sendPlanWords(p: SniRolloutPlan, t: SniTransport): string[] {
       `${plural(checking, 'SNI')} still being checked ${checking === 1 ? 'waits' : 'wait'} for the next send.`,
     );
   return out;
+}
+
+/**
+ * The warning beside the restart line of "Send to the node", or null: no node
+ * behind the port is fronted, so the send restarts Xray and changes nothing
+ * for any member. The send stays possible (an operator may be about to front
+ * a node), but the dialog stops offering it as the next thing to do.
+ */
+export function sendReachWords(p: SniRolloutPlan, t: SniTransport): string | null {
+  if (!p.changed || !reachesNobody(t)) return null;
+  const nodes = t.profileNodes.length;
+  const restart = nodes > 1 ? `All ${nodes} nodes restart` : 'The node restarts';
+  return p.added.length
+    ? `${restart} and no member gets these SNIs. No node behind this port is fronted, and SNIs reach members only through fronted addresses.`
+    : `${restart} and nothing changes for members. No node behind this port is fronted, and SNIs reach members only through fronted addresses.`;
+}
+
+/** The toast after a send went out (`rolloutId` null: the backend already had the SNIs). */
+export function sentWords(sent: boolean, t: SniTransport): string {
+  if (!sent) return 'The backend already had exactly these SNIs.';
+  return reachesNobody(t)
+    ? 'Sent. No member gets these SNIs until a node behind this port is fronted.'
+    : 'Sent. Once the backend has the SNIs, test one on the node.';
 }
 
 /**
@@ -449,6 +483,8 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     if (!t.list || !t.list.enabled) continue;
     const c = t.list.counts;
     const first = t.nodes[0]?.nodeUuid ?? t.profileNodes[0]?.nodeUuid ?? undefined;
+    // A step that would put SNIs on a port handing them to nobody says so.
+    const nobody = reachesNobody(t) ? ` ${NOBODY}` : '';
     if (c.toSend > 0 && (!view.switches.backendChanges || !view.switches.backendSetUp))
       out.push({
         key: `names-blocked:${t.transportUuid}`,
@@ -456,13 +492,13 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
           view.switches.backendChanges
             ? 'this backend is not set up yet'
             : 'changes to the backend are off'
-        }.`,
+        }.${nobody}`,
         ...(first ? { nodeUuid: first } : {}),
       });
     else if (c.toSend > 0 && t.send?.phase !== 'writing')
       out.push({
         key: `names-send:${t.transportUuid}`,
-        text: `${transportName(t.tag)}: ${plural(c.toSend, 'checked SNI')} to send to the node.`,
+        text: `${transportName(t.tag)}: ${plural(c.toSend, 'checked SNI')} to send to the node.${nobody}`,
         ...(first ? { nodeUuid: first } : {}),
       });
     if (t.send?.phase === 'panel_confirmed')
@@ -476,7 +512,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     if (t.list.suggestions > 0)
       out.push({
         key: `names-suggest:${t.transportUuid}`,
-        text: `${transportName(t.tag)}: ${plural(t.list.suggestions, 'suggested SNI')} to add.`,
+        text: `${transportName(t.tag)}: ${plural(t.list.suggestions, 'suggested SNI')} to add.${nobody}`,
         ...(first ? { nodeUuid: first } : {}),
       });
     if (c.failing > 0)

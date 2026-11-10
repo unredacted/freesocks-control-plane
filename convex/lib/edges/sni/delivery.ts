@@ -13,8 +13,9 @@
  *                 handed out on some node: a test there proves it
  *   to_send       qualified, bound, not on the backend: the next rollout adds it
  *   idle          qualified but on no way to members now: the family is bound to
- *                 nothing, or the backend lists it outside any confirmed rollout,
- *                 or no node is protected (the next rollout covers it)
+ *                 nothing, or the backend lists it outside any confirmed rollout
+ *                 (the next rollout covers it), or no node is protected (it is
+ *                 on the node and no member gets it). `onNode` tells them apart.
  *   checking      waiting for its first qualification
  *   failing       its last qualification failed, or it is suspended
  *   off           retired or burned
@@ -46,6 +47,8 @@ export interface NameDeliveryView {
   inUseOn: number;
   /** How many nodes the transport has (protected listeners). */
   nodes: number;
+  /** The transport lists it on the backend now: it is on the node, whoever gets it. */
+  onNode: boolean;
 }
 
 /** A name that qualifies: the only kind a rollout writes or a receipt activates. */
@@ -55,7 +58,12 @@ export const usableName = (n: Pick<DeliveryName, 'status' | 'qualification'>) =>
 export function nameDelivery(n: DeliveryName, f: DeliveryFacts): NameDeliveryView {
   const nodes = f.nodes.length;
   const inUseOn = f.nodes.filter((s) => s.has(n.name)).length;
-  const view = (state: NameDelivery) => ({ state, inUseOn, nodes });
+  const view = (state: NameDelivery) => ({
+    state,
+    inUseOn,
+    nodes,
+    onNode: f.onBackend.has(n.name),
+  });
   if (n.status === 'retired' || n.status === 'burned') return view('off');
   if (n.status === 'suspended' || n.qualification === 'failed') return view('failing');
   if (n.qualification === 'pending') return view('checking');
@@ -91,7 +99,7 @@ export function combineDeliveries(
     'idle',
   ];
   const state = order.find((s) => views.some((v) => v.state === s)) ?? 'idle';
-  return { state, inUseOn, nodes };
+  return { state, inUseOn, nodes, onNode: views.some((v) => v.onNode) };
 }
 
 export interface TransportCounts {
