@@ -104,8 +104,13 @@
     };
     const onError = (e: Event) => {
       console.error('Cap widget error', (e as CustomEvent).detail);
-      failed = true;
-      notify(''); // invalidate any stale token
+      // Clear the held token before switching to the failure UI. Switching
+      // first tears down this effect and cancels notify()'s queued callback.
+      queueMicrotask(() => {
+        if (!alive) return;
+        onVerify('');
+        failed = true;
+      });
     };
     const onReset = () => notify(''); // token expired / returned to initial state
 
@@ -162,6 +167,7 @@
     <cap-widget
       bind:this={el}
       data-cap-api-endpoint={endpoint}
+      data-cap-troubleshooting-url="/#faq"
       data-cap-i18n-initial-state={labels.initialState}
       data-cap-i18n-verifying-label={labels.verifyingLabel}
       data-cap-i18n-solved-label={labels.solvedLabel}

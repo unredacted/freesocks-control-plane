@@ -15,6 +15,27 @@ permissions:
   contents: read
 
 jobs:
+  cap:
+    name: Captcha through production Caddy (Chrome and Firefox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc -p tests/cap/tsconfig.json --noEmit
+      - run: bunx playwright install --with-deps firefox
+      - run: bunx playwright install --force chrome
+      - run: bun run test:integration:cap
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: captcha-browser-failures
+          path: test-results/cap/
+          retention-days: 7
+
   check:
     runs-on: ubuntu-latest
     steps:
