@@ -586,6 +586,9 @@ Convex runs these natively (no Workers triggers, no node-cron):
 
 - `grace-sweep` (10 min): `active→grace→disabled` (cursor-drained; backend-disable first).
 - `tombstone-sweep` (10 min): hard-delete subscriptions past their 24h regenerate/switch grace.
+- `revocation-watch` (5 min): revoked Hysteria keys; restart a node (through the operations
+  ledger) when one keeps moving bytes after its revocation. Off unless `revocation.watch` is on
+  (`docs/backends.md` "Revoking a key with an open Hysteria connection").
 - `backend-healthcheck` (10 min): ping active backend instances of every type; stamp
   `lastHealthOkAt` + rtt (feeds pool selection); for Remnawave, also refresh the
   `remnawaveNodeStats` node-load cache that feeds issuance-time node placement.

@@ -385,6 +385,100 @@
         </CardContent>
       </Card>
 
+      <!-- Revoked Hysteria keys (convex/revocationWatches.ts) -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Revoked Hysteria keys</CardTitle>
+          <CardDescription>
+            A Hysteria connection an app opened before its key was disabled or deleted keeps working
+            until the node restarts. When this is on, FCP watches revoked Hysteria keys and restarts
+            the node when one keeps using data. A restart drops every connection on that node: about
+            1 second for REALITY, up to about 30 seconds for Hysteria. Deleting a Hysteria key then
+            waits: the key is turned off first and deleted later.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={draft['revocation.watch'] === true}
+              onCheckedChange={(v) => (draft = { ...draft, 'revocation.watch': v === true })}
+            />
+            <span>Watch revoked Hysteria keys</span>
+          </label>
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={draft['revocation.adminDisableCutsNow'] !== false}
+              onCheckedChange={(v) =>
+                (draft = { ...draft, 'revocation.adminDisableCutsNow': v === true })}
+            />
+            <span>When an admin disables a key that was online, restart its node at once</span>
+          </label>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="rev-interval"
+              >Restart a node at most once every (minutes)</label
+            >
+            <Input
+              id="rev-interval"
+              type="number"
+              min={5}
+              max={1440}
+              class="w-32"
+              value={Number(draft['revocation.cutMinIntervalMinutes'] ?? 30)}
+              oninput={(e) =>
+                (draft = {
+                  ...draft,
+                  'revocation.cutMinIntervalMinutes': Math.min(
+                    1440,
+                    Math.max(5, Math.round(Number((e.target as HTMLInputElement).value) || 30)),
+                  ),
+                })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="rev-drain"
+              >Delete a Hysteria key this long after turning it off (minutes)</label
+            >
+            <Input
+              id="rev-drain"
+              type="number"
+              min={10}
+              max={1440}
+              class="w-32"
+              value={Number(draft['revocation.drainMinutes'] ?? 60)}
+              oninput={(e) =>
+                (draft = {
+                  ...draft,
+                  'revocation.drainMinutes': Math.min(
+                    1440,
+                    Math.max(10, Math.round(Number((e.target as HTMLInputElement).value) || 60)),
+                  ),
+                })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="rev-days"
+              >Watch a turned-off key for (days)</label
+            >
+            <Input
+              id="rev-days"
+              type="number"
+              min={1}
+              max={90}
+              class="w-32"
+              value={Number(draft['revocation.watchDays'] ?? 14)}
+              oninput={(e) =>
+                (draft = {
+                  ...draft,
+                  'revocation.watchDays': Math.min(
+                    90,
+                    Math.max(1, Math.round(Number((e.target as HTMLInputElement).value) || 14)),
+                  ),
+                })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       <!-- End-user backend choice -->
       <Card>
         <CardHeader>

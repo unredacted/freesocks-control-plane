@@ -639,6 +639,74 @@ Operator sizing: one mode group per node, add them all to the mode's pool, and F
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for
 the multi-backend / Outline case.
 
+## Revoking a key with an open Hysteria connection
+
+FCP disables a key for a lapsed membership and an admin disable, and deletes one at the
+end of a regenerate, a switch and an idle free account's reclaim. For REALITY, XHTTP and
+WebSocket that is enough: they authenticate every connection, and the node drops a
+removed user's TCP connections itself. **Hysteria 2 is different.** It authenticates
+once per QUIC connection, and the node core only removes the password from its table
+when the key is disabled or deleted. A connection the member's app opened before the
+revocation keeps carrying traffic until the node's core restarts. Measured on a real
+node (`remnawave.hysteria.node-integration.test.ts`):
+
+| What                                                       | Result                                                                                                                            |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Open connection after a disable                            | still served (watched for minutes)                                                                                                |
+| Open connection after a delete                             | still served: the same as a disable                                                                                               |
+| A new connection after either                              | refused at once                                                                                                                   |
+| An app with keepalive, quiet for a minute                  | still served (apps keep the connection alive)                                                                                     |
+| An app without keepalive, quiet past the idle timeout      | refused on its next request                                                                                                       |
+| Bytes counted to a disabled key from its open connection   | yes                                                                                                                               |
+| The backend's drop-connections action (by user or address) | no effect (it kills TCP sockets only)                                                                                             |
+| A restart of the node's core                               | cuts it within seconds; a REALITY member loses about 1 s, a Hysteria member up to about 30 s (the app waits for its idle timeout) |
+
+The idle timeout (`finalmask.quicParams.maxIdleTimeout`, 4 to 120 s, default 30) is not a
+lever: an app's keepalive resets it. There is no maximum connection lifetime.
+Device limits are unaffected either way: they apply when the app fetches its
+subscription, never to an open connection.
+
+**The revocation watch** (`convex/revocationWatches.ts`, rule in
+`lib/revocationWatch.ts`, cron `revocation-watch` every 5 minutes) closes the gap
+until the node core closes a removed user's connections itself
+(`REVOKE_REACHES_OPEN_SESSIONS` in `lib/backends/capabilities.ts`). It is **off by
+default** (Admin → Settings → Revoked Hysteria keys):
+
+- A disabled key is still metered, so it is the evidence. A Hysteria-placed key FCP
+  disables (the grace sweep, an admin disable) is watched. After a 3-minute settle time
+  (the backend collects node stats late) its counted bytes are the baseline. Growth of
+  `revocation.leakBytes` (256 KiB) or more past it means an open connection is serving
+  the key. The watch then asks for a **cut**: a forced restart of each node behind the
+  key's groups (`placementNodes`), sent through the operations ledger as a node restart
+  (`actorRun: cron:revocation-watch`), so it never runs into an operator's own op on
+  that node.
+- Many leaks on one node make one restart, and a node is restarted at most once per
+  `revocation.cutMinIntervalMinutes` (30). After a cut the key's watch starts over. A
+  key still moving bytes after 2 cuts is reported (`revocation.stuck`) and not cut
+  again. A watch ends when the key is gone, enabled again, or after
+  `revocation.watchDays` (14).
+- **An admin disable** also cuts at once, past the interval, when the key was online in
+  the last 15 minutes (`revocation.adminDisableCutsNow`, on).
+- **A delete waits.** A deleted key is not metered any more, so the tombstone sweep turns
+  a Hysteria key off first (`subscriptions.revokeDrainUntil`) and deletes it
+  `revocation.drainMinutes` (60) later, while the watch reads it. An idle free account's
+  reclaim deletes at once: its key was idle.
+- **Which keys:** a subscription remembers every Hysteria group it was ever placed in
+  (`subscriptions.hysteriaGroups`, set at issuance and on every in-place switch, never
+  cleared), so a key is watched by what it was issued into even after an operator changes
+  the mode's pool or the member switches away in place. A cut restarts only the nodes
+  behind those groups. A key revoked again starts a new window, baseline and cut count.
+- **Before every restart** each key waiting on the node is read again (all of them, page by
+  page): one the backend no longer knows or that is enabled again stops waiting, and a node
+  nobody still waits on is not restarted. An admin cut counts as one of the key's cuts and
+  is retried like any other. Removing a backend server purges its watches and cuts.
+- **Left open:** a connection that stays idle (keepalive only) through the whole drain and
+  carries traffic only after the delete is not seen. The fix for that is in the node
+  core: close a removed user's connections, which a later core release may do.
+
+Audit: `revocation.leak_seen`, `revocation.node_cut`, `revocation.node_cut_failed`,
+`revocation.stuck` (counts and reasons only).
+
 ## HWID / device limits
 
 Remnawave enforces per-user device limits by **device fingerprint (HWID)**, and
