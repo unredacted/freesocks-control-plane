@@ -156,6 +156,8 @@ accidentally regress it).
     keys have neither (`docs/edges.md` § The country view, "Keys by country"). These are counts
     only: a number per country in one counter row (`appState` `stats:countryKeys`), with no key,
     member, support ID or node beside it, and nothing on the page leads from a number to a key.
+    A country that is not on the list never gets a number of its own, on any route. A key whose
+    mode is no longer freedom-family is left out even while it still holds a country.
     A small number is still a number about few people, so the page is for admins only
     (`admin:servers:read`). Privacy-family keys carry no country and are in none of the numbers.
   - **With detection off** (the default) the CDN country is used for that one response's server

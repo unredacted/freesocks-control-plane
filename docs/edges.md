@@ -3503,7 +3503,7 @@ read it (with FCP's own test of the newest send per node, § "FCP's own test of 
 it lists, the backend nodes running its profile, its family (with the counts above and how many
 found names it may add: the usable ones of every scope of the family, the overview's number), its
 newest rollout (with its witness, the name whose one test proves the whole rollout on a node), and
-per protected node how many names its members get, the names a test there would add (any of them
+per protected node whether members are served through it now (`serving`), how many names its members get, the names a test there would add (any of them
 can be the one a test presents: a rollout without a witness needs one test per name), and the
 addresses a test link can go through (a current endpoint confirmation). A transport with no family
 lists the families with its target that no transport uses. It also says which switch holds a step
@@ -3557,9 +3557,11 @@ behind the port on the list's page), a line saying FCP hands the names to no mem
 status counts the names on the port, never "in use"; done. A send comes before a test: one test after it proves
 everything new.
 
-**A send that reaches no member.** FCP hands SNIs out only through fronted addresses, so behind a
-port with no fronted node (`transport.nodes` is empty: `reachesNobody`) a send restarts Xray on
-every node of the profile and changes nothing for any member. Every step that feeds such a port
+**A send that reaches no member.** FCP hands SNIs out only through fronted addresses in service,
+so behind a port where no node serves members (`reachesNobody`: `transport.nodes` is empty, or no
+node of it is `serving`, which is what delivery renders from: an enabled origin with a deployed,
+enabled listener) a send restarts Xray on every node of the profile and changes nothing for any
+member. The words say which: no node is fronted, or no fronted node is in service. Every step that feeds such a port
 says so: the "Add suggestions" and "Send to the node" steps add "No node behind this port is
 fronted, so no member would get them" and their button is no longer the primary one; the send
 dialog shows, beside the restart line, that the nodes restart and no member gets these SNIs
@@ -5731,7 +5733,10 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   keys with neither an answer nor a guess, and keys guessed in a country that is not on the list
   (only while a guess may be any country, § Latency over the whole path). The summary carries the
   two numbers on each country and the rest at its top (`CountryKeyCounts`, `CountryKeyTotals`);
-  the detail route carries its country's two numbers (`CountryViewKeys`).
+  the detail route carries its country's two numbers (`CountryViewKeys`), for a listed country
+  only: a country off the list gets no count of its own (the page says so), and what is guessed
+  there shows only in the summary's one number for countries off the list. With no country on
+  the list the summary still shows the numbers no country owns.
   - **Counts only.** The view returns numbers and one flag: no key, member, support ID or node.
     Nothing on the pages leads from a number to a key (docs/privacy.md, "Where a member connects
     from").
@@ -5752,8 +5757,10 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
     (`countryKeyCounts.reconcile`, cron `country-keys-reconcile` daily at 05:45 UTC after the
     guesses past their window were forgotten, and once after every deploy, scheduled by
     `seedCutover`) walks every key in pages of 400, judges each active key that holds no country,
-    and rebuilds every number exactly, so a missed bump heals there. The page says when it last
-    ran. Until the first recount has finished nothing is known: the view says `counted: false`
+    and rebuilds every number exactly, so a missed bump heals there. It judges the family of
+    every active key, with a country or without: a key whose mode left the freedom family keeps
+    its answer or guess until `memberCountry.cleanStoredCountries` reaches it, and is in none of
+    the numbers meanwhile. The page says when it last ran. Until the first recount has finished nothing is known: the view says `counted: false`
     and the pages give no number, never zero.
   - **What the number is not**, said on both pages: only keys of freedom modes are counted, a key
     of a privacy mode carries no country, and a member who never answered and was never guessed

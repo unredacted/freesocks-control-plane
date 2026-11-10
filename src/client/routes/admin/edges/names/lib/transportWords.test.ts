@@ -72,6 +72,7 @@ function transport(o: Partial<SniTransport> = {}, c: Partial<typeof counts> = {}
         relaySlug: 'node-one',
         nodeUuid: NODE,
         nodeName: 'node-one',
+        serving: true,
         inUse: 4,
         waitingTest: 0,
         pending: [],
@@ -158,6 +159,17 @@ describe('the next step', () => {
     expect(stepWords({ kind: 'add_suggestions', count: 3 }, bare)).toBe(
       'FCP found 3 more SNIs the cover site serves. No node behind this port is fronted, so no member would get them.',
     );
+    // A fronted node that is out of service (its origin disabled, its listener
+    // not deployed or switched off) hands SNIs to nobody either, and it says which.
+    const down = transport({}, { inUse: 0, toSend: 6 });
+    down.nodes[0]!.serving = false;
+    expect(reachesNobody(down)).toBe(true);
+    expect(stepWords({ kind: 'send' }, down)).toBe(
+      '6 checked SNIs are not on the node yet. No fronted node behind this port is in service, so no member would get them. A send only restarts Xray.',
+    );
+    // One node in service is enough for a send to reach members.
+    down.nodes.push({ ...down.nodes[0]!, relaySlug: 'node-two', serving: true });
+    expect(reachesNobody(down)).toBe(false);
     // With a fronted node behind the port the same steps promise nothing less.
     const fronted = transport({}, { toSend: 6 });
     expect(stepWords({ kind: 'send' }, fronted)).toBe('6 checked SNIs are not on the node yet.');
@@ -450,6 +462,15 @@ describe('what each action did, in words', () => {
     expect(sendReachWords({ ...plan, added: [], removed: ['a.example'] }, bare)).toBe(
       'All 2 nodes restart and nothing changes for members. No node behind this port is fronted, and SNIs reach members only through fronted addresses.',
     );
+    // Fronted, but no fronted node is in service: the same warning, with that reason.
+    const down = { ...two, nodes: two.nodes.map((n) => ({ ...n, serving: false })) };
+    expect(sendReachWords(plan, down)).toBe(
+      'All 2 nodes restart and no member gets these SNIs. No fronted node behind this port is in service, and SNIs reach members only through fronted addresses.',
+    );
+    expect(sendPlanWords(plan, down)).toHaveLength(2);
+    expect(sentWords(true, down)).toBe(
+      'Sent. No member gets these SNIs until a fronted node behind this port is in service.',
+    );
     // Nothing to send: nothing restarts, so nothing to warn about.
     expect(sendReachWords({ ...plan, changed: false }, bare)).toBeNull();
     expect(sentWords(true, bare)).toBe(
@@ -514,6 +535,7 @@ describe("FCP's own test of a send", () => {
           relaySlug: 'node-one',
           nodeUuid: NODE,
           nodeName: 'node-one',
+          serving: true,
           inUse: 4,
           waitingTest: 2,
           pending: ['new-1.example', 'new-2.example'],

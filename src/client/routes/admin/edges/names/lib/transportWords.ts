@@ -97,14 +97,24 @@ export function namesStep(
 }
 
 /**
- * No node behind the port is fronted. FCP hands SNIs out only through fronted
- * addresses, so nothing sent to such a port reaches a member: a send there
- * only restarts Xray.
+ * No node behind the port serves members through a fronted address: none is
+ * fronted, or every fronted one is out of service (its origin disabled, its
+ * listener not deployed or switched off). FCP hands SNIs out only through
+ * fronted addresses in service, so nothing sent to such a port reaches a
+ * member: a send there only restarts Xray.
  */
-export const reachesNobody = (t: Pick<SniTransport, 'nodes'>): boolean => t.nodes.length === 0;
+export const reachesNobody = (t: Pick<SniTransport, 'nodes'>): boolean =>
+  !t.nodes.some((n) => n.serving);
+
+/** Why: no node is fronted, or the fronted ones are out of service. */
+const nobodyWhy = (t: Pick<SniTransport, 'nodes'>): string =>
+  t.nodes.length === 0
+    ? 'No node behind this port is fronted'
+    : 'No fronted node behind this port is in service';
 
 /** Said wherever a step would put SNIs on a port that hands them to nobody. */
-const NOBODY = 'No node behind this port is fronted, so no member would get them.';
+const nobodyWords = (t: Pick<SniTransport, 'nodes'>): string =>
+  `${nobodyWhy(t)}, so no member would get them.`;
 
 /** The button for a step, or null when the step is waiting or done. */
 export const STEP_BUTTON: Partial<Record<NamesStep['kind'], string>> = {
@@ -181,9 +191,9 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
     case 'sending':
       return 'Sending the SNIs to the backend. The node restarts Xray once to take them.';
     case 'send':
-      return `${plural(t.list?.counts.toSend ?? 0, 'checked SNI')} ${(t.list?.counts.toSend ?? 0) === 1 ? 'is' : 'are'} not on the node yet.${shared}${reachesNobody(t) ? ` ${NOBODY} A send only restarts Xray.` : ''}`;
+      return `${plural(t.list?.counts.toSend ?? 0, 'checked SNI')} ${(t.list?.counts.toSend ?? 0) === 1 ? 'is' : 'are'} not on the node yet.${shared}${reachesNobody(t) ? ` ${nobodyWords(t)} A send only restarts Xray.` : ''}`;
     case 'send_again':
-      return `The last send did not go through. See Servers, Recent changes, then send again.${reachesNobody(t) ? ` ${NOBODY}` : ''}`;
+      return `The last send did not go through. See Servers, Recent changes, then send again.${reachesNobody(t) ? ` ${nobodyWords(t)}` : ''}`;
     case 'send_blocked':
       return step.why === 'backend_changes_off'
         ? 'Changes to the backend are off, so these SNIs cannot reach the node.'
@@ -199,7 +209,7 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
     case 'test_needs_address':
       return 'The node has the new SNIs, but none of its addresses has been tried yet. Try one on its Edges first. A test needs an address that already works.';
     case 'add_suggestions':
-      return `FCP found ${plural(step.count, 'more SNI')} the cover site serves.${reachesNobody(t) ? ` ${NOBODY}` : ''}`;
+      return `FCP found ${plural(step.count, 'more SNI')} the cover site serves.${reachesNobody(t) ? ` ${nobodyWords(t)}` : ''}`;
     case 'checking':
       return `Checking ${plural(step.count, 'SNI')} against the cover site. This takes a few minutes.`;
     case 'done':
@@ -280,17 +290,17 @@ export function sendReachWords(p: SniRolloutPlan, t: SniTransport): string | nul
   if (!p.changed || !reachesNobody(t)) return null;
   const nodes = t.profileNodes.length;
   const restart = nodes > 1 ? `All ${nodes} nodes restart` : 'The node restarts';
-  return p.added.length
-    ? `${restart} and no member gets these SNIs. No node behind this port is fronted, and SNIs reach members only through fronted addresses.`
-    : `${restart} and nothing changes for members. No node behind this port is fronted, and SNIs reach members only through fronted addresses.`;
+  const what = p.added.length ? 'no member gets these SNIs' : 'nothing changes for members';
+  return `${restart} and ${what}. ${nobodyWhy(t)}, and SNIs reach members only through fronted addresses.`;
 }
 
 /** The toast after a send went out (`rolloutId` null: the backend already had the SNIs). */
 export function sentWords(sent: boolean, t: SniTransport): string {
   if (!sent) return 'The backend already had exactly these SNIs.';
-  return reachesNobody(t)
+  if (!reachesNobody(t)) return 'Sent. Once the backend has the SNIs, test one on the node.';
+  return t.nodes.length === 0
     ? 'Sent. No member gets these SNIs until a node behind this port is fronted.'
-    : 'Sent. Once the backend has the SNIs, test one on the node.';
+    : 'Sent. No member gets these SNIs until a fronted node behind this port is in service.';
 }
 
 /**
@@ -484,7 +494,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     const c = t.list.counts;
     const first = t.nodes[0]?.nodeUuid ?? t.profileNodes[0]?.nodeUuid ?? undefined;
     // A step that would put SNIs on a port handing them to nobody says so.
-    const nobody = reachesNobody(t) ? ` ${NOBODY}` : '';
+    const nobody = reachesNobody(t) ? ` ${nobodyWords(t)}` : '';
     if (c.toSend > 0 && (!view.switches.backendChanges || !view.switches.backendSetUp))
       out.push({
         key: `names-blocked:${t.transportUuid}`,

@@ -158,13 +158,14 @@
         </li>
       {/each}
     </ul>
-    <section class="text-muted-foreground mt-4 space-y-1 text-sm" aria-label="Keys by country">
-      <h2 class="text-foreground font-medium">Keys by country</h2>
-      {#each keysNotes(summary.data.keys, now) as line (line)}
-        <p class="tabular-nums">{line}</p>
-      {/each}
-    </section>
   {/if}
+  <!-- Whatever the list holds: the opt-out and the keys with neither are no country's. -->
+  <section class="text-muted-foreground mt-4 space-y-1 text-sm" aria-label="Keys by country">
+    <h2 class="text-foreground font-medium">Keys by country</h2>
+    {#each keysNotes(summary.data.keys, now) as line (line)}
+      <p class="tabular-nums">{line}</p>
+    {/each}
+  </section>
 {/if}
 
 <div class="mt-8 space-y-6">

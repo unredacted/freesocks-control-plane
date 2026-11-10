@@ -9,7 +9,9 @@
  * concurrent writes), which heals any missed bump, and it is the only writer
  * of `none`: the active Freedom-family keys with no answer and no guess. A
  * key's family is not on its row, so that number is judged here, once a day
- * and once after every deploy.
+ * and once after every deploy. The recount judges the family of every active
+ * key, so a key that is no longer of a freedom mode but still holds a country
+ * (until the clean-up clears it) is counted nowhere.
  *
  * Nothing here returns or logs anything about a key: numbers only.
  */
@@ -34,8 +36,8 @@ import {
 } from './lib/statusCounters';
 
 /**
- * Rows per page. Judging a key reads its member (one read per active key
- * without a country); the rest of what a family needs is read once per page.
+ * Rows per page. Judging a key reads its member (one read per active key);
+ * the rest of what a family needs is read once per page.
  */
 const PAGE = 400;
 
@@ -53,11 +55,13 @@ export const scanPage = internalMutation({
       COUNTRY_KEY_COUNTER,
       async (row): Promise<CountryKeyCounts> => {
         if (row.state !== 'active') return {};
-        const bucket = countryBucket(row);
-        if (bucket) return { [bucket]: 1 };
-        // Neither an answer nor a guess: counted only when it is a Freedom key.
+        // Only a Freedom key is counted, with a country or without. A key
+        // whose mode left the freedom family keeps its answer or guess until
+        // the clean-up reaches it (memberCountry.cleanStoredCountries): it is
+        // in none of the numbers meanwhile.
         const family = await memberFamilyOf(ctx.db, row, undefined, reads);
-        return family === 'freedom' ? { none: 1 } : {};
+        if (family !== 'freedom') return {};
+        return { [countryBucket(row) ?? 'none']: 1 };
       },
       pageSize ?? PAGE,
     );

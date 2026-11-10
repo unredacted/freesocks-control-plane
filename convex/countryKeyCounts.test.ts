@@ -322,6 +322,39 @@ describe('the daily recount', () => {
     expect((await numbers(t)).IR).toEqual({ answered: 2, guessed: 0 });
   });
 
+  test('a key that is no longer of a freedom mode is in no number, though it still holds a country', async () => {
+    const t = await world();
+    const stays = await member(t, { fields: { sniRegion: 'IR' } });
+    const moved = await member(t, { fields: { sniRegion: 'IR' } });
+    const guessed = await member(t, {
+      fields: { regionSeenCountry: 'RU', regionSeenAt: Date.now() },
+    });
+    // Their mode left the freedom family with no write to their keys (an admin
+    // change to the mode): the rows keep the country until the clean-up.
+    await t.run(async (ctx) => {
+      for (const m of [moved, guessed]) {
+        await ctx.db.patch(m.userId, { connectionModeId: 'privacy-reality' });
+        await ctx.db.patch(m.subId, { backendPlacement: PRIVACY_SQUAD });
+      }
+    });
+    await recount(t);
+    expect(await numbers(t)).toEqual({
+      IR: { answered: 1, guessed: 0 },
+      RU: NONE,
+      optOut: 0,
+      neither: 0,
+      other: 0,
+    });
+    expect((await t.run((ctx) => ctx.db.get(moved.subId)))!.sniRegion).toBe('IR');
+    // The clean-up then clears them; nothing goes below zero, and the key that stayed stays counted.
+    await t.mutation(internal.memberCountry.cleanStoredCountries, {});
+    await t.finishInProgressScheduledFunctions();
+    expect((await t.run((ctx) => ctx.db.get(moved.subId)))!.sniRegion).toBeUndefined();
+    await recount(t);
+    expect((await numbers(t)).IR).toEqual({ answered: 1, guessed: 0 });
+    expect((await t.run((ctx) => ctx.db.get(stays.subId)))!.sniRegion).toBe('IR');
+  });
+
   test('repairs drift: a number that went wrong, and a write that bumped nothing', async () => {
     const t = await world();
     const a = await member(t, { fields: { sniRegion: 'IR' } });
@@ -420,6 +453,23 @@ describe('what the Countries pages read', () => {
       neither: 0,
       otherGuessed: 0,
     });
+    // A country off the list has no count of its own, whatever is guessed there.
+    await t.run(async (ctx) => {
+      const row = (await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', COUNTRY_KEY_COUNTS_KEY))
+        .unique())!;
+      const state = JSON.parse(row.value) as Record<string, unknown>;
+      await ctx.db.patch(row._id, { value: JSON.stringify({ ...state, 'g:DE': 5 }) });
+    });
+    expect((await t.query(internal.edgeCountryView.country, { country: 'DE' })).keys).toEqual({
+      counted: true,
+      countedAt: expect.any(Number),
+      answered: 0,
+      guessed: 0,
+    });
+    expect((await t.query(internal.edgeCountryView.summaryHead, {})).keys.otherGuessed).toBe(5);
+    await recount(t);
     const page = await t.query(internal.edgeCountryView.country, { country: 'IR' });
     expect(page.keys).toEqual({
       counted: true,

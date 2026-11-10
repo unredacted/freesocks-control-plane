@@ -726,6 +726,12 @@ export const SniTransportNode = z.object({
   relaySlug: z.string(),
   nodeUuid: z.string().nullable(),
   nodeName: z.string(),
+  /**
+   * Members are served through it now: its origin is enabled and its listener
+   * deployed and enabled (what delivery renders from). A node that is not
+   * hands its SNIs to nobody.
+   */
+  serving: z.boolean().default(true),
   /** Usable names its members are handed. */
   inUse: z.number(),
   /** Usable names on the backend in the newest confirmed rollout, not handed out here yet. */

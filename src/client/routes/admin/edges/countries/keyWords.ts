@@ -10,6 +10,7 @@
  *   keysLine      one country's count, for its row and its page
  *   keysNotes     under the countries: the opt-out, keys with neither, what is not counted
  *   KEYS_SCOPE    the one-line reminder of what the count leaves out
+ *   KEYS_UNLISTED / KEYS_NOT_COUNTED   why a page gives no number
  */
 import type { CountryKeyCounts, CountryKeyTotals } from '@shared/contracts/edges';
 import { relativeTime } from '../lib/time';
@@ -19,6 +20,14 @@ const num = (n: number) => n.toLocaleString('en-US');
 /** What a count of keys by country leaves out, in one line. */
 export const KEYS_SCOPE =
   'Only keys of freedom modes are counted. A key of a privacy mode carries no country, and a member who never answered and was never guessed is counted for no country.';
+
+/** A country that is not on the list has no count of its own. */
+export const KEYS_UNLISTED =
+  'Keys are counted per country only for countries on the censored-country list.';
+
+/** Before the first count has finished: no number, never zero. */
+export const KEYS_NOT_COUNTED =
+  'Keys by country are not counted yet. The first count runs a few minutes after an update.';
 
 /**
  * One country's count: "212 keys are set to it: 180 by the member's own
@@ -45,11 +54,7 @@ export function keysLine(
  * count. Before the first count: that it has not run yet.
  */
 export function keysNotes(totals: CountryKeyTotals, now: number): string[] {
-  if (!totals.counted)
-    return [
-      'Keys by country are not counted yet. The first count runs a few minutes after an update.',
-      KEYS_SCOPE,
-    ];
+  if (!totals.counted) return [KEYS_NOT_COUNTED, KEYS_SCOPE];
   const out: string[] = [];
   out.push(
     `${num(totals.optOut)} ${totals.optOut === 1 ? 'key has' : 'keys have'} the opt-out: the member chose not to give a country.`,

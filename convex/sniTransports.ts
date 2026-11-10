@@ -207,6 +207,9 @@ export const status = internalQuery({
             relaySlug: relay.slug,
             nodeUuid: node?.nodeUuid ?? origin?.nodeUuid ?? null,
             nodeName: node?.name ?? origin?.nodeName ?? relay.slug,
+            // What delivery renders from (edgeRender.ts): an enabled origin and a
+            // deployed, enabled listener. Anything else hands no SNI to anyone.
+            serving: relay.enabled && listener.deployed && listener.enabled,
             ...(family
               ? nodeCounts(names, provable, handedOut[k]!)
               : { inUse: 0, waitingTest: 0, pending: [] }),

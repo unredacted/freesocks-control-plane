@@ -893,7 +893,9 @@ export const country = internalQuery({
       // (docs/edges.md "Exit location by country"); counts no member.
       exits: await countryExitLabels(ctx.db, code),
       // How many keys are set to this country (docs/edges.md "Keys by country").
-      keys: countryKeysOf(await readCountryKeys(ctx.db, [code]), code),
+      // Per-country numbers are for listed countries only: a country off the
+      // list gets none (its guesses are in the summary's one "other" number).
+      keys: countryKeysOf(await readCountryKeys(ctx.db, listed ? [code] : []), code),
       // How the newest name-check batch from here found its Globalping probes.
       namePool: currentNamePool(await readNamePool(ctx.db, code), {
         at: now,

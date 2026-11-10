@@ -309,6 +309,26 @@ describe('the transports of a backend', () => {
   });
 });
 
+describe('a node that serves members', () => {
+  test('only an enabled origin with a deployed, enabled listener hands SNIs out', async () => {
+    const { t, relayId, listenerId, view } = await seed();
+    const serving = async () => (await view()).transports[0]!.nodes.map((n) => n.serving);
+    expect(await serving()).toEqual([true]);
+    // Each of these leaves the node listed (it is still fronted) and out of service.
+    await t.run((ctx) => ctx.db.patch(relayId, { enabled: false }));
+    expect(await serving()).toEqual([false]);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(relayId, { enabled: true });
+      await ctx.db.patch(listenerId, { enabled: false });
+    });
+    expect(await serving()).toEqual([false]);
+    await t.run((ctx) => ctx.db.patch(listenerId, { enabled: true, deployed: false }));
+    expect(await serving()).toEqual([false]);
+    await t.run((ctx) => ctx.db.patch(listenerId, { deployed: true }));
+    expect(await serving()).toEqual([true]);
+  });
+});
+
 describe('refusals and edges of the view', () => {
   test('a dry run on a transport that is not REALITY is refused by name', async () => {
     const { call } = await seed();

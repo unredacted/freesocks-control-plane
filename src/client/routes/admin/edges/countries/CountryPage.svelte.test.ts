@@ -160,6 +160,17 @@ describe('CountryPage', () => {
     expect(card.querySelector('a, button')).toBeNull();
   });
 
+  test('a country off the list gets no count of its own', () => {
+    open(
+      '/admin/servers/countries/AA',
+      view({ listed: null, keys: { counted: true, countedAt: 1, answered: 0, guessed: 0 } }),
+    );
+    expect(text()).toContain(
+      'Keys are counted per country only for countries on the censored-country list.',
+    );
+    expect(text()).not.toContain('No key is set to this country.');
+  });
+
   test('before the first count it says so, never zero', () => {
     open(
       '/admin/servers/countries/AA',

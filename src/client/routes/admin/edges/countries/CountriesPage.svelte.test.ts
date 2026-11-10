@@ -143,6 +143,23 @@ describe('CountriesPage', () => {
     expect(below.querySelector('a, button')).toBeNull();
   });
 
+  test('with no country on the list the keys no country owns are still shown', () => {
+    summary.keys = {
+      counted: true,
+      countedAt: Date.now(),
+      optOut: 3,
+      neither: 12,
+      otherGuessed: 0,
+    };
+    app = mountWithQuery(new QueryClient(), CountriesPage, {});
+    flushSync();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('No country is on the censored-country list.');
+    const below = document.querySelector('section[aria-label="Keys by country"]')!;
+    expect(below.textContent).toContain('3 keys have the opt-out');
+    expect(below.textContent).toContain('12 keys of freedom modes have no answer and no guess.');
+  });
+
   test('before the first count a row gives no number, and the page says why', () => {
     summary.countries = [country('AA', { answered: 0, guessed: 0 })];
     app = mountWithQuery(new QueryClient(), CountriesPage, {});

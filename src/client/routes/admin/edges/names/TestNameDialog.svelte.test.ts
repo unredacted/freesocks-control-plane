@@ -21,6 +21,7 @@ const node: SniTransportNode = {
   relaySlug: 'relay-a',
   nodeUuid: 'n1',
   nodeName: 'Node A',
+  serving: true,
   inUse: 3,
   waitingTest: 2,
   pending: ['a.site.example', 'b.site.example'],

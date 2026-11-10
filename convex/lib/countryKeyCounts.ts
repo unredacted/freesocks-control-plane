@@ -14,8 +14,9 @@
  *   none     a Freedom-family key with neither (counted once a day, below)
  *
  * Only keys of a Freedom-family mode carry a country at all
- * (lib/memberCountry.ts), so the first three count Freedom keys by
- * construction. They move in the transaction that changes the row
+ * (lib/memberCountry.ts), so the first three count Freedom keys (a key whose
+ * mode left the freedom family may hold one until the clean-up clears it; the
+ * recount leaves such a key out). They move in the transaction that changes the row
  * (`bumpCountryKeys`), from a pure function of the row (`countryBucket`).
  * `none` cannot: which family a key is in is read from the mode pools, its
  * node's mode and its member's stored mode, none of which is on the row, so a

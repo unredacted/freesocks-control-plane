@@ -48,7 +48,7 @@
     type CountrySection,
   } from './sections';
   import { countryLabel, coverageLines, coverageNote, switchNotes, totalsLine } from './words';
-  import { KEYS_SCOPE, keysLine } from './keyWords';
+  import { KEYS_NOT_COUNTED, KEYS_SCOPE, KEYS_UNLISTED, keysLine } from './keyWords';
 
   interface Props {
     code: string;
@@ -134,8 +134,9 @@
     <Card class="mb-6">
       <CardContent class="space-y-1 py-4 text-sm" aria-label="Keys set to this country">
         <p class="font-medium tabular-nums">
-          {keysLine(v.keys, v.keys.counted, 'this country') ??
-            'Keys by country are not counted yet. The first count runs a few minutes after an update.'}
+          {v.listed
+            ? (keysLine(v.keys, v.keys.counted, 'this country') ?? KEYS_NOT_COUNTED)
+            : KEYS_UNLISTED}
         </p>
         <p class="text-muted-foreground">{KEYS_SCOPE}</p>
       </CardContent>

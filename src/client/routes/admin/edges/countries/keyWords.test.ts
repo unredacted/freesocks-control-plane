@@ -3,7 +3,7 @@
  * and what the count is not. Plain words, no em-dashes, no key or member.
  */
 import { describe, expect, test } from 'vitest';
-import { KEYS_SCOPE, keysLine, keysNotes } from './keyWords';
+import { KEYS_NOT_COUNTED, KEYS_SCOPE, KEYS_UNLISTED, keysLine, keysNotes } from './keyWords';
 
 const NOW = Date.UTC(2026, 10, 10, 12);
 
@@ -61,10 +61,13 @@ describe('the numbers no country owns', () => {
   test('before the first count it says so, and still says what is not counted', () => {
     expect(
       keysNotes({ counted: false, countedAt: null, optOut: 0, neither: 0, otherGuessed: 0 }, NOW),
-    ).toEqual([
+    ).toEqual([KEYS_NOT_COUNTED, KEYS_SCOPE]);
+    expect(KEYS_NOT_COUNTED).toBe(
       'Keys by country are not counted yet. The first count runs a few minutes after an update.',
-      KEYS_SCOPE,
-    ]);
+    );
+    expect(KEYS_UNLISTED).toBe(
+      'Keys are counted per country only for countries on the censored-country list.',
+    );
   });
 
   test('plain words: no em-dash, no code, nothing about a member or a key by name', () => {
