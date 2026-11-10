@@ -284,6 +284,51 @@ describe('an allowlist that prefers its names', () => {
     expect(await names()).toEqual(PLAIN);
   });
 
+  test('a family removed while its name is still on a listener takes the copy with it', async () => {
+    const { t, create, paste, approve, settle, names, epoch, preferOn, call } = await seed();
+    const id = await create();
+    await paste(id, V1);
+    await approve(id);
+    await preferOn();
+    await call('PATCH', `lists/${id}`, { preferNames: true });
+    await settle();
+    expect(await names()).toEqual(LISTED);
+    const e = await epoch();
+    const passes = async () =>
+      (await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).filter((f) =>
+        f.name.includes('applyPreference'),
+      ).length;
+    const before = await passes();
+    await t.mutation(internal.sniFamilies.remove, { slug: 'fam-a' });
+    // The removal asks for a pass of its own: no list or setting moved.
+    expect(await passes()).toBe(before + 1);
+    expect(await t.mutation(internal.countryListFacts.applyPreference, {})).toEqual({
+      changed: 1,
+      switched: 0,
+      origins: 1,
+    });
+    expect(await names()).toEqual(PLAIN);
+    expect(await epoch()).toBe(e + 1);
+  });
+
+  test('one pass settles many listeners of an origin, and moves the origin once', async () => {
+    const { t, create, paste, approve, settle, preferOn, call } = await seed();
+    const id = await create();
+    await paste(id, V1);
+    await approve(id);
+    await preferOn();
+    await call('PATCH', `lists/${id}`, { preferNames: true });
+    // Forty more listeners carrying the name, as rows.
+    await t.run(async (ctx) => {
+      const l = (await ctx.db.query('relayListeners').first())!;
+      const { _id, _creationTime, ...row } = l;
+      for (let i = 0; i < 40; i++)
+        await ctx.db.insert('relayListeners', { ...row, listenerKey: `x${i}` });
+    });
+    expect(await settle()).toEqual({ changed: 41, switched: 41, origins: 1 });
+    expect(await settle()).toEqual({ changed: 0, switched: 0, origins: 0 });
+  });
+
   test('only a list of what works can prefer its names, and one that becomes a block list stops', async () => {
     const { t, call, create } = await seed();
     const block = await create('blocklist');

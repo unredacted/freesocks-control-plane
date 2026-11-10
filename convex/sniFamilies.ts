@@ -667,6 +667,11 @@ export const remove = internalMutation({
     else await ctx.db.delete(f._id);
     // Names found for it go with it (docs/edges.md "Finding names").
     await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, { familyId: f._id });
+    // A name left on a listener (unbinding leaves names on origins) lost the
+    // stored list facts its allowlist preference was copied from: the copy goes
+    // too (docs/edges.md "Names on a country's allowlist").
+    if (names.some((n) => n.status !== 'burned' && (n.onLists?.length ?? 0) > 0))
+      await ctx.scheduler.runAfter(0, internal.countryListFacts.applyPreference, {});
     await audit(ctx, 'edge.sni.family.delete', a.actorAdminId, {
       slug: f.slug,
       nameCount: names.length,

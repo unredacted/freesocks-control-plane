@@ -40,7 +40,7 @@ export async function preferContext(
 ): Promise<PreferContext | null> {
   const cfg = await resolveEdgeConfig(db);
   if (!cfg.lists.preferNames) return null;
-  const lists = (await evidenceLists(db, now)).filter(
+  const lists = (await evidenceLists(db, now, cfg)).filter(
     (a) => a.list.regime === 'allowlist' && a.list.preferNames === true,
   );
   if (lists.length === 0) return null;
@@ -97,9 +97,11 @@ export async function marksOfName(
 export async function withCountryMarks(
   db: DatabaseReader,
   names: readonly ListenerName[],
+  /** What the allowlists prefer, when the caller read it already (one read for many listeners). */
+  known?: PreferContext | null,
 ): Promise<ListenerName[]> {
   const out: ListenerName[] = [];
-  const prefer = await preferContext(db, Date.now());
+  const prefer = known === undefined ? await preferContext(db, Date.now()) : known;
   for (const n of names) {
     if (n.status !== 'active') {
       out.push(n);
@@ -185,10 +187,13 @@ export async function reconcileListenerMarks(
   const origins = new Set<Id<'relays'>>();
   let changed = 0;
   let switched = 0;
+  // Read once for every listener: the settings and the lists are many index
+  // reads, and one mutation may make only so many.
+  const prefer = await preferContext(ctx.db, now);
   // Small operator table (as `writeCountryMarks` reads it).
   for (const l of await ctx.db.query('relayListeners').collect()) {
     if (l.retired || !l.tlsNames?.length) continue;
-    const next = await withCountryMarks(ctx.db, l.tlsNames);
+    const next = await withCountryMarks(ctx.db, l.tlsNames, prefer);
     const pick = protocolUsesSni(l) ? pickForJudgedNames(l.sniPick, next) : l.sniPick;
     const namesMoved = !sameCountryMarks(l.tlsNames, next);
     if (!namesMoved && pick === l.sniPick) continue;

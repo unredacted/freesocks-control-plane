@@ -147,8 +147,13 @@ export async function lookupEntries(
 }
 
 /** The lists evidence may read now: enabled, fresh, with a version in use; none while switched off. */
-export async function evidenceLists(db: DatabaseReader, now: number): Promise<Active[]> {
-  const cfg = await resolveEdgeConfig(db);
+export async function evidenceLists(
+  db: DatabaseReader,
+  now: number,
+  /** The edge config, when the caller has read it already. */
+  known?: Awaited<ReturnType<typeof resolveEdgeConfig>>,
+): Promise<Active[]> {
+  const cfg = known ?? (await resolveEdgeConfig(db));
   if (!cfg.lists.enabled) return [];
   return (await activeLists(db, cfg.lists.staleDays, now)).filter((a) => a.list.enabled && a.fresh);
 }
