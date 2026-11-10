@@ -3488,10 +3488,12 @@ the family page, so every count agrees): `in_use` (handed to the members of ever
 transport), `waiting_test` (in the newest rollout the backend was seen to hold, not handed out on
 some node yet: a test there proves it), `to_send` (qualified, the family bound, not on the backend:
 the next rollout adds it), `idle` (qualified but on no way to members now: the family is bound to
-nothing, the backend lists it outside any confirmed rollout, or no node is protected; the next
-rollout covers it), `checking` (waiting for its first qualification), `failing` (its last check
-failed, or it is suspended), `off` (retired or burned). A node is a protected listener of the
-transport: names reach members only through an origin's addresses (§ Rollout and acceptance). A
+nothing, the backend lists it outside any confirmed rollout so the next rollout covers it, or no
+node is protected), `checking` (waiting for its first qualification), `failing` (its last check
+failed, or it is suspended), `off` (retired or burned). Beside the state every name says whether a
+transport lists it on the backend now (`onNode`): an `idle` name that is on the node behind a port
+with no protected node was sent already, and no member gets it. A node is a protected listener of
+the transport: names reach members only through an origin's addresses (§ Rollout and acceptance). A
 family bound to several transports is judged per transport (its own backend, rollout and nodes),
 and a name shows the step still needed somewhere (a test, then a send), else in use, with the
 nodes of every transport counted together.
@@ -3533,8 +3535,8 @@ requireH2?, nodeUuid?}`**, throttled like a provider call:
 Refused while server names are off (`edge.sni.disabled`), for a transport that already has a
 family (`conflict`), and by every check of a bind. Audit `edge.sni.transport.manage` (slugs,
 counts, whether a family was created, whether the place was set). `GET sni/families/{slug}`
-gives every name its `delivery` (state, on how many nodes it is in use, of how many) and the
-family's `suggestions`.
+gives every name its `delivery` (state, on how many nodes it is in use, of how many, and whether
+it is on the node) and the family's `suggestions`.
 
 **On a node's page** (Servers -> a node -> Transports; `names/TransportNames.svelte`, wording in
 `names/lib/transportWords.ts`), each REALITY transport shows its names the way the node's edges
@@ -3553,13 +3555,25 @@ names the cover site serves, best first, grouped by site, a one-line reason each
 Details); names being checked; with no protected node (this node on its page, or any node
 behind the port on the list's page), a line saying FCP hands the names to no member yet and the
 status counts the names on the port, never "in use"; done. A send comes before a test: one test after it proves
-everything new. "More" holds the SNI list, looking for more SNIs (the cover site's certificate
+everything new.
+
+**A send that reaches no member.** FCP hands SNIs out only through fronted addresses, so behind a
+port with no fronted node (`transport.nodes` is empty: `reachesNobody`) a send restarts Xray on
+every node of the profile and changes nothing for any member. Every step that feeds such a port
+says so: the "Add suggestions" and "Send to the node" steps add "No node behind this port is
+fronted, so no member would get them" and their button is no longer the primary one; the send
+dialog shows, beside the restart line, that the nodes restart and no member gets these SNIs
+(`sendReachWords`), drops the "members get them once a test passes" line (there is no test to
+pass) and offers "Send anyway" as a plain button, so the send stays possible for an operator who
+is about to front a node; the toast afterwards says no member gets them until a node behind the
+port is fronted. On the list's page a row still waiting to be sent says the same. "More" holds the SNI list, looking for more SNIs (the cover site's certificate
 and certificate logs), and Stop managing (an unbind: the names stay); a transport FCP does not
 manage offers editing its names by hand there instead.
 
 Servers -> Nodes, "Action needed", adds one line per transport that waits for someone: checked names
 a switch keeps from the backend (which switch), checked names to send, a node whose names wait for
-a test, suggestions to add, names the cover site no longer serves.
+a test, suggestions to add, names the cover site no longer serves. A line about sending or adding
+SNIs for a port with no fronted node says that no member would get them.
 
 ### When a name leaves
 
@@ -4647,8 +4661,11 @@ list).
   **one list** of its names and the names found for it (`names/lib/listWords.ts`), each with one
   state on the way to members: Suggested (with Add and Ignore on the row), Being checked, Waiting
   to be sent, Waiting for a test, In use (on how many nodes), and off the way Failing, Retired,
-  Burned, Ignored (Stop ignoring), Not usable (Check again). Each row says its state and why in one
-  sentence; what was measured (the check, the handshakes, timing, countries, OONI, sources, the
+  Burned, Ignored (Stop ignoring), Not usable (Check again), and On the node: an SNI a send already
+  put on the port that no member gets, because no node behind its port is fronted (or, behind a
+  fronted node, because no send FCP saw through carries it yet). Such a row never reads "goes to
+  the node with the next send": that line is only for an SNI that is not on the node. Each row says
+  its state and why in one sentence; what was measured (the check, the handshakes, timing, countries, OONI, sources, the
   score) is under Details. Three filters: Action needed (suggestions, waiting for a test or a send,
   failing, and any name member reports or the checks from inside a country single out), In use,
   All. Picked names of the list can be checked again, retired (confirmed: it states the name drain,
@@ -5706,9 +5723,47 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   an unapplied suggestion counts as not judged; each name once), nodes whose every published
   address is blocked there (`atRisk`), the newest piece of evidence. The summary adds the worst
   share of members holding a blocked address over every transport.
+- **Keys by country** (`keys`; `convex/lib/countryKeyCounts.ts`, recount in
+  `convex/countryKeyCounts.ts`): how many keys are set to each listed country, to answer "how
+  many members connect from there" before buying addresses for it. Two numbers per country: keys
+  whose member answered it (`subscriptions.sniRegion`) and keys with no answer whose stored guess
+  is it (`regionSeenCountry`); and three no country owns: keys with the opt-out, freedom-family
+  keys with neither an answer nor a guess, and keys guessed in a country that is not on the list
+  (only while a guess may be any country, § Latency over the whole path). The summary carries the
+  two numbers on each country and the rest at its top (`CountryKeyCounts`, `CountryKeyTotals`);
+  the detail route carries its country's two numbers (`CountryViewKeys`).
+  - **Counts only.** The view returns numbers and one flag: no key, member, support ID or node.
+    Nothing on the pages leads from a number to a key (docs/privacy.md, "Where a member connects
+    from").
+  - **A maintained counter, never a read of the keys.** `subscriptions` grows with members, so no
+    query scans it. The numbers live in one `appState` row (`stats:countryKeys`, the
+    `lib/statusCounters.ts` protocol with open keys: `c:<CC>` an answer, `g:<CC>` a guess, `none`).
+    A key is counted once, by its answer, else its guess, and only while it is active
+    (`countryBucket`, a pure function of the row). The row is bumped in the same transaction as
+    every write that changes that: `memberCountry.setStoredCountry` (an answer, a change, a
+    clear, the opt-out, a guess set, moved or forgotten, a switch into a privacy mode), a key
+    issued with an answer or a carried country, a key replaced (its grace keeps the fields, the
+    new key is the one counted), a key deleted, and a purged account's keys. A leased sweep over
+    the two indexes was the alternative; it was not chosen because it reads every key holding a
+    country on each run and still cannot tell how many freedom keys hold none.
+  - **Freedom keys with neither are counted once a day.** Which family a key belongs to is not
+    on its row (the mode pools, its node's mode and its member's stored mode decide it), so a key
+    can change family without a write to it and no bump can keep that number. The recount
+    (`countryKeyCounts.reconcile`, cron `country-keys-reconcile` daily at 05:45 UTC after the
+    guesses past their window were forgotten, and once after every deploy, scheduled by
+    `seedCutover`) walks every key in pages of 400, judges each active key that holds no country,
+    and rebuilds every number exactly, so a missed bump heals there. The page says when it last
+    ran. Until the first recount has finished nothing is known: the view says `counted: false`
+    and the pages give no number, never zero.
+  - **What the number is not**, said on both pages: only keys of freedom modes are counted, a key
+    of a privacy mode carries no country, and a member who never answered and was never guessed
+    is counted for no country. A guess is a guess: with detection off there are none, and a
+    member behind a VPN is guessed where the VPN is.
 
 **The pages** (`src/client/routes/admin/edges/countries/`). The Countries tab
-(`/admin/servers/countries`, sub-views Countries and Lists) lists every censored country, then
+(`/admin/servers/countries`, sub-views Countries and Lists) lists every censored country, each
+with how many keys are set to it, then one "Keys by country" paragraph (the opt-out, freedom keys
+with neither and when that was last counted, and what the counts leave out; `keyWords.ts`), then
 edits the list itself (§ The censored-country list: "Add a country", order, the two switches per
 country, one Save), under one line saying the list also drives the sign-up "Where are you
 connecting from?" choice, the status page matrix and the mode suggestion. Below it the
@@ -5721,7 +5776,9 @@ moved from Admin -> Settings, which keeps link cards in their place.
 One country (`/admin/servers/countries/<CC>[?section=]`) shows one section at a time, picked by a
 section bar (`sections.ts`; Summary when `?section=` is missing or unknown):
 
-- **Summary**: the totals, what is switched off, and one line per section linking to it.
+- **Summary**: the totals, what is switched off, how many keys are set to the country (by the
+  member's own answer and by FCP's guess, with what the count leaves out), and one line per
+  section linking to it.
 - **Addresses for this country**: the locations set for it (with "Add a location for this
   country", which opens Providers), then every origin's transports with what a member here is
   handed and each address with its state, why and evidence. The per-country edges design's card

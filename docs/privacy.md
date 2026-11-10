@@ -150,6 +150,14 @@ accidentally regress it).
   - **Shown** to the member ("We think you're connecting from Iran. Change", or their own
     answer) and to admins per member (Admin -> Users -> Live details: country, choice or guess,
     first and last seen, the last delivery).
+  - **Counted per country for admins.** Admin -> Servers -> Countries shows, for each country on
+    the censored-country list, how many keys are set to it by the member's own answer and how
+    many by the stored guess, plus how many keys have the opt-out and how many freedom-family
+    keys have neither (`docs/edges.md` § The country view, "Keys by country"). These are counts
+    only: a number per country in one counter row (`appState` `stats:countryKeys`), with no key,
+    member, support ID or node beside it, and nothing on the page leads from a number to a key.
+    A small number is still a number about few people, so the page is for admins only
+    (`admin:servers:read`). Privacy-family keys carry no country and are in none of the numbers.
   - **With detection off** (the default) the CDN country is used for that one response's server
     names and **kept nowhere**: the body is not written to the content cache, is served
     `private, no-store`, is not part of the render snapshot, and never orders the member's

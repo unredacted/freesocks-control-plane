@@ -627,6 +627,8 @@ Convex runs these natively (no Workers triggers, no node-cron):
   rewrite or flag the ones that do not serve what FCP wrote (`docs/mirrors.md`).
 - `mirror-copies-reconcile` (daily 04:20 UTC): rebuild the `stats:mirrorCopies` counter and drop
   orphaned ledger rows.
+- `country-keys-reconcile` (daily 05:45 UTC): recount the `stats:countryKeys` counter (how many
+  keys are set to each country, Admin -> Servers -> Countries; `docs/edges.md` § The country view).
 - `edge-reconcile` (5 min): edges — re-kick stale rotations, settle edges with an
   unknown provider outcome by discovery, refresh provider health, drain → destroy with a
   claimed reverse-order ledger walk, pool upkeep (config-gated), finish origin deletes.
@@ -742,7 +744,8 @@ Patterns that are safe: `take(page)` + drain-chain (the sweeps), `paginate()` (a
 reconciles), `first()` on a compound index (`assertBackendServerUnused`), or a **maintained
 counter** in `appState` bumped at every transition + a daily paginated reconcile
 (`stats:userCounts`, `stats:sessionCounts`, `stats:mirrorCopies` in
-`convex/lib/statusCounters.ts`). `mirrorCopies` grows with the mirrors members ask for: paged by
+`convex/lib/statusCounters.ts`; `stats:countryKeys`, keys by country with one count per country,
+in `convex/lib/countryKeyCounts.ts`). `mirrorCopies` grows with the mirrors members ask for: paged by
 the passes, attention figures from bounded index reads (`take(501)`), never collected. Both reconciles
 share one protocol that is exact under concurrent writes: `begin` pins the scan boundary at
 the newest visible `_creationTime`; each page is read and its `scanPos` recorded in the same
