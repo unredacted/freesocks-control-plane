@@ -51,7 +51,7 @@ import {
   auditPickForMarks,
   namesJudged,
   pickForJudgedNames,
-  sameCountryMarks,
+  reconcileListenerMarks,
   withCountryMarks,
 } from './lib/edges/sni/marks';
 import { listenerNetworkOf } from './lib/edges/networkScope';
@@ -993,33 +993,7 @@ export const setSniPick = internalMutation({
 export const reconcileCountryMarks = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const now = Date.now();
-    const origins = new Set<Id<'relays'>>();
-    let changed = 0;
-    let switched = 0;
-    // Small operator table (as `writeCountryMarks` reads it).
-    for (const l of await ctx.db.query('relayListeners').collect()) {
-      if (l.retired || !l.tlsNames?.length) continue;
-      const next = await withCountryMarks(ctx.db, l.tlsNames);
-      const pick = protocolUsesSni(l) ? pickForJudgedNames(l.sniPick, next) : l.sniPick;
-      const namesMoved = !sameCountryMarks(l.tlsNames, next);
-      if (!namesMoved && pick === l.sniPick) continue;
-      await ctx.db.patch(l._id, {
-        ...(namesMoved ? { tlsNames: next, namesRevision: (l.namesRevision ?? 0) + 1 } : {}),
-        ...(pick !== l.sniPick ? { sniPick: pick } : {}),
-        updatedAt: now,
-      });
-      if (pick !== l.sniPick) {
-        switched++;
-        await auditPickForMarks(ctx, l, pick);
-      }
-      changed++;
-      origins.add(l.relayId);
-    }
-    for (const id of origins) {
-      const relay = await ctx.db.get(id);
-      if (relay) await bumpEpochAndRefresh(ctx, relay);
-    }
+    const { changed, switched } = await reconcileListenerMarks(ctx);
     return { changed, switched };
   },
 });

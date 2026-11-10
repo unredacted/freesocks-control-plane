@@ -226,6 +226,10 @@ export const set = internalMutation({
     // with it (convex/memberCountry.ts).
     for (const country of diff.removed)
       await ctx.scheduler.runAfter(0, internal.memberCountry.sweepCountry, { country });
+    // An allowlist prefers its names only in a listed country (docs/edges.md
+    // "Names on a country's allowlist"): the listeners follow the list.
+    if (diff.added.length + diff.removed.length > 0)
+      await ctx.scheduler.runAfter(0, internal.countryListFacts.applyPreference, {});
     // The saved list supersedes the keys it replaced, a change made to them
     // under an older build included: they go, their newest values kept.
     await retireLegacyKeys(ctx, { supersede: true });

@@ -168,6 +168,7 @@ describe('edge addresses against a list', () => {
       'edge.list.mark_not_left',
       'edge.list.mark_moved',
       'edge.list.watch_cap',
+      'edge.list.prefer_allowlist_only',
     ])
       expect(listErrorWords(e)).not.toBe(listErrorWords('nope'));
   });

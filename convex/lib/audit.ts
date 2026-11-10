@@ -699,6 +699,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.list.failed': ['listId', 'outcome'],
   'admin.edge.list.feeds': ['listId', 'feeds', 'started'],
   'admin.edge.list.refeed': ['listId', 'started'],
+  'edge.list.prefer.applied': ['listeners', 'origins', 'switched'],
   // "Seen it" on an edge address that left a watched allowlist.
   'admin.edge.list.mark_seen': ['listId', 'edgeId', 'family'],
   'edge.sni.hunt.list_feed': [

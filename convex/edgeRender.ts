@@ -57,6 +57,7 @@ import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
 import { resolveSniConfig } from './lib/sniConfig';
 import { resolveWhere } from './lib/edges/sni/country';
+import { namesJudged } from './lib/edges/sni/marks';
 import { freedomEdgesOnly, freedomHoldOf, type NodeProtection } from './lib/edges/freedomDelivery';
 import type { EdgeLayer } from '../src/shared/contracts/edges';
 import { lanesOn } from './lib/edges/lanes';
@@ -321,6 +322,7 @@ export function toPublishedEdge(
           drainUntil: s.drainUntil,
           ...(s.blockedIn?.length ? { blockedIn: s.blockedIn } : {}),
           ...(s.provenIn?.length ? { provenIn: s.provenIn } : {}),
+          ...(s.listedIn?.length ? { listedIn: s.listedIn } : {}),
         }))
       : [],
     ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
@@ -558,15 +560,8 @@ export const renderContextFor = internalQuery({
     if (curatedCountries.length === 0)
       return { token, curated: curatedCountries, sensitive: false, covered: true };
     const listeners = await listenersOf(ctx, relay._id);
-    const sensitive = listeners.some(
-      (l) =>
-        l.sniPick === 'hrw1' &&
-        (l.tlsNames ?? []).some(
-          (n) =>
-            n.status === 'active' &&
-            ((n.blockedIn?.length ?? 0) > 0 || (n.provenIn?.length ?? 0) > 0),
-        ),
-    );
+    // A name on a preferred allowlist shapes a body by country like a mark does.
+    const sensitive = listeners.some((l) => l.sniPick === 'hrw1' && namesJudged(l.tlsNames));
     return { token, curated: curatedCountries, sensitive, covered: true };
   },
 });

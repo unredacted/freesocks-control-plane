@@ -65,7 +65,7 @@ export const SETTINGS_GROUPS = [
     id: 'country-lists',
     label: 'Country lists',
     description:
-      'Community lists of SNIs and addresses that work, or are blocked, in a country. Evidence only.',
+      'Community lists of SNIs and addresses that work, or are blocked, in a country. Evidence only, unless a list is set to prefer its SNIs.',
   },
   {
     id: 'delivery',

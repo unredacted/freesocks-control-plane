@@ -269,6 +269,10 @@ const listenerName = v.object({
   // of `sniNameCountry`, kept ON the name so a render needs no extra reads.
   blockedIn: v.optional(v.array(v.string())),
   provenIn: v.optional(v.array(v.string())),
+  // Curated countries where an allowlist that prefers its names holds this one
+  // (docs/edges.md "Names on a country's allowlist"). A copy of what the
+  // name's stored list facts say, kept ON the name like the marks.
+  listedIn: v.optional(v.array(v.string())),
   name: v.string(),
   status: v.union(v.literal('active'), v.literal('retired')),
   retiredAt: v.optional(v.number()),
@@ -4388,6 +4392,10 @@ export default defineSchema({
     // An allowlist whose ranges FCP checks every edge address against
     // (docs/edges.md "Edge addresses against allowlists"). Off by default.
     watchEdges: v.optional(v.boolean()),
+    // An allowlist whose names members in its country get before ones nobody
+    // has judged there (docs/edges.md "Names on a country's allowlist"). Off
+    // by default, and nothing while `edge.lists.preferNames` is off.
+    preferNames: v.optional(v.boolean()),
     activeVersionId: v.optional(v.id('countryListVersions')),
     // A version waiting for a person to use it or throw it away.
     heldVersionId: v.optional(v.id('countryListVersions')),

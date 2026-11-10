@@ -860,6 +860,14 @@ export const LIST_FIELDS: Field[] = inGroup('country-lists', [
     unit: 'hours',
     helper: 'Each list can change its own schedule.',
   },
+  {
+    kind: 'switch',
+    path: 'lists.preferNames',
+    keywords: ['allowlist', 'prefer', 'sni', 'works there'],
+    label: 'Prefer SNIs on allowlists',
+    helper:
+      'On: members in a country get the SNIs on its lists of what works before ones nobody has judged, for each list set to prefer its SNIs. SNIs marked Works there still come first, and one marked Blocked there is never given. Off: no list changes what members get.',
+  },
 ]);
 
 /** The per-country budgets' own path (`{IR: 2}`; a country left out follows the line above). */

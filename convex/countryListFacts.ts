@@ -16,14 +16,24 @@
  *
  * Until a list ever moved the generation (0), nothing runs and rows carry
  * nothing.
+ *
+ * The facts of a family's names also decide which names an allowlist prefers
+ * for members in its country (docs/edges.md "Names on a country's
+ * allowlist"). That is read off the listener's own entries, so once the
+ * family names are refreshed, `applyPreference` copies it onto them.
  */
 import { v } from 'convex/values';
 import { internalMutation, type DatabaseReader, type MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
 import { evidenceLists, storedFactsOf, type StoredFact } from './lib/edges/lists/facts';
 import { candidateScope, touchScope } from './lib/edges/sni/hunt/store';
 import { startEdgeRecheck } from './countryListEdges';
+import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
+import { resolveEdgeConfig } from './lib/edgeConfig';
+import { reconcileListenerMarks, type ListenerName } from './lib/edges/sni/marks';
+import { writeAuditLog } from './lib/audit';
 
 const GEN_KEY = 'countryLists:factsGen';
 const runningKey = (table: FactsTable) => `countryLists:factsRefresh:${table}`;
@@ -99,8 +109,86 @@ export const refresh = internalMutation({
     if (rows.length === PAGE) {
       await writeStateJson(ctx.db, runningKey(table), now);
       await ctx.scheduler.runAfter(0, internal.countryListFacts.refresh, { table });
-    } else await writeStateJson(ctx.db, runningKey(table), 0);
+    } else {
+      await writeStateJson(ctx.db, runningKey(table), 0);
+      // The family names are current: what the allowlists prefer follows them.
+      if (table === 'sniNames' && (await resolveEdgeConfig(ctx.db)).lists.preferNames)
+        await schedulePreference(ctx);
+    }
     return { rows: rows.length, changed };
+  },
+});
+
+/** Copy what the allowlists prefer onto the listeners, in its own mutation. */
+export async function schedulePreference(ctx: MutationCtx): Promise<void> {
+  await ctx.scheduler.runAfter(0, internal.countryListFacts.applyPreference, {});
+}
+
+/**
+ * Every listener's names carry the countries an allowlist prefers them in, as
+ * the stored facts and the switches say now (`lib/edges/sni/marks.ts`
+ * `preferContext`). Runs after the family names' facts are refreshed and when
+ * a switch that decides the preference moves (`edge.lists.preferNames`, a
+ * list's own, the censored-country list). Only a listener whose names really
+ * change is written, and its origin moves on once: a list version that touches
+ * none of the names in use changes nothing for members.
+ */
+export const applyPreference = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const r = await reconcileListenerMarks(ctx);
+    if (r.changed > 0)
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'edge.list.prefer.applied',
+        targetType: 'country_list',
+        payload: { listeners: r.changed, origins: r.origins, switched: r.switched },
+      });
+    return r;
+  },
+});
+
+/**
+ * Before deploying a build from before the allowlist preference: its schema
+ * knows neither `listedIn` on a listener's names nor `preferNames` on a list,
+ * so a row carrying one refuses the push. Turns `edge.lists.preferNames` off
+ * FIRST (nothing writes the copy again), then strips both, moving each origin
+ * that changes. Members are back on the order without lists at their next
+ * refresh. Run with no arguments; run it again if the push is still refused.
+ */
+export const clearForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const setting = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', 'edge.lists.preferNames'))
+      .unique();
+    if (setting) await ctx.db.delete(setting._id);
+    let lists = 0;
+    for (const l of await ctx.db.query('countryLists').collect()) {
+      if (l.preferNames === undefined) continue;
+      await ctx.db.patch(l._id, { preferNames: undefined });
+      lists++;
+    }
+    const origins = new Set<Id<'relays'>>();
+    let listeners = 0;
+    for (const l of await ctx.db.query('relayListeners').collect()) {
+      if (!(l.tlsNames ?? []).some((n) => n.listedIn !== undefined)) continue;
+      const tlsNames: ListenerName[] = (l.tlsNames ?? []).map(({ listedIn: _l, ...rest }) => rest);
+      await ctx.db.patch(l._id, {
+        tlsNames,
+        namesRevision: (l.namesRevision ?? 0) + 1,
+        updatedAt: now,
+      });
+      listeners++;
+      if (!l.retired) origins.add(l.relayId);
+    }
+    for (const id of origins) {
+      const relay = await ctx.db.get(id);
+      if (relay) await bumpEpochAndRefresh(ctx, relay);
+    }
+    return { lists, listeners, origins: origins.size };
   },
 });
 

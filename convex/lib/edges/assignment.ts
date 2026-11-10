@@ -68,6 +68,12 @@ export interface AssignableSni {
   blockedIn?: string[];
   /** Curated countries where this name is proven to work. */
   provenIn?: string[];
+  /**
+   * Curated countries where an allowlist that prefers its names holds this one
+   * (docs/edges.md "Names on a country's allowlist"): offered there after the
+   * proven names and before the ones nobody judged.
+   */
+  listedIn?: string[];
   retiredAt?: number;
   drainUntil?: number;
 }
@@ -472,7 +478,9 @@ export function nameCountry(where: CountryContext): string | null {
  * A name's tier where the member is: lower is offered first, null = never.
  *
  *  - in a curated country: a name blocked THERE is never offered; names proven
- *    there are 0, names nobody has judged there 1;
+ *    there are 0, names on an allowlist there that prefers its names 1, names
+ *    nobody has judged there 2 (a list is weaker than a judgement, so it never
+ *    ranks with proven and never lifts a blocked name);
  *  - anywhere else, or with no country at all (a mirror too): the UNIVERSAL
  *    pool, names not blocked in ANY curated country (0). A name blocked
  *    somewhere is the last resort, by how many curated countries block it
@@ -486,7 +494,8 @@ export function countryTier(s: AssignableSni, where?: CountryContext): number | 
   const country = nameCountry(where);
   if (country) {
     if (blocked.includes(country)) return null;
-    return (s.provenIn ?? []).includes(country) ? 0 : 1;
+    if ((s.provenIn ?? []).includes(country)) return 0;
+    return (s.listedIn ?? []).includes(country) ? 1 : 2;
   }
   return new Set(blocked.filter((c) => where.curated.includes(c))).size;
 }

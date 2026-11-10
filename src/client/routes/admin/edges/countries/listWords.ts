@@ -191,6 +191,7 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.list.mark_not_left': 'That address is on the list again, or never was.',
   'edge.list.mark_moved': 'That address was listed and left again since. Look at it again.',
   'edge.list.watch_cap': 'At most 5 lists check edge addresses. Turn one off first.',
+  'edge.list.prefer_allowlist_only': 'Only a list of what works can prefer its SNIs.',
   not_found: 'That list is gone.',
   validation: 'Something in the form is not right. Check the fields.',
 };
