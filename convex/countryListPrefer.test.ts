@@ -329,6 +329,56 @@ describe('an allowlist that prefers its names', () => {
     expect(await settle()).toEqual({ changed: 0, switched: 0, origins: 0 });
   });
 
+  test('the list page counts what it holds and puts first; the family page says where a name is preferred', async () => {
+    const { t, create, paste, approve, settle, preferOn, call } = await seed();
+    const id = await create();
+    await paste(id, V1);
+    await approve(id);
+    await settle();
+    type Detail = {
+      preferSwitch: boolean;
+      prefer: { inUse: number; preferred: number; curated: boolean } | null;
+    };
+    const detail = async (listId = id) => (await call('GET', `lists/${listId}`)).body as Detail;
+    const preferredIn = async () =>
+      Object.fromEntries(
+        (await t.query(internal.sniFamilies.detail, { slug: 'fam-a' })).names.map((n) => [
+          n.name,
+          n.preferredIn,
+        ]),
+      );
+    // Both switches off: the list holds one SNI in use, and nobody gets it first.
+    expect(await detail()).toMatchObject({
+      preferSwitch: false,
+      prefer: { inUse: 1, preferred: 0, curated: true },
+    });
+    expect(await preferredIn()).toEqual({ 'x.example.com': [], 'y.example.com': [] });
+
+    await preferOn();
+    await call('PATCH', `lists/${id}`, { preferNames: true });
+    await settle();
+    expect(await detail()).toMatchObject({
+      preferSwitch: true,
+      prefer: { inUse: 1, preferred: 1, curated: true },
+    });
+    expect(await preferredIn()).toEqual({ 'x.example.com': ['RU'], 'y.example.com': [] });
+
+    // Marked blocked there: still on the list, but no longer given first.
+    await t.mutation(internal.sniFamilies.setCountry, {
+      slug: 'fam-a',
+      names: ['x.example.com'],
+      country: 'RU',
+      state: 'blocked',
+    });
+    expect((await detail()).prefer).toEqual({ inUse: 1, preferred: 0, curated: true });
+
+    // A block list has no counts; a list for a country off the censored list says so.
+    const block = await create('blocklist');
+    expect((await detail(block)).prefer).toBeNull();
+    const far = await create('allowlist', 'NZ');
+    expect((await detail(far)).prefer).toEqual({ inUse: 0, preferred: 0, curated: false });
+  });
+
   test('only a list of what works can prefer its names, and one that becomes a block list stops', async () => {
     const { t, call, create } = await seed();
     const block = await create('blocklist');

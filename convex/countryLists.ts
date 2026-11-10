@@ -36,6 +36,7 @@ import { siteOf } from './lib/edges/sni/hunt/sources';
 import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
 import { bumpFactsGen, schedulePreference } from './countryListFacts';
+import { resolveSniConfig } from './lib/sniConfig';
 import { feedViews, startFeedRuns, startPendingFeeds, sweepFeeds } from './countryListFeeds';
 import {
   edgeCountsOf,
@@ -284,9 +285,54 @@ export const detail = internalQuery({
       list: await listView(ctx.db, list, cfg.lists.staleDays, now),
       versions: versions.map(versionView),
       edges: await edgeCountsOf(ctx.db, list),
+      preferSwitch: cfg.lists.preferNames,
+      prefer: await preferCountsOf(ctx.db, list),
     };
   },
 });
+
+/** Distinct names in use looked up for a list's page: one index read each, inside one query's limit. */
+const PREFER_NAMES_CAP = 1500;
+
+/**
+ * An allowlist's page, "Prefer its SNIs" (docs/edges.md "Names on a country's
+ * allowlist"): how many SNIs in use this list holds (from the family names'
+ * stored facts, so only what evidence reads), how many of them members in its
+ * country are given first now (the listeners' own copies), and whether that
+ * country is on the censored-country list at all. Null for a block list, and
+ * when more names are in use than one query may look up.
+ */
+async function preferCountsOf(
+  db: DatabaseReader,
+  list: List,
+): Promise<{ inUse: number; preferred: number; curated: boolean } | null> {
+  if (list.regime !== 'allowlist') return null;
+  const { curatedCountries } = await resolveSniConfig(db);
+  // name -> a listener's copy says members in the list's country get it first.
+  const names = new Map<string, boolean>();
+  for (const l of await db.query('relayListeners').collect()) {
+    if (l.retired) continue;
+    for (const n of l.tlsNames ?? []) {
+      if (n.status !== 'active') continue;
+      const first =
+        (n.listedIn ?? []).includes(list.country) && !(n.blockedIn ?? []).includes(list.country);
+      names.set(n.name, (names.get(n.name) ?? false) || first);
+    }
+  }
+  if (names.size > PREFER_NAMES_CAP) return null;
+  let inUse = 0;
+  let preferred = 0;
+  for (const [name, first] of names) {
+    const row = await db
+      .query('sniNames')
+      .withIndex('by_name', (q) => q.eq('name', name))
+      .first();
+    if (!(row?.onLists ?? []).some((f) => f.listId === list._id)) continue;
+    inUse++;
+    if (first) preferred++;
+  }
+  return { inUse, preferred, curated: curatedCountries.includes(list.country) };
+}
 
 /**
  * Entries one lookup takes. An address costs one index read per list (up to

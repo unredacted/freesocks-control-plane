@@ -48,6 +48,7 @@ import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { clientCheckReadiness } from './edgeClientCheck';
 import { decide, listBlocks, resolveSuggestion, suggest, type Mark } from './lib/edges/sni/vantage';
 import { listLabels, onListsView } from './lib/edges/lists/facts';
+import { listedCountries } from './lib/edges/lists/prefer';
 import {
   auditPickForMarks,
   marksOfName,
@@ -413,6 +414,8 @@ export const detail = internalQuery({
         ]);
       }
     const labels = await listLabels(ctx.db);
+    // Where an allowlist puts each name first now (docs/edges.md "Names on a country's allowlist").
+    const prefer = await preferContext(ctx.db, Date.now());
     // Who said "use anyway" (an admin's display name, for the page).
     const admins = new Map<Id<'adminUsers'>, string>();
     for (const n of names) {
@@ -445,6 +448,7 @@ export const detail = internalQuery({
         ),
         name: n.name,
         onLists: onListsView(n.onLists, labels),
+        preferredIn: listedCountries(n.onLists, prefer),
         seq: n.seq,
         status: n.status,
         qualification: n.qualification.state,

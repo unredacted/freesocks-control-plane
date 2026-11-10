@@ -247,6 +247,12 @@ export const SniNameRow = z.object({
   vantage: z.array(SniVantageRow),
   /** The enabled, fresh country lists holding the name. */
   onLists: z.array(HuntListFact).default([]),
+  /**
+   * The censored countries where an allowlist that prefers its SNIs holds it
+   * (docs/edges.md "Names on a country's allowlist"): members there get it
+   * before SNIs nobody has judged, unless a mark decides there.
+   */
+  preferredIn: z.array(z.string()).default([]),
   /** Where it stands on its way to members, across the family's transports. */
   delivery: SniNameDelivery.default({ state: 'idle', inUseOn: 0, nodes: 0 }),
 });

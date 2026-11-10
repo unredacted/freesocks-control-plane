@@ -158,6 +158,8 @@ describe('CountryPage', () => {
       blockedElsewhere: [],
       handed: 3,
       transports: 1,
+      preferred: false,
+      preferDoubt: null,
     };
     open('/admin/servers/countries/AA?section=snis', view({ curated: true, snis: [sni] }));
     expect(text()).toContain('SNIs in AA');

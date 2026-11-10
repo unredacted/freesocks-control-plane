@@ -480,8 +480,8 @@ describe('the country view', () => {
     // The summary counts them per country: in RU, a.example is the one only for it.
     const ir = await t.query(internal.edgeCountryView.summaryRow, { country: 'IR' });
     const ru = await t.query(internal.edgeCountryView.summaryRow, { country: 'RU' });
-    expect(ir!.snis).toEqual({ used: 2, onlyHere: 1 });
-    expect(ru!.snis).toEqual({ used: 2, onlyHere: 1 });
+    expect(ir!.snis).toEqual({ used: 2, onlyHere: 1, preferred: 0 });
+    expect(ru!.snis).toEqual({ used: 2, onlyHere: 1, preferred: 0 });
     // Off the list, the shared names only: no rows.
     const de = await t.query(internal.edgeCountryView.country, { country: 'DE' });
     expect(de.snis).toEqual([]);
@@ -491,6 +491,7 @@ describe('the country view', () => {
     expect((await t.query(internal.edgeCountryView.summaryRow, { country: 'IR' }))!.snis).toEqual({
       used: 0,
       onlyHere: 0,
+      preferred: 0,
     });
   });
 

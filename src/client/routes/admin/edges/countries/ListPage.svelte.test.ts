@@ -11,6 +11,7 @@ import {
   countryListQuery,
   countryListsQuery,
   decideCountryListVersion,
+  updateCountryList,
 } from '@client/lib/countryListsApi';
 import { mountWithQuery } from '../../../../testing/mountWithQuery';
 import ListPage from './ListPage.svelte';
@@ -27,6 +28,7 @@ vi.mock('@client/lib/countryListsApi', async (importOriginal) => ({
   countryListQuery: vi.fn(),
   countryListsQuery: vi.fn(),
   decideCountryListVersion: vi.fn(),
+  updateCountryList: vi.fn(),
 }));
 
 const loaded = <T>(data: T) => ({
@@ -102,6 +104,8 @@ describe('ListPage', () => {
       list: LIST,
       versions: [version()],
       edges: null,
+      preferSwitch: false,
+      prefer: null,
     };
     vi.mocked(countryListQuery).mockReturnValue(loaded(detail) as never);
     vi.mocked(decideCountryListVersion).mockResolvedValue({ ok: true });
@@ -120,6 +124,74 @@ describe('ListPage', () => {
     await vi.waitFor(() =>
       expect(decideCountryListVersion).toHaveBeenCalledWith('l1', 'v1', 'approve'),
     );
+  });
+});
+
+describe('ListPage, Prefer its SNIs', () => {
+  const detail = (over: Partial<CountryListDetail> = {}): CountryListDetail => ({
+    enabled: true,
+    staleDays: 30,
+    list: {
+      ...LIST,
+      held: null,
+      active: version({ status: 'active', heldReasons: [] }),
+      confirmedAt: new Date().toISOString(),
+      fresh: true,
+    },
+    versions: [],
+    edges: null,
+    preferSwitch: true,
+    prefer: { inUse: 2, preferred: 0, curated: true },
+    ...over,
+  });
+  const prefer = () =>
+    document.querySelector<HTMLButtonElement>('button[role="switch"][id$="-prefer"]')!;
+
+  test('off: says so, counts what the list holds, and asks before turning on', async () => {
+    vi.mocked(countryListQuery).mockReturnValue(loaded(detail()) as never);
+    vi.mocked(updateCountryList).mockResolvedValue({ ok: true });
+    app = mountWithQuery(new QueryClient(), ListPage, { id: 'l1' });
+    flushSync();
+    const text = () => document.body.textContent ?? '';
+    expect(text()).toContain('Prefer its SNIs');
+    expect(text()).toContain('Off. This list changes nothing members get.');
+    expect(text()).toContain('2 SNIs in use are on this list.');
+    expect(prefer().getAttribute('aria-checked')).toBe('false');
+    prefer().click();
+    flushSync();
+    // Nothing is sent until the question is answered.
+    expect(updateCountryList).not.toHaveBeenCalled();
+    expect(text()).toContain('Members elsewhere get what they got.');
+    button('Prefer its SNIs')!.click();
+    await vi.waitFor(() =>
+      expect(updateCountryList).toHaveBeenCalledWith('l1', { preferNames: true }),
+    );
+  });
+
+  test('on, with the deployment switch off: says nothing is preferred and points at Settings', () => {
+    const d = detail({ preferSwitch: false });
+    vi.mocked(countryListQuery).mockReturnValue(
+      loaded({ ...d, list: { ...d.list, preferNames: true } }) as never,
+    );
+    app = mountWithQuery(new QueryClient(), ListPage, { id: 'l1' });
+    flushSync();
+    const text = document.body.textContent ?? '';
+    expect(prefer().getAttribute('aria-checked')).toBe('true');
+    expect(text).toContain(
+      'Nothing is preferred until "Prefer SNIs on allowlists" is on in Settings, Country lists.',
+    );
+    expect(text).toContain('Open Settings.');
+    expect(text).toContain('Prefers its SNIs');
+  });
+
+  test('a block list has no such switch', () => {
+    const d = detail({ prefer: null });
+    vi.mocked(countryListQuery).mockReturnValue(
+      loaded({ ...d, list: { ...d.list, regime: 'blocklist' } }) as never,
+    );
+    app = mountWithQuery(new QueryClient(), ListPage, { id: 'l1' });
+    flushSync();
+    expect(document.body.textContent).not.toContain('Prefer its SNIs');
   });
 });
 

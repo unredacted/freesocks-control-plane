@@ -719,7 +719,13 @@ describe('buildCountryView', () => {
 
 describe('countrySnis', () => {
   const S: ViewSettings = { ...SETTINGS, curated: ['IR', 'RU', 'CN'] };
-  type N = { name: string; status: 'active' | 'retired'; blockedIn: string[]; provenIn: string[] };
+  type N = {
+    name: string;
+    status: 'active' | 'retired';
+    blockedIn: string[];
+    provenIn: string[];
+    listedIn?: string[];
+  };
   const name = (n: string, blockedIn: string[] = [], status: N['status'] = 'active'): N => ({
     name: n,
     status,
@@ -763,6 +769,7 @@ describe('countrySnis', () => {
         status: n.status,
         blockedIn: n.blockedIn,
         provenIn: n.provenIn,
+        ...(n.listedIn ? { listedIn: n.listedIn } : {}),
       })),
     });
   const origins = (s: ViewSettings = S) =>
@@ -842,7 +849,81 @@ describe('countrySnis', () => {
     expect(by['gone.example']).toBeUndefined();
     expect(by['unused.example']).toBeUndefined();
     expect(by['origin-facing.example']).toBeUndefined();
-    expect(sniCounts(snis)).toEqual({ used: 4, onlyHere: 1 });
+    expect(sniCounts(snis)).toEqual({ used: 4, onlyHere: 1, preferred: 0 });
+    for (const x of snis) expect(x).toMatchObject({ preferred: false, preferDoubt: null });
+  });
+
+  test('an SNI an allowlist puts first here says so, and what speaks against it', () => {
+    const listed = (n: string, over: Partial<N> = {}): N => ({
+      ...name(n),
+      listedIn: ['IR'],
+      ...over,
+    });
+    const P = [
+      listed('listed.example'),
+      listed('doubted.example'),
+      listed('reported.example'),
+      // A mark decides instead of the list, either way.
+      listed('proven.example', { provenIn: ['IR'] }),
+      listed('blocked.example', { blockedIn: ['IR'] }),
+      // Listed for another country only.
+      { ...name('elsewhere.example'), listedIn: ['RU'] },
+      name('plain.example'),
+    ];
+    const view = buildCountryView(
+      [
+        {
+          relayId: 'r1',
+          slug: 'node-one',
+          label: null,
+          kind: 'panel-node',
+          nodeName: 'node-one',
+          enabled: true,
+          direct: null,
+          listeners: [listener('P', P)],
+          edges: [edge({ edgeId: 'e-P', listenerId: 'P' })],
+          published: [published('P', P, 0)],
+        },
+      ],
+      (n) => ({
+        family: 'fam',
+        familyLabel: 'Fam list',
+        qualified: true,
+        mark: null,
+        checks:
+          n === 'doubted.example'
+            ? {
+                latest: 'failing',
+                okVantages: 0,
+                okNetworks: 0,
+                failVantages: 3,
+                failNetworks: 2,
+                pathFailures: 0,
+                suggestion: 'blocked',
+                reason: null,
+                lastAt: 1,
+                lastOkAt: null,
+              }
+            : null,
+        reports: n === 'reported.example' ? { weight: 4, suspect: true } : null,
+      }),
+      S,
+    ).origins;
+    const snis = countrySnis(view, 'IR', S.curated);
+    const by = Object.fromEntries(snis.map((x) => [x.name, [x.preferred, x.preferDoubt]]));
+    expect(by).toEqual({
+      'listed.example': [true, null],
+      'doubted.example': [true, 'checks'],
+      'reported.example': [true, 'reports'],
+      'proven.example': [false, null],
+      'blocked.example': [false, null],
+      'elsewhere.example': [false, null],
+      'plain.example': [false, null],
+    });
+    expect(sniCounts(snis)).toEqual({ used: 6, onlyHere: 0, preferred: 3 });
+    // The three listed names are what members here hold: the sample's shares say so.
+    const handed = Object.fromEntries(snis.map((x) => [x.name, x.handed]));
+    expect(handed['listed.example']).toBeGreaterThan(handed['plain.example']!);
   });
 
   test('nothing rendered hands out no SNI', () => {
