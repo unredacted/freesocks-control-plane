@@ -10,6 +10,8 @@ import {
   countryShort,
   sniCardTitle,
   sniHandedLine,
+  sniPreferLine,
+  SNI_PREFER_BADGE,
   sniScopeBadge,
   sniScopeLine,
   sniSummaryLine,
@@ -17,6 +19,8 @@ import {
 } from './sniWords';
 
 const sni = (over: Partial<CountryViewSni> = {}): CountryViewSni => ({
+  preferred: false,
+  preferDoubt: null,
   name: 'a.example',
   family: 'fam',
   familyLabel: 'Fam',
@@ -92,5 +96,33 @@ describe('sniWords', () => {
       // "Name list" is the admin's word for a cover site's list.
       expect(line.replace(/server names \(SNIs\)|name lists?/gi, '')).not.toMatch(/\bnames?\b/i);
     }
+  });
+});
+
+describe('an SNI a list of what works puts first', () => {
+  test('says what members here get, and what speaks against it', () => {
+    expect(sniPreferLine(sni())).toBeNull();
+    expect(sniPreferLine(sni({ preferred: true }))).toBe(
+      'On a list of what works here, so members here get it before SNIs nobody has judged.',
+    );
+    expect(sniPreferLine(sni({ preferred: true, preferDoubt: 'checks' }))).toBe(
+      'On a list of what works here, but the checks from inside say blocked. Members here still get it first. Mark it Blocked here on its SNI list to stop that.',
+    );
+    expect(sniPreferLine(sni({ preferred: true, preferDoubt: 'reports' }))).toBe(
+      'On a list of what works here, but members here report it more than other SNIs. Members here still get it first.',
+    );
+    expect(SNI_PREFER_BADGE).toBe('On a list of what works');
+  });
+
+  test('the countries list counts them', () => {
+    expect(sniSummaryLine({ used: 12, onlyHere: 2, preferred: 3 }, 'IR')).toBe(
+      '12 SNIs in use there, 2 only for Iran, 3 preferred from lists.',
+    );
+    expect(sniSummaryLine({ used: 5, onlyHere: 0, preferred: 1 }, 'IR')).toBe(
+      '5 SNIs in use there, 1 preferred from lists.',
+    );
+    expect(sniSummaryLine({ used: 5, onlyHere: 0, preferred: 0 }, 'IR')).toBe(
+      '5 SNIs in use there.',
+    );
   });
 });

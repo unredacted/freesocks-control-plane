@@ -39,6 +39,7 @@ const name = (over: Record<string, unknown> = {}) => ({
   suspectIn: [] as string[],
   probeMarkedIn: [] as string[],
   onLists: [],
+  preferredIn: [],
   vantage: [] as SniVantageRow[],
   delivery: { state: 'in_use' as const, inUseOn: 1, nodes: 1 },
   ...over,

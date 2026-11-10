@@ -56,6 +56,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Node logging privacy: check every config profile, turn logging off where found',
   },
   {
+    name: 'revocation-watch',
+    everyMs: 5 * MIN,
+    description: 'Revoked Hysteria keys: restart a node when one keeps moving bytes',
+  },
+  {
     name: 'epoch-key-rotate',
     everyMs: 10 * MIN,
     description: 'Rotate the HPKE epoch key (CDN-blinding)',

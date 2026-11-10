@@ -375,6 +375,8 @@ export function listsLine(n: CountryViewName): string | null {
     return l.suggestion
       ? 'A block list for here holds this SNI, so it may be blocked here. Mark it on its SNI list page.'
       : 'A block list for here holds this SNI.';
+  if (n.preferred)
+    return 'A list of what works here that prefers its SNIs holds this SNI, so members here get it before SNIs nobody has judged. That says nothing about the address.';
   return 'A list of what works here holds this SNI. That says nothing about the address.';
 }
 

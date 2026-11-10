@@ -11,6 +11,7 @@
  *   sniScopeLine        where else an SNI is used, in one sentence
  *   sniVerdictLine      what it counts as there, and why
  *   sniHandedLine       how many members there are handed it
+ *   SNI_PREFER_BADGE / sniPreferLine   an SNI an allowlist puts first there, and what speaks against it
  *   sniSummaryLine      the countries list's count (null: no SNI in use)
  */
 import type { CountryViewSni } from '@shared/contracts/edges';
@@ -70,13 +71,30 @@ export function sniHandedLine(s: Pick<CountryViewSni, 'handed' | 'transports'>):
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
+/** The badge of an SNI an allowlist puts first for members there. */
+export const SNI_PREFER_BADGE = 'On a list of what works';
+
+/**
+ * An SNI on an allowlist that prefers its SNIs (docs/edges.md "Names on a
+ * country's allowlist"): what that does for members there, and what speaks
+ * against it and waits for a person. Null when no list puts it first.
+ */
+export function sniPreferLine(s: Pick<CountryViewSni, 'preferred' | 'preferDoubt'>): string | null {
+  if (!s.preferred) return null;
+  if (s.preferDoubt === 'checks')
+    return 'On a list of what works here, but the checks from inside say blocked. Members here still get it first. Mark it Blocked here on its SNI list to stop that.';
+  if (s.preferDoubt === 'reports')
+    return 'On a list of what works here, but members here report it more than other SNIs. Members here still get it first.';
+  return 'On a list of what works here, so members here get it before SNIs nobody has judged.';
+}
+
 export function sniSummaryLine(
-  counts: { used: number; onlyHere: number },
+  counts: { used: number; onlyHere: number; preferred?: number },
   code: string,
 ): string | null {
   if (counts.used === 0) return null;
-  const used = `${counts.used} ${counts.used === 1 ? 'SNI' : 'SNIs'} in use there`;
-  return counts.onlyHere > 0
-    ? `${used}, ${counts.onlyHere} only for ${countryShort(code)}.`
-    : `${used}.`;
+  const parts = [`${counts.used} ${counts.used === 1 ? 'SNI' : 'SNIs'} in use there`];
+  if (counts.onlyHere > 0) parts.push(`${counts.onlyHere} only for ${countryShort(code)}`);
+  if (counts.preferred) parts.push(`${counts.preferred} preferred from lists`);
+  return `${parts.join(', ')}.`;
 }

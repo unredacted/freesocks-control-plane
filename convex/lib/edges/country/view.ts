@@ -159,6 +159,8 @@ export interface NameInput {
   /** The copies on the listener (what selection reads). */
   blockedIn: readonly string[];
   provenIn: readonly string[];
+  /** Countries where an allowlist that prefers its names holds it (the listener's copy too). */
+  listedIn?: readonly string[];
 }
 
 /** What is known about a name from one country, read once per name. */
@@ -735,6 +737,11 @@ export interface NameView {
   markAt: number | null;
   /** A member in this country may be offered it (never a name blocked there on an `hrw1` listener). */
   offered: boolean;
+  /**
+   * An allowlist puts it first for members here (docs/edges.md "Names on a
+   * country's allowlist"): on such a list, and no mark decides here instead.
+   */
+  preferred: boolean;
   /** The OTHER curated countries it is blocked in (the listener's copies), sorted. */
   blockedElsewhere: string[];
   checks: NameFacts['checks'];
@@ -1007,6 +1014,11 @@ export function buildCountryView(
           ...st,
           markAt: f?.mark?.at ?? null,
           offered,
+          preferred:
+            offered &&
+            l.sniPick === 'hrw1' &&
+            (n.listedIn ?? []).includes(s.country) &&
+            actedState(st) === 'unknown',
           blockedElsewhere: [
             ...new Set(n.blockedIn.filter((c) => c !== s.country && s.curated.includes(c))),
           ].sort(),
@@ -1092,6 +1104,13 @@ export interface CountrySni {
   handed: number;
   /** Transports handed to members here that offer it. */
   transports: number;
+  /** An allowlist puts it first for members here (`NameView.preferred`). */
+  preferred: boolean;
+  /**
+   * What speaks against that preference and waits for a person: the checks
+   * from inside suggest blocked (not applied), or members' reports single it out.
+   */
+  preferDoubt: 'checks' | 'reports' | null;
 }
 
 /**
@@ -1139,10 +1158,21 @@ export function countrySnis(
             blockedElsewhere: n.blockedElsewhere,
             handed: 0,
             transports: 0,
+            preferred: false,
+            preferDoubt: null,
           };
           byName.set(n.name, row);
         }
         if (!n.offered) continue;
+        if (n.preferred) {
+          row.preferred = true;
+          row.preferDoubt =
+            n.basis === 'checks' && n.state === 'blocked'
+              ? 'checks'
+              : n.reports?.suspect
+                ? 'reports'
+                : row.preferDoubt;
+        }
         row.transports++;
         row.handed = Math.max(row.handed, n.handed);
         row.scope =
@@ -1161,8 +1191,19 @@ export function countrySnis(
   );
 }
 
-/** The summary's count: SNIs members there may get, and how many of them only there. */
-export function sniCounts(snis: readonly CountrySni[]): { used: number; onlyHere: number } {
+/**
+ * The summary's count: SNIs members there may get, how many of them only
+ * there, and how many an allowlist puts first there.
+ */
+export function sniCounts(snis: readonly CountrySni[]): {
+  used: number;
+  onlyHere: number;
+  preferred: number;
+} {
   const used = snis.filter((s) => s.scope !== 'not_here');
-  return { used: used.length, onlyHere: used.filter((s) => s.scope === 'only_here').length };
+  return {
+    used: used.length,
+    onlyHere: used.filter((s) => s.scope === 'only_here').length,
+    preferred: used.filter((s) => s.preferred).length,
+  };
 }

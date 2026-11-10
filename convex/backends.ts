@@ -355,6 +355,90 @@ export const setUserStatus = internalAction({
   },
 });
 
+/**
+ * The nodes serving each of a key's placements on its instance (the
+ * revocation watch's cut targets). Empty for a backend that cannot restart a
+ * node, for an unknown instance, and in mock mode. A placement whose nodes
+ * cannot be read throws: the watch keeps the leak and retries.
+ */
+export const placementNodes = internalAction({
+  args: { backendServerId: v.id('backendServers'), placements: v.array(v.string()) },
+  handler: async (ctx, { backendServerId, placements }): Promise<string[]> => {
+    if (mockBackendEnabled() || placements.length === 0) return [];
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) return [];
+    const provider = PROVIDERS[server.backend];
+    if (!provider.placementNodes) return [];
+    const out = new Set<string>();
+    for (const placement of placements) {
+      for (const node of await provider.placementNodes(server.config as BackendConfig, placement))
+        out.add(node);
+    }
+    return [...out];
+  },
+});
+
+/**
+ * What the revocation watch reads of a revoked key: its status and the bytes
+ * the backend has counted to it, or `gone` when the backend no longer knows
+ * the key (a 404). Anything else throws, and the watch retries later.
+ */
+export const revocationProbe = internalAction({
+  args: { backendServerId: v.id('backendServers'), backendUserId: v.string() },
+  handler: async (
+    ctx,
+    { backendServerId, backendUserId },
+  ): Promise<
+    { gone: true } | { gone: false; status: string; usedBytes: number; onlineAt: string | null }
+  > => {
+    if (mockBackendEnabled()) return { gone: true };
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) return { gone: true };
+    try {
+      const state = await PROVIDERS[server.backend].get(
+        server.config as BackendConfig,
+        toProviderUserId(backendUserId),
+      );
+      return {
+        gone: false,
+        status: state.status,
+        usedBytes: state.usedTrafficBytes ?? 0,
+        onlineAt: state.onlineAt ?? null,
+      };
+    } catch (err) {
+      if (isRemnawaveNotFound(err)) return { gone: true };
+      throw err;
+    }
+  },
+});
+
+/**
+ * Restart one node's core through the operations ledger (the revocation
+ * watch's cut): every open connection on it drops. The ledger refuses while
+ * another op holds the node or the node is off; that is `false`, and the cut
+ * is retried. `true` once the backend acknowledged (or may have taken) it.
+ */
+export const restartNodeForCut = internalAction({
+  args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
+  handler: async (ctx, { backendServerId, nodeUuid }): Promise<boolean> => {
+    if (mockBackendEnabled()) return true;
+    let opId: Id<'panelOps'>;
+    try {
+      ({ opId } = await ctx.runMutation(internal.backendWrites.requestNodeAction, {
+        backendServerId,
+        nodeUuid,
+        action: 'restart',
+        actorRun: 'cron:revocation-watch',
+      }));
+    } catch {
+      return false;
+    }
+    await ctx.runAction(internal.backendWrites.run, { opId });
+    const op = await ctx.runQuery(internal.backendLedger.getForRun, { opId });
+    return op?.request === 'acknowledged' || op?.request === 'uncertain';
+  },
+});
+
 // Bulk-set trafficLimitBytes on many users of ONE instance in a single call
 // (Remnawave bulk/update). Resolves the instance by its id (the caller — the
 // donation free-bandwidth apply — already grouped user ids by server). A backend

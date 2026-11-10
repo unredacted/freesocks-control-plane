@@ -68,6 +68,7 @@
     extraWords,
     listWords,
     nearWords,
+    preferLines,
     scoreWords,
     sourcesWords,
   } from './lib/huntWords';
@@ -562,6 +563,15 @@
                       {/if}
                     </p>
                   {/if}
+                  {#each preferLines(n) as line (line.text)}
+                    <p
+                      class={line.doubt
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-muted-foreground'}
+                    >
+                      {line.text}
+                    </p>
+                  {/each}
                   <Collapsible.Root>
                     {@render details('Details')}
                     <Collapsible.Content class="text-muted-foreground mt-1 space-y-1 text-xs">

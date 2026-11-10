@@ -74,6 +74,7 @@ const handed = (over: Partial<CountryViewHanded> = {}): CountryViewHanded => ({
 
 const name = (over: Partial<CountryViewName> = {}): CountryViewName => ({
   lists: null,
+  preferred: false,
   name: 'n.example',
   family: 'f',
   familyLabel: null,
@@ -773,5 +774,22 @@ describe('switchNotes', () => {
       W.NAME_CHECKS_IDLE,
     ]);
     expect(W.switchNotes(on, { checkNamesInside: true, nameChecksRun: true })).toEqual([]);
+  });
+});
+
+describe('what the country lists say about an SNI', () => {
+  it('says when a list of what works puts it first, and never speaks for the address', () => {
+    const lists = { allow: true, block: false, suggestion: null };
+    expect(W.listsLine(name())).toBeNull();
+    expect(W.listsLine(name({ lists }))).toBe(
+      'A list of what works here holds this SNI. That says nothing about the address.',
+    );
+    expect(W.listsLine(name({ lists, preferred: true }))).toBe(
+      'A list of what works here that prefers its SNIs holds this SNI, so members here get it before SNIs nobody has judged. That says nothing about the address.',
+    );
+    // Lists that disagree prefer nothing, and say so.
+    expect(W.listsLine(name({ lists: { ...lists, block: true } }))).toBe(
+      'Country lists for here disagree about this SNI.',
+    );
   });
 });

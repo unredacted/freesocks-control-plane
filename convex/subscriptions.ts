@@ -2,6 +2,7 @@
 // live proxy key (subscriptionUrl), so nothing in this module may be callable
 // on the raw Convex channel. The old public `get` / `activeForUser` queries
 // were dead code and were deleted outright.
+import { hysteriaGroupsAfter, isHysteriaGroup } from './lib/hysteriaGroups';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { resolveSniConfig } from './lib/sniConfig';
 import type { DatabaseReader, MutationCtx } from './_generated/server';
@@ -306,6 +307,9 @@ export const insertSubscription = internalMutation({
       // Map the generic arg onto the schema field name.
       backendPlacement: placement,
       ...(placement && extraPlacements?.length ? { backendExtraPlacements: extraPlacements } : {}),
+      ...((await isHysteriaGroup(ctx.db, a.backend, placement))
+        ? { hysteriaGroups: [placement!] }
+        : {}),
       subToken,
       // Origin-edge assignment key: the account's seat (`seatOf`), never the
       // subToken (so neither a fronted-URL rotation nor a re-issue reshuffles
@@ -1292,7 +1296,12 @@ export const setPlacementAndClearCache = internalMutation({
     extraPlacements: v.optional(v.array(v.string())),
   },
   handler: async (ctx, { subscriptionId, placement, extraPlacements }) => {
+    const before = await ctx.db.get(subscriptionId);
+    const hysteriaGroups = before
+      ? await hysteriaGroupsAfter(ctx.db, before.backend, before.hysteriaGroups, placement)
+      : undefined;
     await ctx.db.patch(subscriptionId, {
+      ...(hysteriaGroups ? { hysteriaGroups } : {}),
       backendPlacement: placement ?? undefined,
       backendExtraPlacements: placement && extraPlacements?.length ? extraPlacements : undefined,
       subCache: undefined,

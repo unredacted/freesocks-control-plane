@@ -17,7 +17,14 @@
  *    once (Hysteria authenticates once per QUIC connection): how long it goes
  *    on is recorded (`observed.openHysteriaCutAfterDisableMs`), not asserted;
  *  - regenerating (FCP deletes the key and issues a new one) retires the old
- *    password: it is refused, the new one is served.
+ *    password: it is refused, the new one is served;
+ *  - the revocation watch's ground truth (convex/revocationWatches.ts): a
+ *    disabled key's open Hysteria connection keeps moving bytes the backend
+ *    counts to the key, a deleted key's open connection stays served too, and
+ *    a restart of the node behind the key's group (the watch's cut) ends both
+ *    while a key that was never revoked is served again. If the open
+ *    connections are ever cut without the restart, the node core now closes a
+ *    removed user's connections: flip REVOKE_REACHES_OPEN_SESSIONS.
  *
  * Run via `bun run test:integration:remnawave-node` (or one file:
  * `bun run test:integration:remnawave-node convex/lib/backends/remnawave.hysteria.node-integration.test.ts`).
@@ -33,6 +40,8 @@ import {
   remnawaveDeleteUser,
   remnawaveGetUser,
   remnawaveIssueUser,
+  remnawavePlacementNodes,
+  remnawaveRestartNode,
   remnawaveSetStatus,
   type RemnawaveConfig,
 } from './remnawave';
@@ -244,9 +253,10 @@ describe.skipIf(!ENABLED)('remnawave managed node: Hysteria beside REALITY (inte
     for (const u of created.profiles) await quiet(api('DELETE', `config-profiles/${u}`));
   });
 
+  let issueSeq = 0;
   const issue = async (inSquads: string[]) => {
     const issued = await remnawaveIssueUser(cfg, {
-      username: `fcp_hy_${RUN}_${created.users.length}`,
+      username: `fcp_hy_${RUN}_${++issueSeq}`,
       placement: inSquads[0]!,
       extraPlacements: inSquads.slice(1),
       tag: 'MEMBER',
@@ -362,6 +372,69 @@ describe.skipIf(!ENABLED)('remnawave managed node: Hysteria beside REALITY (inte
     expect(await connects(0)).toBe(false);
     await remnawaveSetStatus(cfg, member.id, true);
     expect(await servedSoon(0)).toBe(true);
+  }, 900_000);
+
+  test('a revoked key’s open connection outlives disable and delete, moves counted bytes, and ends at a node restart', async () => {
+    const disabled = await issue([squads.hysteria, squads.reality]);
+    const deleted = await issue([squads.hysteria, squads.reality]);
+    const control = await issue([squads.hysteria, squads.reality]);
+    startClient([
+      { kind: 'hysteria', password: disabled.password },
+      { kind: 'hysteria', password: deleted.password },
+      { kind: 'hysteria', password: control.password },
+    ]);
+    for (const i of [0, 1, 2]) expect(await servedSoon(i), `leg ${i}`).toBe(true);
+
+    await remnawaveSetStatus(cfg, disabled.id, false);
+    await remnawaveDeleteUser(cfg, deleted.id);
+    created.users.splice(created.users.indexOf(deleted.id), 1);
+    const t0 = Date.now();
+    const bytes = async () => (await remnawaveGetUser(cfg, disabled.id)).usedTrafficBytes ?? 0;
+    // Let bytes counted before the disable land, then take the baseline (the
+    // watch's settle time does the same). Traffic keeps flowing meanwhile: a
+    // quiet client's QUIC connection ends at its idle timeout (30 s; this
+    // client sends no keepalive, an app does), and its redial is refused.
+    const keepBusy = async (ms: number) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        await connects(0);
+        await connects(1);
+        await sleep(3000);
+      }
+    };
+    await keepBusy(60_000);
+    expect(await connects(0), 'the disabled key’s open connection was cut').toBe(true);
+    expect(await connects(1), 'the deleted key’s open connection was cut').toBe(true);
+    const baseline = await bytes();
+    // Both open connections keep carrying requests; the disabled key's bytes grow.
+    const grew = await until(
+      async () => {
+        for (let i = 0; i < 10; i++) await connects(0);
+        await connects(1);
+        return (await bytes()) > baseline;
+      },
+      240_000,
+      5000,
+    );
+    observed.revokedBytesCountedMs = grew ? Date.now() - t0 : null;
+    expect(grew, 'no bytes counted to the disabled key from its open connection').toBe(true);
+    expect(await connects(0), 'the disabled key’s open connection was cut').toBe(true);
+    expect(await connects(1), 'the deleted key’s open connection was cut').toBe(true);
+
+    // The watch's cut: restart the node(s) behind the key's Hysteria group.
+    const nodes = await remnawavePlacementNodes(cfg, squads.hysteria);
+    expect(nodes).toContain(nodeUuid);
+    const tCut = Date.now();
+    for (const n of nodes) await remnawaveRestartNode(cfg, n);
+    expect(await refusedSoon(0), 'the disabled key outlived the restart').toBe(true);
+    expect(await refusedSoon(1), 'the deleted key outlived the restart').toBe(true);
+    observed.cutAfterRestartMs = Date.now() - tCut;
+    // A key that was never revoked comes back (its app reconnects).
+    expect(await servedSoon(2), 'the control key never came back').toBe(true);
+    observed.controlBackAfterRestartMs = Date.now() - tCut;
+    await sleep(10_000);
+    expect(await connects(0)).toBe(false);
+    expect(await connects(1)).toBe(false);
   }, 900_000);
 
   test('regenerate retires the old password: refused, and the new key is served', async () => {
