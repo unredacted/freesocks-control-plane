@@ -337,5 +337,13 @@ crons.daily(
   internal.memberCountry.sweepGuesses,
   {},
 );
+// Keys by country (convex/countryKeyCounts.ts): recount the `stats:countryKeys`
+// counter the Countries pages read, after the guesses above were forgotten.
+crons.daily(
+  'country-keys-reconcile',
+  { hourUTC: 5, minuteUTC: 45 },
+  internal.countryKeyCounts.reconcile,
+  {},
+);
 
 export default crons;

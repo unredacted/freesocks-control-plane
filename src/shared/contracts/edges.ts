@@ -2102,6 +2102,38 @@ export const CountryViewNamePool = z.object({
 });
 export type CountryViewNamePool = z.infer<typeof CountryViewNamePool>;
 
+/**
+ * How many Freedom-family keys are set to one country (docs/edges.md "Keys by
+ * country"): by the member's own answer, and by the stored guess. Counts
+ * only, never a key, a member or a node.
+ */
+export const CountryKeyCounts = z.object({ answered: z.number(), guessed: z.number() });
+export type CountryKeyCounts = z.infer<typeof CountryKeyCounts>;
+const noKeys = { answered: 0, guessed: 0 };
+
+/** The key counts no country owns, and whether anything was counted yet. */
+export const CountryKeyTotals = z.object({
+  /** A full count has finished (the first runs after a deploy). */
+  counted: z.boolean(),
+  /** When the last full count finished: `neither` is as of then. */
+  countedAt: z.number().nullable(),
+  /** Keys whose member chose the opt-out. */
+  optOut: z.number(),
+  /** Freedom keys with no answer and no guess, counted once a day. */
+  neither: z.number(),
+  /** Keys guessed in a country that is not on the list. */
+  otherGuessed: z.number(),
+});
+export type CountryKeyTotals = z.infer<typeof CountryKeyTotals>;
+const noKeyTotals = { counted: false, countedAt: null, optOut: 0, neither: 0, otherGuessed: 0 };
+
+/** One country's key counts on its own page. */
+export const CountryViewKeys = CountryKeyCounts.extend({
+  counted: z.boolean(),
+  countedAt: z.number().nullable(),
+});
+export type CountryViewKeys = z.infer<typeof CountryViewKeys>;
+
 /** `GET countries/summary`: every listed country with its totals. */
 export const CountryViewSummaryResponse = z.object({
   generatedAt: z.number(),
@@ -2125,8 +2157,12 @@ export const CountryViewSummaryResponse = z.object({
       snis: z
         .object({ used: z.number(), onlyHere: z.number(), preferred: z.number().default(0) })
         .default({ used: 0, onlyHere: 0, preferred: 0 }),
+      /** Keys set to it, by the member's answer and by the stored guess. */
+      keys: CountryKeyCounts.default(noKeys),
     }),
   ),
+  /** The key counts no country owns (the opt-out, Freedom keys with neither). */
+  keys: CountryKeyTotals.default(noKeyTotals),
   /** Each probe source in use: working, failing, Globalping's cap (`GET probes/sources`). */
   sources: z.array(ProbeSourceHealth).default([]),
 });
@@ -2153,6 +2189,8 @@ export const CountryViewResponse = z.object({
    * Automatic of members who chose this country go, in order. No member counts.
    */
   exits: z.array(z.object({ code: z.string(), label: z.string() })).default([]),
+  /** How many keys are set to this country (docs/edges.md "Keys by country"). Counts only. */
+  keys: CountryViewKeys.default({ ...noKeys, counted: false, countedAt: null }),
   /**
    * How the newest name-check batch from here found its Globalping probes
    * (lib/edges/sni/namePool.ts): null until one ran.

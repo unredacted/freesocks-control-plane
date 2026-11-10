@@ -4,7 +4,8 @@
    * (`/admin/servers/countries/<CC>[?section=]`): "Can members here connect?"
    * One section at a time, picked by the section bar (./sections.ts):
    *
-   *   Summary                      the totals, what is switched off, and one line per section
+   *   Summary                      the totals, how many keys are set to it (counts only,
+   *                                ./keyWords.ts), what is switched off, and one line per section
    *   Addresses for this country   locations set for it, then every origin's transports and
    *                                addresses: what they count as here, why, and what members
    *                                here are handed (CountryAddresses; holds the slot for the
@@ -47,6 +48,7 @@
     type CountrySection,
   } from './sections';
   import { countryLabel, coverageLines, coverageNote, switchNotes, totalsLine } from './words';
+  import { KEYS_SCOPE, keysLine } from './keyWords';
 
   interface Props {
     code: string;
@@ -126,6 +128,16 @@
           {v.controls.length > 0 ? `Control countries: ${v.controls.join(', ')}.` : ''}
         </p>
         {#each notes as n (n)}<p class="text-muted-foreground">{n}</p>{/each}
+      </CardContent>
+    </Card>
+
+    <Card class="mb-6">
+      <CardContent class="space-y-1 py-4 text-sm" aria-label="Keys set to this country">
+        <p class="font-medium tabular-nums">
+          {keysLine(v.keys, v.keys.counted, 'this country') ??
+            'Keys by country are not counted yet. The first count runs a few minutes after an update.'}
+        </p>
+        <p class="text-muted-foreground">{KEYS_SCOPE}</p>
       </CardContent>
     </Card>
 

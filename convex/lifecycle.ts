@@ -32,6 +32,7 @@ import {
   sessionBucket,
   type SessionBump,
 } from './lib/statusCounters';
+import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
 import { placementSetOf } from './lib/placementSet';
 import { resolveDefaultFreeTier } from './tiers';
@@ -1189,8 +1190,12 @@ export const deleteInactiveUser = internalMutation({
     for (const s of await ctx.db
       .query('subscriptions')
       .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect())
+      .collect()) {
       await deleteCopiesOf(ctx, s._id);
+      // A key still counted for a country leaves the count with its row
+      // (lib/countryKeyCounts.ts).
+      await bumpCountryKeysForRow(ctx, s, null);
+    }
     await deleteByUser('subscriptions');
     await deleteByUser('tierHistory');
     await deleteByUser('billingOrders');

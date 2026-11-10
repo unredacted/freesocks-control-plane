@@ -38,6 +38,7 @@ import { resolveCensoredCountries } from './lib/censoredCountries';
 import { isAnswer, storedCountry } from './lib/memberCountry';
 import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from './memberCountry';
 import { memberFamilyOf } from './lib/memberFamily';
+import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { memberLaneOfUser } from './edgeLanes';
 import { noteExposures } from './edgeTrust';
 import { mirrorFormatValidator } from './lib/mirrorFormats';
@@ -318,6 +319,10 @@ export const insertSubscription = internalMutation({
       state: 'active',
       updatedAt: Date.now(),
     });
+    // A key issued with an answer or a carried country is counted for it at once
+    // (lib/countryKeyCounts.ts); most keys carry none and touch nothing.
+    if (carried.sniRegion || carried.regionSeenCountry)
+      await bumpCountryKeysForRow(ctx, null, await ctx.db.get(inserted));
     // The carried objects' open upload obligations follow them (the mirror
     // barrier), and so do their sync records: stale, since each object still
     // holds the old key until the refresh issuance schedules rewrites it.
@@ -1196,6 +1201,8 @@ export const markSubscriptionDeleted = internalMutation({
   },
   handler: async (ctx, { subscriptionId, returnSubTokenToId }) => {
     const dying = await ctx.db.get(subscriptionId);
+    // The key no longer counts for its country (lib/countryKeyCounts.ts).
+    await bumpCountryKeysForRow(ctx, dying, null);
     await ctx.db.patch(subscriptionId, {
       state: 'deleted',
       deletedAt: Date.now(),
@@ -1333,6 +1340,9 @@ export const tombstoneWithGrace = internalMutation({
     if (sub.state !== 'active') return sub.deletedAt != null ? { deletedAt: sub.deletedAt } : null;
     const deletedAt = Date.now() + graceMs;
     await ctx.db.patch(sub._id, { state: 'disabled', deletedAt, updatedAt: Date.now() });
+    // A replaced key keeps its country through the grace, but only the key
+    // that replaced it is counted (lib/countryKeyCounts.ts).
+    await bumpCountryKeysForRow(ctx, sub, { ...sub, state: 'disabled' });
     // The ledger tracks the mirrors of live keys: a superseded key's mirrors
     // serve it through the grace and are deleted with it. They are recorded
     // for withdrawal at the grace's end as well, so a provider removed in the
