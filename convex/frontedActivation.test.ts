@@ -70,6 +70,7 @@ import { REPAIR_GRACE_MS } from './mirrorUploads';
 import { markOf } from './edgeTrust';
 import { onSetupRunEnded } from './edgeSetupRuns';
 import { publicationAdmission } from './nodeActivation';
+import { resolveBuildFor } from './edgeTemplates';
 import { signValue } from './lib/cookies';
 import { profileTitleValue } from './lib/subscriptionTitle';
 import { ActivationReview } from '../src/shared/contracts/servers';
@@ -2366,6 +2367,204 @@ describe('the operator hears about a node that waits on them', () => {
         (i) => i.id === intentId,
       )!.modeEnabled,
     ).toBe(true);
+  });
+});
+
+describe('a node approved without a per-listener review uses the locations assigned to it', () => {
+  /**
+   * A live node whose approval names no per-listener shape (an adopted node,
+   * an older review): its shape is what its members are served through now.
+   * Place A holds its one address in use; Place B and Place C are two more
+   * locations of the same account. `reviewed`: keep the stored review instead.
+   */
+  async function node(opts: { reviewed?: boolean } = {}) {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    if (!opts.reviewed)
+      await t.run(async (c) => {
+        const run = (await c.db.get(live.actId))!;
+        const review = JSON.parse(run.candidate.review) as Record<string, unknown>;
+        delete review.listeners;
+        await c.db.patch(run._id, {
+          candidate: { ...run.candidate, review: JSON.stringify(review) },
+        });
+      });
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    const listener = (await t.run((c) => c.db.get(e1.listenerId)))!;
+    const place = async (zone: string, label: string) =>
+      (
+        await t.mutation(internal.edgeLocations.create, {
+          accountId: live.l4,
+          placement: { zone },
+          label,
+        })
+      ).id as Id<'edgeLocations'>;
+    const b = await place('aa-bbb1', 'Place B');
+    const c = await place('aa-ccc1', 'Place C');
+    /** Put a location among the node's own picks (its provider set). */
+    const assign = (locationId: Id<'edgeLocations'>) =>
+      t.run(async (ctx) => {
+        const relay = (await ctx.db.get(live.relayId))!;
+        await ctx.db.patch(live.relayId, {
+          providerSet: [...(relay.providerSet ?? []), { locationId, addedAt: Date.now() }],
+        });
+      });
+    /** What an address at a location is built with for this node now. */
+    const hashAt = (locationId: Id<'edgeLocations'>, accountId = live.l4) =>
+      t.run(async (ctx) => {
+        const account = (await ctx.db.get(accountId))!;
+        const location = (await ctx.db.get(locationId))!;
+        return (
+          await resolveBuildFor(
+            ctx,
+            account.provider,
+            null,
+            account.defaultTemplateId ?? null,
+            account._id,
+            location,
+            null,
+          )
+        ).hash;
+      });
+    const admission = async (
+      locationId: Id<'edgeLocations'>,
+      over: { accountId?: Id<'edgeProviderAccounts'>; templateHash?: string } = {},
+    ) => {
+      const templateHash = over.templateHash ?? (await hashAt(locationId, over.accountId));
+      return t.run((ctx) =>
+        publicationAdmission(ctx, w.serverId, NODE, {
+          listenerKey: listener.listenerKey,
+          accountId: String(over.accountId ?? live.l4),
+          locationId: String(locationId),
+          templateHash,
+        }),
+      );
+    };
+    /** A tested spare of the node at a location, built with what that location builds now. */
+    const spareAt = async (locationId: Id<'edgeLocations'>, ipv4: string) => {
+      const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+        relayId: live.relayId,
+        listenerId: e1.listenerId,
+        ipv4,
+        accountId: live.l4,
+        locationId,
+        verified: true,
+      });
+      const templateHash = await hashAt(locationId);
+      await t.run((ctx) => ctx.db.patch(edgeId as Id<'edges'>, { templateHash }));
+      // The operator's own test of it, bound to the node as it is now.
+      await verifyL4Edge(t, edgeId as Id<'edges'>);
+      return edgeId as Id<'edges'>;
+    };
+    const refused = { kind: 'refused', code: 'servers.node_not_approved' };
+    return { w, t, live, e1, listener, b, c, assign, hashAt, admission, spareAt, refused };
+  }
+
+  test('an assigned location fits; one nobody assigned, switched off or untrusted by hand does not', async () => {
+    const n = await node();
+    const { t, b, c } = n;
+    // What is served now fits as before.
+    expect((await n.admission(n.e1.locationId!)).kind).toBe('committed');
+    // Place B is not one of the node's locations yet.
+    expect(await n.admission(b)).toEqual(n.refused);
+    await n.assign(b);
+    expect((await n.admission(b)).kind).toBe('committed');
+    // Nobody assigned Place C to this node.
+    expect(await n.admission(c)).toEqual(n.refused);
+    // Trusted by hand: assigned too, without being one of the picks.
+    await t.run((ctx) =>
+      ctx.db.patch(c, { qualified: true, qualification: { by: 'admin', at: Date.now() } }),
+    );
+    expect((await n.admission(c)).kind).toBe('committed');
+    // Untrusted by hand, or switched off: not assigned, whatever the picks say.
+    await t.run((ctx) => ctx.db.patch(b, { autoQualifyHold: true }));
+    expect(await n.admission(b)).toEqual(n.refused);
+    await t.run((ctx) => ctx.db.patch(b, { autoQualifyHold: undefined, enabled: false }));
+    expect(await n.admission(b)).toEqual(n.refused);
+  });
+
+  test('another account or another template still needs a review', async () => {
+    const n = await node();
+    const { t, b, live } = n;
+    await n.assign(b);
+    // A location of another account, though assigned to the node.
+    const other = await createAccount(t, { provider: 'upcloud', name: 'acct-l4-b' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: other, ok: true });
+    const elsewhere = (await defaultLocationRow(t, other))!._id;
+    await n.assign(elsewhere);
+    expect(await n.admission(elsewhere, { accountId: other })).toEqual(n.refused);
+    // An address built with something else than the location builds now.
+    expect(await n.admission(b, { templateHash: 'another-template' })).toEqual(n.refused);
+    // The address in use was built before a change of what its own location
+    // builds: nothing shows the template is the one it serves, so nothing fits.
+    await t.run((ctx) => ctx.db.patch(live.e1, { templateHash: 'built-before-an-edit' }));
+    expect(await n.admission(b)).toEqual(n.refused);
+  });
+
+  test('a node with a stored per-listener review keeps exactly that shape', async () => {
+    const n = await node({ reviewed: true });
+    await n.assign(n.b);
+    expect((await n.admission(n.e1.locationId!)).kind).toBe('committed');
+    expect(await n.admission(n.b)).toEqual(n.refused);
+  });
+
+  test('a spare in an assigned location is put in use by hand; one in another location is not', async () => {
+    const n = await node();
+    const { t, live, b, c } = n;
+    await n.assign(b);
+    await t.run((ctx) => ctx.db.patch(live.relayId, { desiredPublished: 3 }));
+    const spare = await n.spareAt(b, '198.51.100.61');
+    // A spare in Place C, which is not one of the node's locations. The
+    // operator's test of it trusted Place C by hand (that assigns it too), so
+    // the operator untrusts it again: nobody assigned it to this node.
+    const stray = await n.spareAt(c, '198.51.100.62');
+    await t.run((ctx) => ctx.db.patch(c, { qualified: false, autoQualifyHold: true }));
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId: live.relayId,
+        kind: 'publish',
+        trigger: 'manual',
+        toEdgeId: stray,
+      }),
+    ).rejects.toThrow(/not approved for delivery/);
+    const started = await t.mutation(internal.edgeRotations.start, {
+      relayId: live.relayId,
+      kind: 'publish',
+      trigger: 'manual',
+      toEdgeId: spare,
+    });
+    expect(started.rotationId).toBeTruthy();
+  });
+
+  test('upkeep refills an assigned location that holds no address, and a replace may use it', async () => {
+    const n = await node();
+    const { t, live, b, e1 } = n;
+    await n.assign(b);
+    await t.mutation(internal.edgeLocations.setQualified, { id: b, qualified: true });
+    await t.mutation(internal.relays.ensureCapacity, { relayId: live.relayId });
+    // The hold this node had ("outside what it was approved for") is gone.
+    expect(
+      await t.query(internal.edgeRotations.upkeepFillRefusal, { relayId: live.relayId }),
+    ).toBeNull();
+    const select = (kind: 'provision' | 'replace') =>
+      t.run(async (ctx) =>
+        selectionContext(
+          ctx,
+          kind === 'provision'
+            ? { kind, trigger: 'reconcile', listenerId: e1.listenerId, publishOnDone: true }
+            : { kind, trigger: 'manual', listenerId: e1.listenerId },
+          (await ctx.db.get(live.relayId))!,
+          kind === 'replace' ? e1 : null,
+          await resolveEdgeConfig(ctx.db),
+        ),
+      );
+    expect((await select('provision')).account?.locationId).toBe(b);
+    const view = (await t.query(internal.edgeProviderSets.view, { relayId: live.relayId }))!;
+    expect(view.upkeepHold).toBeNull();
+    // A replace of the only address in use stays where it is (its location's
+    // last address): both locations fit, and that one would be left empty.
+    expect((await select('replace')).account?.locationId).toBe(e1.locationId);
   });
 });
 

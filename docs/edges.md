@@ -3123,8 +3123,12 @@ whose held slot is for a location outside the shape (the fitting ones could only
 and to a count's fill at such a location (`onlyLocationId`: the fitting picks are other
 locations): upkeep then starts nothing and the node's row and card say so (§ "Reconcile cron"). A node approved without a per-listener review (an adopted
 node, an older review) has the shape its members are served through NOW
-(`nodeActivation.publicationAdmission`): a location whose last address left is no longer in
-it, so automatic work cannot make an address there again until the node is reviewed. Where the run publishes, the
+(`nodeActivation.publicationAdmission`), so a location whose last address left is no longer in
+it. For such a node a location an operator assigned to it fits too (one of its picks, or
+trusted by hand), for the transport, account, certificate and template it already serves
+(docs/servers.md "Node lifecycle"): upkeep refills it, a replace may use it and a spare there is
+put in use by hand. A location nobody assigned, another account, or a template that changed
+since the addresses in use were built is still held until the node is reviewed. Where the run publishes, the
 approval is checked again: out of shape, the paid-for edge stays a standby and a replace leaves
 its target served (the finalize drains a target only after a real swap); as a candidate of the
 node's running activation it is recorded as one, except for a replace, whose replacement must be

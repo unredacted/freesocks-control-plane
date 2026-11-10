@@ -1004,6 +1004,25 @@ mirror). FCP never starts a run by itself.
   are served from (every published address, not only the template edge) and the run's targets,
   one entry per (listener, account, location, template). Approving a fronted node is refused
   while edges are frozen (docs/edges.md "Maintenance switch and reset drain").
+- **A node approved without a per-listener review** (an adopted node, or a review stored before
+  the per-listener shape) has no stored shape: it is read from what its members are served
+  through now, every published address of each transport. Read alone, that shape forgets a
+  location the moment its last address leaves, and nothing, by hand or automatic, could put an
+  address in use there again (no page offers the review the refusal asks for). So for such a
+  node a location an operator **assigned** to it also fits
+  (`nodeActivation.assignedLocationFits`, the rule of docs/edges.md "Replacing a blocked address
+  without a spare": one of the node's picks, or a location trusted by hand; never one switched
+  off or untrusted by hand). Everything else must be what the node already serves: the same
+  transport and the same account as an address in use, the same certificate by the review's own
+  rule, and the same template. The template is the same when the new address is built with what
+  its location builds for the node now, from the same template as that address in use, and that
+  address is itself built with what its own location builds now; only the location's own
+  regional values may differ. After a template edit, with options other than the pick's, in
+  another account, or for a transport with nothing in use, it still needs a review. Maintenance,
+  retirement, a running activation and the revision compare apply as before. A node with a
+  stored per-listener review keeps exactly the shape that review names. Every caller of the gate
+  reads the same rule: putting a spare in use by hand, a provision that goes in use, upkeep's
+  refill and a replace.
 - **The delivery snapshot.** Before its rehearsal, an enrolled setup run records on its
   activation what members will get after the commit (`delivery.edgeIds`: the committed
   addresses go-live keeps plus the candidates; a `replace_all` keeps only those on transports
