@@ -242,11 +242,10 @@ services:
   # admin paths); the backend verifies tokens over the compose network
   # (CAP_API_ENDPOINT=http://cap:3000).
   cap:
-    # Pinned tag@digest on a real semver tag (upstream release standalone@3.1.8),
-    # NOT `latest` — so a Dependabot bump names the actual version change instead
-    # of "latest moved". Re-pin by hand if needed:
-    # docker buildx imagetools inspect tiago2/cap:<version>.
-    image: tiago2/cap:3.1.17@sha256:b47424a1b4ab3e6e7205ba1ed35fa25c8817c78bf0a82a0c7dac5d3393167a03
+    # Cap v4 + FCP's privacy overlay: no per-request events, visitor fingerprints,
+    # geo/header lookups or detailed request/error logging. See docker/cap/.
+    build:
+      context: docker/cap
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -259,19 +258,19 @@ services:
     environment:
       - ADMIN_KEY=${CAP_ADMIN_KEY:?set CAP_ADMIN_KEY in .env.beta (>=32 chars)}
       - REDIS_URL=redis://valkey:6379
-      # Privacy default: quiet Cap's error logging so a client IP can't surface
-      # in a stack trace. Cap rate-limits on the compose peer (Caddy) and its IP
-      # geolocation stays off (dashboard default) — do NOT enable either against a
-      # real-client header. See docs/privacy.md.
-      - DISABLE_ERROR_LOGGING=${CAP_DISABLE_ERROR_LOGGING:-true}
+    volumes:
+      - cap_data:/usr/src/app/data
     healthcheck:
-      # The image ships NO wget/curl (verified against the pinned digest) — a
-      # wget-based check fails with exit 127 on every probe and marks a
-      # perfectly healthy server unhealthy, which blocks `web` (depends_on)
-      # forever. bun is the image's runtime; fetch resolves on ANY HTTP
-      # response (server up) and throws on connection refused.
-      test: ['CMD', 'bun', '-e', "await fetch('http://localhost:3000/')"]
+      # Readiness checks Valkey too. HTTP 503 must mark the service unhealthy.
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
       interval: 15s
+      timeout: 5s
       start_period: 15s
       retries: 5
     depends_on:
@@ -453,5 +452,6 @@ volumes:
   convexkey:
   caddy_data:
   caddy_config:
+  cap_data:
   valkey_data:
   backups:

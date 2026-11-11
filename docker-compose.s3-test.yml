@@ -5,7 +5,7 @@
 # Nothing is published except a loopback port; no volume survives `down -v`.
 services:
   s3-test:
-    image: chrislusf/seaweedfs:4.52
+    image: chrislusf/seaweedfs:4.53
     container_name: fcp-s3-test
     restart: 'no'
     command:

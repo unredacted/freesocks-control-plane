@@ -39,6 +39,7 @@ snapshots/
 *.sql
 *.sql.gz*
 *.age
+*.rdb
 convex-env-*
 
 # Drizzle

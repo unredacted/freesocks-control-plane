@@ -3,7 +3,7 @@ import compatibility from '../compat/playwright.config';
 
 export default defineConfig({
   testDir: '.',
-  testMatch: 'captcha.spec.ts',
+  testMatch: ['captcha.spec.ts', 'dashboard.spec.ts'],
   timeout: 90_000,
   workers: 1,
   forbidOnly: !!process.env.CI,
