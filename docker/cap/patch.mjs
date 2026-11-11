@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 // Fail the image build on upstream drift, including a same-tag rebuild.
 const pins = {
-  'src/events/index.js': 'd44c7e77682dbd0215e7e98997b98e113e2860a7f5f4ccc1dbae855dc130ef1b',
+  'src/events/index.js': '4598b16ea862d89fb9f142a25d5d9eda0e0c86dbcfc8b76b1ce871724df4a9f0',
   'src/events/context.js': '50b104a283be63a428d63589b5f915eb615b0e99b8656b79ae02d0637ddda3ea',
 };
 for (const [path, expected] of Object.entries(pins)) {

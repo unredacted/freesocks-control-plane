@@ -220,7 +220,7 @@ Client-IP _resolution_ (for those hash buckets) is fail-closed and topology-awar
   the production Caddyfile, with external requests blocked, and checks token
   reuse, retry, iframe cleanup and the pako decompression fallback.
 
-- Cap 4.0.4 runs through `docker/cap/`, a privacy overlay on the digest-pinned
+- Cap 4.0.9 runs through `docker/cap/`, a privacy overlay on the digest-pinned
   upstream image. Its build checks the original event/context module hashes
   and fails on drift. Upgrade those checks only after reviewing the new code.
 - The overlay disables per-request event recording entirely, including live

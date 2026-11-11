@@ -539,7 +539,7 @@ ssh -L 3000:127.0.0.1:3000 <beta-host>   # then open http://127.0.0.1:3000
 ### Upgrading Cap v3 to v4
 
 Merge/deploy the widget update before the server migration.
-The production image is built from the pinned Cap 4.0.4 image through
+The production image is built from the pinned Cap 4.0.9 image through
 `docker/cap/`; **do not replace this build with the unmodified upstream image**.
 The overlay disables request analytics, visitor fingerprints, geo lookup and
 detailed logs (see `docs/privacy.md` §3). DuckDB retains only legacy aggregate
