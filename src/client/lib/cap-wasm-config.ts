@@ -6,7 +6,7 @@
  * the entire point of self-hosting Cap (W1).
  *
  * Vite emits these as hashed assets under /assets (served same-origin by Caddy).
- * Versions are pinned to match what the widget expects (@cap.js/widget@0.1.61
+ * Versions are pinned to match what the widget expects (@cap.js/widget@0.1.62
  * names @cap.js/wasm@0.0.8, both pinned exactly). Pako's public browser entry
  * is resolved to its classic UMD build for the widget's script loader. Two solvers:
  * `cap_wasm_bg.wasm` for `sha256-pow` keys and `hashwx.wasm` for `hashwx` keys
