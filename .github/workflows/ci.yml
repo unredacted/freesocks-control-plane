@@ -26,7 +26,10 @@ jobs:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bunx tsc -p tests/cap/tsconfig.json --noEmit
-      - run: bunx playwright install --with-deps firefox
+      # No --with-deps, as in client-compatibility.yml: the runner image already
+      # carries every library both browsers load, and the apt-get update it
+      # adds hangs the job whenever the runner's Ubuntu mirror stalls.
+      - run: bunx playwright install firefox
       - run: bunx playwright install --force chrome
       - run: bun run test:integration:cap
       - uses: actions/upload-artifact@v7
