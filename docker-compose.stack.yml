@@ -246,7 +246,7 @@ services:
     # NOT `latest` — so a Dependabot bump names the actual version change instead
     # of "latest moved". Re-pin by hand if needed:
     # docker buildx imagetools inspect tiago2/cap:<version>.
-    image: tiago2/cap:3.1.17@sha256:b47424a1b4ab3e6e7205ba1ed35fa25c8817c78bf0a82a0c7dac5d3393167a03
+    image: tiago2/cap:4.0.7@sha256:54f2e76e32cfd3c2ee0ffae2774fd85dc7a44ae3a7ff84d7f49763a568ae2fb8
     pids_limit: 256
     restart: unless-stopped
     logging: *log
