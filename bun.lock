@@ -9,7 +9,7 @@
         "@aws-sdk/client-cloudfront": "3.1164.0",
         "@aws-sdk/client-s3": "^3.1164.0",
         "@cap.js/wasm": "0.0.8",
-        "@cap.js/widget": "0.1.58",
+        "@cap.js/widget": "0.1.62",
         "@fontsource/atkinson-hyperlegible-mono": "^5.3.0",
         "@fontsource/atkinson-hyperlegible-next": "^5.3.0",
         "@fontsource/inter": "^5.3.0",
@@ -161,7 +161,7 @@
 
     "@cap.js/wasm": ["@cap.js/wasm@0.0.8", "", {}, "sha512-rX+4/v2sz4GKLnygXHOS89O7c4GM2qNQcDJP6Y2cyGwoKjg83bsfWHt1TWr9GBzHpFADvju5fvLWYds21nS8sA=="],
 
-    "@cap.js/widget": ["@cap.js/widget@0.1.58", "", {}, "sha512-snNjlYZLx1XddDH7DPZF9uedynSXTPPeRl/nExDlMjw0pCHiu/Fm1NKjRcT4HmqpOBf0TZRvio1HhkTMWg9p9A=="],
+    "@cap.js/widget": ["@cap.js/widget@0.1.62", "", {}, "sha512-ooufENSpF5r6nlPbYQc4UMpcvTJYnWkbOJduwltVtEiEZY5RsTAeruWFOAZH63nSOsp6XP4+xMDvLPKfFL5LDw=="],
 
     "@corvu/utils": ["@corvu/utils@0.4.2", "", { "dependencies": { "@floating-ui/dom": "^1.6.11" }, "peerDependencies": { "solid-js": "^1.8" } }, "sha512-Ox2kYyxy7NoXdKWdHeDEjZxClwzO4SKM8plAaVwmAJPxHMqA0rLOoAsa+hBDwRLpctf+ZRnAd/ykguuJidnaTA=="],
 

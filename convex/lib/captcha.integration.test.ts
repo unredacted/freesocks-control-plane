@@ -11,7 +11,7 @@
  * Gated: skipped unless CAP_API_ENDPOINT + CAP_SITE_KEY + CAP_SECRET point at a
  * live Cap (the dev/beta compose `cap` service). Excluded from the fast offline
  * suite (vitest.config.ts drops `*.integration.test.ts`); run via
- * `bun run test:integration:cap` with those env vars set.
+ * `bun run test:integration:cap:live` with those env vars set.
  *
  * The challenge→solve→redeem flow + the `prng` derivation are reproduced from
  * @cap.js/widget's wire protocol (pinned to the installed Cap version); the PoW

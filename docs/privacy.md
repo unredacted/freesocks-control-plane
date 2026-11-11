@@ -218,6 +218,18 @@ Client-IP _resolution_ (for those hash buckets) is fail-closed and topology-awar
 
 ## 3. Captcha (Cap, the `cap` + `valkey` services)
 
+- The bundled widget isolates instrumentation in an opaque-origin iframe
+  (`CAP_ISOLATE=true`), preventing it from reading member cookies, storage or
+  page interactions. Leave behavior scoring, automated-interaction blocking
+  and agent blocking off: they require parent-page access and reject isolated
+  solves. Proof of work and automated-browser checks remain available.
+- Credit links omit the page URL/referrer (`CAP_DISABLE_WIDGET_REF=true`).
+  Troubleshooting points to our own FAQ, avoiding upstream diagnostic
+  links that package the page URL and browser details.
+- `bun run test:integration:cap` runs real solves in Chrome and Firefox through
+  the production Caddyfile, with external requests blocked, and checks token
+  reuse, retry, iframe cleanup and the pako decompression fallback.
+
 - Cap rate-limits on the **compose peer** (Caddy's container), not a real client
   header. Do **not** set `RATELIMIT_IP_HEADER` to a client-supplied header on this
   deployment — that would pull the real client IP into Cap.

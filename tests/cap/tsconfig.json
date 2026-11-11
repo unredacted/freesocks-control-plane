@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": ["node", "vite/client"] },
+  "include": ["./**/*.ts", "../../src/**/*.d.ts", "../../src/client/lib/cap-wasm-config.ts"],
+  "exclude": []
+}
