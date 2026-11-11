@@ -475,14 +475,14 @@ gates the dashboard regardless.
 > the widget API paths (`/cap/{sitekey,challenge,redeem}`) through Caddy. Until
 > then the edge auth + `ADMIN_KEY` + the digest pin are the mitigations.
 
-Open `https://<host>/cap` in a browser, log in with `CAP_ADMIN_KEY`, create a
+Open `https://<host>/cap/` in a browser, log in with `CAP_ADMIN_KEY`, create a
 site key, and put the **site key** + **secret** into `.env.convex` as
 `CAP_SITE_KEY` / `CAP_SECRET` (the backend reads them;
 `CAP_API_ENDPOINT=http://cap:3000`, `CAP_PUBLIC_ENDPOINT=/cap`). Re-run the
 deployer (`docker compose ... up -d`) so the env applies.
 
 **Key protocol.** Cap creates a key with protocol `hashwx` unless told
-otherwise; `sha256-pow` works too. The bundled widget (`@cap.js/widget` 0.1.58
+otherwise; `sha256-pow` works too. The bundled widget (`@cap.js/widget` 0.1.62
 with `@cap.js/wasm` 0.0.8, pinned exactly) solves both, from same-origin WASM
 (`src/client/lib/cap-wasm-config.ts`: `cap_wasm_bg.wasm` for `sha256-pow`,
 `hashwx.wasm` for `hashwx`), under the strict member CSP above. An older widget
@@ -522,10 +522,11 @@ Put the new `siteKey` / `secretKey` into `.env.convex` as `CAP_SITE_KEY` /
 > `<meta name="csp-nonce">`; `main.ts` hands it to `window.CAP_SCRIPT_NONCE`,
 > which the widget stamps on the srcdoc script), and **`'unsafe-eval'`** lets
 > the probes run (without it they throw, the probe silently returns null, and
-> the widget reports `instr_timeout` after 20 s). Neither grant opens an
-> injection door: the nonce is unguessable and regenerated every response, and
-> eval is only reachable from code that is already executing — inline script
-> injection stays blocked. Instrumentation + the proof-of-work challenge + the
+> the widget reports `instr_timeout` after 20 s). `CAP_ISOLATE=true` removes
+> `allow-same-origin`, so
+> the frame cannot read member cookies, storage or interactions. Keep behavior
+> scoring, automated-interaction blocking and agent blocking off on the key;
+> those modes reject isolated frames. Instrumentation + the proof-of-work challenge + the
 > DB-driven per-IP rate limits (A1/W2) together are the anti-abuse stack.
 
 If the fronting proxy is down or not yet configured, the dashboard also binds
@@ -534,6 +535,62 @@ to host loopback as a fallback (no edge/auth in the path):
 ```sh
 ssh -L 3000:127.0.0.1:3000 <beta-host>   # then open http://127.0.0.1:3000
 ```
+
+### Upgrading Cap v3 to v4
+
+Merge/deploy the widget update before the server migration.
+The production image is built from the pinned Cap 4.0.9 image through
+`docker/cap/`; **do not replace this build with the unmodified upstream image**.
+The overlay disables request analytics, visitor fingerprints, geo lookup and
+detailed logs (see `docs/privacy.md` §3). DuckDB retains only legacy aggregate
+counts, on the explicit `cap_data` volume. Behavior scoring, automated-interaction
+blocking and agent blocking must remain off with the isolated widget.
+
+Before a deployment, run `bun run test:integration:cap`. It exercises real browser
+solves on v3, upgrades the same Valkey state to the current image, checks both
+SHA-256 and older Argon2 secrets, replaces sessions/API keys, rotates secrets,
+checks persistence/privacy/readiness, and restores the v3 snapshot. Also run
+`bun run test:integration:s3` for the SeaweedFS test-image update.
+
+For the real upgrade, use the normal compose arguments/project/env file for
+this host in every command below. Keep backups **outside the checkout** in a
+private directory (`umask 077`); they contain Cap secrets and sessions.
+
+1. Save the old image ref, `.env.beta` and `.env.convex` privately. Stop member
+   traffic at the fronting edge for the credential-change window. Stop `cap`,
+   leaving Valkey running, then take a consistent snapshot:
+
+   ```sh
+   docker compose ... exec -T valkey valkey-cli SAVE
+   docker compose ... cp valkey:/data/dump.rdb /private/backup/cap-v3.rdb
+   ```
+
+2. Recreate with the new compose file using `up -d --build --force-recreate cap`.
+   Check `/cap/health` returns 200 (including Valkey readiness) and the service
+   is healthy. Detailed errors are suppressed by design; fixed severity notices
+   remain in `logs cap`. Check `/cap/` and its assets through the real fronting
+   auth layer. Keep management routes, including `/cap/server/*`, protected.
+3. Log in again using `CAP_ADMIN_KEY`. V3 dashboard sessions and management API
+   keys are invalidated. Replace any management API keys in use and delete the
+   old ones.
+4. Inspect each site key. **Secrets created by 3.1.17 already use SHA-256 and
+   remain valid.** Keys still using older Argon2 hashes are marked "Reset secret"
+   and their siteverify returns 403 until reset. Reset those under Settings →
+   Danger zone, update `CAP_SECRET` in `.env.convex`, and recreate/run the deployer
+   so the backend receives it. `CAP_SITE_KEY` and the public endpoint stay the
+   same. Avoid changing `CAP_ADMIN_KEY` during this migration.
+5. Verify create-account and login (including a failed submission followed by
+   retry) in a browser. Confirm no third-party captcha requests. Reopen traffic
+   only after a real token verifies with the configured backend secret.
+
+For rollback, stop `cap` **and Valkey**. With Valkey stopped, copy the saved RDB
+back to `/data/dump.rdb` on the **same named Valkey volume**, preserving its
+ownership. Restore the pre-upgrade compose ref and matching `.env.convex`, then
+start Valkey, Cap v3 and the deployer. Verify login/create-account again before
+reopening traffic. Do not run v3 against the modified v4 state and assume that
+rotated secrets or invalidated sessions can be recovered without the snapshot.
+Keep `cap_data` when recreating v4; include it with Valkey in future private
+Cap backups. Do not use `down -v` on the production stack.
 
 ### Health & monitoring
 
@@ -830,7 +887,7 @@ locally may come from a build the stack does not have yet.
 `.github/workflows/image-scan.yml` runs Grype over every image
 `docker-compose.stack.yml` runs: the built ones (web, deployer, backup, and the
 backend and dashboard on the Node overlay, with the stack's own build args) and
-the pulled ones (postgres, cap, valkey, keygen). It reads the service list and
+the Cap privacy overlay, and the pulled ones (postgres, valkey, keygen). It reads the service list and
 every ref from the stack file, so a new service or a re-pin needs no edit
 there. It runs Mondays after Dependabot, on pull requests and pushes to main
 that touch `docker/**`, the stack file, `package.json` or `bun.lock` (the
@@ -894,12 +951,12 @@ is safe). To roll back:
 
 ### Cap image provenance (accepted risk)
 
-The `cap` service is pinned **by digest** to `tiago2/cap` — an individual's
+The `cap` service builds `docker/cap/Dockerfile`, whose base is pinned **by digest** to `tiago2/cap` — an individual's
 Docker Hub repo, not an org image. The digest pin prevents silent substitution;
 the residual risk is **availability** (repo deleted/renamed ⇒ future pulls
 fail; the host's local image cache keeps the current one running). Before GA,
 mirror the digest into an org-controlled registry and repoint the compose
-file:
+Dockerfile's `FROM` line, retaining the privacy overlay:
 
 ```
 docker pull tiago2/cap@sha256:<pinned-digest>

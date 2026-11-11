@@ -1,0 +1,30 @@
+# Ephemeral test stack. Image refs are read from the production pins by the runner.
+services:
+  valkey:
+    image: ${CAP_TEST_VALKEY_IMAGE:?}
+    command: ['valkey-server', '--save', '', '--appendonly', 'no']
+    volumes:
+      - valkey_data:/data
+  cap:
+    image: ${CAP_TEST_IMAGE:?}
+    environment:
+      ADMIN_KEY: ${CAP_TEST_ADMIN_KEY:?}
+      REDIS_URL: redis://valkey:6379
+      DISABLE_ERROR_LOGGING: 'true'
+    volumes:
+      - cap_data:/usr/src/app/data
+    depends_on: [valkey]
+  web:
+    image: ${CAP_TEST_CADDY_IMAGE:?}
+    environment:
+      CADDY_SCHEME: http
+      SITE_ADDRESS: ':80'
+    ports:
+      - '127.0.0.1:${FCP_CAP_TEST_PORT:-18340}:80'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./tests/cap/dist:/srv/dist:ro
+    depends_on: [cap]
+volumes:
+  valkey_data:
+  cap_data:

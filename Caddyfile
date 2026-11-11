@@ -32,6 +32,14 @@
 	# going to stderr (docker logs).
 	log default {
 		output stderr
+		# Runtime proxy failures can include the entire request even with access
+		# logs off. Drop that object (IPs, URI and headers), retaining the error.
+		format filter {
+			wrap json
+			fields {
+				request delete
+			}
+		}
 	}
 
 	# Client-IP trust (see the @api block + docs/beta-deploy.md §"Client IP").
@@ -147,6 +155,8 @@
 	# See docs/threat-model-cdn-blinding.md.
 
 	# --- self-hosted Cap captcha (W1) -> the cap service over the compose net ---
+	# The v4 dashboard resolves its assets/API relative to this directory.
+	redir /cap /cap/ 308
 	# The browser widget posts challenges to the SAME-ORIGIN /cap/<siteKey>/...
 	# so they stay within connect-src 'self'. Strip the /cap prefix to match the
 	# Cap server's routes. This ALSO serves Cap's ADMIN DASHBOARD: the deployment
@@ -181,6 +191,11 @@
 			# spoofed client IP. Cap rate-limits on the compose peer (Caddy) by
 			# default — do NOT set RATELIMIT_IP_HEADER to a client header.
 			header_up -CF-Connecting-IP
+			header_up -X-Forwarded-For
+			header_up -X-Real-IP
+			header_up -CF-IPCountry
+			header_up -CF-Region-Code
+			header_up -CF-IPCity
 		}
 	}
 

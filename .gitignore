@@ -39,6 +39,7 @@ snapshots/
 *.sql
 *.sql.gz*
 *.age
+*.rdb
 convex-env-*
 
 # Drizzle
@@ -89,3 +90,4 @@ CLAUDE.md
 # Compatibility artifacts contain disposable credentials; never commit them.
 test-results/
 playwright-report/
+tests/cap/dist/

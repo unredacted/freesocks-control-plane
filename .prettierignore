@@ -4,6 +4,7 @@ convex/_generated
 
 # Build output + lockfile.
 dist
+tests/cap/dist
 bun.lock
 
 # Paraglide-compiled i18n output (generated) + the inlang message store + project

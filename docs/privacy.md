@@ -218,13 +218,42 @@ Client-IP _resolution_ (for those hash buckets) is fail-closed and topology-awar
 
 ## 3. Captcha (Cap, the `cap` + `valkey` services)
 
-- Cap rate-limits on the **compose peer** (Caddy's container), not a real client
-  header. Do **not** set `RATELIMIT_IP_HEADER` to a client-supplied header on this
-  deployment — that would pull the real client IP into Cap.
-- Cap's optional **IP geolocation stays off** (its dashboard default). Leave it off.
-- `CAP_DISABLE_ERROR_LOGGING=true` (the compose default) keeps a peer IP from
-  surfacing in an error trace.
-- `valkey` only holds Cap's short-lived challenge/token state — no client IPs.
+- The bundled widget isolates instrumentation in an opaque-origin iframe
+  (`CAP_ISOLATE=true`), preventing it from reading member cookies, storage or
+  page interactions. Leave behavior scoring, automated-interaction blocking
+  and agent blocking off: they require parent-page access and reject isolated
+  solves. Proof of work and automated-browser checks remain available.
+- Credit links omit the page URL/referrer (`CAP_DISABLE_WIDGET_REF=true`).
+  Troubleshooting points to our own FAQ, avoiding upstream diagnostic
+  links that package the page URL and browser details.
+- `bun run test:integration:cap` runs real solves in Chrome and Firefox through
+  the production Caddyfile, with external requests blocked, and checks token
+  reuse, retry, iframe cleanup and the pako decompression fallback.
+
+- Cap 4.0.9 runs through `docker/cap/`, a privacy overlay on the digest-pinned
+  upstream image. Its build checks the original event/context module hashes
+  and fails on drift. Upgrade those checks only after reviewing the new code.
+- The overlay disables per-request event recording entirely, including live
+  listeners/webhook delivery. Upstream's `ipMode=none` alone is insufficient:
+  it still stores UA, language, visitor fingerprints, timings and outcomes.
+  Event history and request-driven webhook features therefore stay empty.
+  Legacy aggregate counts can migrate; the named `cap_data` volume preserves
+  that store across recreations. It does not contain new request events.
+- Request context uses only the **compose peer** (Caddy) for shared rate limits.
+  It ignores IP/geo headers and performs no geo lookup or visitor fingerprint
+  derivation, regardless of dashboard settings. UA and request headers are
+  available only in memory for protection/signature checks. Visitor matching,
+  country/ASN rules and per-visitor velocity are unavailable in this deployment.
+- `DISABLE_ERROR_LOGGING` was removed upstream. The overlay installs fixed log
+  messages before loading Cap, suppressing arbitrary arguments and exception
+  details. Fatal/startup failures still exit nonzero. `CAP_DISABLE_ERROR_LOGGING`
+  is obsolete and can be removed from existing env files.
+- Caddy strips client IP/geo headers on `/cap`, discards access logs and removes
+  the entire `request` object from runtime logs, including proxy failures.
+- Valkey retains keys/settings, sessions and expiring challenge/token/rate-limit
+  state. It receives no real client IPs or visitor fingerprints. The integration
+  test sends sentinel IP/UA headers and checks Valkey values, container logs,
+  event listeners and the actual DuckDB file, then restores a v3 snapshot.
 
 ## 4. Backend container logging (Convex)
 
@@ -708,7 +737,7 @@ If you deploy or fork FCP, keep the posture:
       writes to a file/stdout unless you truly intend to log client IPs).
 - [ ] `RUST_LOG` leaves both `convex-cloud-http` and `common::http` at `warn` (or
       use `warn`), and the §4 check reads 0.
-- [ ] Cap: `RATELIMIT_IP_HEADER` unset; IP geolocation off; `CAP_DISABLE_ERROR_LOGGING=true`.
+- [ ] Cap: deploy the `docker/cap/` overlay with `--build`; run `bun run test:integration:cap`; keep parent-page behavior/agent blocking off.
 - [ ] Don't add a reverse-proxy access log at any fronting layer (Pangolin / CDN)
       that persists client IPs beyond what you need for abuse handling.
 - [ ] If you add a new rate limit or audit event, bucket on `ipHashSubject(ip)`
