@@ -482,7 +482,7 @@ site key, and put the **site key** + **secret** into `.env.convex` as
 deployer (`docker compose ... up -d`) so the env applies.
 
 **Key protocol.** Cap creates a key with protocol `hashwx` unless told
-otherwise; `sha256-pow` works too. The bundled widget (`@cap.js/widget` 0.1.61
+otherwise; `sha256-pow` works too. The bundled widget (`@cap.js/widget` 0.1.62
 with `@cap.js/wasm` 0.0.8, pinned exactly) solves both, from same-origin WASM
 (`src/client/lib/cap-wasm-config.ts`: `cap_wasm_bg.wasm` for `sha256-pow`,
 `hashwx.wasm` for `hashwx`), under the strict member CSP above. An older widget
