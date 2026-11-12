@@ -7506,7 +7506,12 @@ Gcore sells Advanced DDoS protection on an IP address in some regions. FCP drive
 the Cloud API's DDoS endpoints (`convex/lib/edges/providers/gcoreDdos.ts`, sharing the
 transport in `gcoreHttp.ts` with the load balancer adapter). A profile names one address and
 one of the region's profile templates, and Gcore works out the resource (here the load
-balancer) from the address. Every write is a task. Capability `ddosProtection` (Gcore only)
+balancer) from the address. Every write is a task. The template list is read page by page (its
+`count`, then `limit`/`offset`). A template's required fields go out with their defaults; one
+with a required field that has no default is refused (`ddos_template_needs_fields`) and the edge
+card marks it. A 401 or 403 from a DDoS endpoint crosses as `ddos_refused` without its HTTP
+status: the protection entitlement, not the key's hold on the load balancers, so it never counts
+against the account's API health. Capability `ddosProtection` (Gcore only)
 mirrors the adapter's `ddos` methods.
 
 - **On a new edge.** The Gcore template's `ddosProtection` option is `off` (the default),
@@ -7516,7 +7521,8 @@ mirrors the adapter's `ddos` methods.
   second step after the load balancer (`create_ddos_profile`): it waits for the balancer to be
   `ACTIVE` with a public IPv4, adopts a profile already on that address (an earlier answer
   that was lost), or checks the region (`/ddos/accessibility`), picks the template and creates
-  the profile, then turns it on. The step carries what it needs between polls in its opRef.
+  the profile, then turns it on. A finished create whose profile the listing does not show yet is
+  read again (up to five times) before it counts as `ddos_create_failed`. The step carries what it needs between polls in its opRef.
   `required` stops the run on any refusal (`ddos_unavailable`, `ddos_template_required`,
   `ddos_template_unknown`, `ddos_no_templates`, `ddos_refused`, `ddos_create_failed`,
   `ddos_activate_failed`), so no edge goes out unprotected; `on` lets the edge go on without
@@ -7531,7 +7537,10 @@ mirrors the adapter's `ddos` methods.
 bgp? }`: enable creates the profile when there is none, switches its template when another
   is named, and turns it on; disable turns it off and keeps it; remove deletes it. Each waits
   up to 20 s for Gcore's tasks and answers `done`, `pending` or `unchanged` with the view read
-  again. Only a managed edge that is up (verifying, active, draining or quarantined) may
+  again. An `enable` that answers `pending` is run again in the background every 30 s
+  (`edgeProviderOps.ddosResume`, up to 10 times, while the edge stays up and FCP's): the change is
+  idempotent, so it finds the profile the slow task made and turns it on. The card sends a template
+  only when it changes, so a BGP or on/off change never re-reads the template list. Only a managed edge that is up (verifying, active, draining or quarantined) may
   change (`edge.ddos_not_live`). Both routes are throttled under
   `admin.edges.provider-call`; a change is audited `admin.edge.ddos.change` (action, outcome,
   whether a template was named, BGP; never the template's name).

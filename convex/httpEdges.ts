@@ -22,6 +22,7 @@ import { makeFail, notFound, throttle, unauth } from './lib/adminHttp';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
 import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
+import { EDGE_DDOS_CHANGE_STATES } from './lib/edges/providers/types';
 import { namedSpareWaivesTrust } from './lib/edges/rotation';
 import { parseTargetKey } from './probes';
 import { findLegacyField, LEGACY } from './lib/legacyFields';
@@ -373,9 +374,6 @@ function wrap(handler: Handler, sealedRoute: boolean) {
 
 const id = <T extends TableNames>(s: string | undefined) => (s ?? '') as Id<T>;
 
-/** Edge states whose load balancer exists and is FCP's to change. */
-const DDOS_CHANGE_STATES = new Set(['verifying', 'active', 'draining', 'quarantined']);
-
 /**
  * An edge's DDoS protection at its provider (capability `ddosProtection`).
  * `refresh`: what it has now (a read). Otherwise a change: `{ action:
@@ -413,7 +411,7 @@ async function edgeDdos(
     return errorJson('validation', 'bgp must be true or false', 400);
   if (!edge.managed)
     return errorJson('edge.unmanaged', 'An adopted edge is observed only, never changed', 409);
-  if (!DDOS_CHANGE_STATES.has(edge.status))
+  if (!EDGE_DDOS_CHANGE_STATES.has(edge.status))
     return errorJson(
       'edge.ddos_not_live',
       'Only an edge that is up (checking, live, draining or held) can change its protection',

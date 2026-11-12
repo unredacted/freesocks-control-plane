@@ -1373,6 +1373,12 @@ const COPY = {
       'The region has no DDoS protection profile with the name or number the template gives.',
     fix: "Check the template's Protection profile against the region's list on an edge's DDoS card.",
   },
+  ddos_template_needs_fields: {
+    label: 'Profile needs settings',
+    explain:
+      'The protection profile has required settings without a default, which FCP has no values for.',
+    fix: "Pick another profile, or set this one up in the provider's console.",
+  },
   ddos_refused: {
     label: 'Protection refused',
     explain: 'The provider refused to protect the address, so a retry would fail the same way.',

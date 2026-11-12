@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { GcoreTemplate, gcoreProvider } from './gcore';
-import { chooseDdosTemplate, decodeDdosState, DDOS_STEP_KIND } from './gcoreDdos';
+import {
+  chooseDdosTemplate,
+  decodeDdosState,
+  DDOS_STEP_KIND,
+  templateFieldValues,
+} from './gcoreDdos';
+import { apiFailureCode } from '../../../edgeProviderOps';
 import type { GcoreConfig, Ledger, LedgerResource } from './types';
 import { jsonRes, mockFetch, type Captured } from '../testing/mockFetch';
 
@@ -44,7 +50,10 @@ function gcoreWorld(w: World) {
     if (p === '/cloud/v1/ddos/accessibility/22')
       return jsonRes({ is_accessible: w.access ?? true, http_code: 200, message: 'ok' });
     if (p === '/cloud/v1/ddos/profile-templates/22')
-      return jsonRes({ count: 2, results: w.templates ?? TEMPLATES });
+      return jsonRes({
+        count: (w.templates ?? TEMPLATES).length,
+        results: w.templates ?? TEMPLATES,
+      });
     if (p === '/cloud/v1/pricing/22/ddos')
       return jsonRes({
         price: {
@@ -379,5 +388,124 @@ describe('gcore ddos: the edge page', () => {
       gcoreProvider.ddos!.change(cfg, ledger, { action: 'enable' }),
     ).rejects.toMatchObject({ meta: { code: 'ddos_unavailable' } });
     expect(stub.calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+});
+
+describe('gcore ddos: review fixes', () => {
+  const step = gcoreProvider.planProvision(
+    cfg,
+    spec,
+    GcoreTemplate.parse({ ddosProtection: 'required' }),
+  )[1]!;
+  const required = GcoreTemplate.parse({ ddosProtection: 'required' });
+
+  test("every page of the region's templates is read (count past the first page)", async () => {
+    const stub = mockFetch((c) => {
+      if (c.path === '/cloud/v1/ddos/profile-templates/22') {
+        const offset = Number(new URLSearchParams(c.query).get('offset') ?? 0);
+        return jsonRes({
+          count: 3,
+          results:
+            offset === 0 ? TEMPLATES : [{ id: 12, name: 'Late', description: null, fields: [] }],
+        });
+      }
+      return gcoreWorld({})(c);
+    });
+    const v = await gcoreProvider.ddos!.view(cfg, ledger);
+    expect(v.templates.map((t) => t.id)).toEqual([7, 9, 12]);
+    expect(
+      stub.calls
+        .filter((c) => c.path === '/cloud/v1/ddos/profile-templates/22' && c.query)
+        .map((c) => new URLSearchParams(c.query).get('offset')),
+    ).toEqual(['2']);
+  });
+
+  test("a template's required fields go out with their defaults; one without a default is refused", async () => {
+    const withFields = {
+      id: 5,
+      name: 'Game ports',
+      description: null,
+      fields: [
+        { id: 10, name: 'Ports', required: true, default: '[27015]' },
+        { id: 11, name: 'Note', required: false, default: null },
+      ],
+    };
+    expect(templateFieldValues(withFields)).toEqual({
+      fields: [{ base_field: 10, field_value: [27015] }],
+      missing: [],
+    });
+    const stub = mockFetch(gcoreWorld({ templates: [withFields as never] }));
+    await gcoreProvider.runStep(cfg, step, spec, required, ledger);
+    expect(stub.calls.find((c) => c.path === PROFILES && c.method === 'POST')?.body).toEqual({
+      profile_template: 5,
+      ip_address: ADDR,
+      fields: [{ base_field: 10, field_value: [27015] }],
+    });
+
+    const noDefault = {
+      ...withFields,
+      fields: [{ id: 10, name: 'Ports', required: true, default: null }],
+    };
+    mockFetch(gcoreWorld({ templates: [noDefault as never] }));
+    expect(await gcoreProvider.runStep(cfg, step, spec, required, ledger)).toMatchObject({
+      status: 'partial',
+      code: 'ddos_template_needs_fields',
+    });
+    expect((await gcoreProvider.ddos!.view(cfg, ledger)).templates[0]!.fieldsNeeded).toEqual([
+      'Ports',
+    ]);
+  });
+
+  test('a finished create the listing does not show yet is read again before it counts as failed', async () => {
+    mockFetch(gcoreWorld({ templates: [TEMPLATES[0]], profiles: [] }));
+    let out = await gcoreProvider.runStep(cfg, step, spec, required, ledger);
+    for (let i = 0; i < 4; i++) {
+      expect(out.status).toBe('requested');
+      out = await gcoreProvider.pollStep!(
+        cfg,
+        step,
+        out.status === 'requested' ? out.opRef : '',
+        ledger,
+      );
+    }
+    expect(decodeDdosState(out.status === 'requested' ? out.opRef : '')).toMatchObject({
+      phase: 'create',
+      reads: 4,
+    });
+    out = await gcoreProvider.pollStep!(
+      cfg,
+      step,
+      out.status === 'requested' ? out.opRef : '',
+      ledger,
+    );
+    expect(out).toMatchObject({ status: 'partial', code: 'ddos_create_failed' });
+  });
+
+  test('a 403 from the protection product never counts against the account', async () => {
+    const refusing = (c: Captured) =>
+      c.path.startsWith('/cloud/v1/ddos/')
+        ? jsonRes({ type: 'permission-denied', title: 'no' }, 403)
+        : gcoreWorld({})(c);
+    mockFetch(refusing);
+    let err: unknown;
+    try {
+      await gcoreProvider.ddos!.change(cfg, ledger, { action: 'enable' });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ meta: { code: 'ddos_refused' } });
+    expect(apiFailureCode(err)).toBeNull();
+    // The step gives up on it at once; the destroy sweep reads it as no profiles.
+    expect(await gcoreProvider.runStep(cfg, step, spec, required, ledger)).toMatchObject({
+      status: 'partial',
+      code: 'ddos_refused',
+    });
+    const s2 = mockFetch((c) => (c.method === 'DELETE' ? jsonRes({ tasks: ['d'] }) : refusing(c)));
+    expect(await gcoreProvider.runDestroy(cfg, lbRes, ledger)).toMatchObject({
+      status: 'delete_requested',
+    });
+    expect(s2.calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([
+      '/cloud/v1/loadbalancers/11/22/lb-1',
+    ]);
   });
 });

@@ -1370,7 +1370,13 @@ export const EdgeLiveResponse = z.object({ live: EdgeLive.nullable() });
 export const EdgeDdosView = z.object({
   available: z.boolean().nullable(),
   templates: z.array(
-    z.object({ id: z.number(), name: z.string(), description: z.string().nullable() }),
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      description: z.string().nullable(),
+      /** Required settings without a default: FCP cannot make a profile of this template. */
+      fieldsNeeded: z.array(z.string()).default([]),
+    }),
   ),
   profiles: z.array(
     z.object({

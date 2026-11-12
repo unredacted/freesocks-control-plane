@@ -64,7 +64,7 @@
     profileChoice =
       current?.templateId != null
         ? String(current.templateId)
-        : v.templates.length === 1
+        : v.templates.length === 1 && v.templates[0]!.fieldsNeeded.length === 0
           ? String(v.templates[0]!.id)
           : '';
     bgp = current?.bgp ?? true;
@@ -86,13 +86,21 @@
     mutationFn: (a: { id: string; action: EdgeDdosAction }) =>
       changeEdgeDdos(a.id, {
         action: a.action,
-        ...(a.action === 'enable' && profileChoice ? { profileTemplate: profileChoice } : {}),
+        // The template only when it changes (or there is no profile yet): a
+        // BGP or on/off change keeps the profile's own without re-reading the list.
+        ...(a.action === 'enable' && profileChoice && (!profile || changingTemplate)
+          ? { profileTemplate: profileChoice }
+          : {}),
         ...(a.action === 'enable' ? { bgp } : {}),
       }),
     onSuccess: (res, a) => {
       if (a.id === edgeId && res.view) take(res.view);
       if (res.state === 'pending')
-        toast.info('The provider is still applying it. Check again in a minute.');
+        toast.info(
+          a.action === 'enable'
+            ? 'The provider is still applying it. FCP finishes turning it on by itself; check again in a few minutes.'
+            : 'The provider is still applying it. Check again in a minute.',
+        );
       else if (res.state === 'unchanged') toast.info('Nothing to change.');
       else toast.success(DONE_WORDS[a.action]);
     },
@@ -208,12 +216,22 @@
             >
               <option value="" disabled>Pick a profile</option>
               {#each view.templates as t (t.id)}
-                <option value={String(t.id)}>{t.name}</option>
+                <option value={String(t.id)} disabled={t.fieldsNeeded.length > 0}>
+                  {t.fieldsNeeded.length > 0
+                    ? `${t.name} (needs settings FCP cannot fill)`
+                    : t.name}
+                </option>
               {/each}
             </select>
             {#each view.templates.filter((t) => String(t.id) === profileChoice && t.description) as t (t.id)}
               <p class="text-muted-foreground text-xs">{t.description}</p>
             {/each}
+            {#if view.templates.some((t) => t.fieldsNeeded.length > 0)}
+              <p class="text-muted-foreground text-xs">
+                A profile marked as needing settings has required values with no default. Set it up
+                in Gcore's console instead.
+              </p>
+            {/if}
           </div>
         {/if}
         <div class="flex items-center gap-2">

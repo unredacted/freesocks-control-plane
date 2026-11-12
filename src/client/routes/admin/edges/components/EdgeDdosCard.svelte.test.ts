@@ -16,8 +16,8 @@ vi.mock('@client/lib/edgesApi', async (importOriginal) => ({
 const VIEW: EdgeDdosView = {
   available: true,
   templates: [
-    { id: 7, name: 'TCP generic', description: 'Any TCP service' },
-    { id: 9, name: 'Game server', description: null },
+    { id: 7, name: 'TCP generic', description: 'Any TCP service', fieldsNeeded: [] },
+    { id: 9, name: 'Game server', description: null, fieldsNeeded: [] },
   ],
   profiles: [],
   addresses: { v4: '192.0.2.10' },
@@ -93,6 +93,20 @@ describe('An edge DDoS card', () => {
     );
     await vi.waitFor(() => expect(button('Turn off')).toBeDefined());
     expect(text()).toContain('Profile TCP generic, BGP on');
+  });
+
+  test('a BGP-only change keeps the profile and sends no template', async () => {
+    vi.mocked(fetchEdgeDdos).mockResolvedValue(ON);
+    vi.mocked(changeEdgeDdos).mockResolvedValue({ state: 'done', view: ON });
+    mount();
+    button('Check protection')!.click();
+    await vi.waitFor(() => expect(button('Turn off')).toBeDefined());
+    document.querySelector<HTMLButtonElement>('#edge-ddos-bgp')!.click();
+    flushSync();
+    button('Apply')!.click();
+    await vi.waitFor(() =>
+      expect(changeEdgeDdos).toHaveBeenCalledWith('e1', { action: 'enable', bgp: false }),
+    );
   });
 
   test("a refusal reads in words under the card, not the server's code", async () => {

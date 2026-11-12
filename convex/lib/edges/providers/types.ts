@@ -523,8 +523,16 @@ export interface EdgeDdosProfileView {
 export interface EdgeDdosView {
   /** Whether the edge's region offers protection; null when the provider did not say. */
   available: boolean | null;
-  /** The region's profile templates. */
-  templates: Array<{ id: number; name: string; description: string | null }>;
+  /**
+   * The region's profile templates. `fieldsNeeded`: required settings the
+   * template has no default for (FCP cannot make a profile of it).
+   */
+  templates: Array<{
+    id: number;
+    name: string;
+    description: string | null;
+    fieldsNeeded: string[];
+  }>;
   profiles: EdgeDdosProfileView[];
   addresses: Addresses;
   /** The provider's list price for the feature, per protected address, when it gives one. */
@@ -533,6 +541,13 @@ export interface EdgeDdosView {
   unread: string[];
 }
 export type EdgeDdosAction = 'enable' | 'disable' | 'remove';
+/** Edge states whose load balancer exists and is FCP's to change protection on. */
+export const EDGE_DDOS_CHANGE_STATES: ReadonlySet<string> = new Set([
+  'verifying',
+  'active',
+  'draining',
+  'quarantined',
+]);
 export interface EdgeDdosChange {
   action: EdgeDdosAction;
   /** `enable`: the template by name or number (absent: keep the profile's, or the region's only one). */

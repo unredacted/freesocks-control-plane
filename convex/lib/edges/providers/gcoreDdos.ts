@@ -40,7 +40,13 @@ import type {
 } from './types';
 import { firstResource, metaOf, stepOf } from './types';
 import { discoveryMaySettle } from './capabilities';
-import { EdgeProviderError, isProviderNotFound, refusedCreate } from './http';
+import {
+  EdgeProviderError,
+  isProviderNotFound,
+  refusalOf,
+  refusedCreate,
+  withRefusal,
+} from './http';
 import {
   GcoreTasks,
   gcore,
@@ -58,11 +64,25 @@ import type { GcoreDdosMode, GcoreTemplateParams } from './templates';
 const AccessStatus = z
   .object({ is_accessible: z.boolean(), message: z.string().nullish() })
   .passthrough();
-const ProfileTemplate = z
-  .object({ id: z.number(), name: z.string().nullish(), description: z.string().nullish() })
+const TemplateField = z
+  .object({
+    id: z.number(),
+    name: z.string().nullish(),
+    required: z.boolean().nullish(),
+    default: z.string().nullish(),
+  })
   .passthrough();
+const ProfileTemplate = z
+  .object({
+    id: z.number(),
+    name: z.string().nullish(),
+    description: z.string().nullish(),
+    fields: z.array(TemplateField).nullish(),
+  })
+  .passthrough();
+export type GcoreDdosTemplate = z.infer<typeof ProfileTemplate>;
 const ProfileTemplateList = z
-  .object({ results: z.array(ProfileTemplate).default([]) })
+  .object({ count: z.number().nullish(), results: z.array(ProfileTemplate).default([]) })
   .passthrough();
 const Profile = z
   .object({
@@ -102,13 +122,51 @@ const Price = z
 
 // --- the calls ---------------------------------------------------------------------------
 
+/** A DDoS endpoint refused the key (401 / 403): the protection product, not the load balancers. */
+export const DDOS_REFUSED = 'ddos_refused';
+export const isDdosRefusal = (e: unknown): e is EdgeProviderError =>
+  e instanceof EdgeProviderError && e.meta.code === DDOS_REFUSED;
+
+/**
+ * `gcore()` for the DDoS endpoints. A 401 or 403 there is the account's
+ * protection entitlement or quota, not its hold on the load balancers: it
+ * crosses as `ddos_refused` WITHOUT an HTTP status, so it never counts
+ * against the account's API health (`apiFailureCode`). The provider's own
+ * words stay attached for the operator.
+ */
+async function ddosGcore<T>(
+  cfg: GcoreConfig,
+  step: string,
+  method: 'GET' | 'POST' | 'DELETE' | 'PATCH',
+  path: string,
+  schema: z.ZodType<T>,
+  body?: unknown,
+): Promise<T> {
+  try {
+    return await gcore(cfg, step, method, path, schema, body);
+  } catch (e) {
+    const status = e instanceof EdgeProviderError ? e.meta.status : undefined;
+    if (status !== 401 && status !== 403) throw e;
+    throw withRefusal(
+      new EdgeProviderError(`gcore ddos: refused on ${step}`, {
+        provider: 'gcore',
+        step,
+        code: DDOS_REFUSED,
+        retryable: false,
+        timedOut: false,
+      }),
+      refusalOf(e),
+    );
+  }
+}
+
 const profilesPath = (cfg: GcoreConfig) => `/cloud/v1/ddos/profiles/${gcoreScope(cfg)}`;
 const profilePath = (cfg: GcoreConfig, id: string | number) =>
   `${profilesPath(cfg)}/${encodeURIComponent(String(id))}`;
 
 /** Whether the region has Advanced DDoS protection at all. */
 async function regionAccess(cfg: GcoreConfig, step: string) {
-  return gcore(
+  return ddosGcore(
     cfg,
     step,
     'GET',
@@ -117,20 +175,68 @@ async function regionAccess(cfg: GcoreConfig, step: string) {
   );
 }
 
-async function profileTemplates(cfg: GcoreConfig, step: string) {
-  const res = await gcore(
-    cfg,
-    step,
-    'GET',
-    `/cloud/v1/ddos/profile-templates/${encodeURIComponent(String(cfg.regionId))}`,
-    ProfileTemplateList,
-  );
-  return res.results;
+/** Pages of the template list read at most (Gcore's limit/offset pagination). */
+const TEMPLATE_PAGES_MAX = 10;
+
+/**
+ * Every profile template of the region. The list says how many there are
+ * (`count`): pages past the first are asked by `limit`/`offset` until all are
+ * read, a page adds none, or the page cap.
+ */
+async function profileTemplates(cfg: GcoreConfig, step: string): Promise<GcoreDdosTemplate[]> {
+  const base = `/cloud/v1/ddos/profile-templates/${encodeURIComponent(String(cfg.regionId))}`;
+  const first = await ddosGcore(cfg, step, 'GET', base, ProfileTemplateList);
+  const out = [...first.results];
+  const total = first.count ?? out.length;
+  const pageSize = Math.max(first.results.length, 1);
+  for (let page = 1; out.length < total && page < TEMPLATE_PAGES_MAX; page++) {
+    const next = await ddosGcore(
+      cfg,
+      step,
+      'GET',
+      `${base}?limit=${pageSize}&offset=${out.length}`,
+      ProfileTemplateList,
+    );
+    const fresh = next.results.filter((t) => !out.some((o) => o.id === t.id));
+    if (fresh.length === 0) break;
+    out.push(...fresh);
+  }
+  return out;
+}
+
+/**
+ * The `fields` a profile of this template is created with: every REQUIRED
+ * field the template declares, with its default (JSON when it parses, else
+ * the text). `missing`: required fields without a default, which FCP has no
+ * value for (the profile cannot be made from FCP: `ddos_template_needs_fields`).
+ * Exported for tests.
+ */
+export function templateFieldValues(t: Pick<GcoreDdosTemplate, 'fields'>): {
+  fields: Array<{ base_field: number; field_value: unknown }>;
+  missing: string[];
+} {
+  const fields: Array<{ base_field: number; field_value: unknown }> = [];
+  const missing: string[] = [];
+  for (const f of t.fields ?? []) {
+    if (f.required !== true) continue;
+    if (f.default === null || f.default === undefined || f.default === '') {
+      missing.push(f.name ?? String(f.id));
+      continue;
+    }
+    let value: unknown = f.default;
+    try {
+      value = JSON.parse(f.default);
+    } catch {
+      // Plain text: sent as it is.
+    }
+    fields.push({ base_field: f.id, field_value: value });
+  }
+  return { fields, missing };
 }
 
 /** The profiles on one address (a single address, never a range). */
 async function profilesOn(cfg: GcoreConfig, step: string, address: string) {
-  const res = await gcore(
+  const res = await ddosGcore(
     cfg,
     step,
     'GET',
@@ -141,16 +247,30 @@ async function profilesOn(cfg: GcoreConfig, step: string, address: string) {
   return res.results.filter((p) => p.ip_address === address);
 }
 
+/** The create / update body: the template, the address, and the template's required fields. */
+function profileBody(template: GcoreDdosTemplate, address: string) {
+  const { fields } = templateFieldValues(template);
+  return {
+    profile_template: template.id,
+    ip_address: address,
+    ...(fields.length > 0 ? { fields } : {}),
+  };
+}
+
 async function createProfile(
   cfg: GcoreConfig,
   step: string,
-  templateId: number,
+  template: GcoreDdosTemplate,
   address: string,
 ): Promise<string> {
-  const res = await gcore(cfg, step, 'POST', profilesPath(cfg), GcoreTasks, {
-    profile_template: templateId,
-    ip_address: address,
-  });
+  const res = await ddosGcore(
+    cfg,
+    step,
+    'POST',
+    profilesPath(cfg),
+    GcoreTasks,
+    profileBody(template, address),
+  );
   return res.tasks[0];
 }
 
@@ -158,13 +278,17 @@ async function changeTemplate(
   cfg: GcoreConfig,
   step: string,
   profileId: number,
-  templateId: number,
+  template: GcoreDdosTemplate,
   address: string,
 ): Promise<string> {
-  const res = await gcore(cfg, step, 'PATCH', profilePath(cfg, profileId), GcoreTasks, {
-    profile_template: templateId,
-    ip_address: address,
-  });
+  const res = await ddosGcore(
+    cfg,
+    step,
+    'PATCH',
+    profilePath(cfg, profileId),
+    GcoreTasks,
+    profileBody(template, address),
+  );
   return res.tasks[0];
 }
 
@@ -175,10 +299,17 @@ async function setActive(
   active: boolean,
   bgp: boolean,
 ): Promise<string> {
-  const res = await gcore(cfg, step, 'POST', `${profilePath(cfg, profileId)}/action`, GcoreTasks, {
-    active,
-    bgp,
-  });
+  const res = await ddosGcore(
+    cfg,
+    step,
+    'POST',
+    `${profilePath(cfg, profileId)}/action`,
+    GcoreTasks,
+    {
+      active,
+      bgp,
+    },
+  );
   return res.tasks[0];
 }
 
@@ -189,7 +320,7 @@ async function deleteProfile(
   profileId: string | number,
 ): Promise<{ task?: string } | null> {
   try {
-    const res = await gcore(
+    const res = await ddosGcore(
       cfg,
       step,
       'DELETE',
@@ -209,9 +340,34 @@ async function deleteProfile(
 
 // --- pure helpers ------------------------------------------------------------------------
 
+/**
+ * `chooseDdosTemplate` over the region's list, then the template itself, refused
+ * `ddos_template_needs_fields` when it requires a field FCP has no value for.
+ */
+function pickTemplate(
+  templates: GcoreDdosTemplate[],
+  wanted: string | undefined,
+):
+  | { ok: true; template: GcoreDdosTemplate }
+  | { ok: false; code: Extract<DdosTemplateChoice, { ok: false }>['code'] } {
+  const choice = chooseDdosTemplate(templates, wanted);
+  if (!choice.ok) return choice;
+  const template = templates.find((t) => t.id === choice.id)!;
+  if (templateFieldValues(template).missing.length > 0)
+    return { ok: false, code: 'ddos_template_needs_fields' };
+  return { ok: true, template };
+}
+
 export type DdosTemplateChoice =
   | { ok: true; id: number; name: string }
-  | { ok: false; code: 'ddos_no_templates' | 'ddos_template_required' | 'ddos_template_unknown' };
+  | {
+      ok: false;
+      code:
+        | 'ddos_no_templates'
+        | 'ddos_template_required'
+        | 'ddos_template_unknown'
+        | 'ddos_template_needs_fields';
+    };
 
 /**
  * The template to use: `wanted` by its number, else by its name (any case);
@@ -272,7 +428,11 @@ interface DdosStepState {
   task?: string;
   address?: string;
   profileId?: number;
+  /** Listings after a finished task that did not show the profile yet (Gcore's list lags). */
+  reads?: number;
 }
+/** Listings after a finished create before the profile counts as never made. */
+const PROFILE_READS_MAX = 5;
 const OPREF_PREFIX = 'ddos:';
 const encodeState = (st: DdosStepState) => `${OPREF_PREFIX}${JSON.stringify(st)}`;
 export function decodeDdosState(opRef: string | undefined): DdosStepState | null {
@@ -352,6 +512,20 @@ export async function pollDdosStep(
 }
 
 async function advance(cfg: GcoreConfig, ledger: Ledger, st: DdosStepState): Promise<StepOutcome> {
+  try {
+    return await advanceStep(cfg, ledger, st);
+  } catch (e) {
+    // The protection product refused the key: asking again gets the same answer.
+    if (isDdosRefusal(e)) return giveUp(st, DDOS_REFUSED, [], refusalOf(e));
+    throw e;
+  }
+}
+
+async function advanceStep(
+  cfg: GcoreConfig,
+  ledger: Ledger,
+  st: DdosStepState,
+): Promise<StepOutcome> {
   const step = DDOS_STEP_ID;
   if (st.phase === 'create' || st.phase === 'activate') {
     const t = await gcoreTask(cfg, step, st.task ?? '');
@@ -366,7 +540,13 @@ async function advance(cfg: GcoreConfig, ledger: Ledger, st: DdosStepState): Pro
         st.phase === 'create' ? 'ddos_create_failed' : 'ddos_activate_failed',
         found,
       );
-    if (!p) return giveUp(st, 'ddos_create_failed');
+    if (!p) {
+      // A finished task can come before the listing shows what it made: read again.
+      const reads = (st.reads ?? 0) + 1;
+      return reads < PROFILE_READS_MAX
+        ? requested({ ...st, reads })
+        : giveUp(st, 'ddos_create_failed');
+    }
     if (st.phase === 'activate' || (p.options?.active === true && p.options?.bgp === st.bgp))
       return { status: 'done', resources: found };
     const task = await setActive(cfg, step, p.id, true, st.bgp);
@@ -392,18 +572,19 @@ async function advance(cfg: GcoreConfig, ledger: Ledger, st: DdosStepState): Pro
 
   const access = await regionAccess(cfg, step);
   if (!access.is_accessible) return giveUp(st, 'ddos_unavailable');
-  const choice = chooseDdosTemplate(await profileTemplates(cfg, step), st.want);
+  const choice = pickTemplate(await profileTemplates(cfg, step), st.want);
   if (!choice.ok) return giveUp(st, choice.code);
   let task: string;
   try {
-    task = await createProfile(cfg, step, choice.id, address);
+    task = await createProfile(cfg, step, choice.template, address);
   } catch (e) {
     // A 4xx (`validation-error`, `not-available`, `quota-exceeded`) built nothing.
-    // Its HTTP status is dropped: a 403 here is the protection product, not the
-    // key's hold on the load balancers, and must not count against the account.
-    const refused = refusedCreate(e, 'ddos_refused');
+    // Its HTTP status is dropped: a refusal here is the protection product, not
+    // the key's hold on the load balancers, and must not count against the account.
+    if (isDdosRefusal(e)) throw e;
+    const refused = refusedCreate(e, DDOS_REFUSED);
     if (!refused || refused.status !== 'partial') throw e;
-    return giveUp(st, 'ddos_refused', [], refused.detail);
+    return giveUp(st, DDOS_REFUSED, [], refused.detail);
   }
   return requested({ ...st, phase: 'create', task, address });
 }
@@ -450,7 +631,7 @@ export async function confirmProfileDestroyed(
   r: LedgerResource,
 ): Promise<DestroyOutcome> {
   const address = metaOf(r).address;
-  const res = await gcore(
+  const res = await ddosGcore(
     cfg,
     'confirm-destroy',
     'GET',
@@ -476,7 +657,15 @@ export async function sweepProfiles(cfg: GcoreConfig, lb: GcoreLbBody): Promise<
   if (lb.ddos_profile) ids.set(lb.ddos_profile.id, lb.ddos_profile);
   for (const a of [addrs.v4, addrs.v6]) {
     if (!a) continue;
-    for (const p of await profilesOn(cfg, 'destroy', a)) ids.set(p.id, p);
+    let on: ProfileBody[];
+    try {
+      on = await profilesOn(cfg, 'destroy', a);
+    } catch (e) {
+      // A key the protection product refuses has no profiles to leave behind.
+      if (isDdosRefusal(e)) continue;
+      throw e;
+    }
+    for (const p of on) ids.set(p.id, p);
   }
   let left = 0;
   for (const [id, p] of ids) {
@@ -536,7 +725,7 @@ export async function ddosView(cfg: GcoreConfig, ledger: Ledger): Promise<GcoreD
     soft('region', () => regionAccess(cfg, step)),
     soft('templates', () => profileTemplates(cfg, step)),
     soft('price', () =>
-      gcore(
+      ddosGcore(
         cfg,
         step,
         'GET',
@@ -557,6 +746,7 @@ export async function ddosView(cfg: GcoreConfig, ledger: Ledger): Promise<GcoreD
       id: t.id,
       name: t.name ?? String(t.id),
       description: t.description ? t.description.slice(0, 300) : null,
+      fieldsNeeded: templateFieldValues(t).missing.map((n) => n.slice(0, 60)),
     })),
     profiles,
     addresses,
@@ -642,22 +832,26 @@ export async function changeDdos(
 
   const bgp = req.bgp ?? true;
   let profile = p;
-  let template: DdosTemplateChoice | null = null;
+  let template: GcoreDdosTemplate | null = null;
   if (!profile || req.profileTemplate) {
     const access = await regionAccess(cfg, step);
     if (!access.is_accessible) refuse('ddos_unavailable', step);
-    template = chooseDdosTemplate(await profileTemplates(cfg, step), req.profileTemplate);
-    if (!template.ok) refuse(template.code, step);
+    const pick = pickTemplate(await profileTemplates(cfg, step), req.profileTemplate);
+    if (!pick.ok) refuse(pick.code, step);
+    template = pick.template;
   }
+  // A `pending` answer below is picked up again by the caller
+  // (edgeProviderOps.ddosResume): an enable is idempotent, so running it again
+  // finds the profile the slow task made and turns it on.
   let changed = false;
-  if (!profile && template?.ok) {
-    const task = await createProfile(cfg, step, template.id, address);
+  if (!profile && template) {
+    const task = await createProfile(cfg, step, template, address);
     changed = true;
     if ((await waitTask(cfg, step, task, deadline)) === 'pending') return { state: 'pending' };
     [profile] = await profilesOn(cfg, step, address);
     if (!profile) return { state: 'pending' };
-  } else if (profile && template?.ok && profile.profile_template?.id !== template.id) {
-    const task = await changeTemplate(cfg, step, profile.id, template.id, address);
+  } else if (profile && template && profile.profile_template?.id !== template.id) {
+    const task = await changeTemplate(cfg, step, profile.id, template, address);
     changed = true;
     if ((await waitTask(cfg, step, task, deadline)) === 'pending') return { state: 'pending' };
   }

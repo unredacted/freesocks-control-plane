@@ -1764,7 +1764,7 @@ describe('origin admin routes: an edge DDoS protection', () => {
   afterEach(() => __setEdgeProviderForTests('gcore', null));
 
   /** Gcore with its protection methods recorded (nothing reaches a network). */
-  function fakeGcoreDdos() {
+  function fakeGcoreDdos(answers: Array<'done' | 'pending'> = []) {
     const changes: Array<Record<string, unknown>> = [];
     const view = {
       available: true,
@@ -1780,7 +1780,7 @@ describe('origin admin routes: an edge DDoS protection', () => {
         view: async () => view,
         change: async (_cfg: unknown, _ledger: unknown, req: Record<string, unknown>) => {
           changes.push(req);
-          return { state: 'done' as const };
+          return { state: answers.shift() ?? ('done' as const) };
         },
       },
     } as never);
@@ -1847,6 +1847,21 @@ describe('origin admin routes: an edge DDoS protection', () => {
     );
     expect(audits).toHaveLength(1);
     expect(JSON.stringify(audits[0])).not.toContain('TCP generic');
+  });
+
+  test('an enable Gcore was still applying is run again in the background until it lands', async () => {
+    const fake = fakeGcoreDdos(['pending', 'done']);
+    const { t, call, edgeId } = await seedEdge('active');
+    const res = await call('POST', `${edgeId}/ddos`, { action: 'enable', bgp: false });
+    expect(EdgeDdosChangeResponse.parse(await res.json()).state).toBe('pending');
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    const resume = scheduled.find((f) => f.name.includes('ddosResume'));
+    expect(resume?.args[0]).toMatchObject({ edgeId, attempt: 1, bgp: false });
+    await t.action(internal.edgeProviderOps.ddosResume, { edgeId, attempt: 1, bgp: false });
+    expect(fake.changes).toEqual([
+      { action: 'enable', bgp: false },
+      { action: 'enable', bgp: false },
+    ]);
   });
 
   test('refuses a bad action, an edge that is not up, and an imported edge', async () => {
