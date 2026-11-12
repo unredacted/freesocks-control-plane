@@ -988,6 +988,37 @@ export const recordLive = internalMutation({
   },
 });
 
+/** Audit an edge's DDoS protection change (the provider call already happened). */
+export const recordDdosChange = internalMutation({
+  args: {
+    edgeId: v.id('edges'),
+    action: v.union(v.literal('enable'), v.literal('disable'), v.literal('remove')),
+    state: v.union(v.literal('done'), v.literal('pending'), v.literal('unchanged')),
+    profileTemplateSet: v.boolean(),
+    bgp: v.optional(v.boolean()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    const e = await ctx.db.get(a.edgeId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.edge.ddos.change',
+      targetType: 'edge',
+      targetId: a.edgeId,
+      payload: {
+        edgeId: a.edgeId,
+        accountId: e?.accountId ?? null,
+        action: a.action,
+        state: a.state,
+        profileTemplateSet: a.profileTemplateSet,
+        bgp: a.bgp ?? null,
+      },
+    });
+    return { ok: true as const };
+  },
+});
+
 /**
  * Operator resolution for a parked edge (`needs_operator` / `ambiguous` steps):
  *  - `destroy`: the ledger is trusted; walk the destroy path again;

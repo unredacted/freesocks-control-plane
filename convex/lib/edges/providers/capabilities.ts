@@ -85,6 +85,12 @@ export interface EdgeProviderCapabilities {
    * (lib/edges/layers.ts `withOriginHost`). Absent = it sends the front name.
    */
   originHostHeader?: 'origin' | 'option';
+  /**
+   * Paid DDoS protection on an edge's address that FCP can turn on as the edge
+   * is made (a template option) and on or off from the edge's page: the
+   * adapter has `ddos`. Absent = none.
+   */
+  ddosProtection?: true;
   /** Typical wall clock from create to active (informational; bounds `discoverySettleMs`). */
   typicalProvisionMs: number;
   /**
@@ -119,6 +125,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     udp: false,
     idleTimeoutConfigurable: true,
     memberHealth: true,
+    ddosProtection: true,
     typicalProvisionMs: 2 * MIN,
     discoverySettleMs: 2 * MIN,
   },

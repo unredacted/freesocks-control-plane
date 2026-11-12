@@ -648,6 +648,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'probe.target.update': ['label', 'referenceFor'],
   'probe.target.delete': ['label'],
   'edge.live.pulled': ['edgeId', 'accountId'],
+  // An edge's DDoS protection turned on, off or removed: never the template's name.
+  'admin.edge.ddos.change': ['edgeId', 'accountId', 'action', 'state', 'profileTemplateSet', 'bgp'],
   'admin.edge.config.change': ['changedKeys'],
   'admin.edge.maintenance': ['frozen', 'reason'],
   // The explicit bootstrap provision from a tested but unqualified account.

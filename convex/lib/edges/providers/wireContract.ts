@@ -65,7 +65,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
   // --- L4: Gcore Cloud load balancers ------------------------------------------------
   gcore: {
     source:
-      'https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16; https://docs.gcore.com/api-reference/cloud/load-balancers/ (list load balancer flavors, preview load balancer price), 2026-10-22',
+      'https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16; https://docs.gcore.com/api-reference/cloud/load-balancers/ (list load balancer flavors, preview load balancer price), 2026-10-22; https://docs.gcore.com/api-reference/cloud/ddos-protection/ (DDoS protection), 2026-11-12',
     calls: [
       {
         method: 'GET',
@@ -145,6 +145,50 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         method: 'GET',
         path: '^/cloud/v1/subnets/[^/]+/[^/]+$',
         purpose: 'location form: the subnets of those networks',
+      },
+      {
+        method: 'GET',
+        path: '^/cloud/v1/ddos/accessibility/[^/]+$',
+        purpose: 'DDoS protection: whether the region offers it',
+      },
+      {
+        method: 'GET',
+        path: '^/cloud/v1/ddos/profile-templates/[^/]+$',
+        purpose: "DDoS protection: the region's profile templates",
+      },
+      {
+        method: 'GET',
+        path: '^/cloud/v1/ddos/profiles/[^/]+/[^/]+$',
+        purpose:
+          'DDoS protection: the profiles on an address (step, discovery, destroy, edge page)',
+      },
+      {
+        method: 'POST',
+        path: '^/cloud/v1/ddos/profiles/[^/]+/[^/]+$',
+        purpose: "DDoS protection: protect the edge's public IPv4 with a template",
+        body: ['profile_template', 'ip_address'],
+      },
+      {
+        method: 'PATCH',
+        path: '^/cloud/v1/ddos/profiles/[^/]+/[^/]+/[^/]+$',
+        purpose: "DDoS protection: switch a profile's template (edge page)",
+        body: ['profile_template', 'ip_address'],
+      },
+      {
+        method: 'POST',
+        path: '^/cloud/v1/ddos/profiles/[^/]+/[^/]+/[^/]+/action$',
+        purpose: 'DDoS protection: turn a profile on or off, with or without BGP',
+        body: ['active', 'bgp'],
+      },
+      {
+        method: 'DELETE',
+        path: '^/cloud/v1/ddos/profiles/[^/]+/[^/]+/[^/]+$',
+        purpose: 'DDoS protection: delete a profile (destroy, edge page)',
+      },
+      {
+        method: 'GET',
+        path: '^/cloud/v1/pricing/[^/]+/ddos$',
+        purpose: "DDoS protection: the feature's list price (edge page)",
       },
     ],
   },

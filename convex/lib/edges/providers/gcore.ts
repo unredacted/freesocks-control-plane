@@ -18,9 +18,14 @@
  * still registering. A task in ERROR that lists no created resource still
  * falls through to the by-name listing (the task report can lag the LB).
  *
- * Destroy order is by kind: LB first, then the floating IP it held. Deletes are
- * tasks, so each kind is read back: an LB that is not PENDING_DELETE after the
- * request means the delete never landed (`still_present`).
+ * Destroy order is by kind: a DDoS protection profile, the LB, then the
+ * floating IP it held. Deletes are tasks, so each kind is read back: an LB that
+ * is not PENDING_DELETE after the request means the delete never landed
+ * (`still_present`).
+ *
+ * Advanced DDoS protection (`gcoreDdos.ts`): a second step after the LB when
+ * the template asks for it, the edge page's on/off (`ddos`), and a sweep of
+ * any profile left on the LB's addresses before the LB is deleted.
  *
  * Plans and prices (`plans`): the flavor list with `include_prices=true`, and
  * the v2 price preview for a flavor it does not price (lib/edges/pricing.ts).
@@ -52,64 +57,46 @@ import {
   noteDiscoverError,
   refusedCreate,
 } from './http';
-import { addressFamily, isPublicIpLiteral } from '../ip';
+import {
+  GCORE_BASE,
+  GcoreFloatingIp,
+  GcoreLb as Lb,
+  getGcoreLb,
+  gcoreLbAddresses,
+  GcoreTask,
+  GcoreTasks,
+  gcore,
+  gcoreHeaders,
+  gcoreScope,
+} from './gcoreHttp';
+import {
+  DDOS_STEP_ID,
+  DDOS_STEP_KIND,
+  changeDdos,
+  confirmProfileDestroyed,
+  ddosModeOf,
+  ddosView,
+  destroyProfile,
+  discoverDdos,
+  pollDdosStep,
+  runDdosStep,
+  sweepProfiles,
+} from './gcoreDdos';
 import type { ProviderPlan } from '../pricing';
 import { GcoreTemplate, GCORE_TEMPLATE_FIELDS, type GcoreTemplateParams } from './templates';
 
-const BASE = 'https://api.gcore.com';
+const BASE = GCORE_BASE;
 
 export { GcoreTemplate, GCORE_TEMPLATE_FIELDS } from './templates';
 export type { GcoreTemplateParams } from './templates';
 
 // --- schemas (lenient: only the fields we read) ---------------------------------
 
-const Tasks = z.object({ tasks: z.array(z.string()).min(1) });
-const Task = z
-  .object({
-    id: z.string(),
-    state: z.string(),
-    created_resources: z
-      .object({
-        loadbalancers: z.array(z.string()).nullish(),
-        floatingips: z.array(z.string()).nullish(),
-        listeners: z.array(z.string()).nullish(),
-        pools: z.array(z.string()).nullish(),
-      })
-      .passthrough()
-      .nullish(),
-    error: z.string().nullish(),
-  })
-  .passthrough();
-const FloatingIp = z
-  .object({ id: z.string().nullish(), floating_ip_address: z.string().nullish() })
-  .passthrough();
-const Lb = z
-  .object({
-    id: z.string(),
-    name: z.string().nullish(),
-    provisioning_status: z.string().nullish(),
-    operating_status: z.string().nullish(),
-    vip_address: z.string().nullish(),
-    vip_ipv6_address: z.string().nullish(),
-    // Where the current API reports a second (IPv6) VIP.
-    additional_vips: z
-      .array(z.object({ ip_address: z.string().nullish() }).passthrough())
-      .nullish(),
-    floating_ips: z.array(FloatingIp).nullish(),
-    flavor: z
-      .union([z.string(), z.object({ flavor_name: z.string().nullish() }).passthrough()])
-      .nullish(),
-    created_at: z.string().nullish(),
-    listeners: z
-      .array(
-        z.object({ id: z.string().nullish(), protocol_port: z.number().nullish() }).passthrough(),
-      )
-      .nullish(),
-  })
-  .passthrough();
+const Tasks = GcoreTasks;
+const Task = GcoreTask;
 const LbList = z.object({ results: z.array(Lb).default([]) }).passthrough();
 const FipList = z
-  .object({ results: z.array(FloatingIp.extend({ id: z.string() })).default([]) })
+  .object({ results: z.array(GcoreFloatingIp.extend({ id: z.string() })).default([]) })
   .passthrough();
 const ProjectList = z
   .object({
@@ -193,31 +180,8 @@ const PricePreview = z
 
 // --- helpers ----------------------------------------------------------------------
 
-function headers(cfg: GcoreConfig): Record<string, string> {
-  return { authorization: `APIKey ${cfg.apiKey}` };
-}
-const scope = (cfg: GcoreConfig) => `${cfg.projectId}/${cfg.regionId}`;
-
-async function gcore<T>(
-  cfg: GcoreConfig,
-  step: string,
-  method: 'GET' | 'POST' | 'DELETE' | 'PATCH',
-  path: string,
-  schema: z.ZodType<T>,
-  body?: unknown,
-  okStatuses?: number[],
-): Promise<T> {
-  return providerFetch({
-    provider: 'gcore',
-    step,
-    url: `${BASE}${path}`,
-    method,
-    headers: headers(cfg),
-    body,
-    schema,
-    okStatuses,
-  });
-}
+const headers = gcoreHeaders;
+const scope = gcoreScope;
 
 /** One pool's health monitor: TCP unless the template chose another check. */
 function gcoreHealthMonitor(hm: GcoreTemplateParams['healthMonitor']) {
@@ -302,34 +266,9 @@ function taskResources(t: z.infer<typeof Task>): ChildResource[] {
   return out;
 }
 
-/**
- * Public addresses only. In private VIP mode `vip_address` is the private VIP
- * (the floating IP is the public one): a non-public literal is never surfaced
- * as the edge's address. Exported for tests.
- */
-export function gcoreLbAddresses(lb: {
-  vip_address?: string | null;
-  vip_ipv6_address?: string | null;
-  additional_vips?: Array<{ ip_address?: string | null }> | null;
-  floating_ips?: Array<{ floating_ip_address?: string | null }> | null;
-}): Addresses {
-  const out: Addresses = {};
-  const fip = lb.floating_ips?.find((f) => f.floating_ip_address)?.floating_ip_address ?? undefined;
-  const extra = (lb.additional_vips ?? []).map((v) => v.ip_address ?? undefined);
-  const candidates = [
-    fip,
-    lb.vip_address ?? undefined,
-    lb.vip_ipv6_address ?? undefined,
-    ...extra,
-  ].filter((x): x is string => !!x && isPublicIpLiteral(x));
-  for (const c of candidates) {
-    const fam = addressFamily(c);
-    if (fam === 'v4' && !out.v4) out.v4 = c;
-    if (fam === 'v6' && !out.v6) out.v6 = c;
-  }
-  return out;
-}
+export { gcoreLbAddresses };
 const lbAddresses = gcoreLbAddresses;
+const getLb = (cfg: GcoreConfig, step: string, id: string) => getGcoreLb(cfg, step, id);
 
 function lbState(lb: z.infer<typeof Lb>): EdgeDescription['state'] {
   const p = (lb.provisioning_status ?? '').toUpperCase();
@@ -343,16 +282,6 @@ function lbHealth(lb: z.infer<typeof Lb>): EdgeDescription['health'] {
   if (o === 'DEGRADED') return 'degraded';
   if (o === 'OFFLINE' || o === 'ERROR') return 'offline';
   return 'unknown';
-}
-
-async function getLb(cfg: GcoreConfig, step: string, id: string) {
-  return gcore(
-    cfg,
-    step,
-    'GET',
-    `/cloud/v1/loadbalancers/${scope(cfg)}/${encodeURIComponent(id)}`,
-    Lb,
-  );
 }
 
 async function pollTask(cfg: GcoreConfig, step: string, taskId: string): Promise<StepOutcome> {
@@ -458,11 +387,23 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     return out;
   },
 
-  planProvision(_cfg, spec) {
-    return [{ id: 'lb', kind: 'create_lb', resourceName: spec.name, discoverability: 'by_name' }];
+  planProvision(_cfg, spec, tpl) {
+    const steps: ResourceStep[] = [
+      { id: 'lb', kind: 'create_lb', resourceName: spec.name, discoverability: 'by_name' },
+    ];
+    // Advanced DDoS protection on the new address, once the load balancer has it.
+    if (ddosModeOf(tpl) !== 'off')
+      steps.push({
+        id: DDOS_STEP_ID,
+        kind: DDOS_STEP_KIND,
+        resourceName: spec.name,
+        discoverability: 'by_name',
+      });
+    return steps;
   },
 
-  async runStep(cfg, step, spec, tpl) {
+  async runStep(cfg, step, spec, tpl, ledger) {
+    if (step.kind === DDOS_STEP_KIND) return runDdosStep(cfg, tpl, ledger);
     if (step.kind !== 'create_lb') throw unknownStep(step);
     let res: z.infer<typeof Tasks>;
     try {
@@ -484,9 +425,11 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     return { status: 'requested', opRef: res.tasks[0], resources: [] };
   },
 
-  pollStep: (cfg, step, opRef) => pollTask(cfg, step.id, opRef),
+  pollStep: (cfg, step, opRef, ledger) =>
+    step.kind === DDOS_STEP_KIND ? pollDdosStep(cfg, ledger, opRef) : pollTask(cfg, step.id, opRef),
 
   async discover(cfg, step, spec, ledger, attempt) {
+    if (step.kind === DDOS_STEP_KIND) return discoverDdos(cfg, ledger, attempt);
     const ls = stepOf(ledger, step.id);
     if (ls?.opRef) {
       const out = await pollTask(cfg, step.id, ls.opRef);
@@ -550,7 +493,11 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
         retryable: false,
         timedOut: false,
       });
-    const obj = await getLb(cfg, 'inspect', lb.resourceId);
+    // With its DDoS protection profile when Gcore can say (the raw view shows
+    // it); a protection service that cannot answer never hides the balancer.
+    const obj = await getGcoreLb(cfg, 'inspect', lb.resourceId, { withDdos: true }).catch(() =>
+      getLb(cfg, 'inspect', lb.resourceId),
+    );
     const flavor =
       typeof obj.flavor === 'string' ? obj.flavor : (obj.flavor?.flavor_name ?? undefined);
     return {
@@ -644,6 +591,20 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
   planDestroy: (_cfg, ledger) => orderByKind(ledger, GCORE_DESTROY_ORDER),
 
   async runDestroy(cfg, r) {
+    if (r.kind === 'ddos_profile') return destroyProfile(cfg, r);
+    if (r.kind === 'lb') {
+      // No protection profile may outlive the address: any on it (one the
+      // ledger never recorded included) goes first. Answered `unresolved`
+      // while some remain: the next pass asks again and deletes the balancer.
+      let lb: z.infer<typeof Lb>;
+      try {
+        lb = await getGcoreLb(cfg, 'destroy', r.resourceId, { withDdos: true });
+      } catch (e) {
+        if (isProviderNotFound(e)) return { status: 'confirmed_gone' };
+        throw e;
+      }
+      if ((await sweepProfiles(cfg, lb)) > 0) return { status: 'unresolved' };
+    }
     const path = destroyPath(cfg, r.kind, r.resourceId);
     // Listeners/pools die with the LB and are never ledgered; any other kind is
     // not this adapter's and must not be assumed gone.
@@ -675,6 +636,7 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
    * floating IP that is still readable is still present (its delete is fast).
    */
   async confirmDestroyed(cfg, r) {
+    if (r.kind === 'ddos_profile') return confirmProfileDestroyed(cfg, r);
     const path = destroyPath(cfg, r.kind, r.resourceId);
     if (!path) return { status: 'unresolved' };
     try {
@@ -694,6 +656,8 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
       throw e;
     }
   },
+
+  ddos: { view: ddosView, change: changeDdos },
 };
 
 /** Flavors priced by the v2 preview when the flavor list prices none of them, at most. */
@@ -720,8 +684,11 @@ export function gcorePlanOf(f: z.infer<typeof FlavorPriceList>['results'][number
   };
 }
 
-/** The floating IP is attached to the LB's VIP port: the LB goes first. */
-const GCORE_DESTROY_ORDER = ['lb', 'floating_ip'] as const;
+/**
+ * A protection profile names the address, so it goes before the LB; the
+ * floating IP is attached to the LB's VIP port: the LB goes before it.
+ */
+const GCORE_DESTROY_ORDER = ['ddos_profile', 'lb', 'floating_ip'] as const;
 
 function destroyPath(cfg: GcoreConfig, kind: string, id: string): string | null {
   return kind === 'lb'

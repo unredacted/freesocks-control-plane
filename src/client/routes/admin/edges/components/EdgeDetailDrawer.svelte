@@ -60,6 +60,7 @@
   import CodeNote from './CodeNote.svelte';
   import ProviderAnswer from './ProviderAnswer.svelte';
   import EdgeCountryActions from './EdgeCountryActions.svelte';
+  import EdgeDdosCard from './EdgeDdosCard.svelte';
   import EdgeListMarks from '../countries/EdgeListMarks.svelte';
   import { anyCountryCheckPending } from '../lib/countryCheckRequests';
   import { edgeHasCountryData } from '../lib/countryChecks';
@@ -76,6 +77,9 @@
     actions?: Snippet<[EdgeAdmin]>;
   }
   let { edgeId, onClose, actions }: Props = $props();
+
+  // The states the server lets protection change in (httpEdges.ts DDOS_CHANGE_STATES).
+  const DDOS_CHANGE_STATES = new Set(['verifying', 'active', 'draining', 'quarantined']);
 
   const qc = useQueryClient();
   // The detail carries the live snapshot too: one cache, polled by the detail
@@ -588,6 +592,13 @@
               {/each}
             </ul>
           </section>
+        {/if}
+
+        {#if edge.provider && EDGE_PROVIDER_META[edge.provider].ddosProtection}
+          <EdgeDdosCard
+            edgeId={edge.id}
+            canChange={edge.managed && DDOS_CHANGE_STATES.has(edge.status)}
+          />
         {/if}
 
         <section class="space-y-3">

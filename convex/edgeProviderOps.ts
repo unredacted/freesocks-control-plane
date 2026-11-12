@@ -82,6 +82,8 @@ import type {
   AdoptionInspection,
   DiscoverResult,
   Discovery,
+  EdgeDdosChangeResult,
+  EdgeDdosView,
   EdgeDescription,
   EdgeSpec,
   DestroyOutcome,
@@ -2066,6 +2068,44 @@ export const inspect = internalAction({
     tracked(ctx, a.accountId, async (seen) => {
       const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       return jsonSafe(await provider.inspect(cfg, a.ledger as Ledger)) as InspectResult;
+    }),
+});
+
+/**
+ * An edge's DDoS protection (`EdgeProvider.ddos`, capability `ddosProtection`):
+ * what it has now, and turning it on, off or removing it. Refused
+ * `ddos_unsupported` for a provider without it, before any provider call.
+ */
+export const ddosView = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), ledger, edgeId: v.optional(v.id('edges')) },
+  handler: (ctx, a): Promise<EdgeDdosView> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
+      if (!provider.ddos)
+        refuse('ddos_unsupported', `${providerId} edges have no DDoS protection`, providerId);
+      return jsonSafe(await provider.ddos.view(cfg, a.ledger as Ledger)) as EdgeDdosView;
+    }),
+});
+
+export const ddosChange = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    ledger,
+    edgeId: v.optional(v.id('edges')),
+    action: v.union(v.literal('enable'), v.literal('disable'), v.literal('remove')),
+    profileTemplate: v.optional(v.string()),
+    bgp: v.optional(v.boolean()),
+  },
+  handler: (ctx, a): Promise<EdgeDdosChangeResult> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
+      if (!provider.ddos)
+        refuse('ddos_unsupported', `${providerId} edges have no DDoS protection`, providerId);
+      return provider.ddos.change(cfg, a.ledger as Ledger, {
+        action: a.action,
+        ...(a.profileTemplate !== undefined ? { profileTemplate: a.profileTemplate } : {}),
+        ...(a.bgp !== undefined ? { bgp: a.bgp } : {}),
+      });
     }),
 });
 

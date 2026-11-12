@@ -190,6 +190,8 @@ export type ResourceKind =
   | 'create_backend'
   | 'create_frontend'
   | 'attach_ip'
+  /** Gcore: Advanced DDoS protection on the load balancer's public address (gcoreDdos.ts). */
+  | 'create_ddos_profile'
   // L7 (CDN) kinds
   | 'create_dns_record'
   | 'create_origin_rule'
@@ -502,6 +504,47 @@ export interface DiscoverResult {
   errorDetails?: Record<string, string>;
 }
 
+// --- DDoS protection (capability `ddosProtection`) -----------------------------------------------
+
+/** One protection profile on one of the edge's addresses, as the provider reports it. */
+export interface EdgeDdosProfileView {
+  id: string;
+  address: string;
+  active: boolean | null;
+  bgp: boolean | null;
+  /** The provider's status word (`Updated`, `Deleting`...). */
+  status: string | null;
+  /** The provider's error text on a failed profile (redacted, short). */
+  error: string | null;
+  templateId: number | null;
+  templateName: string | null;
+}
+/** What an edge's DDoS card shows (`EdgeProvider.ddos.view`). */
+export interface EdgeDdosView {
+  /** Whether the edge's region offers protection; null when the provider did not say. */
+  available: boolean | null;
+  /** The region's profile templates. */
+  templates: Array<{ id: number; name: string; description: string | null }>;
+  profiles: EdgeDdosProfileView[];
+  addresses: Addresses;
+  /** The provider's list price for the feature, per protected address, when it gives one. */
+  price: { feature: string | null; per30d: number | null; currency: string | null } | null;
+  /** Lists that could not be read (`region`, `templates`, `price`, `profiles`). */
+  unread: string[];
+}
+export type EdgeDdosAction = 'enable' | 'disable' | 'remove';
+export interface EdgeDdosChange {
+  action: EdgeDdosAction;
+  /** `enable`: the template by name or number (absent: keep the profile's, or the region's only one). */
+  profileTemplate?: string;
+  /** `enable`: route through filtering over BGP (absent = true). */
+  bgp?: boolean;
+}
+/** `pending`: the provider is still applying it (read the view again). */
+export interface EdgeDdosChangeResult {
+  state: 'done' | 'pending' | 'unchanged';
+}
+
 // --- the adapter -----------------------------------------------------------------------------
 
 export interface EdgeProvider<
@@ -635,6 +678,17 @@ export interface EdgeProvider<
    * assuming the delete landed.
    */
   confirmDestroyed?(cfg: Cfg, resource: LedgerResource, ledger: Ledger): Promise<DestroyOutcome>;
+
+  /**
+   * Providers with paid DDoS protection on an edge's address (capability
+   * `ddosProtection`): what the edge has now, and turning it on, off, or
+   * removing it. Neither touches the ledger: a profile made here is found
+   * again by address, and the edge's destroy removes it before its address.
+   */
+  ddos?: {
+    view(cfg: Cfg, ledger: Ledger): Promise<EdgeDdosView>;
+    change(cfg: Cfg, ledger: Ledger, req: EdgeDdosChange): Promise<EdgeDdosChangeResult>;
+  };
 }
 
 // --- ledger helpers (pure) ------------------------------------------------------------------

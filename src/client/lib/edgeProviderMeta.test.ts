@@ -56,6 +56,14 @@ describe('edge provider meta', () => {
     ).toEqual(['fastly', 'cloudfront']);
   });
 
+  it('offers DDoS protection only where the adapter has it (capabilities.ts ddosProtection)', () => {
+    expect(
+      Object.entries(EDGE_PROVIDER_META)
+        .filter(([, m]) => m.ddosProtection)
+        .map(([id]) => id),
+    ).toEqual(['gcore']);
+  });
+
   it('groups providers by what an account is for: L4, L7, then DNS', () => {
     const groups = providerGroups(EDGE_PROVIDER_IDS);
     expect(groups.map((g) => [g.id, g.title])).toEqual([

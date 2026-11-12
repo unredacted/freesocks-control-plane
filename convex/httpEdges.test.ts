@@ -45,6 +45,8 @@ import {
   EdgeRenderPreviewResponse,
   RelayBySlugResponse,
   RelayEndpointsResponse,
+  EdgeDdosView,
+  EdgeDdosChangeResponse,
 } from '../src/shared/contracts/edges';
 import { scopeFor, throttlePolicyFor, throttlePolicyForGet } from './httpEdges';
 import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
@@ -53,6 +55,8 @@ import type { AdoptionInspection } from './lib/edges/providers/types';
 import { deliveryBindingOf, relayBySlug } from './lib/edges/testing/reads';
 import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
 import { refuseNetwork } from './lib/edges/testing/mockFetch';
+import { gcoreProvider } from './lib/edges/providers/gcore';
+import { createAccount, registerRelay, wsListener } from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -353,6 +357,9 @@ describe('origin admin routes', () => {
     expect(scopeFor(['summary'], 'GET')).toBe('admin:servers:read');
     expect(scopeFor(['render', 'preview'], 'POST')).toBe('admin:servers:read');
     expect(scopeFor(['templates', 'validate'], 'POST')).toBe('admin:servers:read');
+    // Reading an edge's DDoS protection is a read; changing it manages servers.
+    expect(scopeFor(['edges', 'e1', 'ddos', 'refresh'], 'POST')).toBe('admin:servers:read');
+    expect(scopeFor(['edges', 'e1', 'ddos'], 'POST')).toBe('admin:servers:manage');
     expect(scopeFor(['templates'], 'POST')).toBe('admin:servers:manage');
     expect(scopeFor(['templates', 'ensure-defaults'], 'POST')).toBe('admin:servers:manage');
     expect(scopeFor(['render', 'preview', 'x'], 'POST')).toBe('admin:servers:manage');
@@ -416,6 +423,9 @@ describe('origin admin routes', () => {
     expect(throttlePolicyFor(['relays', 'node-candidates', 'refresh'])).toBe(P);
     expect(throttlePolicyFor(['relays', 'r1', 'adopt'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'live', 'refresh'])).toBe(P);
+    // DDoS protection: reading it and changing it both ask the provider.
+    expect(throttlePolicyFor(['edges', 'e1', 'ddos', 'refresh'])).toBe(P);
+    expect(throttlePolicyFor(['edges', 'e1', 'ddos'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'qualify'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'client-check'])).toBe(P);
     expect(throttlePolicyFor(['client-check', 'refresh'])).toBe(P);
@@ -1747,5 +1757,115 @@ describe('origin admin routes: importing an existing L7 front', () => {
     await expect(
       t.mutation(internal.relays.publishEdge, { relayId: relayId as Id<'relays'>, edgeId }),
     ).rejects.toThrow(/front_qualification_stale/);
+  });
+});
+
+describe('origin admin routes: an edge DDoS protection', () => {
+  afterEach(() => __setEdgeProviderForTests('gcore', null));
+
+  /** Gcore with its protection methods recorded (nothing reaches a network). */
+  function fakeGcoreDdos() {
+    const changes: Array<Record<string, unknown>> = [];
+    const view = {
+      available: true,
+      templates: [{ id: 7, name: 'TCP generic', description: null }],
+      profiles: [],
+      addresses: { v4: '203.0.113.50' },
+      price: null,
+      unread: [],
+    };
+    __setEdgeProviderForTests('gcore', {
+      ...gcoreProvider,
+      ddos: {
+        view: async () => view,
+        change: async (_cfg: unknown, _ledger: unknown, req: Record<string, unknown>) => {
+          changes.push(req);
+          return { state: 'done' as const };
+        },
+      },
+    } as never);
+    return { changes };
+  }
+
+  async function seedEdge(status: string, managed = true) {
+    const { t, call } = await seed();
+    const accountId = await createAccount(t, { provider: 'gcore' });
+    const r = await registerRelay(t, { listeners: [wsListener()] });
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId: r.relayId,
+        listenerId: r.listenerId,
+        accountId,
+        provider: 'gcore',
+        placement: { type: 'gcore', projectId: 11, regionId: 22 },
+        managed,
+        name: 'fcp-relay-ddos',
+        steps: [],
+        resources: [
+          {
+            stepId: 'lb',
+            kind: 'lb',
+            resourceId: 'lb-1',
+            ownership: 'created',
+            deleteState: 'present',
+          },
+        ],
+        listeners: [{ edgePort: 443, originAddress: '203.0.113.10', originPort: 443 }],
+        addresses: { v4: '203.0.113.50' },
+        layer: 'l4',
+        publication: 'published',
+        status: status as never,
+        statusChangedAt: Date.now(),
+        health: 'online',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    return { t, call, edgeId };
+  }
+
+  test('reads, then turns on with a profile, audited without its name', async () => {
+    const fake = fakeGcoreDdos();
+    const { t, call, edgeId } = await seedEdge('active');
+    const read = await call('POST', `${edgeId}/ddos/refresh`, {});
+    expect(read.status).toBe(200);
+    expect(EdgeDdosView.parse(await read.json()).templates).toHaveLength(1);
+
+    const res = await call('POST', `${edgeId}/ddos`, {
+      action: 'enable',
+      profileTemplate: ' TCP generic ',
+      bgp: true,
+    });
+    expect(res.status).toBe(200);
+    expect(EdgeDdosChangeResponse.parse(await res.json())).toMatchObject({ state: 'done' });
+    expect(fake.changes).toEqual([{ action: 'enable', profileTemplate: 'TCP generic', bgp: true }]);
+    const audits = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .withIndex('by_action', (q) => q.eq('action', 'admin.edge.ddos.change'))
+        .collect(),
+    );
+    expect(audits).toHaveLength(1);
+    expect(JSON.stringify(audits[0])).not.toContain('TCP generic');
+  });
+
+  test('refuses a bad action, an edge that is not up, and an imported edge', async () => {
+    const fake = fakeGcoreDdos();
+    const up = await seedEdge('active');
+    expect((await up.call('POST', `${up.edgeId}/ddos`, { action: 'explode' })).status).toBe(400);
+    expect(
+      (await up.call('POST', `${up.edgeId}/ddos`, { action: 'enable', bgp: 'yes' })).status,
+    ).toBe(400);
+
+    const gone = await seedEdge('destroying');
+    const res = await gone.call('POST', `${gone.edgeId}/ddos`, { action: 'enable' });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('edge.ddos_not_live');
+
+    const adopted = await seedEdge('active', false);
+    expect(
+      (await adopted.call('POST', `${adopted.edgeId}/ddos`, { action: 'disable' })).status,
+    ).toBe(409);
+    expect(fake.changes).toEqual([]);
   });
 });

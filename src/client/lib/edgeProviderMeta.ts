@@ -38,6 +38,8 @@ export interface EdgeProviderMeta {
   dnsOnly?: true;
   /** The account's fronts can share one wildcard certificate (`certificateScope`). */
   sharedCertificates: boolean;
+  /** Paid DDoS protection an edge's page can turn on and off (`ddosProtection`). */
+  ddosProtection?: true;
 }
 
 const L4 = {
@@ -51,7 +53,7 @@ const L4 = {
 } as const satisfies Omit<EdgeProviderMeta, 'label'>;
 
 export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
-  gcore: { ...L4, label: 'Gcore' },
+  gcore: { ...L4, label: 'Gcore', ddosProtection: true },
   upcloud: { ...L4, label: 'UpCloud' },
   scaleway: { ...L4, label: 'Scaleway' },
   ovh: { ...L4, label: 'OVHcloud' },
