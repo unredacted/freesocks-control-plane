@@ -1574,7 +1574,7 @@ describe('wire contract: fastly', () => {
               {
                 id: 'CERTW2',
                 type: 'tls_certificate',
-                attributes: { not_after: '2026-12-19T10:12:00Z' },
+                attributes: { not_after: '2100-01-19T10:12:00Z' },
               },
             ],
           })

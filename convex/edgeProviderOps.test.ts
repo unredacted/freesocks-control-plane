@@ -1666,14 +1666,14 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       name: '*.example.org',
       subscriptionId: 'WILD1',
       state: 'issued',
-      notAfter: '2026-11-19T10:12:00.000Z',
+      notAfter: '2099-11-19T10:12:00.000Z',
     };
     await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toMatchObject({
       state: 'issued',
       code: null,
-      notAfter: '2026-11-19T10:12:00.000Z',
+      notAfter: '2099-11-19T10:12:00.000Z',
     });
     expect(
       await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
