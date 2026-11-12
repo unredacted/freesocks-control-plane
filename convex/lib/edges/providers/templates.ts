@@ -36,6 +36,10 @@ const HTTP_METHODS = [
 /** Health check kinds Gcore offers a TCP pool (K8S and UDP-CONNECT left out: not ours). */
 const GCORE_MONITOR_TYPES = ['TCP', 'TLS-HELLO', 'PING', 'HTTP', 'HTTPS'] as const;
 
+/** Advanced DDoS protection on a new edge: `off` (the default), `on`, or `required`. */
+export const GCORE_DDOS_MODES = ['off', 'on', 'required'] as const;
+export type GcoreDdosMode = (typeof GCORE_DDOS_MODES)[number];
+
 export const GcoreTemplate = z.object({
   flavor: z.string().min(1).max(64).default('lb1-1-2'),
   /** public = the provider assigns a public VIP directly; private = private VIP + floating IP. */
@@ -83,10 +87,19 @@ export const GcoreTemplate = z.object({
     })
     .default({ delay: 10, timeout: 5, maxRetries: 3, maxRetriesDown: 3 }),
   tags: z.record(z.string().min(1).max(64), z.string().max(128)).default({}),
+  // Advanced DDoS protection (gcoreDdos.ts), added after the first schema:
+  // optional, so a stored template's hash never moves (the adapter applies
+  // the defaults: off, BGP on).
+  /** `on`: turned on as the edge is created, the edge goes on without it; `required`: or no edge. */
+  ddosProtection: z.enum(GCORE_DDOS_MODES).optional(),
+  /** A profile template of the region, by name or number; absent = the region's only one. */
+  ddosProfileTemplate: z.string().trim().min(1).max(100).optional(),
+  ddosBgp: z.boolean().optional(),
 });
 export type GcoreTemplateParams = z.infer<typeof GcoreTemplate>;
 
 const GCORE_HTTP_CHECK = { key: 'healthMonitor.type', in: ['HTTP', 'HTTPS'] };
+const GCORE_DDOS_ON = { key: 'ddosProtection', in: ['on', 'required'] };
 
 export const GCORE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   {
@@ -323,6 +336,43 @@ export const GCORE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     when: GCORE_HTTP_CHECK,
     help: 'The Host header an HTTP check sends. Empty sends none.',
     wire: { resource: 'health_monitor', field: 'domain_name', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'ddosProtection',
+    label: 'Advanced DDoS protection',
+    type: 'select',
+    group: 'DDoS protection',
+    default: 'off',
+    help: "Gcore's paid Advanced DDoS protection on the edge's IPv4 address, turned on as the edge is created. On: the edge goes live without it where the region cannot protect it. Required: no edge is made there. An edge's page turns it on or off later.",
+    options: [
+      { value: 'off', label: 'Off' },
+      { value: 'on', label: 'On where the region offers it' },
+      { value: 'required', label: 'Required' },
+    ],
+    wire: { resource: 'ddos_profile', field: 'profile_template', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'ddosProfileTemplate',
+    label: 'Protection profile',
+    type: 'string',
+    group: 'DDoS protection',
+    when: GCORE_DDOS_ON,
+    help: "The name or number of one of the region's protection profiles. Empty uses the region's only profile, when it lists exactly one. An edge's page lists them.",
+    wire: { resource: 'ddos_profile', field: 'profile_template', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'ddosBgp',
+    label: 'Route through filtering (BGP)',
+    type: 'boolean',
+    group: 'DDoS protection',
+    default: true,
+    advanced: true,
+    when: GCORE_DDOS_ON,
+    help: "Sends the address's traffic through Gcore's filtering over BGP, which is how the protection works. Turn off only if Gcore asks you to.",
+    wire: { resource: 'ddos_profile', field: 'bgp', manual: true },
     live: 'in_place',
   },
 ];

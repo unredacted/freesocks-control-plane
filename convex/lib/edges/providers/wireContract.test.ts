@@ -307,9 +307,84 @@ describe('wire contract: gcore', () => {
     total_price_per_month: 32.88,
   };
 
+  // DDoS protection shapes from https://docs.gcore.com/api-reference/cloud/ddos-protection/
+  // (AccessStatusSerializer, ClientProfileTemplateSerializerList, ClientProfileSerializerList,
+  // DDosPricingPreviewResponseSerializer, TaskIDsSerializer), read 2026-11-12.
+  const DDOS = '/cloud/v1/ddos/profiles/11/22';
+  const ddos: { profiles: Array<Record<string, unknown>> } = { profiles: [] };
+  const ddosProfile = (active: boolean, templateId = 7) => ({
+    id: 41,
+    ip_address: '203.0.113.50',
+    options: { active, bgp: active },
+    site: 'ED',
+    protocols: [],
+    status: { status: 'Updated', error_description: '' },
+    profile_template_description: null,
+    profile_template: {
+      id: templateId,
+      name: templateId === 7 ? 'TCP generic' : 'Game',
+      fields: [],
+    },
+    fields: [],
+    managed_by: 'user',
+  });
+  function ddosRoute(c: Captured): Response | null {
+    const p = c.path;
+    if (p === '/cloud/v1/ddos/accessibility/22')
+      return jsonRes({ is_accessible: true, http_code: 200, message: 'accessible' });
+    if (p === '/cloud/v1/ddos/profile-templates/22')
+      return jsonRes({
+        count: 2,
+        results: [
+          { id: 7, name: 'TCP generic', description: null, fields: [] },
+          { id: 9, name: 'Game', description: null, fields: [] },
+        ],
+      });
+    if (p === '/cloud/v1/pricing/22/ddos')
+      return jsonRes({
+        price: {
+          feature_name: 'Advanced DDoS Protection',
+          period: 'day',
+          unit_name: 'PC',
+          unit_size: 1,
+          price_currency: 'EUR',
+          price_per_day: 2,
+          price_per_hour: 0.083,
+          price_per_30d: 60,
+        },
+        current_month_days_last: 19,
+        current_month_days: 30,
+        next_month_days: 31,
+      });
+    if (p === DDOS && c.method === 'GET') return jsonRes({ count: 1, results: ddos.profiles });
+    if (p === DDOS && c.method === 'POST') {
+      ddos.profiles = [ddosProfile(false)];
+      return jsonRes({ tasks: ['task-d1'] });
+    }
+    if (p === `${DDOS}/41/action` && c.method === 'POST') {
+      const active = (c.body as { active: boolean }).active;
+      const tplId = (ddos.profiles[0]?.profile_template as { id: number } | undefined)?.id;
+      ddos.profiles = [ddosProfile(active, tplId)];
+      return jsonRes({ tasks: ['task-d2'] });
+    }
+    if (p === `${DDOS}/41` && c.method === 'PATCH') {
+      ddos.profiles = [
+        ddosProfile(true, (c.body as { profile_template: number }).profile_template),
+      ];
+      return jsonRes({ tasks: ['task-d3'] });
+    }
+    if (p === `${DDOS}/41` && c.method === 'DELETE') {
+      ddos.profiles = [];
+      return jsonRes({ tasks: ['task-d4'] });
+    }
+    return null;
+  }
+
   function route(over: { lbs?: unknown[] } = {}) {
     return (c: Captured): Response => {
       const p = c.path;
+      const d = ddosRoute(c);
+      if (d) return d;
       if (p === '/cloud/v1/projects') return jsonRes({ results: [{ id: 11, name: 'project' }] });
       if (p === '/cloud/v1/regions')
         return jsonRes({ results: [{ id: 22, display_name: 'region' }] });
@@ -374,7 +449,25 @@ describe('wire contract: gcore', () => {
     expect(
       stub.calls.filter((c) => c.path.startsWith('/cloud/v2/pricing/')).map((c) => c.body),
     ).toEqual([{ flavor: 'lb1-2-4' }]);
+
+    // Advanced DDoS protection: the step after the balancer, then the edge page.
+    const ddosTpl = gcoreProvider.templateSchema.parse({
+      ddosProtection: 'required',
+      ddosProfileTemplate: 'TCP generic',
+    }) as never;
+    const ddosStep = gcoreProvider.planProvision(cfg, spec, ddosTpl)[1]!;
+    let protectedOut = await gcoreProvider.runStep(cfg, ddosStep, spec, ddosTpl, ledger);
+    for (let i = 0; protectedOut.status === 'requested' && i < 5; i++)
+      protectedOut = await gcoreProvider.pollStep!(cfg, ddosStep, protectedOut.opRef, ledger);
+    expect(protectedOut).toMatchObject({ status: 'done', resources: [{ resourceId: '41' }] });
+    ledger = apply(ledger, ddosStep, protectedOut);
+    expect((await gcoreProvider.discover(cfg, ddosStep, spec, ledger, 1)).status).toBe('found');
+    expect((await gcoreProvider.ddos!.view(cfg, ledger)).profiles).toHaveLength(1);
+    await gcoreProvider.ddos!.change(cfg, ledger, { action: 'enable', profileTemplate: 'Game' });
+    await gcoreProvider.ddos!.change(cfg, ledger, { action: 'disable' });
+
     expect(await destroyAll(gcoreProvider as never, cfg as never, ledger)).toEqual([
+      'ddos_profile',
       'lb',
       'floating_ip',
     ]);
@@ -1481,7 +1574,7 @@ describe('wire contract: fastly', () => {
               {
                 id: 'CERTW2',
                 type: 'tls_certificate',
-                attributes: { not_after: '2026-12-19T10:12:00Z' },
+                attributes: { not_after: '2100-01-19T10:12:00Z' },
               },
             ],
           })

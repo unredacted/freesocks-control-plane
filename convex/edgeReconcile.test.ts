@@ -974,7 +974,9 @@ describe('edgeReconcile', () => {
     expect(e.status).toBe('destroying');
     await run(s.t); // present → runDestroy re-issued, read back at once (not gone yet)
     e = (await s.t.query(internal.edges.get, { id: edgeId }))!;
-    expect(calls).toEqual(['GET', 'DELETE', 'GET']);
+    // The re-issued delete reads the balancer first (with its DDoS profile: none,
+    // and no public address to list profiles on), then deletes, then reads back.
+    expect(calls).toEqual(['GET', 'GET', 'DELETE', 'GET']);
     expect(e.resources[0].deleteState).toBe('delete_requested');
     expect(e.destroyAttempts).toBe(2);
   });

@@ -22,6 +22,7 @@ import { makeFail, notFound, throttle, unauth } from './lib/adminHttp';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
 import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
+import { EDGE_DDOS_CHANGE_STATES } from './lib/edges/providers/types';
 import { namedSpareWaivesTrust } from './lib/edges/rotation';
 import { parseTargetKey } from './probes';
 import { findLegacyField, LEGACY } from './lib/legacyFields';
@@ -151,6 +152,9 @@ function isReadOnlyPost(parts: string[]): boolean {
     parts[2] === 'own-pools' &&
     parts[4] === 'preview'
   )
+    return true;
+  // Reads an edge's DDoS protection at the provider; stores nothing.
+  if (parts.length === 4 && parts[0] === 'edges' && parts[2] === 'ddos' && parts[3] === 'refresh')
     return true;
   // Asks the client-check service how it is; stores nothing but that answer.
   if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
@@ -298,6 +302,9 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'relays' && b && c === 'quarantine' && d === 'inspect')
     return 'admin.edges.provider-call';
   if (a === 'edges' && b && c === 'live' && d === 'refresh') return 'admin.edges.provider-call';
+  // An edge's DDoS protection: reading it and changing it both ask the provider.
+  if (a === 'edges' && b && c === 'ddos' && (!d || d === 'refresh') && !parts[4])
+    return 'admin.edges.provider-call';
   // An authenticated session through the front: an outbound call like any other.
   if (a === 'edges' && b && c === 'qualify' && !d) return 'admin.edges.provider-call';
   if (a === 'render' && b === 'preview') return 'admin.edges.provider-call';
@@ -366,6 +373,72 @@ function wrap(handler: Handler, sealedRoute: boolean) {
 }
 
 const id = <T extends TableNames>(s: string | undefined) => (s ?? '') as Id<T>;
+
+/**
+ * An edge's DDoS protection at its provider (capability `ddosProtection`).
+ * `refresh`: what it has now (a read). Otherwise a change: `{ action:
+ * 'enable' | 'disable' | 'remove', profileTemplate?, bgp? }`, audited, then
+ * read again for the answer (`EdgeDdosChangeResponse`).
+ */
+async function edgeDdos(
+  ctx: ActionCtx,
+  edgeId: Id<'edges'>,
+  refresh: boolean,
+  body: Record<string, unknown>,
+  act: { actorAdminId?: Id<'adminUsers'> },
+): Promise<Response> {
+  const edge = await ctx.runQuery(internal.edges.get, { id: edgeId });
+  if (!edge) return notFound();
+  if (!edge.accountId)
+    return errorJson('edge.unmanaged', 'An adopted edge has no provider account', 409);
+  const accountId = edge.accountId;
+  const ledger = { steps: edge.steps, resources: edge.resources };
+  const view = () =>
+    ctx.runAction(internal.edgeProviderOps.ddosView, { accountId, edgeId, ledger });
+  if (refresh) return json(await view());
+
+  const action = body.action;
+  if (action !== 'enable' && action !== 'disable' && action !== 'remove')
+    return errorJson('validation', 'action must be enable, disable or remove', 400);
+  const tplRaw = body.profileTemplate;
+  if (
+    tplRaw !== undefined &&
+    tplRaw !== null &&
+    (typeof tplRaw !== 'string' || tplRaw.trim().length === 0 || tplRaw.length > 100)
+  )
+    return errorJson('validation', 'profileTemplate must be a short name or number', 400);
+  if (body.bgp !== undefined && typeof body.bgp !== 'boolean')
+    return errorJson('validation', 'bgp must be true or false', 400);
+  if (!edge.managed)
+    return errorJson('edge.unmanaged', 'An adopted edge is observed only, never changed', 409);
+  if (!EDGE_DDOS_CHANGE_STATES.has(edge.status))
+    return errorJson(
+      'edge.ddos_not_live',
+      'Only an edge that is up (checking, live, draining or held) can change its protection',
+      409,
+    );
+  const profileTemplate = typeof tplRaw === 'string' ? tplRaw.trim() : undefined;
+  const bgp = typeof body.bgp === 'boolean' ? body.bgp : undefined;
+  const res = await ctx.runAction(internal.edgeProviderOps.ddosChange, {
+    accountId,
+    edgeId,
+    ledger,
+    action,
+    ...(profileTemplate !== undefined ? { profileTemplate } : {}),
+    ...(bgp !== undefined ? { bgp } : {}),
+  });
+  await ctx.runMutation(internal.edgeAdmin.recordDdosChange, {
+    edgeId,
+    action,
+    state: res.state,
+    profileTemplateSet: profileTemplate !== undefined,
+    ...(bgp !== undefined ? { bgp } : {}),
+    ...act,
+  });
+  // The change landed; a view that cannot be read now is the card's to retry.
+  const after = await view().catch(() => null);
+  return json({ state: res.state, view: after });
+}
 
 /** `[{locationId, want}]` from a body (want a number, null or absent), or null when malformed. */
 function parseDefaultPicks(
@@ -1868,6 +1941,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       });
       return json(await ctx.runQuery(internal.edgeAdmin.liveView, { edgeId }));
     }
+    if (c === 'ddos' && (!d || d === 'refresh') && !parts[4])
+      return edgeDdos(ctx, edgeId, d === 'refresh', body, act);
     const edge = await ctx.runQuery(internal.edges.get, { id: edgeId });
     if (!edge) return notFound();
     switch (c) {

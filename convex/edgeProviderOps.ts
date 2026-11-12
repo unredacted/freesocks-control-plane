@@ -33,6 +33,7 @@ import type { ActionCtx } from './_generated/server';
 import { edgeProviderFor, edgeProviderConfigFrom } from './lib/edges/providers/registry';
 import { dnsClientForProvider, isDnsProviderId } from './lib/edges/providers/dns/clients';
 import type { DnsZoneConfig } from './lib/edges/providers/types';
+import { EDGE_DDOS_CHANGE_STATES } from './lib/edges/providers/types';
 import { dnsMarkStoreFor } from './lib/edges/dnsMarks';
 import { EdgeProviderError, refusalOf, scrubNames } from './lib/edges/providers/http';
 import {
@@ -82,6 +83,8 @@ import type {
   AdoptionInspection,
   DiscoverResult,
   Discovery,
+  EdgeDdosChangeResult,
+  EdgeDdosView,
   EdgeDescription,
   EdgeSpec,
   DestroyOutcome,
@@ -2067,6 +2070,104 @@ export const inspect = internalAction({
       const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       return jsonSafe(await provider.inspect(cfg, a.ledger as Ledger)) as InspectResult;
     }),
+});
+
+/**
+ * An edge's DDoS protection (`EdgeProvider.ddos`, capability `ddosProtection`):
+ * what it has now, and turning it on, off or removing it. Refused
+ * `ddos_unsupported` for a provider without it, before any provider call.
+ */
+export const ddosView = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), ledger, edgeId: v.optional(v.id('edges')) },
+  handler: (ctx, a): Promise<EdgeDdosView> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
+      if (!provider.ddos)
+        refuse('ddos_unsupported', `${providerId} edges have no DDoS protection`, providerId);
+      return jsonSafe(await provider.ddos.view(cfg, a.ledger as Ledger)) as EdgeDdosView;
+    }),
+});
+
+export const ddosChange = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    ledger,
+    edgeId: v.optional(v.id('edges')),
+    action: v.union(v.literal('enable'), v.literal('disable'), v.literal('remove')),
+    profileTemplate: v.optional(v.string()),
+    bgp: v.optional(v.boolean()),
+  },
+  handler: async (ctx, a): Promise<EdgeDdosChangeResult> => {
+    const res = await tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
+      if (!provider.ddos)
+        refuse('ddos_unsupported', `${providerId} edges have no DDoS protection`, providerId);
+      return provider.ddos.change(cfg, a.ledger as Ledger, {
+        action: a.action,
+        ...(a.profileTemplate !== undefined ? { profileTemplate: a.profileTemplate } : {}),
+        ...(a.bgp !== undefined ? { bgp: a.bgp } : {}),
+      });
+    });
+    // An enable whose provider task outlived the wait would otherwise stop
+    // half way (a profile made but never turned on): it is run again later.
+    if (res.state === 'pending' && a.action === 'enable' && a.edgeId)
+      await ctx.scheduler.runAfter(DDOS_RESUME_MS, internal.edgeProviderOps.ddosResume, {
+        edgeId: a.edgeId,
+        attempt: 1,
+        ...(a.profileTemplate !== undefined ? { profileTemplate: a.profileTemplate } : {}),
+        ...(a.bgp !== undefined ? { bgp: a.bgp } : {}),
+      });
+    return res;
+  },
+});
+
+/** Between runs of an enable the provider was still applying. */
+const DDOS_RESUME_MS = 30_000;
+/** Runs of one enable after the first, at most (about five minutes in all). */
+const DDOS_RESUME_MAX = 10;
+
+/**
+ * An enable the provider was still applying when it answered (`pending`), run
+ * again: the change is idempotent, so it finds the profile the slow task made
+ * and turns it on. Stops when the edge is no longer up or FCP's, on any
+ * refusal, or after `DDOS_RESUME_MAX` runs. Reads the edge fresh each time.
+ */
+export const ddosResume = internalAction({
+  args: {
+    edgeId: v.id('edges'),
+    attempt: v.number(),
+    profileTemplate: v.optional(v.string()),
+    bgp: v.optional(v.boolean()),
+  },
+  handler: async (ctx, a): Promise<void> => {
+    const edge = await ctx.runQuery(internal.edges.get, { id: a.edgeId });
+    if (!edge?.accountId || !edge.managed || !EDGE_DDOS_CHANGE_STATES.has(edge.status)) return;
+    const accountId = edge.accountId;
+    let res: EdgeDdosChangeResult;
+    try {
+      res = await tracked(ctx, accountId, async (seen) => {
+        const { provider, cfg } = await loadAdapter(ctx, accountId, a.edgeId, seen);
+        if (!provider.ddos) return { state: 'unchanged' as const };
+        return provider.ddos.change(
+          cfg,
+          { steps: edge.steps, resources: edge.resources } as Ledger,
+          {
+            action: 'enable',
+            ...(a.profileTemplate !== undefined ? { profileTemplate: a.profileTemplate } : {}),
+            ...(a.bgp !== undefined ? { bgp: a.bgp } : {}),
+          },
+        );
+      });
+    } catch {
+      // A refusal or a failed task: the edge page shows what Gcore has; nothing to retry.
+      return;
+    }
+    if (res.state === 'pending' && a.attempt < DDOS_RESUME_MAX)
+      await ctx.scheduler.runAfter(DDOS_RESUME_MS, internal.edgeProviderOps.ddosResume, {
+        ...a,
+        attempt: a.attempt + 1,
+      });
+  },
 });
 
 /**

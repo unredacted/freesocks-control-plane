@@ -3790,7 +3790,7 @@ describe('fastly: one wildcard certificate per account and zone', () => {
       name: '*.example.org',
       subscriptionId: WILD,
       state: 'issued',
-      notAfter: '2026-11-19T10:12:00.000Z',
+      notAfter: '2099-11-19T10:12:00.000Z',
     });
     expect(rec!.calls.at(-1)!.query).toEqual({ include: 'tls_authorizations,tls_certificates' });
     // A per-host account sees the wildcard only while one exists (to remove
