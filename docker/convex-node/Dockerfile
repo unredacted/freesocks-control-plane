@@ -15,7 +15,7 @@
 # within one major keep the same ABI.
 ARG CONVEX_IMAGE
 
-FROM node:22.23.4-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d AS node
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS node
 
 FROM ${CONVEX_IMAGE}
 COPY --from=node /usr/local/bin/node /usr/bin/node
