@@ -204,6 +204,8 @@ describe('origin capability record ⇔ adapters', () => {
     expect(caps.asyncDelete).toBe(!!p.confirmDestroyed);
     // A provider whose fronts can share one certificate reports it to the account.
     expect(caps.sharedCertificates).toBe(!!p.sharedCertificate);
+    // DDoS protection: the edge page's card and the template option need the methods.
+    expect(caps.ddosProtection === true).toBe(!!p.ddos);
   });
 
   test.each([...EDGE_PROVIDER_IDS])(

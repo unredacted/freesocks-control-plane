@@ -61,6 +61,9 @@ import {
   LanesView,
   TrustSummary,
   EdgeLiveResponse,
+  EdgeDdosChangeResponse,
+  EdgeDdosView,
+  type EdgeDdosAction,
   EdgeAccountCostRequest,
   EdgeCatalogRefreshResponse,
   EdgeCatalogView,
@@ -807,6 +810,14 @@ export const probeEdge = (edgeId: string) =>
   apiClient.post(`${BASE}/${enc(edgeId)}/probe`, {}, ProbeRequestedResponse);
 export const refreshEdgeLive = (edgeId: string) =>
   apiClient.post(`${BASE}/${enc(edgeId)}/live/refresh`, {}, EdgeLiveResponse);
+/** An edge's DDoS protection at its provider, read now (a provider call; nothing stored). */
+export const fetchEdgeDdos = (edgeId: string) =>
+  apiClient.post(`${BASE}/${enc(edgeId)}/ddos/refresh`, {}, EdgeDdosView);
+/** Turn an edge's DDoS protection on (optionally with a profile), off, or remove it. */
+export const changeEdgeDdos = (
+  edgeId: string,
+  body: { action: EdgeDdosAction; profileTemplate?: string; bgp?: boolean },
+) => apiClient.post(`${BASE}/${enc(edgeId)}/ddos`, body, EdgeDdosChangeResponse);
 export const deleteEdge = (edgeId: string) =>
   apiClient.delete(`${BASE}/${enc(edgeId)}`, EdgeOkResponse);
 
