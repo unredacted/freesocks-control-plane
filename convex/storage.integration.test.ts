@@ -304,9 +304,14 @@ describe.skipIf(!ENDPOINT)('S3 mirrors against a real store', () => {
       ok: true,
       removing: true,
     });
+    // The removal scheduled a run of its own, which runs beside this one: one of
+    // them withdraws the copy, and whichever finishes removes the row.
     expect(
       await t.action(internal.storage.withdrawProviderMirrors, { providerId: p1._id }),
-    ).toEqual({ withdrawn: 1, done: true });
+    ).toMatchObject({ done: true });
+    await vi.waitFor(async () => expect(await t.run((ctx) => ctx.db.get(p1._id))).toBeNull(), {
+      timeout: 10_000,
+    });
     // Every format's object goes with the copy.
     expect((await servedSet(res.publicUrl!)).statuses).toEqual([404, 404, 404]);
     expect((await t.run((ctx) => ctx.db.get(subId)))!.subscriptionMirrors).toEqual([]);

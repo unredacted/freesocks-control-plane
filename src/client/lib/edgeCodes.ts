@@ -1350,6 +1350,72 @@ const COPY = {
       "The provider refused to create this with FCP's settings, so a retry would fail the same way, and this node's automatic work uses another location for a while.",
     fix: "Read the provider's reason and fix the quota, location or template setting it names. Delete the address afterwards if FCP did not remove it.",
   },
+  // Gcore Advanced DDoS protection (gcoreDdos.ts): a provisioning step's stop codes
+  // (template `Required`), and the edge page's refusals.
+  ddos_unavailable: {
+    label: 'No DDoS protection here',
+    explain: "The provider's region this address is in does not offer Advanced DDoS protection.",
+    fix: 'Use a location in a region that offers it, or set the protection to "On where the region offers it".',
+  },
+  ddos_no_templates: {
+    label: 'No protection profiles',
+    explain: 'The region lists no DDoS protection profiles to protect the address with.',
+    fix: 'Ask the provider to enable Advanced DDoS protection for the account, or set the protection to Off.',
+  },
+  ddos_template_required: {
+    label: 'Pick a protection profile',
+    explain: 'The region lists more than one DDoS protection profile and the template names none.',
+    fix: "Name one in the template's Protection profile. An edge's DDoS card lists the region's profiles.",
+  },
+  ddos_template_unknown: {
+    label: 'Protection profile not found',
+    explain:
+      'The region has no DDoS protection profile with the name or number the template gives.',
+    fix: "Check the template's Protection profile against the region's list on an edge's DDoS card.",
+  },
+  ddos_template_needs_fields: {
+    label: 'Profile needs settings',
+    explain:
+      'The protection profile has required settings without a default, which FCP has no values for.',
+    fix: "Pick another profile, or set this one up in the provider's console.",
+  },
+  ddos_refused: {
+    label: 'Protection refused',
+    explain: 'The provider refused to protect the address, so a retry would fail the same way.',
+    fix: "Read the provider's reason, then fix the account, quota or profile it names.",
+  },
+  ddos_create_failed: {
+    label: 'Protection not created',
+    explain: 'The provider could not create the protection for the address.',
+    fix: "Look at DDoS protection in the provider's console, then try again.",
+  },
+  ddos_activate_failed: {
+    label: 'Protection not turned on',
+    explain: 'The protection was created but the provider could not turn it on.',
+    fix: "Look at DDoS protection in the provider's console, then turn it on from the edge's DDoS card.",
+  },
+  ddos_task_failed: {
+    label: 'Provider could not apply it',
+    explain: 'The provider started the change but it failed on their side.',
+    fix: "Look at DDoS protection in the provider's console, then try again.",
+  },
+  ddos_no_lb: {
+    label: 'No load balancer yet',
+    explain: 'The address has no load balancer recorded, so there is nothing to protect yet.',
+  },
+  ddos_no_address: {
+    label: 'No public IPv4',
+    explain: 'The load balancer has no public IPv4 address to protect.',
+  },
+  ddos_unsupported: {
+    label: 'No DDoS protection at this provider',
+    explain: "FCP cannot manage DDoS protection at this address's provider.",
+  },
+  'edge.ddos_not_live': {
+    label: 'Address not up',
+    explain:
+      'Protection changes only on an address that is up: being checked, live, draining or held.',
+  },
   // A provider refused the arguments of an address allocation (a 400): retrying cannot help.
   ip_allocation_refused: {
     label: 'Address allocation refused',
@@ -2199,6 +2265,8 @@ const ACRONYMS: Record<string, string> = {
   sni: 'SNI',
   udp: 'UDP',
   tcp: 'TCP',
+  ddos: 'DDoS',
+  bgp: 'BGP',
   cdn: 'CDN',
   id: 'ID',
   ip: 'IP',
@@ -2869,6 +2937,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.template.delete': 'Template deleted',
   'admin.edge.provision': 'Provision requested',
   'admin.edge.test_provision': 'Test provision requested',
+  'admin.edge.ddos.change': 'DDoS protection changed',
   'admin.edge.publish': 'Publish requested',
   'admin.edge.rotate': 'Rotation requested',
   'admin.edge.burn': 'Burn requested',
@@ -3186,6 +3255,7 @@ export function plainWords(text: string): string {
 
 /** The node page's timeline: the audit action in plain words. */
 const PLAIN_AUDIT_LABELS: Record<string, string> = {
+  'admin.edge.ddos.change': 'DDoS protection changed',
   'relay.create': 'Node added',
   'relay.registered': 'Node registered',
   'relay.upsert': 'Node registered',

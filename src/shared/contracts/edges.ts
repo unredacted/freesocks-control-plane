@@ -1362,6 +1362,54 @@ export const EdgeDetail = z.object({
 export type EdgeDetail = z.infer<typeof EdgeDetail>;
 export const EdgeLiveResponse = z.object({ live: EdgeLive.nullable() });
 
+/**
+ * An edge's DDoS protection at its provider (`POST .../edges/<id>/ddos/refresh`;
+ * capability `ddosProtection`). `available` null = the provider did not say;
+ * `unread` names the lists it could not read.
+ */
+export const EdgeDdosView = z.object({
+  available: z.boolean().nullable(),
+  templates: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      description: z.string().nullable(),
+      /** Required settings without a default: FCP cannot make a profile of this template. */
+      fieldsNeeded: z.array(z.string()).default([]),
+    }),
+  ),
+  profiles: z.array(
+    z.object({
+      id: z.string(),
+      address: z.string(),
+      active: z.boolean().nullable(),
+      bgp: z.boolean().nullable(),
+      status: z.string().nullable(),
+      error: z.string().nullable(),
+      templateId: z.number().nullable(),
+      templateName: z.string().nullable(),
+    }),
+  ),
+  addresses: z.object({ v4: z.string().optional(), v6: z.string().optional() }),
+  price: z
+    .object({
+      feature: z.string().nullable(),
+      per30d: z.number().nullable(),
+      currency: z.string().nullable(),
+    })
+    .nullable(),
+  unread: z.array(z.string()),
+});
+export type EdgeDdosView = z.infer<typeof EdgeDdosView>;
+export const EdgeDdosAction = z.enum(['enable', 'disable', 'remove']);
+export type EdgeDdosAction = z.infer<typeof EdgeDdosAction>;
+/** `POST .../edges/<id>/ddos`: what the change did, and the protection read again after it. */
+export const EdgeDdosChangeResponse = z.object({
+  state: z.enum(['done', 'pending', 'unchanged']),
+  view: EdgeDdosView.nullable(),
+});
+export type EdgeDdosChangeResponse = z.infer<typeof EdgeDdosChangeResponse>;
+
 export const EdgeRotationAdmin = z.object({
   id: z.string(),
   relayId: z.string(),
