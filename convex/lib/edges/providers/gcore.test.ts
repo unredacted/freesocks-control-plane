@@ -394,13 +394,20 @@ describe('gcore: describe / destroy', () => {
   });
 
   test('destroy requests a delete task; confirm reads PENDING_DELETE as unresolved, ACTIVE as still_present, 404 as gone', async () => {
-    const stub = mockFetch(() => jsonRes({ tasks: ['del-1'] }));
+    // The balancer is read first (with its DDoS profile) and the addresses'
+    // profiles listed: none, so the delete goes out.
+    const stub = mockFetch((c) =>
+      c.method === 'DELETE'
+        ? jsonRes({ tasks: ['del-1'] })
+        : c.path.startsWith('/cloud/v1/ddos/')
+          ? jsonRes({ results: [] })
+          : jsonRes({ id: 'lb-1', provisioning_status: 'ACTIVE', vip_address: '203.0.113.5' }),
+    );
     const out = await gcoreProvider.runDestroy(cfg, ledger.resources[0], ledger);
     expect(out).toEqual({ status: 'delete_requested', opRef: 'del-1' });
-    expect(stub.calls[0]).toMatchObject({
-      method: 'DELETE',
-      path: '/cloud/v1/loadbalancers/11/22/lb-1',
-    });
+    expect(stub.calls.filter((c) => c.method === 'DELETE')).toMatchObject([
+      { method: 'DELETE', path: '/cloud/v1/loadbalancers/11/22/lb-1' },
+    ]);
     mockFetch(() => jsonRes({ id: 'lb-1', provisioning_status: 'PENDING_DELETE' }));
     expect(await gcoreProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({
       status: 'unresolved',
