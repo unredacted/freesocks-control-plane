@@ -600,7 +600,9 @@ export const finishRemoval = internalMutation({
   args: { providerId: v.id('mirrorProviders'), withdrawn: v.number() },
   handler: async (ctx, { providerId, withdrawn }) => {
     const row = await ctx.db.get(providerId);
-    if (!row || !row.removing) return { removed: false };
+    // Already removed (another run of this removal finished first) or no longer
+    // being removed: nothing is left for this run to wait on.
+    if (!row || !row.removing) return { removed: false, over: true };
     if ((await copiesOnProvider(ctx.db, row.name, 1)).count > 0) return { removed: false };
     if (await openRecordsName(ctx.db, row.name)) return { removed: false };
     await ctx.db.delete(providerId);
