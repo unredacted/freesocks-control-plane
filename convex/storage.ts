@@ -1730,10 +1730,13 @@ export const withdrawProviderMirrors = internalAction({
         numItems: WITHDRAW_PAGE,
       });
       if (page.length === 0) {
-        const { removed } = await ctx.runMutation(internal.mirrorProviders.finishRemoval, {
+        const { removed, over } = await ctx.runMutation(internal.mirrorProviders.finishRemoval, {
           providerId,
           withdrawn,
         });
+        // Another run of this removal finished it (the removal schedules one
+        // and a retry can overlap it), or it was called off: nothing to wait on.
+        if (over) return { withdrawn, done: true };
         // An open record still names the provider: wait for the repair pass.
         if (!removed) return backoff();
         return { withdrawn, done: true };

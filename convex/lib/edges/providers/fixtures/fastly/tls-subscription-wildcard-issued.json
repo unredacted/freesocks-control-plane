@@ -29,7 +29,7 @@
       "type": "tls_certificate",
       "attributes": {
         "not_before": "2026-10-20T10:12:00Z",
-        "not_after": "2026-11-19T10:12:00Z"
+        "not_after": "2099-11-19T10:12:00Z"
       }
     }
   ]
