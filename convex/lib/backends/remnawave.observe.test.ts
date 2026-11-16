@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { realityPublicKey } from '../backend/digest';
-import { generateVlessEncryption } from '../backend/vlessEncryption';
+import { clientEncryption, generateVlessEncryption } from '../backend/vlessEncryption';
 import { remnawaveObservePanel, type RemnawaveConfig } from './remnawave';
 
 const cfg: RemnawaveConfig = { baseUrl: 'https://panel.internal', apiToken: 'SECRET_TOKEN' };
@@ -269,6 +269,7 @@ describe('remnawaveObservePanel', () => {
       digest: expect.stringMatching(/^[0-9a-f]{64}$/),
       mode: 'native',
       auth: 'mlkem768',
+      encryption: clientEncryption(server),
     });
     // A plain VLESS transport and a non-VLESS one carry nothing.
     expect(byTag['reality-in']).not.toHaveProperty('vlessEncryption');

@@ -717,7 +717,11 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       (p) => p.profileUuid === encProfile,
     )!;
     const byTag = Object.fromEntries(seen.inbounds.map((i) => [i.tag, i]));
-    expect(byTag[tag].vlessEncryption).toMatchObject({ mode: 'native', auth: 'mlkem768' });
+    expect(byTag[tag].vlessEncryption).toMatchObject({
+      mode: 'native',
+      auth: 'mlkem768',
+      encryption: client,
+    });
     expect(byTag[plainTag]).not.toHaveProperty('vlessEncryption');
     expect(JSON.stringify(seen)).not.toContain(seed);
 

@@ -267,22 +267,26 @@ export async function hysteriaAuthDigest(
 }
 
 /**
- * The VLESS Encryption identity of one VLESS inbound: how the handshake looks
- * and what the node is verified by (both public), and a keyed digest of the
- * client string every member entry carries.
+ * The VLESS Encryption identity of one VLESS inbound: how the handshake looks,
+ * what the node is verified by, the client string every member entry carries
+ * (all public: the string is in every share link, like a REALITY public key),
+ * and a keyed digest of that string.
  */
 export interface VlessEncryptionAuth {
   /** Null when the server string is not one FCP can read: members' entries cannot be predicted. */
   digest: string | null;
   mode: VlessEncryptionIdentity['mode'] | null;
   auth: VlessEncryptionIdentity['auth'] | null;
+  /** The `encryption` of a member entry, derived from the server string. */
+  encryption: string | null;
 }
 
 /**
  * The VLESS Encryption identity of an inbound's `settings`, or null for a
  * plain transport (`decryption` absent, empty or `none`). The digest moves on
  * a new key, mode, padding or ticket setting: every change a member's copied
- * entry would stop matching. Nothing of the server string is returned.
+ * entry would stop matching. Nothing of the server string's private half is
+ * returned.
  */
 export async function vlessEncryptionAuthDigest(
   settings: unknown,
@@ -291,11 +295,12 @@ export async function vlessEncryptionAuthDigest(
   const decryption = isObj(settings) ? settings.decryption : undefined;
   if (!isVlessEncrypted(decryption)) return null;
   const id = vlessEncryptionIdentity(decryption);
-  if (!id) return { digest: null, mode: null, auth: null };
+  if (!id) return { digest: null, mode: null, auth: null, encryption: null };
   return {
     digest: await hmacSha256Hex(key, `fcp.panel.vless-encryption.v1\n${id.encryption}`),
     mode: id.mode,
     auth: id.auth,
+    encryption: id.encryption,
   };
 }
 

@@ -161,16 +161,15 @@ describe('vlessEncryptionAuthDigest', () => {
     expect(await vlessEncryptionAuthDigest(undefined, KEY)).toBeNull();
   });
 
-  test('says how the node is verified, and never carries the server string or the client one', async () => {
+  test('says how the node is verified and what members hold, and never carries the server string', async () => {
     const a = await vlessEncryptionAuthDigest(settings(server), KEY);
     expect(a).toEqual({
       digest: expect.stringMatching(/^[0-9a-f]{64}$/),
       mode: 'native',
       auth: 'mlkem768',
+      encryption: clientEncryption(server),
     });
-    const blob = JSON.stringify(a);
-    expect(blob).not.toContain(server.split('.')[3]);
-    expect(blob).not.toContain(clientEncryption(server)!.split('.')[3]);
+    expect(JSON.stringify(a)).not.toContain(server.split('.')[3]);
   });
 
   test('moves with the key, the mode and the tickets; is keyed; and is stable', async () => {
@@ -193,6 +192,7 @@ describe('vlessEncryptionAuthDigest', () => {
       digest: null,
       mode: null,
       auth: null,
+      encryption: null,
     });
   });
 

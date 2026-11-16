@@ -919,8 +919,8 @@ handshake otherwise. `0s` on the server turns tickets off and makes every client
 that writes it (`backendWrites.ts` `freshMaterial`), held in memory and the provider call only,
 never stored, logged or returned. In the digests (`convex/lib/backend/digest.ts`,
 [servers.md](servers.md) § "Nothing secret is read into FCP's database") it is redacted from the
-shape hash, covered by the change token, and reduced to a keyed digest plus two public facts on
-the observed transport.
+shape hash, covered by the change token, and reduced on the observed transport to what is public:
+the client string, how the handshake looks, what the node is verified by, and a keyed digest.
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, and

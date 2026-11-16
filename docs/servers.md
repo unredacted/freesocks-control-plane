@@ -83,8 +83,10 @@ returned or logged:
 | `realityAuthDigest` | key pair, short ids, client version and clock bounds, keyed HMAC | "Would a client that connected yesterday still connect?" Server names and target are not part of it. |
 
 A VLESS transport that runs VLESS Encryption gets one more, `vlessEncryptionAuthDigest`: a keyed
-HMAC over the client string its members' entries carry, stored with how the handshake looks
-(`mode`) and what the node is verified by (`auth`) as the transport's `vlessEncryption`. A plain
+HMAC over the client string its members' entries carry, stored with that string (`encryption`:
+public by nature, like a REALITY public key, since every share link carries it), how the
+handshake looks (`mode`) and what the node is verified by (`auth`) as the transport's
+`vlessEncryption`. A plain
 transport has none. The server string itself is redacted like a key, with one exception: the
 plain value `none` is a fact and stays visible, so a profile without the layer hashes exactly as
 it did before the layer existed (pinned by a test).

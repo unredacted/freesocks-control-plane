@@ -61,6 +61,7 @@ const observedInbound = v.object({
       digest: nullableString,
       mode: v.union(v.literal('native'), v.literal('xorpub'), v.literal('random'), v.null()),
       auth: v.union(v.literal('mlkem768'), v.literal('x25519'), v.literal('mixed'), v.null()),
+      encryption: nullableString,
     }),
   ),
 });
