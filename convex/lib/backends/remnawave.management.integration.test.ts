@@ -26,8 +26,15 @@
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, test } from 'vitest';
+import { clientEncryption, generateVlessEncryption } from '../backend/vlessEncryption';
+import type { PatchOp } from '../backend/patchOps';
 import { PROVIDERS } from './registry';
-import { remnawaveObservePanel } from './remnawave';
+import {
+  remnawaveDeleteUser,
+  remnawaveFetchSubscription,
+  remnawaveIssueUser,
+  remnawaveObservePanel,
+} from './remnawave';
 
 const BASE_URL = process.env.REMNAWAVE_TEST_URL;
 const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
@@ -644,5 +651,142 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     const gone = await api('DELETE', `nodes/${nodeUuid}`);
     expect(ok(gone)).toBe(true);
     created.nodes = [];
+  });
+
+  // VLESS Encryption (lib/backend/vlessEncryption.ts): the transport FCP makes,
+  // and what the backend then hands members for it. FCP writes only the SERVER
+  // string; the backend derives the client one on its own, so the two
+  // derivations have to agree or FCP would expect entries members never get.
+  test('an encrypted transport made by FCP is taken, and every entry the backend renders for it carries the client string FCP derives', async () => {
+    const cfg = {
+      type: 'remnawave' as const,
+      baseUrl: BASE_URL!,
+      apiToken: API_TOKEN!,
+      timeoutMs: 20_000,
+    };
+    const w = PROVIDERS.remnawave.backendWrites!;
+    const KEY = 'integration-digest-key';
+    const plainTag = `fcp-p-${run}`;
+    const tag = `fcp-e-${run}`;
+    const made = await api('POST', 'config-profiles', {
+      name: `fcp-enc-${run}`,
+      config: profileConfig([
+        {
+          tag: plainTag,
+          listen: '127.0.0.1',
+          port: 9443,
+          protocol: 'vless',
+          settings: { clients: [], decryption: 'none' },
+          streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/ws' } },
+        },
+      ]),
+    });
+    expect(made.status).toBe(201);
+    const encProfile = made.data.uuid as string;
+    created.profiles.push(encProfile);
+
+    const server = generateVlessEncryption().decryption;
+    const seed = server.split('.')[3]!;
+    const client = clientEncryption(server)!;
+    const ops: PatchOp[] = [
+      {
+        op: 'addInboundFromTemplate',
+        inboundTag: tag,
+        template: { kind: 'ws', port: 9444, path: '/ws-e', encrypted: true },
+      },
+    ];
+    const preview = await w.previewProfilePatch(cfg, encProfile, ops, KEY);
+    // The server string is made in the attempt: nothing can be predicted before it.
+    expect(preview.expectedToken).toBeNull();
+    expect(
+      await w.applyProfilePatch(cfg, encProfile, ops, preview.baseToken, KEY, {
+        material: { [tag]: { decryption: server } },
+      }),
+    ).toEqual({ sent: true });
+
+    // The backend stores the server string as sent, beside the untouched plain transport.
+    const raw = await api('GET', `config-profiles/${encProfile}`);
+    expect(rawInbound(raw.data, tag).settings.decryption).toBe(server);
+    expect(rawInbound(raw.data, plainTag).settings.decryption).toBe('none');
+    const encInbound = uuidOfTag(raw.data, tag)!;
+    const plainInbound = uuidOfTag(raw.data, plainTag)!;
+    expect(encInbound).toBeTruthy();
+
+    // FCP's own observation says "encrypted" and carries neither string.
+    const seen = (await remnawaveObservePanel(cfg, KEY)).profiles.find(
+      (p) => p.profileUuid === encProfile,
+    )!;
+    const byTag = Object.fromEntries(seen.inbounds.map((i) => [i.tag, i]));
+    expect(byTag[tag].vlessEncryption).toMatchObject({ mode: 'native', auth: 'mlkem768' });
+    expect(byTag[plainTag]).not.toHaveProperty('vlessEncryption');
+    expect(JSON.stringify(seen)).not.toContain(seed);
+
+    const squad = await api('POST', 'internal-squads', {
+      name: `fcpe-${run}`,
+      inbounds: [encInbound, plainInbound],
+    });
+    expect(squad.status).toBe(201);
+    created.squads.push(squad.data.uuid);
+    for (const [inbound, address, path] of [
+      [encInbound, '192.0.2.61', '/ws-e'],
+      [plainInbound, '192.0.2.62', '/ws'],
+    ] as const) {
+      const { hostUuid } = await w.createAddress(cfg, {
+        remark: `fcp-enc-${run}-${address.slice(-2)}`,
+        address,
+        port: 443,
+        sni: 'front.example',
+        host: 'front.example',
+        path,
+        inbound: { configProfileUuid: encProfile, configProfileInboundUuid: inbound },
+      });
+      created.hosts.push(hostUuid);
+    }
+    const issued = await remnawaveIssueUser(cfg, {
+      username: `fcp_enc_${run}`,
+      placement: squad.data.uuid,
+      tag: 'ENCTEST',
+      expireAt: null,
+      trafficLimitBytes: 1024 ** 3,
+    });
+    try {
+      const body = async (userAgent: string) =>
+        (
+          await remnawaveFetchSubscription(
+            cfg,
+            issued.backendShortId,
+            userAgent,
+            issued.subscriptionUrl,
+          )
+        ).content;
+
+      // A link list: the encrypted entry carries exactly FCP's client string, the plain one `none`.
+      const links = Buffer.from(await body('v2rayNG/1.10.20'), 'base64')
+        .toString('utf8')
+        .split('\n')
+        .filter((l) => l.startsWith('vless://'))
+        .map((l) => new URL(l));
+      const linkTo = (address: string) => links.find((u) => u.hostname === address)!;
+      expect(linkTo('192.0.2.61').searchParams.get('encryption')).toBe(client);
+      expect(linkTo('192.0.2.62').searchParams.get('encryption')).toBe('none');
+
+      // A Clash body: the same string on the encrypted entry only.
+      const clash = await body('clash-verge/v2.4.2');
+      expect(clash).toContain('192.0.2.61');
+      expect(clash).toContain(client);
+      expect(clash.split(client)).toHaveLength(2);
+
+      // A sing-box body: sing-box has no VLESS Encryption, so the backend
+      // leaves the encrypted entry out and keeps the plain one.
+      const singbox = await body('SFA/1.12.12 (sing-box 1.12.12)');
+      expect(singbox).toContain('192.0.2.62');
+      expect(singbox).not.toContain('192.0.2.61');
+      expect(singbox).not.toContain('mlkem768x25519plus');
+
+      // Nothing a member is handed holds the server's seed.
+      for (const b of [links.map(String).join('\n'), clash, singbox]) expect(b).not.toContain(seed);
+    } finally {
+      await remnawaveDeleteUser(cfg, issued.backendUserId);
+    }
   });
 });

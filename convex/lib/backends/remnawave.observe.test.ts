@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { realityPublicKey } from '../backend/digest';
+import { generateVlessEncryption } from '../backend/vlessEncryption';
 import { remnawaveObservePanel, type RemnawaveConfig } from './remnawave';
 
 const cfg: RemnawaveConfig = { baseUrl: 'https://panel.internal', apiToken: 'SECRET_TOKEN' };
@@ -248,6 +249,33 @@ describe('remnawaveObservePanel', () => {
       maxClientVer: null,
     });
     for (const s of SECRETS) expect(JSON.stringify(o)).not.toContain(s);
+  });
+
+  test('a transport running VLESS Encryption is reported as one, and its server string stays behind', async () => {
+    const server = generateVlessEncryption().decryption;
+    const p = profile(['a.example']);
+    (p.config.inbounds as unknown[]).push({
+      tag: 'ws-e',
+      listen: '127.0.0.1',
+      port: 8444,
+      protocol: 'vless',
+      settings: { clients: [], decryption: server },
+      streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/ws-e' } },
+    });
+    mockFetch(panel(p));
+    const o = await remnawaveObservePanel(cfg, KEY);
+    const byTag = Object.fromEntries(o.profiles[0].inbounds.map((i) => [i.tag, i]));
+    expect(byTag['ws-e'].vlessEncryption).toEqual({
+      digest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      mode: 'native',
+      auth: 'mlkem768',
+    });
+    // A plain VLESS transport and a non-VLESS one carry nothing.
+    expect(byTag['reality-in']).not.toHaveProperty('vlessEncryption');
+    expect(byTag['tls-in']).not.toHaveProperty('vlessEncryption');
+    const blob = JSON.stringify(o);
+    expect(blob).not.toContain(server.split('.')[3]);
+    expect(blob).not.toContain('decryption');
   });
 
   test('a name change moves both digests; a short-id change moves only the keyed ones', async () => {

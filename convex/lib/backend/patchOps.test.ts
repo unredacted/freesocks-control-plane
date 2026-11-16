@@ -5,8 +5,10 @@ import {
   PatchRefused,
   applyPatchOps,
   checkPatchOps,
+  needsFreshKeys,
   type PatchOp,
 } from './patchOps';
+import { generateVlessEncryption } from './vlessEncryption';
 
 const reality = (tag: string, over: Record<string, unknown> = {}) => ({
   tag,
@@ -323,6 +325,105 @@ describe('addInboundFromTemplate', () => {
       listen: '127.0.0.1',
       port: 9443,
       streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/feed' } },
+    });
+  });
+
+  describe('an encrypted template (VLESS Encryption)', () => {
+    const SERVER = generateVlessEncryption().decryption;
+    const encWs: PatchOp = {
+      op: 'addInboundFromTemplate',
+      inboundTag: 'NEW_WS_E',
+      template: { kind: 'ws', port: 9444, path: '/feed-e', encrypted: true },
+    };
+    const encReality: PatchOp = {
+      ...reality,
+      inboundTag: 'NEW_REALITY_E',
+      template: { ...(reality as any).template, encrypted: true },
+    };
+    const decryptionOf = (out: { config: unknown }) =>
+      (out.config as any).inbounds[3].settings.decryption as string;
+
+    test('a WebSocket transport is born encrypted, beside the plain ones, which do not move', () => {
+      const before: any = config();
+      const out = applyPatchOps(before, [encWs], { NEW_WS_E: { decryption: SERVER } });
+      expect(out.needsMaterial).toBe(false);
+      for (let i = 0; i < 3; i++) expect((out.config as any).inbounds[i]).toBe(before.inbounds[i]);
+      expect((out.config as any).inbounds[3]).toMatchObject({
+        tag: 'NEW_WS_E',
+        listen: '127.0.0.1',
+        port: 9444,
+        protocol: 'vless',
+        settings: { clients: [], decryption: SERVER },
+        streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/feed-e' } },
+      });
+    });
+
+    test('a REALITY transport carries both its key and its server string', () => {
+      const out = applyPatchOps(config(), [encReality], {
+        NEW_REALITY_E: { privateKey: 'FRESH_KEY', shortIds: [''], decryption: SERVER },
+      });
+      expect(out.needsMaterial).toBe(false);
+      expect(decryptionOf(out)).toBe(SERVER);
+      expect((out.config as any).inbounds[3].streamSettings.realitySettings.privateKey).toBe(
+        'FRESH_KEY',
+      );
+    });
+
+    test('needs its material: missing, or of the wrong kind, is a placeholder and never a plain transport', () => {
+      expect(needsFreshKeys([encWs])).toBe(true);
+      expect(needsFreshKeys([{ ...encWs, template: { kind: 'ws', port: 9444, path: '/f' } }])).toBe(
+        false,
+      );
+      const wrong: Record<string, any>[] = [
+        {},
+        // A REALITY key for a WebSocket transport, and a key without the string.
+        { NEW_WS_E: { privateKey: 'FRESH_KEY', shortIds: [''], decryption: SERVER } },
+        { NEW_WS_E: { decryption: '' } },
+      ];
+      for (const material of wrong) {
+        const out = applyPatchOps(config(), [encWs], material);
+        expect(out.needsMaterial).toBe(true);
+        expect(decryptionOf(out)).not.toBe('none');
+        expect(JSON.stringify(out.config)).not.toContain(SERVER);
+      }
+      const noString = applyPatchOps(config(), [encReality], {
+        NEW_REALITY_E: { privateKey: 'FRESH_KEY', shortIds: [''] },
+      });
+      expect(noString.needsMaterial).toBe(true);
+      expect(decryptionOf(noString)).not.toBe('none');
+      expect(JSON.stringify(noString.config)).not.toContain('FRESH_KEY');
+    });
+
+    test('a plain template ignores a server string it was not asked for', () => {
+      const out = applyPatchOps(config(), [reality], {
+        NEW_REALITY: { privateKey: 'FRESH_KEY', shortIds: [''], decryption: SERVER },
+      });
+      expect(decryptionOf(out)).toBe('none');
+    });
+
+    test('the flag is kept only when it is exactly true', () => {
+      const template = (t: unknown) =>
+        (
+          checkPatchOps([
+            { op: 'addInboundFromTemplate', inboundTag: 'T_NEW', template: t } as PatchOp,
+          ])[0] as Extract<PatchOp, { op: 'addInboundFromTemplate' }>
+        ).template;
+      expect(template({ kind: 'ws', port: 9000, path: '/a', encrypted: true })).toEqual({
+        kind: 'ws',
+        port: 9000,
+        path: '/a',
+        encrypted: true,
+      });
+      for (const off of [false, 'yes', 1, undefined])
+        expect(template({ kind: 'ws', port: 9000, path: '/a', encrypted: off })).toEqual({
+          kind: 'ws',
+          port: 9000,
+          path: '/a',
+        });
+      // Hysteria is not VLESS: the flag means nothing there.
+      expect(
+        template({ kind: 'hysteria', port: 443, serverName: 'q.example', encrypted: true }),
+      ).not.toHaveProperty('encrypted');
     });
   });
 

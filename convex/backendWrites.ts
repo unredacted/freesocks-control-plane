@@ -43,10 +43,12 @@ import {
   checkPatchOps,
   needsFreshKeys,
   opensPort,
+  templateNeedsKeys,
   type PatchMaterial,
   type PatchOp,
 } from './lib/backend/patchOps';
 import { generateRealityKey } from './lib/backend/realityKeys';
+import { generateVlessEncryption } from './lib/backend/vlessEncryption';
 import { patchOp } from './lib/backend/patchOpArgs';
 import { currentNodeName } from './lib/backend/nodeAliases';
 import { PROFILE_DEFAULTS, generateObfsPassword } from './lib/backend/profileTemplate';
@@ -1276,14 +1278,15 @@ async function writesFor(ctx: ActionCtx, backendServerId: Id<'backendServers'>) 
 }
 
 /**
- * The key material a new REALITY transport needs, made for THIS attempt: it
+ * The key material a new transport needs (a REALITY key, a Hysteria
+ * certificate, a VLESS Encryption server string), made for THIS attempt: it
  * exists in this action's memory and the provider call only.
  */
 function freshMaterial(ops: readonly PatchOp[]): PatchMaterial | undefined {
   if (!needsFreshKeys(ops)) return undefined;
   const out: Record<string, PatchMaterial[string]> = {};
   for (const op of ops) {
-    if (op.op !== 'addInboundFromTemplate' || op.template.kind === 'ws') continue;
+    if (op.op !== 'addInboundFromTemplate' || !templateNeedsKeys(op.template)) continue;
     if (op.template.kind === 'hysteria') {
       const cert = generateHysteriaCertificate(op.template.serverName);
       out[op.inboundTag] = {
@@ -1293,9 +1296,16 @@ function freshMaterial(ops: readonly PatchOp[]): PatchMaterial | undefined {
       };
       continue;
     }
+    const encryption = op.template.encrypted ? generateVlessEncryption() : undefined;
+    if (op.template.kind === 'ws') {
+      // Only an encrypted WebSocket transport reaches here: a plain one needs nothing.
+      if (encryption) out[op.inboundTag] = encryption;
+      continue;
+    }
     out[op.inboundTag] = {
       privateKey: generateRealityKey().privateKey,
       shortIds: PROFILE_DEFAULTS.shortIds,
+      ...encryption,
     };
   }
   return out;

@@ -63,8 +63,10 @@ the other.
 
 ### Nothing secret is read into FCP's database
 
-A config profile holds the REALITY **private key**, the **short ids**, the **client list** and
-certificate material. None of it is stored, returned or logged:
+A config profile holds the REALITY **private key**, the **short ids**, the **client list**,
+certificate material and, for a transport running VLESS Encryption, its **server string**
+(`settings.decryption`, [backends.md](backends.md) § "VLESS Encryption"). None of it is stored,
+returned or logged:
 
 - A transport is the same **allowlist projection** discovery uses (`projectXrayTransport`): tag,
   protocol, port, transport, security, server names, target, paths. The backend's derived
@@ -79,6 +81,13 @@ certificate material. None of it is stored, returned or logged:
 | `shapeHash`         | the **redacted** config, SHA-256                                 | "Does this profile look different?" Safe to show. Blind to a change that touches only secrets.       |
 | `changeToken`       | the **complete** config, keyed HMAC                              | "Did anything change?", a key or short-id rotation included. What a write will be conditioned on.    |
 | `realityAuthDigest` | key pair, short ids, client version and clock bounds, keyed HMAC | "Would a client that connected yesterday still connect?" Server names and target are not part of it. |
+
+A VLESS transport that runs VLESS Encryption gets one more, `vlessEncryptionAuthDigest`: a keyed
+HMAC over the client string its members' entries carry, stored with how the handshake looks
+(`mode`) and what the node is verified by (`auth`) as the transport's `vlessEncryption`. A plain
+transport has none. The server string itself is redacted like a key, with one exception: the
+plain value `none` is a fact and stays visible, so a profile without the layer hashes exactly as
+it did before the layer existed (pinned by a test).
 
 The REALITY **public** key is derived from the private one and _is_ shown: it is public by
 nature (every share link carries it). A stored `publicKey` that does not belong to the private
@@ -246,7 +255,11 @@ uuid; a new transport is appended. A uuid that moved anyway is flagged
   returned, so no preview can predict the token the profile will have: the preview answers
   `expectedToken: null`, and the attempt records the token it computed from its own fresh read
   immediately before the `PATCH` (`markSent`), which is what the look then settles on and what
-  tells the observer the edit was FCP's. A tag another transport of the backend has is refused
+  tells the observer the edit was FCP's. A WebSocket or REALITY template marked `encrypted` gets a
+  VLESS Encryption server string made in the same attempt, under the same rules
+  ([backends.md](backends.md) § "VLESS Encryption"); without it in hand the edit holds a
+  placeholder and is never sent, so an encrypted transport is never built plain. No route sets
+  the flag yet. A tag another transport of the backend has is refused
   (`servers.tag_taken`; the backend answers 409). **No node serves a new transport** until it is
   assigned to it (measured: the backend re-applies the profile to its nodes, and each keeps
   exactly its own transports), so the add opens no port and closes no node. Setting the backend

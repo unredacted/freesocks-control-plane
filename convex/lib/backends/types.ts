@@ -406,9 +406,22 @@ export interface PanelHysteriaAuth {
   obfs: boolean;
 }
 
+/**
+ * The VLESS Encryption identity of one VLESS inbound that runs it: how the
+ * handshake looks, what the node is verified by, and a keyed digest of the
+ * client string members hold. Absent on a plain transport; all three null when
+ * the server string is one FCP cannot read.
+ */
+export interface PanelVlessEncryption {
+  digest: string | null;
+  mode: 'native' | 'xorpub' | 'random' | null;
+  auth: 'mlkem768' | 'x25519' | 'mixed' | null;
+}
+
 export type ObservedTransport = Omit<BackendTransport, 'active'> & {
   realityAuth?: PanelRealityAuth;
   hysteriaAuth?: PanelHysteriaAuth;
+  vlessEncryption?: PanelVlessEncryption;
   /** A REALITY transport's `minClientVer` / `maxClientVer` (version numbers, never key material). */
   realityClients?: RealityClientBounds;
 };

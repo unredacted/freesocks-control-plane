@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { PRIVACY_XRAY_LOG } from '../backends/remnawave';
 import {
   buildProfile,
+  buildTransport,
   generateObfsPassword,
   isHysteria,
   isReality,
@@ -212,6 +213,27 @@ describe('buildProfile', () => {
       }),
     ).toThrow(/short_ids/);
     expect(() => buildProfile([direct], {})).toThrow(/short_ids/);
+  });
+});
+
+describe('VLESS Encryption', () => {
+  const encryption = { decryption: 'mlkem768x25519plus.native.600s.server-string' };
+  const settingsOf = (t: Record<string, unknown>) => t.settings as Record<string, unknown>;
+
+  test('every VLESS transport is plain unless it is given a server string', () => {
+    for (const m of [direct, fronted, xhttp, ws]) {
+      const k = keys[m.slug as keyof typeof keys];
+      expect(settingsOf(buildTransport(m, k))).toEqual({ clients: [], decryption: 'none' });
+      const built = buildTransport(m, k, undefined, encryption);
+      expect(settingsOf(built)).toEqual({ clients: [], decryption: encryption.decryption });
+      // Nothing else about the transport moves.
+      expect({ ...built, settings: null }).toEqual({ ...buildTransport(m, k), settings: null });
+    }
+  });
+
+  test('a whole profile is still born plain', () => {
+    for (const i of buildProfile(modes, keys).inbounds as Record<string, unknown>[])
+      expect(settingsOf(i).decryption).toBe('none');
   });
 });
 
