@@ -46,6 +46,9 @@
   let failed = $state(false);
   let retryNonce = $state(0);
   let widgetReady = $state(false);
+  // One silent retry per attempt for a slow instrumentation frame (see onError).
+  let autoRetried = false;
+  let solveOnMount = false;
 
   $effect(() => {
     void retryNonce; // a retry after a chunk-load failure re-attempts the import
@@ -98,11 +101,41 @@
       });
     };
 
+    // Only the remounted element may take the pending solve, not a stale one.
+    if (solveOnMount && node.isConnected) {
+      solveOnMount = false;
+      queueMicrotask(() => {
+        if (alive)
+          void (node as HTMLElement & { solve(): Promise<unknown> }).solve().catch(() => {});
+      });
+    }
+
     const onSolve = (e: Event) => {
       const token = (e as CustomEvent<{ token: string }>).detail?.token;
-      if (token) notify(token);
+      if (token) {
+        autoRetried = false;
+        notify(token);
+      }
     };
     const onError = (e: Event) => {
+      // With CAP_ISOLATE the widget gives its sandboxed instrumentation frame
+      // one second after load to report in, then calls it instr_csp_blocked.
+      // A slow device or a busy browser can miss that. Our CSP is pinned by
+      // tests/cap, so remount and solve once more before showing the failure;
+      // a real CSP block fails the second time too.
+      if (
+        (e as CustomEvent<{ code?: string }>).detail?.code === 'instr_csp_blocked' &&
+        !autoRetried
+      ) {
+        autoRetried = true;
+        solveOnMount = true;
+        queueMicrotask(() => {
+          if (!alive) return;
+          onVerify('');
+          retryNonce += 1;
+        });
+        return;
+      }
       console.error('Cap widget error', (e as CustomEvent).detail);
       // Clear the held token before switching to the failure UI. Switching
       // first tears down this effect and cancels notify()'s queued callback.
@@ -134,6 +167,8 @@
    * Callable via `bind:this` - see Login.svelte / GetAccount.svelte.
    */
   export function reset() {
+    autoRetried = false;
+    solveOnMount = false;
     failed = false;
     onVerify('');
     retryNonce += 1;

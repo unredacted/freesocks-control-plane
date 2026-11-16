@@ -120,3 +120,41 @@ test('instrumentation is isolated and error recovery stays on our origin', async
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect(page.locator('cap-widget')).toHaveCount(1);
 });
+
+test('a slow instrumentation frame gets one silent retry, a second block shows the failure', async ({
+  page,
+}) => {
+  const key = keys.hashwx!;
+  process.env.CAP_API_ENDPOINT = `${process.env.FCP_CAP_TEST_URL}/cap`;
+  process.env.CAP_SITE_KEY = key.siteKey;
+  process.env.CAP_SECRET = key.secretKey;
+  const fail = () =>
+    page.locator('cap-widget').evaluate((widget) => {
+      HTMLElement.prototype.dispatchEvent.call(
+        widget,
+        new CustomEvent('error', { detail: { code: 'instr_csp_blocked' } }),
+      );
+    });
+  await page.goto(`/?siteKey=${key.siteKey}`);
+  await expect(page.locator('cap-widget')).toHaveCount(1);
+
+  // The widget reports instr_csp_blocked when the isolated frame misses its
+  // one-second deadline. The component remounts and solves without a click.
+  await fail();
+  await expect(page.getByText("Couldn't complete the human check")).toHaveCount(0);
+  await expect(page.getByTestId('token')).not.toHaveText('', { timeout: 60_000 });
+  expect(await verifyCaptcha((await page.getByTestId('token').textContent())!)).toMatchObject({
+    success: true,
+  });
+
+  // A solve re-arms the retry; two blocks in a row are a real CSP problem.
+  // Hold challenges open so the silent retry cannot finish in between.
+  await page.route('**/challenge', () => {});
+  await page.getByRole('button', { name: 'Retry submission' }).click();
+  await expect(page.getByTestId('token')).toHaveText('');
+  await fail();
+  await expect(page.locator('cap-widget')).toHaveCount(1);
+  await fail();
+  await expect(page.locator('cap-widget')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+});
