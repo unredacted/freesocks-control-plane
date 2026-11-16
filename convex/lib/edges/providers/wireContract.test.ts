@@ -2584,7 +2584,22 @@ describe('wire contract: edgeone', () => {
     });
     const cert = rec.calls.find((c) => c.headers['x-tc-action'] === 'ModifyHostsCertificate')!;
     expect(cert.body).toEqual({ ZoneId: ZONE_ID, Hosts: [HOST], Mode: 'eofreecert' });
-    const del = rec.calls.find((c) => c.headers['x-tc-action'] === 'DeleteAccelerationDomains')!;
+    // EdgeOne deletes only a domain switched off: offline first, then the delete.
+    const off = rec.calls.findIndex(
+      (c) => c.headers['x-tc-action'] === 'ModifyAccelerationDomainStatuses',
+    );
+    const delAt = rec.calls.findIndex(
+      (c) => c.headers['x-tc-action'] === 'DeleteAccelerationDomains',
+    );
+    expect(off).toBeGreaterThan(-1);
+    expect(off).toBeLessThan(delAt);
+    expect(rec.calls[off]!.body).toEqual({
+      ZoneId: ZONE_ID,
+      DomainNames: [HOST],
+      Status: 'offline',
+      Force: false,
+    });
+    const del = rec.calls[delAt]!;
     expect(del.body).toMatchObject({ Force: false });
 
     expectContractCovered('edgeone', observed(rec.calls));
