@@ -7115,8 +7115,8 @@ account's credentials are rotated, so a long-lived sub-user key is the one to us
 **site** is where it was created, International (`teo.intl.tencentcloudapi.com`, the default) or
 China (`teo.tencentcloudapi.com`); it decides the API host every call goes to and is locked while
 fronts exist. Test credentials lists the zones the key reaches (`DescribeZones`); with a location
-it also reads that zone's domains and settings. A key that may read but not write passes the test
-and is refused at its first write, naming the action.
+it also reads that zone's domains and settings, and the records of a zone EdgeOne hosts. A key that
+may read but not write passes the test and is refused at its first write, naming the action.
 
 **The CAM policy.** Create a sub-user with programmatic access only and attach this custom
 policy (replace `<owner-uin>` with the main account's ID and `<zone-id>` with each zone FCP may
@@ -7165,7 +7165,8 @@ built:
   switched off; the front's DNS step switches it on (`ModifyDnsRecordsStatus`), or writes one
   (`CreateDnsRecord`) when EdgeOne added none (Tencent has announced it will stop adding them).
   EdgeOne removes its own record with the domain; the destroy then removes whatever is still at
-  the name pointing at the domain's CNAME target.
+  the name pointing at the domain's CNAME target. The template's Record TTL applies to a record FCP
+  writes; the one EdgeOne adds keeps the zone's TTL.
 - **CNAME access** (the zone's DNS is elsewhere: zone type `partial`). The location names a DNS
   account (Cloudflare or Gandi) and its zone for the **same domain** (`dnsAccountId`,
   `dnsZoneId`); each front's CNAME, `<front> -> <the domain's CNAME target>`, is written there
@@ -7176,8 +7177,10 @@ built:
 The capability is `optionalDnsAccount`: generic code resolves a DNS account for an EdgeOne edge
 only when its location (and then its frozen intent: `dnsAccountId`, `dnsZoneId`) names one, and
 counts such edges against the DNS account like Fastly's (a DNS account they write through cannot
-be deleted from under them). The location check reads the zone (`active`, not paused, the name
-recorded) and refuses a mismatched mode: a CNAME-access zone without a DNS account
+be deleted from under them). The location check reads the zone (`active`, in effect: an
+`ActiveStatus` other than `active` refuses it, not paused, the name recorded; for a zone EdgeOne
+hosts, a read of its records, so a key without `teo:DescribeDnsRecords` is refused before any front
+is half built) and refuses a mismatched mode: a CNAME-access zone without a DNS account
 (`zone_needs_dns_account`), an NS-access zone with one (`zone_dns_at_edgeone`), any other access
 type (`zone_access_unsupported`), or a DNS account whose zone is another domain
 (`zone_name_mismatch`). It records the zone's access mode, service area, WebSocket switch and
@@ -7219,8 +7222,11 @@ one-per-front certificates do (§ "L7 edges"). While it is issued:
 
 A certificate EdgeOne reports `failed` stops the run (`tls_failed`). Tencent documents no issuance
 time. The CAA preflight walks the records for a front's name from `_fcp-caa-check.<zone>`
-(§ "L7 edges") and refuses the zone (`caa_forbids_ca`) only when records exist and allow neither
-`letsencrypt.org` nor `trustasia.com`; allow both, since EdgeOne chooses.
+(§ "L7 edges") once per authority, since EdgeOne picks either for each certificate: the zone is
+refused (`caa_forbids_ca`, naming the one refused) when records exist and do not allow BOTH
+`letsencrypt.org` and `trustasia.com`. A record that lists validation methods must list the one the
+zone's access mode gets: `dns-01` for a zone EdgeOne hosts (it writes the validation records),
+`http-01` for a zone connected by CNAME (a file at its edge).
 
 **WebSocket and the plan.** WebSocket is a ZONE setting at EdgeOne (site acceleration,
 `WebSocket` with a timeout); FCP reads it and never changes it. Turn it on for the zone with the
@@ -7240,9 +7246,9 @@ the node needs a server-side WebSocket heartbeat shorter than the timeout (Xray
 client reconnects. gRPC is a separate zone switch that EdgeOne offers on every plan; it is not
 carried (`l7Transports: ['ws']`) until a front proves it.
 
-**The origin.** EdgeOne dials the node by address or name, on the port the domain names; the
-capability keeps it to 80, 443 and 1024-65535 (`originPortMode: web-or-high`, the CloudFront rule:
-Tencent documents no range). EdgeOne does not verify the node's certificate by default, so a
+**The origin.** EdgeOne dials the node by address or name, on any port 1-65535 the domain names
+(`originPortMode: any-port`, from Tencent's data types for `HttpOriginPort` and
+`HttpsOriginPort`). EdgeOne does not verify the node's certificate by default, so a
 privately issued one works. Which TLS server name EdgeOne sends the node is **not documented**
 (no SNI setting exists in the API): a node whose TLS server refuses an unknown name may need
 `overrideHost: origin` or a node name as the origin; the beta walk checks it. An address literal
@@ -7252,8 +7258,8 @@ as the Host is refused at plan time (`origin_not_a_name`).
 without an ICP filing cannot be served inside the mainland. The area is the ZONE's (set when the
 site was added, changed only with `ModifyZone`), never a domain's, and FCP never changes it. The
 template option **Service area** (`serviceArea`, default `overseas`: outside the Chinese
-mainland) says which area a front may be built in: a zone set to another one refuses the front
-before anything is built (`zone_area_mismatch`). A domain EdgeOne restricts anyway (a missing ICP
+mainland) says which area a front may be built in: a zone set to another one, or one that reports
+no area at all, refuses the front before anything is built (`zone_area_mismatch`). A domain EdgeOne restricts anyway (a missing ICP
 filing, a government order) reads `domain_restricted`.
 
 **What reaches the node.** EdgeOne's default origin request headers were not read for this

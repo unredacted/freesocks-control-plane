@@ -28,9 +28,11 @@ export type EdgeProviderRole = 'edge' | 'dns';
  * 443 for https, 80 for http), `default-or-override` (a default by the zone's
  * encryption mode, any other port through a destination-port override),
  * `web-or-high` (the front's origin setting names the port, which may be 80,
- * 443 or one of 1024-65535: CloudFront's `HTTPPort` / `HTTPSPort`).
+ * 443 or one of 1024-65535: CloudFront's `HTTPPort` / `HTTPSPort`),
+ * `any-port` (the front's origin setting names any port 1-65535: EdgeOne's
+ * `HttpOriginPort` / `HttpsOriginPort`).
  */
-export type OriginPortMode = 'any' | 'fixed' | 'default-or-override' | 'web-or-high';
+export type OriginPortMode = 'any' | 'fixed' | 'default-or-override' | 'web-or-high' | 'any-port';
 
 export interface EdgeProviderCapabilities {
   /** L4 = a TCP forwarder in front of the node; L7 = a CDN front terminating TLS + HTTP. */
@@ -274,8 +276,9 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   // record is EdgeOne's (a zone EdgeOne hosts) or written through a DNS
   // account (a zone connected by CNAME). WebSocket only (a zone setting
   // EdgeOne owns; gRPC is not proven through it). The origin's port is the
-  // domain's own (`HttpOriginPort` / `HttpsOriginPort`), kept to 80, 443 and
-  // 1024-65535 like CloudFront's (Tencent documents no range). The Host the
+  // domain's own (`HttpOriginPort` / `HttpsOriginPort`), any of 1-65535 by
+  // Tencent's data types (https://intl.cloud.tencent.com/document/product/1145/50547).
+  // The Host the
   // node receives is the domain's `HostHeader`: the front name, or the node's
   // own (`overrideHost`). A domain goes `process` to `online` within minutes,
   // the free certificate after the name points at EdgeOne; deletes answer at
@@ -289,7 +292,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     needsDnsAccount: false,
     optionalDnsAccount: true,
     providesDns: false,
-    originPortMode: 'web-or-high',
+    originPortMode: 'any-port',
     originHostHeader: 'option',
     sharedCertificates: false,
     asyncOps: true,
@@ -457,12 +460,15 @@ export function originPortCarriedBy(
 
 /**
  * Whether an L7 front can dial this origin port at all, whatever the
- * transport: a `web-or-high` front only 80, 443 and 1024-65535 (CloudFront
+ * transport: an `any-port` front 1-65535 (EdgeOne), a `web-or-high` front
+ * only 80, 443 and 1024-65535 (CloudFront
  * refuses the other privileged ports). Unknown port = no opinion.
  */
 export function originPortDialable(id: EdgeProviderId, port?: number): boolean {
-  if (port === undefined || EDGE_PROVIDER_CAPABILITIES[id].originPortMode !== 'web-or-high')
-    return true;
+  if (port === undefined) return true;
+  const mode = EDGE_PROVIDER_CAPABILITIES[id].originPortMode;
+  if (mode === 'any-port') return Number.isInteger(port) && port >= 1 && port <= 65535;
+  if (mode !== 'web-or-high') return true;
   return port === 80 || port === 443 || (port >= 1024 && port <= 65535);
 }
 

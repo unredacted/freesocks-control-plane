@@ -817,7 +817,7 @@ const COPY = {
   origin_port_unsupported: {
     label: 'Origin port not supported',
     explain:
-      'This front cannot dial the origin on that port. Fastly dials only 443 over TLS or 80 over plain HTTP, CloudFront 80, 443 or 1024 and up.',
+      'This front cannot dial the origin on that port. Fastly dials only 443 over TLS or 80 over plain HTTP, CloudFront 80, 443 or 1024 and up, EdgeOne 1 to 65535.',
     fix: 'Move the origin listener to a port this front dials.',
   },
   origin_not_a_name: {

@@ -17,6 +17,7 @@ import {
   discoveryMaySettle,
   dnsZoneOfPlace,
   edgeRoleOf,
+  originPortDialable,
   frontsAllowed,
   isDnsOnly,
   originPortCarriedBy,
@@ -363,6 +364,15 @@ describe('origin capability record ⇔ adapters', () => {
       zoneName: 'example.org',
     });
     expect(dnsZoneOfPlace('edgeone', { ...place, dnsAccountId: undefined })).toEqual({});
+  });
+
+  test('origin ports: EdgeOne dials 1-65535, CloudFront 80, 443 and 1024 up', () => {
+    expect(originPortDialable('edgeone', 808)).toBe(true);
+    expect(originPortDialable('edgeone', 1)).toBe(true);
+    expect(originPortDialable('edgeone', 0)).toBe(false);
+    expect(originPortDialable('edgeone', 65536)).toBe(false);
+    expect(originPortDialable('cloudfront', 808)).toBe(false);
+    expect(originPortDialable('cloudfront', 8443)).toBe(true);
   });
 
   test('a DNS account reference always points at a providesDns provider', () => {

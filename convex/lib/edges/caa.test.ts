@@ -185,31 +185,24 @@ describe('caa: one record set', () => {
       'lets-encrypt': 'letsencrypt.org',
       globalsign: 'globalsign.com',
       amazon: 'amazon.com',
-      edgeone: 'letsencrypt.org',
+      trustasia: 'trustasia.com',
     });
   });
 
-  test("EdgeOne's free certificate issues under Let's Encrypt or TrustAsia", async () => {
-    for (const domain of ['letsencrypt.org', 'trustasia.com']) {
-      const lookup: CaaLookup = async (name) => (name === 'example.org' ? [issue(domain)] : []);
-      const v = await checkCaa({
+  test('a validation method in a CAA record must be the one the issuance uses', async () => {
+    const lookup: CaaLookup = async (name) =>
+      name === 'example.org' ? [issue('letsencrypt.org; validationmethods=http-01')] : [];
+    const at = (validationMethod?: 'dns-01' | 'http-01') =>
+      checkCaa({
         name: 'front.example.org',
-        certificateAuthority: 'edgeone',
+        certificateAuthority: 'lets-encrypt',
         lookup,
+        validationMethod,
       });
-      expect(v.verdict, domain).toBe('allows');
-    }
-    const other: CaaLookup = async (name) =>
-      name === 'example.org' ? [issue('certainly.com')] : [];
-    expect(
-      (
-        await checkCaa({
-          name: 'front.example.org',
-          certificateAuthority: 'edgeone',
-          lookup: other,
-        })
-      ).verdict,
-    ).toBe('forbids');
+    // DNS unless said otherwise (every certificate FCP ordered before EdgeOne).
+    expect((await at()).verdict).toBe('forbids');
+    expect((await at('dns-01')).verdict).toBe('forbids');
+    expect((await at('http-01')).verdict).toBe('allows');
   });
 
   test("ACM issues under any of Amazon's four CAA domains, issuewild governing a wildcard", async () => {

@@ -383,6 +383,34 @@ describe('edgeone: refusals, lost answers and discovery', () => {
     expect((await provision(ns, spec, { ...tpl, serviceArea: 'global' })).last.status).toBe('done');
   });
 
+  test('a zone that reports no service area is refused too', async () => {
+    account({ zones: [zone({ Area: undefined as never })] });
+    const { last } = await provision(ns);
+    expect(last).toMatchObject({ status: 'partial', refused: true, code: 'zone_area_mismatch' });
+    expect(fake.state.domains).toEqual([]);
+  });
+
+  test('discovery: our CNAME pointing at an old target is not done, and the step moves it', async () => {
+    account({ zones: [zone({ Type: 'partial' })] });
+    const dns = fakeDnsZone(dnsZone);
+    __setEdgeOneDnsClientFactory(() => dns);
+    fake.state.resolves = () => true;
+    const { ledger } = await provision(viaAccount);
+    const dnsStep = edgeOneProvider
+      .planProvision(viaAccount, spec, tpl)
+      .find((x) => x.kind === 'create_dns_record')!;
+    dns.rows[0]!.content = 'old-target.example.net';
+    expect(await edgeOneProvider.discover(viaAccount, dnsStep, spec, ledger, 1)).toEqual({
+      status: 'confirmed_absent',
+    });
+    expect((await edgeOneProvider.runStep(viaAccount, dnsStep, spec, tpl, ledger)).status).toBe(
+      'done',
+    );
+    expect(dns.rows).toEqual([
+      expect.objectContaining({ content: fake.state.domains[0]!.Cname, comment: spec.name }),
+    ]);
+  });
+
   test('a failed certificate stops the wait with tls_failed', async () => {
     account();
     const { ledger } = await provision(ns);
@@ -425,11 +453,15 @@ describe('edgeone: the origin', () => {
       ...spec,
       listeners: [{ edgePort: 443, members: [{ address, port }] }],
     });
-    expect(() => edgeOneProvider.planProvision(ns, at(ORIGIN, 22), tpl)).toThrow(
-      expect.objectContaining({
-        meta: expect.objectContaining({ code: 'origin_port_unsupported' }),
-      }),
-    );
+    // Any port 1-65535 (Tencent's data types); nothing outside it.
+    expect(edgeOneProvider.planProvision(ns, at(ORIGIN, 808), tpl)).toHaveLength(4);
+    expect(edgeOneProvider.planProvision(ns, at(ORIGIN, 22), tpl)).toHaveLength(4);
+    for (const port of [0, 65536])
+      expect(() => edgeOneProvider.planProvision(ns, at(ORIGIN, port), tpl), String(port)).toThrow(
+        expect.objectContaining({
+          meta: expect.objectContaining({ code: 'origin_port_unsupported' }),
+        }),
+      );
     expect(() =>
       edgeOneProvider.planProvision(ns, at('198.51.100.7', 443), {
         ...tpl,
@@ -537,10 +569,68 @@ describe('edgeone: the account and its locations', () => {
       ok: false,
       code: 'caa_forbids_ca',
     });
+    // Allowing one of EdgeOne's two authorities is not enough: it picks either.
     __setEdgeOneCaaLookup(async (name) =>
       name === ZONE ? [{ flags: 0, tag: 'issue', value: 'trustasia.com' }] : [],
     );
+    expect(await edgeOneProvider.checkLocation!(ns)).toMatchObject({
+      ok: false,
+      code: 'caa_forbids_ca',
+    });
+    __setEdgeOneCaaLookup(async (name) =>
+      name === ZONE
+        ? [
+            { flags: 0, tag: 'issue', value: 'trustasia.com' },
+            { flags: 0, tag: 'issue', value: 'letsencrypt.org' },
+          ]
+        : [],
+    );
     expect(await edgeOneProvider.checkLocation!(ns)).toMatchObject({ ok: true });
+  });
+
+  test('a zone not in effect yet (ActiveStatus) is not active', async () => {
+    account({ zones: [zone({ ActiveStatus: 'inactive' })] });
+    expect(await edgeOneProvider.checkLocation!(ns)).toMatchObject({
+      ok: false,
+      code: 'zone_not_active',
+    });
+  });
+
+  test("CAA is judged under the zone's validation: DNS where EdgeOne hosts it, HTTP by CNAME", async () => {
+    __setEdgeOneCaaLookup(async (name) =>
+      name === ZONE
+        ? [
+            { flags: 0, tag: 'issue', value: 'letsencrypt.org; validationmethods=http-01' },
+            { flags: 0, tag: 'issue', value: 'trustasia.com; validationmethods=http-01' },
+          ]
+        : [],
+    );
+    account();
+    expect(await edgeOneProvider.checkLocation!(ns)).toMatchObject({
+      ok: false,
+      code: 'caa_forbids_ca',
+    });
+    account({ zones: [zone({ Type: 'partial' })] });
+    __setEdgeOneDnsClientFactory(() => fakeDnsZone(dnsZone));
+    expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({ ok: true });
+  });
+
+  test('a zone EdgeOne hosts needs its records read: a key that may not is refused before any front', async () => {
+    account();
+    fake.state.denied.add('DescribeDnsRecords');
+    const check = await edgeOneProvider.checkLocation!(ns);
+    expect(check).toMatchObject({ ok: false, code: 'permission_missing' });
+    expect(check.detail).toContain('teo:DescribeDnsRecords');
+    expect(await edgeOneProvider.testCredentials(ns)).toMatchObject({
+      ok: false,
+      code: 'permission_missing',
+    });
+    // A zone connected by CNAME never reads EdgeOne's records.
+    account({ zones: [zone({ Type: 'partial' })] });
+    fake.state.denied.add('DescribeDnsRecords');
+    __setEdgeOneDnsClientFactory(() => fakeDnsZone(dnsZone));
+    expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({ ok: true });
+    expect(await edgeOneProvider.testCredentials(viaAccount)).toMatchObject({ ok: true });
   });
 
   test('a zone the key does not see is unreadable, not an outage', async () => {

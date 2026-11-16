@@ -1737,7 +1737,7 @@ export const EDGEONE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     group: 'DNS records',
     advanced: true,
     default: 1,
-    help: "How long resolvers may cache the front's record: 1 is the zone's default, else 60 to 86400.",
+    help: "How long resolvers may cache a record FCP writes for the front (a DNS account's CNAME, or one FCP writes in a zone EdgeOne hosts when EdgeOne added none): 1 is the zone's default, else 60 to 86400. The record EdgeOne adds itself keeps the zone's TTL.",
     wire: { resource: 'dns_record', field: 'ttl', manual: true },
     live: 'in_place',
   },

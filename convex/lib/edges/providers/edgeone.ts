@@ -84,8 +84,8 @@ import { deepMerge, defaultsOf } from './options';
 export { EdgeOneTemplate, EDGEONE_TEMPLATE_FIELDS } from './templates';
 export type { EdgeOneTemplateParams } from './templates';
 
-/** The certificate authority CAA is checked for (lib/edges/caa.ts: Let's Encrypt or TrustAsia). */
-export const EDGEONE_CERTIFICATE_AUTHORITY = 'edgeone';
+/** The authorities EdgeOne issues its free certificate from (it picks): CAA must allow both. */
+export const EDGEONE_CERTIFICATE_AUTHORITIES = ['lets-encrypt', 'trustasia'] as const;
 
 // --- DNS client and CAA injection -----------------------------------------------------------
 
@@ -165,7 +165,7 @@ export function effectiveEdgeOneParams(
 
 /**
  * The origin refusals decided before any call: an origin transport is
- * declared, on a port the front dials (80, 443, 1024-65535), and a node that
+ * declared, on a port the front dials (1-65535), and a node that
  * receives its own name as Host is addressed by a name (an address literal is
  * no Host a node's certificate names).
  */
@@ -178,7 +178,7 @@ export function assertEdgeOneOrigin(
     throw refusal(step, 'origin_transport_missing', 'the slot declares no origin transport');
   const { address, port } = originMember(spec, step);
   if (!originPortDialable('edgeone', port))
-    throw refusal(step, 'origin_port_unsupported', 'EdgeOne dials 80, 443 or 1024-65535');
+    throw refusal(step, 'origin_port_unsupported', 'EdgeOne dials ports 1 to 65535');
   if (effectiveEdgeOneParams(tpl).overrideHost === 'origin' && addressFamily(address) !== null)
     throw refusal(step, 'origin_not_a_name', 'the node address sent as Host is not a name');
 }
@@ -373,31 +373,44 @@ const codeOf = (e: unknown): string =>
   e instanceof EdgeProviderError && e.meta.code ? e.meta.code : 'create_refused';
 
 /**
- * The location check's CAA verdict: whether the zone's CAA records let either
- * of EdgeOne's free-certificate authorities issue a front's own name (checked
- * from a label no front uses, as a new front's name will be).
+ * The location check's CAA verdict: EdgeOne picks the authority for each free
+ * certificate (Let's Encrypt or TrustAsia), so the zone's CAA records must let
+ * BOTH issue a front's own name (checked from a label no front uses, as a new
+ * front's name will be), under the validation the zone's access mode gets:
+ * DNS records EdgeOne writes for a zone it hosts, a file at its edge (HTTP)
+ * for a zone connected by CNAME.
+ * Source: https://cloud.tencent.com/document/product/1552/90437, 2026-11-15.
  */
 async function caaPreflight(cfg: EdgeOneConfig): Promise<{
   observed: Record<string, string>;
   refusal?: { code: L7CertificateCode; detail: string };
 }> {
-  const v = await checkCaa({
-    name: caaProbeName(cfg.zoneName),
-    certificateAuthority: EDGEONE_CERTIFICATE_AUTHORITY,
-    lookup: caaLookupOverride ?? dnsCaaLookup,
-  });
+  const validationMethod = edgeOneDnsModeOf(cfg) === 'account' ? 'http-01' : 'dns-01';
+  const verdicts = [];
+  for (const certificateAuthority of EDGEONE_CERTIFICATE_AUTHORITIES)
+    verdicts.push(
+      await checkCaa({
+        name: caaProbeName(cfg.zoneName),
+        certificateAuthority,
+        validationMethod,
+        lookup: caaLookupOverride ?? dnsCaaLookup,
+      }),
+    );
+  const forbidden = verdicts.filter((v) => v.verdict === 'forbids');
+  // One verdict to keep: the first refusal, else an unchecked look, else the first.
+  const kept = forbidden[0] ?? verdicts.find((v) => v.verdict === 'unchecked') ?? verdicts[0]!;
   const observed: Record<string, string> = {
-    caa: v.verdict,
-    caaIssuer: v.issuer,
+    caa: kept.verdict,
+    caaIssuer: verdicts.map((v) => v.issuer).join(','),
     caaCertificate: 'per_host',
-    ...(v.decidedAt ? { caaAt: v.decidedAt } : {}),
+    ...(kept.decidedAt ? { caaAt: kept.decidedAt } : {}),
   };
-  if (v.verdict !== 'forbids') return { observed };
+  if (forbidden.length === 0) return { observed };
   return {
     observed,
     refusal: {
       code: 'caa_forbids_ca',
-      detail: `the CAA records at ${v.decidedAt} allow neither letsencrypt.org nor trustasia.com`,
+      detail: `the CAA records at ${kept.decidedAt} do not allow ${forbidden.map((v) => v.issuer).join(' or ')} (${validationMethod}); EdgeOne may issue from either authority`,
     },
   };
 }
@@ -449,8 +462,17 @@ async function createDomain(
   // to build a front in a zone serving somewhere the template does not allow.
   const zone = await zoneOrThrow(api, want.zoneId, STEP_IDS.domain);
   const area = effectiveEdgeOneParams(tpl).serviceArea;
-  if (zone.area && zone.area !== area)
-    return { status: 'partial', resources: [], code: 'zone_area_mismatch', refused: true };
+  // An area the zone does not report is no proof it is the template's: refused too.
+  if (zone.area !== area)
+    return {
+      status: 'partial',
+      resources: [],
+      code: 'zone_area_mismatch',
+      refused: true,
+      detail: zone.area
+        ? `the zone serves ${zone.area}, the template allows ${area}`
+        : 'the zone reports no service area',
+    };
   try {
     await api.createDomain(want);
   } catch (e) {
@@ -603,6 +625,10 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
       if (cfg.zoneId) {
         const domains = await api.listDomains(cfg.zoneId);
         await api.zoneSettings(cfg.zoneId);
+        // Every read the steps make: a zone EdgeOne hosts also has its records read.
+        const zone = zones.items.find((z) => z.id === cfg.zoneId);
+        if (zone?.type === 'full' && edgeOneDnsModeOf(cfg) === 'edgeone')
+          await api.findDnsRecords(cfg.zoneId, caaProbeName(zone.name));
         detail.push(`domains=${domains.items.length}${domains.truncated ? '+' : ''}`);
       }
       return { ok: true, detail: detail.join('; '), observed: { site: cfg.site ?? 'intl' } };
@@ -672,7 +698,10 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
       if (cfg.zoneName && zone.name !== normalizeZoneName(cfg.zoneName))
         return out('zone_name_mismatch');
       if (zone.paused) return out('zone_paused');
-      if (zone.status !== 'active') return out('zone_not_active');
+      // `ActiveStatus` is whether the site is in effect (a zone can be `active`
+      // and not yet in effect): any value it reports but `active` refuses.
+      if (zone.status !== 'active' || (zone.activeStatus && zone.activeStatus !== 'active'))
+        return out('zone_not_active');
       const viaAccount = edgeOneDnsModeOf(cfg) === 'account';
       if (zone.type === 'partial' && !viaAccount) return out('zone_needs_dns_account');
       if (zone.type === 'full' && viaAccount) return out('zone_dns_at_edgeone');
@@ -686,6 +715,9 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
         }
         if (z.paused || z.status !== 'active') return out('zone_not_active');
       }
+      // A zone EdgeOne hosts: the DNS step reads its records; a key that may
+      // not is refused here, before any front is half built.
+      if (!viaAccount) await api.findDnsRecords(zone.id, caaProbeName(zone.name));
       const settings = await api.zoneSettings(zone.id);
       observed.edgeoneWebSocket = settings.webSocket ?? 'unknown';
       if (settings.webSocketTimeout !== undefined)
@@ -771,6 +803,8 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
               status: 'ambiguous',
               candidates: records.map((r) => candidateOf(accountRecordResource(r, dns, cname))),
             };
+          // Ours but pointing at an old target: not done, the step moves it.
+          if (!sameDnsName(ours.content, cname)) return { status: 'confirmed_absent' };
           return {
             status: 'found',
             resources: [{ ...accountRecordResource(ours, dns, cname), ownership: 'adopted' }],
