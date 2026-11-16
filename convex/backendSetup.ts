@@ -196,9 +196,28 @@ function freshModes(input: SetupInput, prev: readonly SetupMode[] = []): SetupMo
       renamedFrom: before?.renamedFrom,
       placement: kept?.placement ?? 'pending',
       transport: kept?.transport,
+      // A mode's encrypted twin goes with the transport it is the twin of.
+      twin: kept?.twin,
       family: kept?.family ?? (isReality(m.shape) ? 'unbound' : 'none'),
     };
   });
+}
+
+/**
+ * The transports a set-up mode's group carries: its own, and its encrypted
+ * twin when it has one (backendTwins.ts). Nothing else may be in the group.
+ */
+export function modeGroupTransports(m: Pick<SetupMode, 'transport' | 'twin'>): string[] {
+  return [...(m.transport ? [m.transport.uuid] : []), ...(m.twin ? [m.twin.uuid] : [])];
+}
+
+/** Whether a group holds exactly a mode's transports (in any order). */
+export function groupCarriesMode(
+  transportUuids: readonly string[],
+  m: Pick<SetupMode, 'transport' | 'twin'>,
+): boolean {
+  const want = modeGroupTransports(m);
+  return transportUuids.length === want.length && want.every((u) => transportUuids.includes(u));
 }
 
 /**
@@ -301,7 +320,7 @@ async function checkChange(
     for (const m of row.modes) {
       if (!setUp.has(m.slug)) continue;
       const g = groups.find((x) => x.squadUuid === m.groupUuid);
-      if (!g || g.inboundUuids.join() !== m.transport!.uuid)
+      if (!g || !groupCarriesMode(g.inboundUuids, m))
         refuse(
           `servers.setup_mode_drifted:${m.slug}`,
           `The group of mode ${m.name} changed on the backend. Look at it under Mode groups first`,
@@ -1079,7 +1098,7 @@ export const run = internalAction({
         const transportUuid = m.transport!.uuid;
         if (established.has(m.slug)) {
           const kept = c.snapshot.groups.find((g) => g.groupUuid === m.groupUuid);
-          if (!kept || kept.transportUuids.join() !== transportUuid) {
+          if (!kept || !groupCarriesMode(kept.transportUuids, m)) {
             await save();
             await finish('failed', `servers.setup_mode_drifted:${m.slug}`, 'groups');
             return null;
@@ -1491,6 +1510,7 @@ export const view = internalQuery({
                 : null,
             }
           : null,
+        twin: m.twin ? { tag: m.twin.tag, port: m.twin.port, path: m.twin.path } : null,
         family: m.family,
       })),
       templates: row.templates.map((t) => ({ family: t.family, state: t.state })),

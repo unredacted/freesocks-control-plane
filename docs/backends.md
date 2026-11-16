@@ -987,14 +987,18 @@ family, "Encrypted connections"):
   an operator's test link are one entry, never a pair. A mirror's link list is made for no
   particular app (the `other` family), so it carries the plain entries.
 
-Not done yet: nothing writes a twin onto a listener or creates its Host, the front qualification
-proves the plain path only, and the names a member can pick in a report do not list the plain
-twins.
+On the backend, the twin is a second transport of the profile that the mode's group carries
+beside the mode's own ([servers.md](servers.md) § "A mode's encrypted twin").
+
+Not done yet: no node serves a twin, nothing writes one onto a listener or creates its Host, the
+front qualification proves the plain path only, and the names a member can pick in a report do
+not list the plain twins.
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the
-observation, FCP's own sessions, and the renderer's handling of a twin. Nothing sets the flag
-yet: no route accepts it, every profile FCP builds is plain, and no listener has a twin. Hysteria is not VLESS and
+observation, FCP's own sessions, the renderer's handling of a twin, and a mode's twin on the
+backend (Add a transport offers the flag; a mode can take the transport as its twin). Every
+profile FCP builds is still born plain, no node serves a twin and no listener has one. Hysteria is not VLESS and
 takes no part.
 
 ## Sensitive data

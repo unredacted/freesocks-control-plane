@@ -37,7 +37,7 @@ import { createCipheriv, createDecipheriv } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { blake3 } from '@noble/hashes/blake3.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
-import { parseClientEncryption } from '../../backend/vlessEncryption';
+import { clientEncryptionProblem, parseClientEncryption } from '../../backend/vlessEncryption';
 
 const TAG = 16;
 const SEALED_LENGTH = 2 + TAG;
@@ -57,11 +57,7 @@ export const MAX_NONCE = new Uint8Array(12).fill(0xff);
 export type EncryptionRefusal = 'unreadable' | 'mode' | 'chain';
 
 export function encryptionRefusal(encryption: string): EncryptionRefusal | null {
-  const parsed = parseClientEncryption(encryption);
-  if (!parsed) return 'unreadable';
-  if (parsed.mode === 'random') return 'mode';
-  if (parsed.keys.length !== 1) return 'chain';
-  return null;
+  return clientEncryptionProblem(encryption);
 }
 
 /** The handshake or a record did not open: the peer does not hold the node's key, or spoke something else. */

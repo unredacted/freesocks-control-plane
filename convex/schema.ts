@@ -4753,6 +4753,20 @@ export default defineSchema({
             publicKey: v.optional(v.string()),
           }),
         ),
+        // The mode's ENCRYPTED TWIN (docs/backends.md "VLESS Encryption"): a
+        // second transport of the profile that runs VLESS Encryption, which
+        // the mode's group carries beside its own. A node of the mode may
+        // serve it on another loopback port and path, behind the same fronts.
+        // Never a key: the server string stays on the backend.
+        twin: v.optional(
+          v.object({
+            tag: v.string(),
+            uuid: v.string(),
+            listen: v.optional(v.string()),
+            port: v.number(),
+            path: v.string(),
+          }),
+        ),
         family: v.union(
           v.literal('none'),
           v.literal('bound'),

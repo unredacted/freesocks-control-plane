@@ -455,6 +455,23 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.modes_invalid': 'The modes are not usable. Check their names and shapes.',
   'servers.unsupported_transport': 'This backend type cannot serve a UDP (Hysteria) transport.',
   'servers.extra_mode_present': 'The node already serves that mode.',
+  'servers.twin_unsupported': 'Only a WebSocket mode behind a CDN takes an encrypted twin.',
+  'servers.twin_present': 'This mode already has an encrypted twin. Take it away first.',
+  'servers.twin_absent': 'This mode has no encrypted twin.',
+  'servers.twin_transport_unknown':
+    'That transport is not on this backend’s profile. Refresh, then try again.',
+  'servers.twin_transport_taken': 'That transport already belongs to a mode.',
+  'servers.twin_not_websocket':
+    'The twin has to be a loopback WebSocket transport like the mode’s own.',
+  'servers.twin_not_encrypted':
+    'That transport does not encrypt inside the connection. Add one with that option ticked.',
+  'servers.twin_encryption_unreadable':
+    'FCP cannot read that transport’s encryption on the profile. Refresh, then try again.',
+  'servers.twin_encryption_unsupported':
+    'FCP cannot check a transport with that kind of encryption (the random appearance, or several keys).',
+  'servers.twin_same_route':
+    'The twin needs a port and a path of its own. The node’s front server tells the two apart by them.',
+  'servers.twin_in_use': 'A node still serves the encrypted twin. Turn it off there first.',
   'servers.extra_mode_unsupported':
     'Only a direct Hysteria 2 transport can be served beside a node’s own mode.',
   'servers.extra_mode_node_not_direct':

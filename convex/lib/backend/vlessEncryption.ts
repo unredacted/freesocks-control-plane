@@ -194,6 +194,23 @@ export function clientEncryption(decryption: unknown): string | null {
 
 const MLKEM768_CLIENT_KEY_BYTES = 1184;
 
+/**
+ * Why FCP's own sessions cannot speak a client string (the front check,
+ * lib/edges/frontCheck/vlessEncryption.ts), or null when they can: a string
+ * that is not one, the `random` appearance (it masks the whole stream), or a
+ * chain of several keys (relays). A transport FCP is to hand out as an
+ * encrypted twin has to pass this: FCP proves a twin before members get it.
+ */
+export type ClientEncryptionProblem = 'unreadable' | 'mode' | 'chain';
+
+export function clientEncryptionProblem(encryption: unknown): ClientEncryptionProblem | null {
+  const parsed = parseClientEncryption(encryption);
+  if (!parsed) return 'unreadable';
+  if (parsed.mode === 'random') return 'mode';
+  if (parsed.keys.length !== 1) return 'chain';
+  return null;
+}
+
 /** A client string taken apart: what a client needs to open a session. All public. */
 export interface ParsedClientEncryption {
   mode: VlessEncryptionMode;

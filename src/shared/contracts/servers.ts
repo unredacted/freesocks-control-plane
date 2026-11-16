@@ -284,7 +284,17 @@ export const TransportTemplateOp = z.discriminatedUnion('kind', [
     serverNames: z.array(z.string()).optional(),
     acceptProxyProtocol: z.boolean().optional(),
   }),
-  z.object({ kind: z.literal('ws'), port: z.number().int(), path: z.string() }),
+  /**
+   * A loopback WebSocket transport. `encrypted`: it runs VLESS Encryption
+   * inside the stream (docs/backends.md), with a server key made in the attempt;
+   * such a transport is added beside a mode's plain one as its encrypted twin.
+   */
+  z.object({
+    kind: z.literal('ws'),
+    port: z.number().int(),
+    path: z.string(),
+    encrypted: z.literal(true).optional(),
+  }),
   /**
    * Hysteria 2 (QUIC, UDP 443) on a direct node: the one server name its
    * self-signed certificate is made for; Salamander obfuscation off by default.
@@ -541,9 +551,21 @@ export const ModeSetupView = z.object({
       target: z.string().nullable(),
     })
     .nullable(),
+  /**
+   * The mode's encrypted twin: a second transport that runs VLESS Encryption,
+   * carried by the mode's group beside its own. Null = none.
+   */
+  twin: z.object({ tag: z.string(), port: z.number(), path: z.string() }).nullable().default(null),
   family: z.enum(['none', 'bound', 'unbound', 'target_mismatch', 'bound_elsewhere']),
 });
 export type ModeSetupView = z.infer<typeof ModeSetupView>;
+
+/** Give a mode its encrypted twin (a transport already on the profile), or take it away. */
+export const ModeTwinRequest = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('attach'), transportTag: z.string().min(2).max(40) }),
+  z.object({ action: z.literal('detach') }),
+]);
+export type ModeTwinRequest = z.infer<typeof ModeTwinRequest>;
 
 export const BackendSetupView = z.object({
   exists: z.boolean(),

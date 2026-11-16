@@ -35,6 +35,7 @@ import {
   BackendSetupInput,
   DirectTestConfirm,
   ModeGroupPatch,
+  ModeTwinRequest,
   ModeGroupWrite,
   NodeAppliedReport,
   NodeRegistration,
@@ -315,7 +316,8 @@ async function toPatchOps(ctx: ActionCtx, ops: readonly ProfilePatchOp[]): Promi
 }
 
 async function toTemplate(ctx: ActionCtx, t: TransportTemplateOp): Promise<TransportTemplate> {
-  if (t.kind === 'ws') return { kind: 'ws', port: t.port, path: t.path };
+  if (t.kind === 'ws')
+    return { kind: 'ws', port: t.port, path: t.path, ...(t.encrypted ? { encrypted: true } : {}) };
   if (t.kind === 'hysteria')
     return { kind: 'hysteria', port: t.port, serverName: t.serverName, salamander: t.salamander };
   let target = t.target;
@@ -460,6 +462,29 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         ...actorOf(admin),
       }),
     );
+  }
+  // A mode's encrypted twin (docs/servers.md "A mode's encrypted twin"): make a
+  // transport of the profile the mode's, or take it away. The mode's group is
+  // rewritten through the ledger; nothing is turned on for a node here.
+  if (a && b === 'modes' && c && d === 'encrypted-twin' && !parts[4]) {
+    const w = parseWrite(ModeTwinRequest, body, {});
+    if (!w.ok) return w.res;
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const args = {
+      backendServerId: instance.id,
+      slug: c,
+      actorAdminId: admin.adminUserId ?? undefined,
+    };
+    const { opId } =
+      w.data.action === 'attach'
+        ? await ctx.runMutation(internal.backendTwins.attach, {
+            ...args,
+            transportTag: w.data.transportTag,
+          })
+        : await ctx.runMutation(internal.backendTwins.detach, args);
+    if (!opId) return json({ op: null });
+    await ctx.runAction(internal.backendWrites.run, { opId });
+    return json({ op: await ctx.runQuery(internal.backendLedger.view, { opId }) });
   }
   if (a && b === 'profiles' && c && (d === 'preview' || d === 'apply')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });

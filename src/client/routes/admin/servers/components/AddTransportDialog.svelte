@@ -48,6 +48,7 @@
   let proxyProtocol = $state(false);
   let serverName = $state('');
   let salamander = $state(false);
+  let encrypted = $state(false);
   let preview = $state<ProfilePatchPreview | null>(null);
   let busy = $state(false);
 
@@ -61,6 +62,7 @@
     proxyProtocol = false;
     serverName = '';
     salamander = false;
+    encrypted = false;
     preview = null;
   });
   // A loopback WebSocket sits behind the node proxy on a high port.
@@ -86,7 +88,13 @@
   );
 
   function template(): TransportTemplateOp {
-    if (kind === 'ws') return { kind, port: Number(port), path: path.trim() };
+    if (kind === 'ws')
+      return {
+        kind,
+        port: Number(port),
+        path: path.trim(),
+        ...(encrypted ? { encrypted: true } : {}),
+      };
     if (kind === 'hysteria')
       return { kind, port: Number(port), serverName: serverName.trim().toLowerCase(), salamander };
     return { kind, port: Number(port), familySlug, acceptProxyProtocol: proxyProtocol };
@@ -167,6 +175,14 @@
           <div class="space-y-1.5">
             <Label for={`${uid}-path`}>Path</Label>
             <Input id={`${uid}-path`} bind:value={path} autocomplete="off" spellcheck={false} />
+          </div>
+          <div class="flex items-start gap-2">
+            <Checkbox id={`${uid}-enc`} bind:checked={encrypted} />
+            <Label for={`${uid}-enc`} class="font-normal">
+              Encrypt inside the connection (VLESS Encryption). A CDN in front then sees no traffic.
+              Apps that cannot do it are refused, so add it beside the plain transport on another
+              port and path, never in its place.
+            </Label>
           </div>
         {:else if kind === 'hysteria'}
           <div class="space-y-1.5">
