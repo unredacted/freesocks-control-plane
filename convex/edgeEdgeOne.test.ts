@@ -149,7 +149,10 @@ function tencent(type: 'full' | 'partial'): FakeEdgeOne {
         ZoneId: EO_ZONE_ID,
         ZoneName: ZONE,
         Type: type,
-        Status: 'active',
+        // As Tencent reports them: a CNAME-access zone keeps `Status: pending`
+        // (its name servers never move) and is verified by `CnameStatus`.
+        Status: type === 'full' ? 'active' : 'pending',
+        ...(type === 'partial' ? { CnameStatus: 'finished' } : {}),
         ActiveStatus: 'active',
         Area: 'overseas',
       },
