@@ -34,6 +34,8 @@ export const CA_CAA_DOMAINS = {
   globalsign: 'globalsign.com',
   // Amazon's CA (ACM certificates, a CloudFront front's): the first of the four below.
   amazon: 'amazon.com',
+  // EdgeOne's free certificate: Let's Encrypt or TrustAsia, EdgeOne's choice.
+  edgeone: 'letsencrypt.org',
 } as const;
 export type CaaCertificateAuthority = keyof typeof CA_CAA_DOMAINS;
 
@@ -45,6 +47,8 @@ export type CaaCertificateAuthority = keyof typeof CA_CAA_DOMAINS;
  */
 export const CA_CAA_ALIASES: Partial<Record<CaaCertificateAuthority, readonly string[]>> = {
   amazon: ['amazontrust.com', 'awstrust.com', 'amazonaws.com'],
+  // Source: https://cloud.tencent.com/document/product/1552/90437 (free certificates), 2026-11-15.
+  edgeone: ['trustasia.com'],
 };
 
 /** One CAA record as DNS returns it (flags 128 = critical). */

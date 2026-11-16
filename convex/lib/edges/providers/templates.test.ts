@@ -42,6 +42,8 @@ const EMPTY_TEMPLATE_HASHES: Record<string, string> = {
   cloudfront: 'cc4939d2bf8fe80e',
   // DNS only: nothing to tune, pinned from the start.
   gandi: '08f44b07b5901a25',
+  // Its first schema (every option optional, like CloudFront's): pinned from the start.
+  edgeone: 'cc4939d2bf8fe80e',
 };
 
 type Node = {

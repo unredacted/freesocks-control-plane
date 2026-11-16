@@ -130,6 +130,30 @@ export interface CloudFrontConfig {
   dns?: DnsZoneConfig;
 }
 /**
+ * Tencent Cloud EdgeOne: acceleration domains in one EdgeOne zone (a site the
+ * operator added). The zone is the location; its records are EdgeOne's own
+ * when EdgeOne hosts the zone's DNS (NS access), or written through a DNS
+ * account when the zone is connected by CNAME (`dnsAccountId` + `dnsZoneId`).
+ */
+export interface EdgeOneConfig {
+  type: 'edgeone';
+  /** The CAM sub-user's SecretId (a credential identifier, kept with the settings). */
+  secretId: string;
+  secretKey: string;
+  /** An STS session token, when the key pair is a temporary one. */
+  sessionToken?: string;
+  /** The Tencent Cloud site the account lives on (its API host). Absent = `intl`. */
+  site?: 'intl' | 'china';
+  /** The EdgeOne zone id (`zone-...`) and its name. */
+  zoneId: string;
+  zoneName: string;
+  /** CNAME access only: the DNS account and its zone that hold the front's CNAME. */
+  dnsAccountId?: string;
+  dnsZoneId?: string;
+  /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
+  dns?: DnsZoneConfig;
+}
+/**
  * Gandi LiveDNS: a DNS account only (it fronts nothing). Its zones are its
  * locations, named by the domain itself (LiveDNS has no zone ids).
  */
@@ -148,7 +172,8 @@ export type EdgeProviderConfig =
   | OvhConfig
   | CloudflareConfig
   | FastlyConfig
-  | CloudFrontConfig;
+  | CloudFrontConfig
+  | EdgeOneConfig;
 
 // --- what to build -----------------------------------------------------------------
 

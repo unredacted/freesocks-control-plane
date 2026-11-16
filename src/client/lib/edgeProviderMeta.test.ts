@@ -46,6 +46,10 @@ describe('edge provider meta', () => {
   it('offers a DNS account only from providers that host DNS', () => {
     expect(EDGE_PROVIDER_META.fastly.needsDnsAccount).toBe(true);
     expect(EDGE_PROVIDER_META.fastly.providesDns).toBe(false);
+    // EdgeOne takes one only for a zone connected by CNAME, and lists its own zones.
+    expect(EDGE_PROVIDER_META.edgeone.needsDnsAccount).toBe(false);
+    expect(EDGE_PROVIDER_META.edgeone.optionalDnsAccount).toBe(true);
+    expect(EDGE_PROVIDER_META.edgeone.providesDns).toBe(false);
   });
 
   it('offers a shared wildcard certificate only where fronts can share one', () => {
@@ -77,7 +81,11 @@ describe('edge provider meta', () => {
       'scaleway',
       'ovh',
     ]);
-    expect(groups.find((g) => g.id === 'l7')!.providers).toEqual(['fastly', 'cloudfront']);
+    expect(groups.find((g) => g.id === 'l7')!.providers).toEqual([
+      'fastly',
+      'cloudfront',
+      'edgeone',
+    ]);
     // Cloudflare is a DNS provider here, listed ONLY as one (never as an L7 front).
     expect(groups.find((g) => g.id === 'dns')!.providers).toEqual(['cloudflare', 'gandi']);
     expect(providerGroupOf('cloudflare')).toBe('dns');

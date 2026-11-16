@@ -103,7 +103,9 @@
   const accounts = $derived(providers.data?.accounts ?? []);
   const account = $derived(accounts.find((a) => a.id === accountId) ?? null);
   const catalog = providerCatalogQuery(() => (cdn ? accountId : null));
-  const dnsAccountId = $derived(meta.needsDnsAccount ? (values['dnsAccountId'] ?? '') : '');
+  const dnsAccountId = $derived(
+    meta.needsDnsAccount || meta.optionalDnsAccount ? (values['dnsAccountId'] ?? '') : '',
+  );
   const dnsCatalog = providerCatalogQuery(() => dnsAccountId || null);
   /** "example.org", or "example.org (not active)" for a zone the provider lists as not active. */
   const zoneOptions = (list: ReturnType<typeof zoneChoices>) =>
@@ -117,7 +119,8 @@
   );
   /** For a CDN the lists are the catalogs' (zones, TLS configurations), never a live listing. */
   const cdnDiscovered = $derived<EdgeDiscoverResponse>({
-    ...(meta.providesDns ? { zones: zoneOptions(ownZones) } : {}),
+    // A provider whose zones are its own: a DNS provider's, or EdgeOne's.
+    ...(meta.providesDns || meta.optionalDnsAccount ? { zones: zoneOptions(ownZones) } : {}),
     ...(catalog.data?.kinds.tlsConfigurations
       ? { tlsConfigurations: catalog.data.kinds.tlsConfigurations.items }
       : {}),
@@ -232,12 +235,15 @@
   function onFieldChange(f: ProviderField, value: string) {
     const next = { ...values, [f.key]: value };
     if (f.from === 'networks') next['subnetId'] = '';
-    if (f.from === 'zones' || f.from === 'dnsZones')
+    // The location's zone names it (a DNS account's zone only where that is the front's zone).
+    if (f.from === 'zones' || (f.from === 'dnsZones' && meta.needsDnsAccount))
       next['zoneName'] =
         (f.from === 'zones' ? ownZones : dnsZoneList).find((z) => z.id === value)?.name ?? '';
     if (f.from === 'dnsAccounts') {
-      next['zoneId'] = '';
-      next['zoneName'] = '';
+      if (meta.needsDnsAccount) {
+        next['zoneId'] = '';
+        next['zoneName'] = '';
+      } else next['dnsZoneId'] = '';
     }
     values = next;
     // The networks, subnets and flavors of a region depend on the project and the region.
@@ -269,7 +275,9 @@
   const cdnHint = $derived(
     meta.needsDnsAccount
       ? "The front's hostnames and certificate challenges are written into this zone of the DNS account."
-      : 'Every hostname FCP writes sits directly under the zone apex.',
+      : meta.optionalDnsAccount
+        ? "Every hostname FCP makes sits directly under the zone apex. A zone connected by CNAME gets each front's CNAME in the DNS account's zone of the same domain."
+        : 'Every hostname FCP writes sits directly under the zone apex.',
   );
   const regionHint = $derived(
     nodeCountry

@@ -11,8 +11,9 @@
  * node is protected and frozen on each edge. `settings` holds three kinds of
  * non-secret fields, told apart by name lists:
  *  - LOCATING settings decide where every one of the account's resources
- *    lives: locked by the account update mutation while edges exist. Only the
- *    API endpoint an OVH key was issued for is one.
+ *    lives: locked by the account update mutation while edges exist. The API
+ *    endpoint an OVH key was issued for, and the Tencent Cloud site an EdgeOne
+ *    account lives on, are the only ones.
  *  - credential IDENTIFIERS (the public half of a key pair: Scaleway access
  *    key, OVH application key; the Cloudflare account an account-owned token
  *    belongs to). They rotate with the secret and locate nothing, so they stay
@@ -77,6 +78,16 @@ export const EDGE_SETTINGS_SCHEMAS = {
   }),
   // DNS only: the personal access token alone; the domains it reaches are locations.
   gandi: z.object({ type: z.literal('gandi') }),
+  // L7: EdgeOne acceleration domains. The CAM sub-user's SecretId is the
+  // public half of its key pair (a credential identifier); the site is the
+  // Tencent Cloud site the account lives on, whose API host every call goes
+  // to (another site is another API: locating). The EdgeOne zone, and the DNS
+  // account of a zone connected by CNAME, are a location's.
+  edgeone: z.object({
+    type: z.literal('edgeone'),
+    secretId: z.string().regex(/^AKID[A-Za-z0-9]{8,124}$/, 'SecretId like AKIDxxxxxxxx'),
+    site: z.enum(['intl', 'china']).optional(),
+  }),
 } as const;
 
 /** A DNS zone id as the zone's provider issues it (Cloudflare: 32 hex characters). */
@@ -155,6 +166,20 @@ export const EDGE_PLACEMENT_SCHEMAS = {
       message: 'a Gandi zone id is its domain name',
       path: ['zoneId'],
     }),
+  // An EdgeOne zone (a site). A zone connected to EdgeOne by CNAME also names
+  // the DNS account, and its zone of the same domain, that hold the fronts' CNAMEs.
+  edgeone: z
+    .object({
+      type: z.literal('edgeone'),
+      zoneId: z.string().regex(/^zone-[a-z0-9]{4,64}$/, 'EdgeOne zone id like zone-2abc...'),
+      zoneName: ZONE_NAME,
+      dnsAccountId: z.string().min(1).max(64).optional(),
+      dnsZoneId: DNS_ZONE_ID.optional(),
+    })
+    .refine((p) => !p.dnsAccountId === !p.dnsZoneId, {
+      message: 'a DNS account and its zone go together',
+      path: ['dnsZoneId'],
+    }),
 } as const;
 
 export type EdgePlacementFor<P extends EdgeProviderId> = z.infer<
@@ -175,6 +200,17 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   fastly: ['apiToken'],
   cloudfront: ['secretAccessKey'],
   gandi: ['apiToken'],
+  edgeone: ['secretKey'],
+};
+
+/**
+ * Secret credential fields a provider takes but does not require: an EdgeOne
+ * key pair from STS comes with a session token. Kept on an update only while
+ * the required secrets are kept too (a token belongs to its key pair), and
+ * masked like the rest.
+ */
+export const EDGE_OPTIONAL_CREDENTIAL_FIELDS: Partial<Record<EdgeProviderId, readonly string[]>> = {
+  edgeone: ['sessionToken'],
 };
 
 /** Placement fields per provider: on a LOCATION (and frozen on each edge), never on the account. */
@@ -187,6 +223,7 @@ export const EDGE_PLACEMENT_SETTINGS: Record<EdgeProviderId, readonly string[]> 
   fastly: ['dnsAccountId', 'zoneId', 'zoneName', 'tlsConfigurationId'],
   cloudfront: ['dnsAccountId', 'zoneId', 'zoneName'],
   gandi: ['zoneId', 'zoneName'],
+  edgeone: ['zoneId', 'zoneName', 'dnsAccountId', 'dnsZoneId'],
 };
 
 /**
@@ -209,6 +246,7 @@ export const EDGE_OBSERVED_PLACEMENT: Record<
   fastly: {},
   cloudfront: {},
   gandi: {},
+  edgeone: {},
 };
 
 /** Account settings that still LOCATE every edge of the account: locked while any non-destroyed edge references it. */
@@ -223,6 +261,7 @@ export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> =
   fastly: [],
   cloudfront: [],
   gandi: [],
+  edgeone: ['site'],
 };
 
 /** Defaults frozen into each new edge's provisionIntent (L7); a change never moves an existing edge. */
@@ -235,6 +274,7 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   fastly: ['domainModel'],
   cloudfront: [],
   gandi: [],
+  edgeone: [],
 };
 
 /**
@@ -255,6 +295,7 @@ export const EDGE_RETEST_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   fastly: [],
   cloudfront: [],
   gandi: [],
+  edgeone: [],
 };
 
 /**
@@ -294,6 +335,7 @@ export const EDGE_INTENT_FACTS: Record<
   },
   cloudfront: {},
   gandi: {},
+  edgeone: {},
 };
 
 /**
@@ -310,6 +352,7 @@ export const EDGE_LEGACY_OPTION_SETTINGS: Record<EdgeProviderId, readonly string
   fastly: ['certificateAuthority', 'certificateScope'],
   cloudfront: [],
   gandi: [],
+  edgeone: [],
 };
 
 /** The option defaults a settings payload (or a stored row) still carries the old way. */
@@ -330,6 +373,7 @@ export const EDGE_CREDENTIAL_IDENTIFIER_FIELDS: Record<EdgeProviderId, readonly 
   fastly: [],
   cloudfront: ['accessKeyId'],
   gandi: [],
+  edgeone: ['secretId'],
 };
 
 /**
@@ -348,6 +392,7 @@ export const EDGE_LEGACY_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   fastly: ['dnsAccountId', 'tlsConfigurationId'],
   cloudfront: [],
   gandi: [],
+  edgeone: [],
 };
 
 /** The legacy keys a stored settings object still carries (usually none). */
@@ -494,6 +539,21 @@ export function buildCredentials(
     else missing.push(field);
   }
   if (missing.length > 0) return { ok: false, missing };
+  // A required secret given anew: the optional ones are the payload's alone.
+  const fresh = EDGE_CREDENTIAL_FIELDS[provider].some(
+    (f) => typeof incoming?.[f] === 'string' && (incoming[f] as string).trim().length > 0,
+  );
+  for (const field of EDGE_OPTIONAL_CREDENTIAL_FIELDS[provider] ?? []) {
+    const raw = incoming?.[field];
+    const val = typeof raw === 'string' ? raw.trim() : '';
+    if (val.length > 0) out[field] = val;
+    else if (
+      !fresh &&
+      typeof existing?.[field] === 'string' &&
+      (existing[field] as string).length > 0
+    )
+      out[field] = existing[field] as string;
+  }
   return { ok: true, credentials: { type: provider, ...out } };
 }
 

@@ -19,6 +19,7 @@ export const EDGE_PROVIDER_IDS = [
   'fastly',
   'cloudfront',
   'gandi',
+  'edgeone',
 ] as const;
 export type EdgeProviderId = (typeof EDGE_PROVIDER_IDS)[number];
 

@@ -48,6 +48,7 @@ export function placeKeyOf(placement: EdgePlacement): string {
     case 'fastly':
     case 'cloudfront':
     case 'gandi':
+    case 'edgeone':
       return ANYCAST_PLACE;
   }
 }

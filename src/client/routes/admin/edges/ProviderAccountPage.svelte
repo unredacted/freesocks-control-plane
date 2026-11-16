@@ -54,7 +54,7 @@
   import KeyValue from './components/KeyValue.svelte';
   import LayerBadge from './components/LayerBadge.svelte';
   import SectionHeader from './components/SectionHeader.svelte';
-  import { credentialLabel } from './forms/providerFields';
+  import { credentialLabel, OPTIONAL_CREDENTIALS } from './forms/providerFields';
   import { providerLabel } from './lib/format';
   import { edgesPaths } from './lib/routes';
   import { relativeTime } from './lib/time';
@@ -124,7 +124,12 @@
       : [],
   );
   const credentialFields = $derived(
-    a ? (providers.data?.credentialFields[a.provider] ?? Object.keys(a.credentialsSet)) : [],
+    a
+      ? [
+          ...(providers.data?.credentialFields[a.provider] ?? Object.keys(a.credentialsSet)),
+          ...(OPTIONAL_CREDENTIALS[a.provider] ?? []),
+        ]
+      : [],
   );
 
   // --- DNS accounts (a front writes its records through one) ---------------------------------------

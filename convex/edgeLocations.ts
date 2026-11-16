@@ -53,7 +53,12 @@ import { assertAdmission } from './lib/edges/maintenance';
 import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
 import { verificationEndpoint } from './lib/edges/verification';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
-import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
+import {
+  EDGE_PROVIDER_CAPABILITIES,
+  dnsZoneOfPlace,
+  edgeLayerOf,
+  takesDnsAccount,
+} from './lib/edges/providers/capabilities';
 import {
   removableSharedCertificate,
   sharedCertificateOrderedByFcp,
@@ -193,8 +198,10 @@ export async function assertDnsAccountOfPlacement(
   provider: EdgeProviderId,
   placement: unknown,
 ): Promise<void> {
-  if (!EDGE_PROVIDER_CAPABILITIES[provider].needsDnsAccount) return;
+  if (!takesDnsAccount(provider)) return;
   const ref = (placement as { dnsAccountId?: unknown } | null)?.dnsAccountId;
+  // A provider that only may take one (EdgeOne): none named is a zone it hosts.
+  if (ref === undefined && !EDGE_PROVIDER_CAPABILITIES[provider].needsDnsAccount) return;
   const id = typeof ref === 'string' ? db.normalizeId('edgeProviderAccounts', ref) : null;
   const row = id ? await db.get(id) : null;
   if (!row || !EDGE_PROVIDER_CAPABILITIES[row.provider].providesDns)
@@ -1529,9 +1536,10 @@ export const zonesWrittenThrough = internalQuery({
       if (locationId && !z.locationIds.includes(locationId)) z.locationIds.push(locationId);
       zones.set(zoneId, z);
     };
-    // Every front that writes its records through a DNS account (Fastly, CloudFront).
-    const writers = (Object.keys(EDGE_PROVIDER_CAPABILITIES) as EdgeProviderId[]).filter(
-      (p) => EDGE_PROVIDER_CAPABILITIES[p].needsDnsAccount,
+    // Every front that writes its records through a DNS account (Fastly,
+    // CloudFront; EdgeOne where its zone is connected by CNAME).
+    const writers = (Object.keys(EDGE_PROVIDER_CAPABILITIES) as EdgeProviderId[]).filter((p) =>
+      takesDnsAccount(p),
     );
     for (const provider of writers) {
       const rows = await ctx.db
@@ -1539,14 +1547,22 @@ export const zonesWrittenThrough = internalQuery({
         .withIndex('by_place', (q) => q.eq('provider', provider))
         .collect();
       for (const r of rows) {
-        const p = r.placement as { dnsAccountId?: string; zoneId?: string; zoneName?: string };
+        const p = r.placement as {
+          dnsAccountId?: string;
+          zoneId?: string;
+          zoneName?: string;
+          dnsZoneId?: string;
+        };
         if (p.dnsAccountId !== (accountId as string)) continue;
         const live = await liveEdgesOfLocation(ctx.db, r);
-        add(p.zoneId, p.zoneName, r.enabled || live.length > 0, r._id as string);
+        const zone = dnsZoneOfPlace(provider, p);
+        add(zone.zoneId, zone.zoneName, r.enabled || live.length > 0, r._id as string);
         for (const e of live) {
           const intent = parseIntent(e.provisionIntent);
-          if (intent?.dnsAccountId === (accountId as string))
-            add(intent.zoneId, intent.zoneName, true);
+          if (intent?.dnsAccountId === (accountId as string)) {
+            const z = dnsZoneOfPlace(provider, intent);
+            add(z.zoneId, z.zoneName, true);
+          }
         }
       }
     }

@@ -46,6 +46,7 @@ import type {
   ChildResource,
   CloudFrontConfig,
   CloudflareConfig,
+  EdgeOneConfig,
   EdgeProvider,
   EdgeSpec,
   FastlyConfig,
@@ -88,6 +89,9 @@ import { __setCloudFrontEndpoint } from './cloudfront/sdk';
 import { fakeDnsZone } from '../testing/fakeCloudFront';
 import { fakeGandi, memoryMarks } from '../testing/fakeGandi';
 import { gandiProvider } from './gandi';
+import { __setEdgeOneCaaLookup, edgeOneProvider } from './edgeone';
+import { __setEdgeOneEndpoint } from './edgeone/sdk';
+import { fakeEdgeOne } from '../testing/fakeEdgeOne';
 import { __setGandiNsLookup, gandiDnsClient } from './dns/gandiDns';
 import { readFileSync } from 'node:fs';
 import ovhCatalog from './fixtures/pricing/ovh_public_cloud_catalog_lb.json';
@@ -2450,6 +2454,190 @@ describe('wire contract: gandi', () => {
       true,
     );
     expect(api.stub.calls.every((c) => c.redirect === 'manual')).toBe(true);
+  });
+});
+
+// --- edgeone ------------------------------------------------------------------------------
+
+describe('wire contract: edgeone', () => {
+  const ZONE_ID = 'zone-2abcdef01234';
+  const ZONE = 'example.org';
+  const HOST = 'k3m7q9zbx2wd.example.org';
+  const ORIGIN = 'node-7.origin.example.net';
+  const cfg: EdgeOneConfig = {
+    type: 'edgeone',
+    secretId: 'AKIDfcptestkey01',
+    secretKey: 'SECRET_TENCENT_KEY_0123456789',
+    sessionToken: 'SECRET_STS_TOKEN_0123456789',
+    zoneId: ZONE_ID,
+    zoneName: ZONE,
+  };
+  const spec: EdgeSpec = {
+    name: 'fcp-relay-o1-deadbeef',
+    hostname: HOST,
+    listeners: [{ edgePort: 443, members: [{ address: ORIGIN, port: 443 }] }],
+    originTransport: {
+      scheme: 'https',
+      certPublic: true,
+      certNames: ['*.origin.example.net'],
+      acceptsHostHeader: 'any',
+    },
+  };
+  const tpl = edgeOneProvider.templateSchema.parse({}) as never;
+  const zone = {
+    ZoneId: ZONE_ID,
+    ZoneName: ZONE,
+    Type: 'full' as const,
+    Status: 'active',
+    ActiveStatus: 'active',
+    Area: 'overseas',
+  };
+
+  function observed(calls: readonly RecordedCall[]): ObservedCall[] {
+    return calls.map((c) => {
+      const action = c.headers['x-tc-action'];
+      return {
+        method: c.method,
+        path: c.path,
+        queryKeys: Object.keys(c.query),
+        bodyKeys: keysOf(c.body),
+        ...(action ? { action } : {}),
+      };
+    });
+  }
+
+  let rec: HttpRecorder | undefined;
+  afterEach(async () => {
+    __setEdgeOneEndpoint(null);
+    __setEdgeOneCaaLookup(null);
+    await rec?.close();
+    rec = undefined;
+  });
+
+  async function run(steps: ResourceStep[], ledger: Ledger): Promise<Ledger> {
+    for (const step of steps) {
+      let out = await edgeOneProvider.runStep(cfg, step, spec, tpl, ledger);
+      ledger = apply(ledger, step, out);
+      for (let i = 0; out.status === 'requested' && i < 6; i++) {
+        out = await edgeOneProvider.pollStep!(cfg, step, out.opRef, ledger);
+        ledger = apply(ledger, step, out);
+      }
+      expect(out.status, step.id).toBe('done');
+    }
+    return ledger;
+  }
+
+  test('the lifecycle stays inside the contract and exercises all of it', async () => {
+    // A zone EdgeOne hosts: the first front gets EdgeOne's own record, the
+    // second (EdgeOne adds none) a record FCP writes and later deletes.
+    const tencent = fakeEdgeOne({ zones: [zone] });
+    rec = await startHttpRecorder(tencent.route);
+    __setEdgeOneEndpoint(rec.base);
+    __setEdgeOneCaaLookup(async () => []);
+
+    expect((await edgeOneProvider.testCredentials(cfg)).ok).toBe(true);
+    expect((await edgeOneProvider.discoverOptions!(partial(cfg))).zones).toHaveLength(1);
+    expect((await edgeOneProvider.checkLocation!(cfg)).ok).toBe(true);
+    const steps = edgeOneProvider.planProvision(cfg, spec, tpl);
+    let ledger = await run(steps, { steps: [], resources: [] });
+    for (const step of steps) await edgeOneProvider.discover(cfg, step, spec, ledger, 1);
+    await edgeOneProvider.describe(cfg, ledger);
+    await edgeOneProvider.inspect(cfg, ledger);
+    await edgeOneProvider.inventory(cfg);
+    let live = ledger;
+    for (let pass = 0; pass < 6; pass++) {
+      const r = edgeOneProvider.planDestroy(cfg, live)[0];
+      if (!r) break;
+      while ((await edgeOneProvider.runDestroy(cfg, r, live)).status !== 'confirmed_gone');
+      live = {
+        ...live,
+        resources: live.resources.map((x) =>
+          x === r ? { ...x, deleteState: 'confirmed_gone' as const } : x,
+        ),
+      };
+    }
+    tencent.state.autoRecord = false;
+    ledger = await run(steps, { steps: [], resources: [] });
+    live = ledger;
+    for (let pass = 0; pass < 6; pass++) {
+      const r = edgeOneProvider.planDestroy(cfg, live)[0];
+      if (!r) break;
+      while ((await edgeOneProvider.runDestroy(cfg, r, live)).status !== 'confirmed_gone');
+      live = {
+        ...live,
+        resources: live.resources.map((x) =>
+          x === r ? { ...x, deleteState: 'confirmed_gone' as const } : x,
+        ),
+      };
+    }
+    expect(tencent.state.domains).toEqual([]);
+    expect(tencent.state.records).toEqual([]);
+
+    // What the SDK put on the wire for the domain.
+    const create = rec.calls.find((c) => c.headers['x-tc-action'] === 'CreateAccelerationDomain')!;
+    expect(create.body).toMatchObject({
+      ZoneId: ZONE_ID,
+      DomainName: HOST,
+      OriginInfo: { OriginType: 'IP_DOMAIN', Origin: ORIGIN, HostHeader: HOST },
+      OriginProtocol: 'HTTPS',
+      HttpsOriginPort: 443,
+    });
+    const cert = rec.calls.find((c) => c.headers['x-tc-action'] === 'ModifyHostsCertificate')!;
+    expect(cert.body).toEqual({ ZoneId: ZONE_ID, Hosts: [HOST], Mode: 'eofreecert' });
+    const del = rec.calls.find((c) => c.headers['x-tc-action'] === 'DeleteAccelerationDomains')!;
+    expect(del.body).toMatchObject({ Force: false });
+
+    expectContractCovered('edgeone', observed(rec.calls));
+    // Every call is TC3-signed with the SecretId and the API version, carries
+    // the session token as its own header, and never the SecretKey. (The SDK
+    // signs for the endpoint's first label: `teo` on Tencent's hosts, the
+    // recorder's address here.)
+    for (const c of rec.calls) {
+      expect(c.method).toBe('POST');
+      expect(c.headers.authorization).toMatch(
+        /^TC3-HMAC-SHA256 Credential=AKIDfcptestkey01\/\d{4}-\d\d-\d\d\/[^/]+\/tc3_request/,
+      );
+      expect(c.headers['x-tc-version']).toBe('2022-09-01');
+      expect(c.headers['x-tc-token']).toBe(cfg.sessionToken);
+      expect(JSON.stringify(c.headers)).not.toContain(cfg.secretKey);
+      expect(c.rawBody).not.toContain(cfg.secretKey);
+    }
+  });
+
+  test('an allocating call is made once: a lost answer is resolved by a read', async () => {
+    const tencent = fakeEdgeOne({ zones: [zone] });
+    let dropped = false;
+    rec = await startHttpRecorder((call) => {
+      const reply = tencent.route(call);
+      if (!dropped && call.headers['x-tc-action'] === 'CreateAccelerationDomain') {
+        dropped = true;
+        return { ...reply, abort: true };
+      }
+      return reply;
+    });
+    __setEdgeOneEndpoint(rec.base);
+    const step = edgeOneProvider.planProvision(cfg, spec, tpl)[0]!;
+    const out = await edgeOneProvider.runStep(cfg, step, spec, tpl, { steps: [], resources: [] });
+    expect(out).toMatchObject({ status: 'done', resources: [{ ownership: 'adopted' }] });
+    expect(
+      rec.calls.filter((c) => c.headers['x-tc-action'] === 'CreateAccelerationDomain'),
+    ).toHaveLength(1);
+    expectDeclared('edgeone', observed(rec.calls));
+  });
+
+  test('a Tencent error answer reaches the adapter reduced, with no name or secret in it', async () => {
+    const tencent = fakeEdgeOne({ zones: [zone] });
+    tencent.state.failNext.set(
+      'DescribeAccelerationDomains',
+      'UnauthorizedOperation.CamUnauthorized',
+    );
+    rec = await startHttpRecorder(tencent.route);
+    __setEdgeOneEndpoint(rec.base);
+    const e = await caught(() => edgeOneProvider.inventory(cfg));
+    expect(e).toMatchObject({
+      meta: { provider: 'edgeone', status: 403, code: 'permission_missing' },
+    });
+    expect(String((e as Error).message)).not.toMatch(/example|SECRET/);
   });
 });
 

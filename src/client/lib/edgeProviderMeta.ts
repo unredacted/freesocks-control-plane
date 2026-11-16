@@ -32,6 +32,11 @@ export interface EdgeProviderMeta {
   l7Transports: readonly ListenerStreamTransport[];
   /** The account needs a DNS account of another provider (Fastly, CloudFront → Cloudflare). */
   needsDnsAccount: boolean;
+  /**
+   * A location may name a DNS account (EdgeOne: a zone connected by CNAME);
+   * its own zones are listed from the account itself.
+   */
+  optionalDnsAccount?: true;
   /** The account can host DNS records for other providers' edges. */
   providesDns: boolean;
   /** A DNS provider that never fronts traffic (Gandi): no "DNS and fronting" choice. */
@@ -86,6 +91,17 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
     needsDnsAccount: true,
     providesDns: false,
     sharedCertificates: true,
+  },
+  edgeone: {
+    label: 'Tencent EdgeOne',
+    layer: 'l7',
+    role: 'edge',
+    addressKind: 'hostname',
+    l7Transports: ['ws'],
+    needsDnsAccount: false,
+    optionalDnsAccount: true,
+    providesDns: false,
+    sharedCertificates: false,
   },
   gandi: {
     label: 'Gandi',

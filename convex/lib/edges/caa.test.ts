@@ -185,7 +185,31 @@ describe('caa: one record set', () => {
       'lets-encrypt': 'letsencrypt.org',
       globalsign: 'globalsign.com',
       amazon: 'amazon.com',
+      edgeone: 'letsencrypt.org',
     });
+  });
+
+  test("EdgeOne's free certificate issues under Let's Encrypt or TrustAsia", async () => {
+    for (const domain of ['letsencrypt.org', 'trustasia.com']) {
+      const lookup: CaaLookup = async (name) => (name === 'example.org' ? [issue(domain)] : []);
+      const v = await checkCaa({
+        name: 'front.example.org',
+        certificateAuthority: 'edgeone',
+        lookup,
+      });
+      expect(v.verdict, domain).toBe('allows');
+    }
+    const other: CaaLookup = async (name) =>
+      name === 'example.org' ? [issue('certainly.com')] : [];
+    expect(
+      (
+        await checkCaa({
+          name: 'front.example.org',
+          certificateAuthority: 'edgeone',
+          lookup: other,
+        })
+      ).verdict,
+    ).toBe('forbids');
   });
 
   test("ACM issues under any of Amazon's four CAA domains, issuewild governing a wildcard", async () => {

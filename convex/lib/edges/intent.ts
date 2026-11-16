@@ -59,6 +59,11 @@ export interface ProvisionIntent {
   zoneName: string;
   /** The DNS account whose credentials write this edge's records (Fastly edges). */
   dnsAccountId?: string;
+  /**
+   * The DNS account's zone, when it is not `zoneId` (EdgeOne: `zoneId` is the
+   * EdgeOne zone, and a zone connected by CNAME writes its CNAME here).
+   */
+  dnsZoneId?: string;
   tlsConfigurationId?: string;
   certificateAuthority?: string;
   /** Fastly: `wildcard` = the account's shared `*.<zone>` certificate; absent = one per front. */
@@ -98,6 +103,7 @@ export interface IntentPlace {
   zoneId?: string;
   zoneName?: string;
   dnsAccountId?: string;
+  dnsZoneId?: string;
   tlsConfigurationId?: string;
   observed?: Record<string, string>;
 }
@@ -128,6 +134,7 @@ export function intentPlaceOf(
     ...(str(p.zoneId) ? { zoneId: str(p.zoneId) } : {}),
     ...(str(p.zoneName) ? { zoneName: str(p.zoneName) } : {}),
     ...(str(p.dnsAccountId) ? { dnsAccountId: str(p.dnsAccountId) } : {}),
+    ...(str(p.dnsZoneId) ? { dnsZoneId: str(p.dnsZoneId) } : {}),
     ...(str(p.tlsConfigurationId) ? { tlsConfigurationId: str(p.tlsConfigurationId) } : {}),
     observed: parseObservedSettings(observedJson),
   };
@@ -197,6 +204,10 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
       ? EDGE_PROVIDER_CAPABILITIES[a.account.provider as keyof typeof EDGE_PROVIDER_CAPABILITIES]
       : null;
   if (caps?.needsDnsAccount && !dnsAccountId) throw new IntentError('dns_account_missing');
+  // A DNS account a provider only may take writes into its own zone (`dnsZoneId`).
+  const dnsZoneId = caps?.optionalDnsAccount && dnsAccountId ? str(a.place.dnsZoneId) : undefined;
+  if (caps?.optionalDnsAccount && dnsAccountId && !dnsZoneId)
+    throw new IntentError('dns_zone_missing');
   const originTransport = a.listener.originTransport ?? null;
   if (!originTransport) throw new IntentError('origin_transport_missing');
   const tpl = a.templateParams;
@@ -227,6 +238,7 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
     zoneId,
     zoneName,
     ...(dnsAccountId ? { dnsAccountId } : {}),
+    ...(dnsZoneId ? { dnsZoneId } : {}),
     ...(tlsConfigurationId ? { tlsConfigurationId } : {}),
     ...(certificateAuthority ? { certificateAuthority } : {}),
     ...(certificateScope ? { certificateScope } : {}),

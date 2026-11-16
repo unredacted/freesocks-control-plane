@@ -822,7 +822,8 @@ const COPY = {
   },
   origin_not_a_name: {
     label: 'Origin is an IP address',
-    explain: 'A CloudFront front dials its origin by hostname, never by IP address.',
+    explain:
+      'A CloudFront front dials its origin by hostname, never by IP address. An EdgeOne front that sends the node address as Host needs a hostname too.',
     fix: 'Give the node a hostname, the one on its certificate for TLS, and register the origin by it.',
   },
   retest_required: {
@@ -1501,6 +1502,87 @@ const COPY = {
     label: 'Not allowed',
     explain: 'The IAM user may not call every ACM action FCP uses in us-east-1.',
     fix: 'Add the ACM actions the account form lists to the IAM user’s policy, then test again.',
+  },
+  // Tencent EdgeOne answers (providers/edgeone/sdk.ts EDGEONE_ERROR_CODES) and its checks.
+  permission_missing: {
+    label: 'Permission missing',
+    explain:
+      "The CAM sub-user may not call one of the EdgeOne actions FCP uses. The provider's answer names the action.",
+    fix: "Add that teo action to the sub-user's policy (docs/edges.md lists them all), then test again.",
+  },
+  plan_limit: {
+    label: 'Plan limit reached',
+    explain:
+      "The zone's EdgeOne plan does not allow this: too many domains or rules, a feature the plan lacks, or a plan that expired or is not bound to the zone.",
+    fix: "Read the provider's answer, then delete fronts the zone no longer needs, renew the plan, or move to a plan that allows it.",
+  },
+  icp_filing_required: {
+    label: 'ICP filing needed',
+    explain:
+      'The zone serves the Chinese mainland, which needs an ICP filing the domain does not have.',
+    fix: "Set the zone's service area to outside the Chinese mainland at the provider, or use a zone that has a filing.",
+  },
+  domain_taken_elsewhere: {
+    label: 'Name used by another account',
+    explain: 'Another Tencent Cloud account has this hostname on EdgeOne.',
+    fix: 'Delete this front and front the node again to get a new hostname.',
+  },
+  dns_record_exists: {
+    label: 'Name already has a record',
+    explain: "The zone already holds a record at the front's hostname that FCP did not write.",
+    fix: 'Remove that record if nothing uses it, or delete this front and front the node again.',
+  },
+  tls_waiting_for_dns: {
+    label: 'Waiting for the name',
+    explain:
+      "EdgeOne issues its free certificate only once the front's hostname points at EdgeOne.",
+    fix: 'Nothing to do while DNS catches up. If it lasts, check the CNAME in the DNS account.',
+  },
+  rate_limited: {
+    label: 'Too many calls',
+    explain: 'The provider asked FCP to slow down. The call is tried again.',
+  },
+  provider_busy: {
+    label: 'Provider busy',
+    explain: 'Another change to the zone was still being applied. The call is tried again.',
+  },
+  provider_error: {
+    label: 'Provider error',
+    explain: 'The provider failed on its side. The call is tried again.',
+  },
+  zone_area_mismatch: {
+    label: 'Zone serves another area',
+    explain:
+      "The EdgeOne zone's service area is not the one the template asks for. FCP never changes a zone's area.",
+    fix: "Set the template's Service area to the zone's, or change the zone's area at the provider.",
+  },
+  zone_needs_dns_account: {
+    label: 'Needs a DNS account',
+    explain:
+      "This EdgeOne zone is connected by CNAME, so each front's CNAME goes in a DNS account's zone of the same domain.",
+    fix: 'Add the location again with the DNS account and its zone for this domain.',
+  },
+  zone_dns_at_edgeone: {
+    label: 'DNS is at EdgeOne',
+    explain:
+      "EdgeOne hosts this zone's DNS, so it writes each front's record itself and the DNS account would never be used.",
+    fix: 'Add the location again without a DNS account.',
+  },
+  zone_access_unsupported: {
+    label: 'Zone access not supported',
+    explain:
+      'This EdgeOne zone is connected neither by its name servers nor by CNAME, so FCP cannot point names at it.',
+    fix: 'Use a zone added to EdgeOne by name servers or by CNAME.',
+  },
+  domain_restricted: {
+    label: 'Front restricted',
+    explain:
+      'EdgeOne restricts this front somewhere, for a missing ICP filing or a government order.',
+    fix: "Check the domain at the provider. Keep the zone's service area outside the Chinese mainland.",
+  },
+  cname_pending: {
+    label: 'Waiting for a CNAME',
+    explain: 'EdgeOne has not named the CNAME target for the new front yet. The step tries again.',
   },
   // --- published pool (reserved allocation, capacity, rebalance) -------------------------
   pool_full: {

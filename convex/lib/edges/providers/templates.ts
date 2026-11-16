@@ -1665,6 +1665,84 @@ export const CLOUDFRONT_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   },
 ];
 
+// --- EdgeOne (L7) ------------------------------------------------------------------
+
+/**
+ * A Tencent EdgeOne front: one acceleration domain in the operator's EdgeOne
+ * zone, in front of the node, and the record that points its name at EdgeOne.
+ * Every key but the label settings is optional and the adapter applies the
+ * declared default (providers/edgeone.ts `effectiveEdgeOneParams`).
+ */
+export const EdgeOneTemplate = z.object({
+  ...LABEL_FIELDS,
+  overrideHost: z.enum(['hostname', 'origin']).optional(),
+  ipv6: z.enum(['follow', 'on', 'off']).optional(),
+  serviceArea: z.enum(['overseas', 'global', 'mainland']).optional(),
+  dnsTtl: z.union([z.literal(1), z.number().int().min(60).max(86_400)]).optional(),
+});
+export type EdgeOneTemplateParams = z.infer<typeof EdgeOneTemplate>;
+
+export const EDGEONE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
+  ...LABEL_FIELD_DESCRIPTORS,
+  {
+    key: 'overrideHost',
+    label: 'Host sent to the node',
+    type: 'select',
+    group: 'Origin',
+    default: 'hostname',
+    help: 'The Host header the front sends: the front name, or the node address. A node that answers only to its own name gets the node address whatever is chosen here.',
+    options: [
+      { value: 'hostname', label: 'The front name' },
+      { value: 'origin', label: 'The node address' },
+    ],
+    wire: { resource: 'acceleration_domain', field: 'OriginInfo.HostHeader', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'ipv6',
+    label: 'IPv6 for members',
+    type: 'select',
+    group: 'Domain',
+    default: 'follow',
+    help: "Whether members can reach the front over IPv6. Follow the zone takes the zone's own setting.",
+    options: [
+      { value: 'follow', label: 'Follow the zone' },
+      { value: 'on', label: 'On' },
+      { value: 'off', label: 'Off' },
+    ],
+    wire: { resource: 'acceleration_domain', field: 'IPv6Status', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'serviceArea',
+    label: 'Service area',
+    type: 'select',
+    group: 'Domain',
+    prominent: true,
+    default: 'overseas',
+    help: "Where the zone must serve from. A name without an ICP filing cannot be served in the Chinese mainland, so keep Outside the Chinese mainland unless the domain has one. The area is the zone's own setting: FCP never changes it, and refuses to build a front in a zone set to another area.",
+    options: [
+      { value: 'overseas', label: 'Outside the Chinese mainland' },
+      { value: 'global', label: 'Everywhere (needs an ICP filing)' },
+      { value: 'mainland', label: 'Chinese mainland only (needs an ICP filing)' },
+    ],
+    wire: { resource: 'zone', field: 'Area', manual: true },
+    live: 'rebuild',
+  },
+  {
+    key: 'dnsTtl',
+    label: 'Record TTL',
+    type: 'number',
+    unit: 's',
+    group: 'DNS records',
+    advanced: true,
+    default: 1,
+    help: "How long resolvers may cache the front's record: 1 is the zone's default, else 60 to 86400.",
+    wire: { resource: 'dns_record', field: 'ttl', manual: true },
+    live: 'in_place',
+  },
+];
+
 // --- certificate options (CDN fronts) -------------------------------------------------
 
 /**
@@ -1779,6 +1857,7 @@ export const EDGE_TEMPLATES: Record<EdgeProviderId, TemplateDefinition> = {
   fastly: template(FastlyTemplate, FASTLY_TEMPLATE_FIELDS),
   cloudfront: template(CloudFrontTemplate, CLOUDFRONT_TEMPLATE_FIELDS),
   gandi: template(GandiTemplate, GANDI_TEMPLATE_FIELDS),
+  edgeone: template(EdgeOneTemplate, EDGEONE_TEMPLATE_FIELDS),
 };
 
 export interface CertificateDefinition {
@@ -1802,6 +1881,8 @@ export const EDGE_CERTIFICATE_OPTIONS: Record<EdgeProviderId, CertificateDefinit
   fastly: certificate(FastlyCertificateOptions, FASTLY_CERTIFICATE_FIELDS),
   cloudfront: certificate(CloudFrontCertificateOptions, CLOUDFRONT_CERTIFICATE_FIELDS),
   gandi: certificate(NO_CERTIFICATE, []),
+  // EdgeOne's free certificate, one per front: nothing to choose.
+  edgeone: certificate(NO_CERTIFICATE, []),
 };
 
 /** Every option of a provider, tuning then certificate: what the forms render. */

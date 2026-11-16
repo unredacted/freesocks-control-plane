@@ -136,6 +136,12 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
   v.object({ type: v.literal('cloudfront'), secretAccessKey: v.string() }),
   v.object({ type: v.literal('gandi'), apiToken: v.string() }),
+  // A CAM sub-user's SecretKey; an STS key pair adds its session token.
+  v.object({
+    type: v.literal('edgeone'),
+    secretKey: v.string(),
+    sessionToken: v.optional(v.string()),
+  }),
 );
 // Account settings: credential identifiers and intent defaults. WHERE an
 // account's edges live is never here: it is a location
@@ -187,6 +193,11 @@ const relayProviderSettings = v.union(
   }),
   // DNS only: the personal access token is all there is.
   v.object({ type: v.literal('gandi') }),
+  v.object({
+    type: v.literal('edgeone'),
+    secretId: v.string(), // the CAM key's public id; not a secret
+    site: v.optional(v.union(v.literal('intl'), v.literal('china'))),
+  }),
 );
 // Where an edge's resources live (`lib/edges/accountSettings.ts`
 // EDGE_PLACEMENT_SCHEMAS validates every new one). A CDN front's keys are
@@ -236,6 +247,14 @@ const relayEdgePlacement = v.union(
   }),
   // A Gandi LiveDNS domain (its id is its name).
   v.object({ type: v.literal('gandi'), zoneId: v.string(), zoneName: v.string() }),
+  // An EdgeOne zone; a CNAME-connected one names the DNS account writing its CNAMEs.
+  v.object({
+    type: v.literal('edgeone'),
+    zoneId: v.string(),
+    zoneName: v.string(),
+    dnsAccountId: v.optional(v.string()),
+    dnsZoneId: v.optional(v.string()),
+  }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.

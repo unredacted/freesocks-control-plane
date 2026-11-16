@@ -350,6 +350,71 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       placeholder: 'front.example',
     },
   ],
+  edgeone: [
+    {
+      key: 'secretId',
+      label: 'SecretId (public id)',
+      kind: 'text',
+      step: 'credentials',
+      required: true,
+      placeholder: 'AKID...',
+      help: 'The public id paired with the SecretKey. Not a secret.',
+    },
+    {
+      key: 'site',
+      label: 'Tencent Cloud site',
+      kind: 'select',
+      step: 'credentials',
+      from: 'fixed',
+      options: [
+        { id: 'intl', label: 'International (tencentcloud.com)' },
+        { id: 'china', label: 'China (cloud.tencent.com)' },
+      ],
+      required: true,
+      help: 'Where the account was created. Its API host follows it.',
+    },
+    {
+      key: 'zoneId',
+      label: 'EdgeOne zone',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'zones',
+      required: true,
+      help: 'A site in EdgeOne that the key reaches.',
+    },
+    {
+      key: 'zoneName',
+      label: 'Zone name',
+      kind: 'text',
+      step: 'placement',
+      location: true,
+      required: true,
+      readOnly: true,
+      help: 'Filled from the chosen zone.',
+      placeholder: 'front.example',
+    },
+    {
+      key: 'dnsAccountId',
+      label: 'DNS account',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'dnsAccounts',
+      required: false,
+      help: "Only for a zone connected to EdgeOne by CNAME: the DNS account whose zone gets each front's CNAME. Leave it empty when EdgeOne hosts the zone's DNS.",
+    },
+    {
+      key: 'dnsZoneId',
+      label: 'DNS zone',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'dnsZones',
+      required: false,
+      help: "The DNS account's zone for the same domain.",
+    },
+  ],
   gandi: [
     {
       key: 'zoneId',
@@ -384,6 +449,12 @@ export const CREDENTIAL_LABELS: Record<string, string> = {
   consumerKey: 'Consumer key',
   apiToken: 'API token',
   secretAccessKey: 'Secret access key',
+  sessionToken: 'Session token',
+};
+
+/** Secrets a provider takes but does not require (an STS key pair's session token). */
+export const OPTIONAL_CREDENTIALS: Partial<Record<EdgeProviderId, string[]>> = {
+  edgeone: ['sessionToken'],
 };
 
 /** What each provider's token must be allowed to do. */
@@ -394,6 +465,8 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
     'A global-scope API token from a dedicated automation user. The account also needs the WebSockets product entitlement.',
   gandi:
     "A personal access token of the organization that owns the domains, limited to them, allowed to see and change their DNS records (LiveDNS). The older API key is not accepted. Gandi tokens expire, so rotate this account's credentials before the date you set.",
+  edgeone:
+    "A key of a CAM sub-user, never the root account's. Its policy allows only the teo actions docs/edges.md lists (EdgeOne), limited to the zones FCP uses. A session token is needed only for a temporary STS key, which stops working when it expires.",
   cloudfront:
     'An access key of a dedicated IAM user. Its policy allows cloudfront:CreateDistribution, GetDistribution, GetDistributionConfig, UpdateDistribution, DeleteDistribution, ListDistributions, CreateOriginRequestPolicy, ListOriginRequestPolicies and ListDistributionsByOriginRequestPolicyId, and acm:RequestCertificate, DescribeCertificate, ListCertificates and DeleteCertificate in us-east-1. No IAM or Lambda permissions.',
 };
@@ -402,6 +475,7 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
 export const DEFAULT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, string>>> = {
   ovh: { endpoint: 'ovh-eu' },
   fastly: { domainModel: 'versionless' },
+  edgeone: { site: 'intl' },
 };
 
 export function credentialLabel(name: string): string {

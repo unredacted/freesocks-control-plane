@@ -87,6 +87,7 @@
     DEFAULT_SETTINGS,
     applyDiscovery,
     credentialLabel,
+    OPTIONAL_CREDENTIALS,
     fieldsFor,
     missingRequired,
     optionsFor,
@@ -166,10 +167,14 @@
 
   const meta = $derived(EDGE_PROVIDER_META[provider]);
   const secretNames = $derived(providers.data?.credentialFields[provider] ?? []);
+  /** Secrets the provider takes but does not require (an STS session token). */
+  const optionalSecretNames = $derived(OPTIONAL_CREDENTIALS[provider] ?? []);
   const accounts = $derived(providers.data?.accounts ?? []);
   /** A front's DNS account, and the zones it reaches (its catalog plus its own zones). */
   const dnsCatalog = providerCatalogQuery(() =>
-    meta.needsDnsAccount && values['dnsAccountId'] ? values['dnsAccountId'] : null,
+    (meta.needsDnsAccount || meta.optionalDnsAccount) && values['dnsAccountId']
+      ? values['dnsAccountId']
+      : null,
   );
   const dnsZones = $derived(
     zoneChoices(
@@ -285,12 +290,15 @@
 
   function onFieldChange(f: ProviderField, value: string) {
     const next = { ...values, [f.key]: value };
-    if (f.from === 'zones' || f.from === 'dnsZones')
+    // The location's zone names it (a DNS account's zone only where that is the front's zone).
+    if (f.from === 'zones' || (f.from === 'dnsZones' && meta.needsDnsAccount))
       next['zoneName'] = optionsFor(f, ctx).find((o) => o.id === value)?.label ?? '';
     // Another DNS account has other zones.
     if (f.from === 'dnsAccounts') {
-      next['zoneId'] = '';
-      next['zoneName'] = '';
+      if (meta.needsDnsAccount) {
+        next['zoneId'] = '';
+        next['zoneName'] = '';
+      } else next['dnsZoneId'] = '';
     }
     if (f.from === 'networks') next['subnetId'] = '';
     values = next;
@@ -589,6 +597,21 @@
           {#each secretNames as c (c)}
             <div class="space-y-1.5">
               <Label for={`${uid}-cred-${c}`}>{credentialLabel(c)}</Label>
+              <Input
+                id={`${uid}-cred-${c}`}
+                type="password"
+                autocomplete="off"
+                class="font-mono"
+                value={credentials[c] ?? ''}
+                disabled={discover.isPending}
+                oninput={(e) => (credentials = { ...credentials, [c]: e.currentTarget.value })}
+              />
+              <p class="text-muted-foreground text-xs">Write only. Never shown again.</p>
+            </div>
+          {/each}
+          {#each optionalSecretNames as c (c)}
+            <div class="space-y-1.5">
+              <Label for={`${uid}-cred-${c}`}>{credentialLabel(c)} (optional)</Label>
               <Input
                 id={`${uid}-cred-${c}`}
                 type="password"
