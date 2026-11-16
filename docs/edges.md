@@ -7153,6 +7153,10 @@ zone-scoped, except that `ModifyDnsRecordsStatus` was not confirmed there. The l
 account form calls `DescribeZones` with no zone filter: if Test credentials answers
 `permission_missing` naming `teo:DescribeZones`, CAM judged that listing against `*`, so give
 `teo:DescribeZones` alone a statement on `*` (it reads zone names and settings, nothing more).
+If a zone-scoped action is refused although the policy names that zone (`permission_missing`
+naming, say, `teo:DescribeAccelerationDomains` on `qcs::teo:::zone/<zone-id>`), grant the same
+actions on `*` instead: the narrow action list still keeps the key away from billing, CAM and
+every zone setting, and an account that holds only zones meant for fronts loses little.
 Nothing else (no billing, no CAM, no SSL console, no `teo:ModifyZone*`) is needed: FCP never
 changes a zone's own settings.
 
@@ -7178,7 +7182,11 @@ The capability is `optionalDnsAccount`: generic code resolves a DNS account for 
 only when its location (and then its frozen intent: `dnsAccountId`, `dnsZoneId`) names one, and
 counts such edges against the DNS account like Fastly's (a DNS account they write through cannot
 be deleted from under them). The location check reads the zone (`active`, in effect: an
-`ActiveStatus` other than `active` refuses it, not paused, the name recorded; for a zone EdgeOne
+`ActiveStatus` other than `active` refuses it, not paused, the name recorded; a zone connected
+by CNAME keeps `Status: pending` for good, since its name servers never move, so it counts as
+active once `CnameStatus` is `finished`, its site verified, while its `Status` is `pending` or
+`active`; any other `Status` (`moved`, `deactivated`, `initializing`, `deleted`, or one Tencent
+adds later) is refused under either access mode; for a zone EdgeOne
 hosts, a read of its records, so a key without `teo:DescribeDnsRecords` is refused before any front
 is half built) and refuses a mismatched mode: a CNAME-access zone without a DNS account
 (`zone_needs_dns_account`), an NS-access zone with one (`zone_dns_at_edgeone`), any other access

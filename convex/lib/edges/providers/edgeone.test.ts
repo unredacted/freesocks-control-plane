@@ -65,11 +65,14 @@ const spec: EdgeSpec = {
 };
 const tpl = edgeOneProvider.templateSchema.parse({});
 
+// A CNAME-access zone (`Type: partial`) defaults to how Tencent reports a
+// verified one: `Status: pending` (name servers never move), `CnameStatus: finished`.
 const zone = (over: Partial<FakeZone> = {}): FakeZone => ({
   ZoneId: ZONE_ID,
   ZoneName: ZONE,
   Type: 'full',
-  Status: 'active',
+  Status: over.Type === 'partial' ? 'pending' : 'active',
+  ...(over.Type === 'partial' ? { CnameStatus: 'finished' } : {}),
   ActiveStatus: 'active',
   Area: 'overseas',
   ...over,
@@ -586,6 +589,50 @@ describe('edgeone: the account and its locations', () => {
         : [],
     );
     expect(await edgeOneProvider.checkLocation!(ns)).toMatchObject({ ok: true });
+  });
+
+  test('a CNAME-access zone is judged by its verification, not by its name servers', async () => {
+    __setEdgeOneDnsClientFactory(() => fakeDnsZone(dnsZone));
+    // Tencent keeps `Status: pending` (name servers not switched) on every
+    // CNAME-access zone; `CnameStatus: finished` is what says it is verified.
+    account({ zones: [zone({ Type: 'partial', Status: 'pending', CnameStatus: 'finished' })] });
+    expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({
+      ok: true,
+      observed: { zoneStatus: 'active', zoneAccess: 'cname' },
+    });
+    expect((await edgeOneProvider.discoverOptions!({ ...ns })).zones?.[0]?.facts).toMatchObject({
+      status: 'active',
+      access: 'cname',
+    });
+    account({ zones: [zone({ Type: 'partial', Status: 'pending', CnameStatus: 'pending' })] });
+    expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({
+      ok: false,
+      code: 'zone_not_active',
+      observed: { zoneStatus: 'pending' },
+    });
+    account({ zones: [zone({ Type: 'partial', CnameStatus: undefined })] });
+    expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({
+      ok: false,
+      code: 'zone_not_active',
+    });
+    // A blocked zone is refused whatever its verification says.
+    account({
+      zones: [zone({ Type: 'partial', Status: 'deactivated', CnameStatus: 'finished' })],
+    });
+    expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({
+      ok: false,
+      code: 'zone_not_active',
+      observed: { zoneStatus: 'deactivated' },
+    });
+    // So is any status other than the two name-server ones, known or not.
+    for (const Status of ['deleted', 'moved', 'initializing', 'something-new']) {
+      account({ zones: [zone({ Type: 'partial', Status, CnameStatus: 'finished' })] });
+      expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({
+        ok: false,
+        code: 'zone_not_active',
+        observed: { zoneStatus: Status },
+      });
+    }
   });
 
   test('a zone not in effect yet (ActiveStatus) is not active', async () => {

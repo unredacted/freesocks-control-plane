@@ -28,6 +28,8 @@ export interface FakeZone {
   ZoneName: string;
   Type: 'full' | 'partial';
   Status: string;
+  /** CNAME access: `finished` once the site is verified, else `pending`. */
+  CnameStatus?: string;
   ActiveStatus?: string;
   Paused?: boolean;
   Area: string;

@@ -73,6 +73,7 @@ import {
   edgeOneApiFor,
   isEdgeOneCode,
   isEdgeOneNotFound,
+  zoneState,
   type EdgeOneApi,
   type EdgeOneDomain,
   type EdgeOneDomainSpec,
@@ -648,7 +649,7 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
         id: z.id,
         label: z.name,
         facts: {
-          ...(z.status ? { status: z.paused ? 'paused' : z.status } : {}),
+          ...(z.status || z.cnameStatus || z.paused ? { status: zoneState(z) } : {}),
           ...(z.type
             ? { access: z.type === 'full' ? 'ns' : z.type === 'partial' ? 'cname' : z.type }
             : {}),
@@ -678,7 +679,7 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
       if (!zone)
         return { ok: false, code: 'zone_unreadable', detail: 'the key does not see this zone' };
       const observed: Record<string, string> = {
-        zoneStatus: zone.paused ? 'paused' : (zone.status ?? 'unknown'),
+        zoneStatus: zoneState(zone),
         zoneAccess:
           zone.type === 'full'
             ? 'ns'
@@ -700,7 +701,8 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
       if (zone.paused) return out('zone_paused');
       // `ActiveStatus` is whether the site is in effect (a zone can be `active`
       // and not yet in effect): any value it reports but `active` refuses.
-      if (zone.status !== 'active' || (zone.activeStatus && zone.activeStatus !== 'active'))
+      // A CNAME-access zone counts as active once it is verified (`zoneState`).
+      if (zoneState(zone) !== 'active' || (zone.activeStatus && zone.activeStatus !== 'active'))
         return out('zone_not_active');
       const viaAccount = edgeOneDnsModeOf(cfg) === 'account';
       if (zone.type === 'partial' && !viaAccount) return out('zone_needs_dns_account');

@@ -58,8 +58,14 @@ export interface EdgeOneZone {
   name: string;
   /** `full` (EdgeOne hosts the zone's DNS: NS access), `partial` (CNAME access), others. */
   type?: string;
-  /** `active`, `pending`, `moved`, `deactivated`, `initializing`. */
+  /**
+   * `active`, `pending`, `moved`, `deactivated`, `initializing`. For NS access
+   * `active` means the name servers point at EdgeOne; a CNAME-access zone never
+   * switches them and stays `pending` (its verification is `cnameStatus`).
+   */
   status?: string;
+  /** CNAME access only: `finished` (the site is verified) or `pending`. */
+  cnameStatus?: string;
   /** `active`, `inactive`, `paused`. */
   activeStatus?: string;
   paused: boolean;
@@ -325,10 +331,26 @@ export function zoneOf(z: Zone): EdgeOneZone {
     name: lower(z.ZoneName),
     ...(z.Type ? { type: z.Type } : {}),
     ...(z.Status ? { status: z.Status } : {}),
+    ...(z.CnameStatus ? { cnameStatus: z.CnameStatus } : {}),
     ...(z.ActiveStatus ? { activeStatus: z.ActiveStatus } : {}),
     paused: z.Paused === true || z.ActiveStatus === 'paused',
     ...(z.Area ? { area: z.Area } : {}),
   };
+}
+
+/**
+ * Whether a zone can carry fronts, in one word: `active`, `paused`, or the
+ * state that keeps it from it. A CNAME-access zone is judged by its
+ * verification (`cnameStatus`) only while its `status` is one of the two
+ * name-server states (`pending`, which it keeps for good, or `active`); any
+ * other status (`moved`, `deactivated`, `initializing`, `deleted`, or one
+ * Tencent adds later) is returned as is, so it refuses under either mode.
+ */
+export function zoneState(z: EdgeOneZone): string {
+  if (z.paused) return 'paused';
+  if (z.type === 'partial' && (z.status === 'pending' || z.status === 'active'))
+    return z.cnameStatus === 'finished' ? 'active' : 'pending';
+  return z.status ?? 'unknown';
 }
 
 export function domainOf(d: AccelerationDomain): EdgeOneDomain {
