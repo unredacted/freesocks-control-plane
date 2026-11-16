@@ -2885,7 +2885,8 @@ any point, and never writes twice what it cannot prove:
   replacement), quotes the provider, and opens the run. A step left `ambiguous` or `needs_operator` raises the edge to
   `needs_operator`. `ambiguous`: the edge needs an operator, the run fails
   `ambiguous_resource`. `unresolved`: keep looking for 30 minutes after the step started, then
-  `discovery_timeout`. A provision has its own 20-minute cap (`provision_timeout`). Shared
+  `discovery_timeout`. A provision has its own cap (`provision_timeout`): 20 minutes, or three times the provider's
+  typical build time when that is longer (`provisionTimeoutMsOf`). Shared
   external locks use the same lease and are held on a thrown or partial write until discovery
   answers. A step the provider REFUSED (`StepOutcome` partial with `refused`: what FCP built
   does not compile, Fastly's `version_invalid`) is never retried, since the same draft is
@@ -7213,7 +7214,10 @@ Readiness is the domain `online`, its certificate deployed, and the front's reco
 holds it now pointing at the CNAME target (switched on, in a zone EdgeOne hosts). Qualification,
 publication, rotation and the replacement of a blocked front are the generic L7 ones
 (§ "L7 edges"). `typicalProvisionMs` is fifteen minutes: Tencent says a configuration usually
-takes effect within 5 minutes, some within 15, and promises no time.
+takes effect within 5 minutes, some within 15, and promises no time. A domain can serve with its
+certificate deployed while EdgeOne still reports it `process` (deploying); readiness waits for
+`online`. A run gives a provider three times its typical build time, at least 20 minutes
+(`provisionTimeoutMsOf`), so an EdgeOne front may take 45 before the run gives up.
 
 **The certificate.** One free certificate per front, issued by Let's Encrypt or TrustAsia
 (EdgeOne picks; 90 days, renewed from 15 days before expiry). A front's own name therefore

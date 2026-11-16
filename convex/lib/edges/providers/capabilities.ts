@@ -330,6 +330,20 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   },
 };
 
+/**
+ * How long a provider may take to build an edge before the run fails: the
+ * shared floor, or three times its typical build time when that is longer.
+ * A CDN that deploys a configuration in a quarter of an hour (EdgeOne,
+ * CloudFront) can need well past the floor; the fast ones keep the floor.
+ */
+export function provisionTimeoutMsOf(
+  id: EdgeProviderId | string | null | undefined,
+  floorMs: number,
+): number {
+  const caps = id ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId] : undefined;
+  return Math.max(floorMs, 3 * (caps?.typicalProvisionMs ?? 0));
+}
+
 export function edgeLayerOf(id: EdgeProviderId | string | null | undefined): EdgeLayer {
   return id && id in EDGE_PROVIDER_CAPABILITIES
     ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].layer

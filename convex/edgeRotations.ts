@@ -170,6 +170,7 @@ import {
   edgeRoleOf,
   frontsAllowed,
   providerHealthSatisfies,
+  provisionTimeoutMsOf,
   zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
 import type {
@@ -5063,7 +5064,10 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
     return;
   }
   const now = Date.now();
-  if (edge._creationTime + EDGE_PLUMBING.provisionTimeoutMs < now) {
+  if (
+    edge._creationTime + provisionTimeoutMsOf(edge.provider, EDGE_PLUMBING.provisionTimeoutMs) <
+    now
+  ) {
     // A wait that was held up by something known ends with THAT as the reason
     // (a CAA record forbidding the CA), not as a bare timeout.
     const held = edge.waiting?.code;

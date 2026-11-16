@@ -1234,7 +1234,11 @@ export const edgeMs = {
 // --- plumbing (constants, not settings) ------------------------------------------------------------
 
 const PLUMBING_DEFAULTS = {
-  /** How long the provider may take to build an edge before the run fails. */
+  /**
+   * How long the provider may take to build an edge before the run fails: the
+   * floor; a slow provider gets three times its typical build time
+   * (`provisionTimeoutMsOf` in lib/edges/providers/capabilities.ts).
+   */
   provisionTimeoutMs: 20 * MIN,
   /** How long to look for a resource whose create call was cut off. */
   discoveryTimeoutMs: 30 * MIN,
