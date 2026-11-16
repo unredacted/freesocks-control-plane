@@ -1116,6 +1116,17 @@ describe('review fixes, round two', () => {
     w.duringPut.fn = async () => {
       await w.t.run(async (ctx) => {
         await setStoredCountry(ctx, (await ctx.db.get(subId))!, { choice: 'ZZ' });
+        // The country change schedules its own refresh (runAfter 0), which
+        // convex-test fires on a real timer: left alone it races the repair
+        // below and adds a PUT of its own whenever it lands in time (or, run
+        // first, settles the obligation itself). This test is about the
+        // repair as the backstop, so that refresh is cancelled in the same
+        // transaction that scheduled it, before its timer can start it.
+        const pending = (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (f) => f.name.includes('refreshMirrorsForSubscription') && f.state.kind === 'pending',
+        );
+        expect(pending).toHaveLength(1);
+        for (const f of pending) await ctx.scheduler.cancel(f._id);
       });
     };
     await w.t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
@@ -1126,6 +1137,12 @@ describe('review fixes, round two', () => {
     await w.t.action(internal.storage.repairMirrorUploads, {});
     expect(puts(w).length).toBe(puts0 + 1);
     expect(await openUploads(w.t)).toEqual([]);
+    // Nothing else wrote meanwhile: the country change's refresh never ran.
+    await w.t.finishAllScheduledFunctions(() => {});
+    expect(puts(w).length).toBe(puts0 + 1);
+    expect(
+      (await scheduled(w.t, 'refreshMirrorsForSubscription')).map((f) => f.state.kind),
+    ).toEqual(['canceled']);
   });
 
   test('a read-back after a refresh treats only the copies that refresh wrote as just rewritten', async () => {
