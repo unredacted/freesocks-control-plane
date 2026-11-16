@@ -22,6 +22,7 @@ import {
   isDnsOnly,
   originPortCarriedBy,
   protocolCarriedBy,
+  provisionTimeoutMsOf,
   takesDnsAccount,
   unsupportedTransport,
 } from './capabilities';
@@ -364,6 +365,21 @@ describe('origin capability record ⇔ adapters', () => {
       zoneName: 'example.org',
     });
     expect(dnsZoneOfPlace('edgeone', { ...place, dnsAccountId: undefined })).toEqual({});
+  });
+
+  test('the provision timeout is the floor, or three times a slow provider’s typical build', () => {
+    const MIN = 60_000;
+    // EdgeOne typically takes 15 min, and can take past the 20-minute floor.
+    expect(provisionTimeoutMsOf('edgeone', 20 * MIN)).toBe(45 * MIN);
+    // A fast provider keeps the floor.
+    expect(provisionTimeoutMsOf('gcore', 20 * MIN)).toBe(20 * MIN);
+    // An unknown id or none keeps the floor.
+    expect(provisionTimeoutMsOf('nope', 20 * MIN)).toBe(20 * MIN);
+    expect(provisionTimeoutMsOf(undefined, 20 * MIN)).toBe(20 * MIN);
+    for (const id of EDGE_PROVIDER_IDS)
+      expect(provisionTimeoutMsOf(id, 20 * MIN)).toBe(
+        Math.max(20 * MIN, 3 * EDGE_PROVIDER_CAPABILITIES[id].typicalProvisionMs),
+      );
   });
 
   test('origin ports: EdgeOne dials 1-65535, CloudFront 80, 443 and 1024 up', () => {
