@@ -43,6 +43,11 @@ export interface WireCall {
    * in the `X-Amz-Target` header, which must equal this.
    */
   target?: string;
+  /**
+   * Tencent Cloud API 3.0 (EdgeOne): every call is `POST /` and names its
+   * action in the `X-TC-Action` header, which must equal this.
+   */
+  action?: string;
 }
 
 export interface WireContract {
@@ -59,6 +64,8 @@ export interface ObservedCall {
   bodyKeys?: readonly string[];
   /** The `X-Amz-Target` header of an AWS JSON protocol call. */
   target?: string;
+  /** The `X-TC-Action` header of a Tencent Cloud API call. */
+  action?: string;
 }
 
 export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
@@ -1031,6 +1038,93 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       },
     ],
   },
+  // --- L7: Tencent EdgeOne acceleration domains --------------------------------------
+  edgeone: {
+    source:
+      "https://www.tencentcloud.com/document/api/1145/50456 (Request Structure) and the EdgeOne API 2022-09-01 reference (https://www.tencentcloud.com/document/api/1145/54134 CreateAccelerationDomain, https://cloud.tencent.com/document/api/1552/80764 ModifyHostsCertificate, https://cloud.tencent.com/document/product/1552/115817 site acceleration settings), via tencentcloud-sdk-nodejs-teo 4.1.333, 2026-11-15; every call is `POST /` with its action in `X-TC-Action` and a JSON body (the body keys are the request's top-level fields); the CNAME a zone connected by CNAME needs is a DNS account's call, listed under `cloudflare` or `gandi`",
+    calls: [
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'DescribeZones',
+        purpose:
+          "list the zones the key reaches: credential test, zone list, location check, the zone's service area",
+        body: ['Offset', 'Limit'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'DescribeL7AccSetting',
+        purpose:
+          "the zone's WebSocket and client-address settings: credential test, location check",
+        body: ['ZoneId'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'DescribeAccelerationDomains',
+        purpose:
+          "find a domain by its exact name, list the zone's domains: discovery, describe, inventory, delete confirmation",
+        body: ['ZoneId', 'Limit'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'CreateAccelerationDomain',
+        purpose: "create the front's acceleration domain with its origin, ports and Host",
+        body: [
+          'ZoneId',
+          'DomainName',
+          'OriginInfo',
+          'OriginProtocol',
+          'HttpOriginPort',
+          'HttpsOriginPort',
+        ],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'DeleteAccelerationDomains',
+        purpose: "delete the front's acceleration domain",
+        body: ['ZoneId', 'DomainNames'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'ModifyHostsCertificate',
+        purpose: "ask for EdgeOne's free certificate for the front's name",
+        body: ['ZoneId', 'Hosts', 'Mode'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'DescribeDnsRecords',
+        purpose: "a zone EdgeOne hosts: the records at the front's name",
+        body: ['ZoneId', 'Filters'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'ModifyDnsRecordsStatus',
+        purpose: 'a zone EdgeOne hosts: switch on the record EdgeOne added for the domain',
+        body: ['ZoneId', 'RecordsToEnable'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'CreateDnsRecord',
+        purpose: "a zone EdgeOne hosts: write the front's CNAME when EdgeOne added none",
+        body: ['ZoneId', 'Name', 'Type', 'Content'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        action: 'DeleteDnsRecords',
+        purpose: 'a zone EdgeOne hosts: remove a record left at the name after the domain',
+        body: ['ZoneId', 'RecordIds'],
+      },
+    ],
+  },
 };
 
 // --- matching --------------------------------------------------------------------------
@@ -1039,6 +1133,7 @@ function matches(entry: WireCall, call: ObservedCall): boolean {
   if (entry.method !== call.method.toUpperCase()) return false;
   if (!new RegExp(entry.path).test(call.path)) return false;
   if ((entry.target ?? undefined) !== (call.target ?? undefined)) return false;
+  if ((entry.action ?? undefined) !== (call.action ?? undefined)) return false;
   const queryKeys = new Set(call.queryKeys ?? []);
   for (const k of entry.query ?? []) if (!queryKeys.has(k)) return false;
   for (const k of entry.withoutQuery ?? []) if (queryKeys.has(k)) return false;
@@ -1081,7 +1176,8 @@ export function wireCallLabel(entry: WireCall): string {
   const q = entry.query?.length ? ` ?${entry.query.join('&')}` : '';
   const nq = entry.withoutQuery?.length ? ` without ?${entry.withoutQuery.join('&')}` : '';
   const t = entry.target ? ` X-Amz-Target: ${entry.target}` : '';
-  return `${entry.path}${q}${nq}${t}`;
+  const a = entry.action ? ` X-TC-Action: ${entry.action}` : '';
+  return `${entry.path}${q}${nq}${t}${a}`;
 }
 
 // --- documentation ------------------------------------------------------------------------

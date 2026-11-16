@@ -22,6 +22,8 @@ const NODE_ACTION_DEPS = [
   'fastly',
   '@aws-sdk/client-cloudfront',
   '@aws-sdk/client-acm',
+  'tencentcloud-sdk-nodejs-teo',
+  'tencentcloud-sdk-nodejs-common',
   'superagent',
   'yaml',
 ];

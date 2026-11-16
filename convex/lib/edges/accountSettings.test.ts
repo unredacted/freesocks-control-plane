@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { EDGE_PROVIDER_IDS } from '../edgeProviderIds';
 import {
+  buildCredentials,
   EDGE_CREDENTIAL_FIELDS,
   EDGE_CREDENTIAL_IDENTIFIER_FIELDS,
   EDGE_INTENT_DEFAULT_SETTINGS,
@@ -166,5 +167,62 @@ describe('account settings: locating vs credential-identifier split', () => {
     ).toEqual({ accessKey: 'SCWNEW' });
     expect(pickCredentialIdentifiers('ovh', { applicationKey: '', regionName: 'R' })).toEqual({});
     expect(pickCredentialIdentifiers('gcore', { apiKey: 'k' })).toEqual({});
+  });
+});
+
+describe('EdgeOne: an optional session token and an optional DNS account', () => {
+  test('a CAM key alone, or with an STS session token; never without its SecretKey', () => {
+    expect(buildCredentials('edgeone', { secretKey: 'k1' })).toEqual({
+      ok: true,
+      credentials: { type: 'edgeone', secretKey: 'k1' },
+    });
+    expect(buildCredentials('edgeone', { secretKey: 'k1', sessionToken: 't1' })).toEqual({
+      ok: true,
+      credentials: { type: 'edgeone', secretKey: 'k1', sessionToken: 't1' },
+    });
+    expect(buildCredentials('edgeone', { sessionToken: 't1' })).toEqual({
+      ok: false,
+      missing: ['secretKey'],
+    });
+  });
+
+  test('an update keeps the token with its key, and drops it with a new key that brings none', () => {
+    const stored = { type: 'edgeone', secretKey: 'k1', sessionToken: 't1' };
+    expect(buildCredentials('edgeone', {}, stored)).toMatchObject({
+      credentials: { secretKey: 'k1', sessionToken: 't1' },
+    });
+    expect(buildCredentials('edgeone', { sessionToken: 't2' }, stored)).toMatchObject({
+      credentials: { secretKey: 'k1', sessionToken: 't2' },
+    });
+    const fresh = buildCredentials('edgeone', { secretKey: 'k2' }, stored);
+    expect(fresh).toEqual({ ok: true, credentials: { type: 'edgeone', secretKey: 'k2' } });
+  });
+
+  test('a location is an EdgeOne zone, with a DNS account and its zone only together', () => {
+    const base = { zoneId: 'zone-2abcdef01234', zoneName: 'example.org' };
+    expect(validatePlacement('edgeone', base).ok).toBe(true);
+    expect(
+      validatePlacement('edgeone', {
+        ...base,
+        dnsAccountId: 'acct',
+        dnsZoneId: '0123456789abcdef0123456789abcdef',
+      }).ok,
+    ).toBe(true);
+    expect(validatePlacement('edgeone', { ...base, dnsAccountId: 'acct' }).ok).toBe(false);
+    expect(validatePlacement('edgeone', { ...base, zoneId: 'example.org' }).ok).toBe(false);
+  });
+
+  test('the SecretId is a credential identifier, the site locates the account', () => {
+    expect(
+      EDGE_SETTINGS_SCHEMAS.edgeone.safeParse({ type: 'edgeone', secretId: 'AKIDabcdef0123456789' })
+        .success,
+    ).toBe(true);
+    expect(
+      EDGE_SETTINGS_SCHEMAS.edgeone.safeParse({ type: 'edgeone', secretId: 'secret' }).success,
+    ).toBe(false);
+    expect(pickCredentialIdentifiers('edgeone', { secretId: ' AKIDx ', site: 'china' })).toEqual({
+      secretId: 'AKIDx',
+    });
+    expect(locatingSettingsChanged('edgeone', { site: 'china' }, { site: 'intl' })).toBe(true);
   });
 });

@@ -15,11 +15,14 @@ import { jsonRes, mockFetch } from '../testing/mockFetch';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   discoveryMaySettle,
+  dnsZoneOfPlace,
   edgeRoleOf,
+  originPortDialable,
   frontsAllowed,
   isDnsOnly,
   originPortCarriedBy,
   protocolCarriedBy,
+  takesDnsAccount,
   unsupportedTransport,
 } from './capabilities';
 import { EDGE_PROVIDERS } from './registry';
@@ -110,6 +113,13 @@ const CONFIGS: Record<(typeof EDGE_PROVIDER_IDS)[number], EdgeProviderConfig> = 
     zoneId: 'example.org',
     zoneName: 'example.org',
   },
+  edgeone: {
+    type: 'edgeone',
+    secretId: 'AKIDfcptestkey01',
+    secretKey: 'SECRET_TENCENT',
+    zoneId: 'zone-2abcdef01234',
+    zoneName: 'example.org',
+  },
 };
 
 /** L4 providers only (the balancer-shaped tests below); L7 fronts have their own checks. */
@@ -146,6 +156,11 @@ const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<s
     zoneName: 'example.org',
   },
   gandi: { zoneId: 'example.org', zoneName: 'example.org' },
+  edgeone: {
+    secretId: 'AKIDfcptestkey01',
+    zoneId: 'zone-2abcdef01234',
+    zoneName: 'example.org',
+  },
 };
 
 const lbLedger: Ledger = {
@@ -319,6 +334,45 @@ describe('origin capability record ⇔ adapters', () => {
     }
     expect(edgeRoleOf('cloudflare')).toBe('dns');
     expect(edgeRoleOf('unknown-provider')).toBe('edge');
+  });
+
+  test('a DNS account is required (Fastly, CloudFront), optional (EdgeOne) or never taken', () => {
+    expect(takesDnsAccount('fastly')).toBe(true);
+    expect(takesDnsAccount('cloudfront')).toBe(true);
+    expect(takesDnsAccount('edgeone')).toBe(true);
+    expect(takesDnsAccount('cloudflare')).toBe(false);
+    expect(takesDnsAccount('gcore')).toBe(false);
+    for (const id of EDGE_PROVIDER_IDS) {
+      const caps = EDGE_PROVIDER_CAPABILITIES[id];
+      // Never both, and never a DNS provider itself.
+      expect(caps.needsDnsAccount && caps.optionalDnsAccount === true).toBe(false);
+      if (caps.optionalDnsAccount) expect(caps.providesDns).toBe(false);
+    }
+    const place = {
+      dnsAccountId: 'acct',
+      zoneId: 'zone-2abcdef01234',
+      zoneName: 'example.org',
+      dnsZoneId: 'f'.repeat(32),
+    };
+    // EdgeOne's zone is its own; the DNS account writes into its own zone of the same name.
+    expect(dnsZoneOfPlace('edgeone', place)).toEqual({
+      zoneId: 'f'.repeat(32),
+      zoneName: 'example.org',
+    });
+    expect(dnsZoneOfPlace('fastly', place)).toEqual({
+      zoneId: 'zone-2abcdef01234',
+      zoneName: 'example.org',
+    });
+    expect(dnsZoneOfPlace('edgeone', { ...place, dnsAccountId: undefined })).toEqual({});
+  });
+
+  test('origin ports: EdgeOne dials 1-65535, CloudFront 80, 443 and 1024 up', () => {
+    expect(originPortDialable('edgeone', 808)).toBe(true);
+    expect(originPortDialable('edgeone', 1)).toBe(true);
+    expect(originPortDialable('edgeone', 0)).toBe(false);
+    expect(originPortDialable('edgeone', 65536)).toBe(false);
+    expect(originPortDialable('cloudfront', 808)).toBe(false);
+    expect(originPortDialable('cloudfront', 8443)).toBe(true);
   });
 
   test('a DNS account reference always points at a providesDns provider', () => {

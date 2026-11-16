@@ -28,9 +28,11 @@ export type EdgeProviderRole = 'edge' | 'dns';
  * 443 for https, 80 for http), `default-or-override` (a default by the zone's
  * encryption mode, any other port through a destination-port override),
  * `web-or-high` (the front's origin setting names the port, which may be 80,
- * 443 or one of 1024-65535: CloudFront's `HTTPPort` / `HTTPSPort`).
+ * 443 or one of 1024-65535: CloudFront's `HTTPPort` / `HTTPSPort`),
+ * `any-port` (the front's origin setting names any port 1-65535: EdgeOne's
+ * `HttpOriginPort` / `HttpsOriginPort`).
  */
-export type OriginPortMode = 'any' | 'fixed' | 'default-or-override' | 'web-or-high';
+export type OriginPortMode = 'any' | 'fixed' | 'default-or-override' | 'web-or-high' | 'any-port';
 
 export interface EdgeProviderCapabilities {
   /** L4 = a TCP forwarder in front of the node; L7 = a CDN front terminating TLS + HTTP. */
@@ -42,6 +44,14 @@ export interface EdgeProviderCapabilities {
   l7Transports: readonly ListenerStreamTransport[];
   /** Fastly-style: the hostnames' DNS lives in a referenced Cloudflare account. */
   needsDnsAccount: boolean;
+  /**
+   * EdgeOne-style: a location MAY name a DNS account. A zone the provider
+   * hosts gets its records from the provider itself; a zone connected to it
+   * by CNAME writes the front's CNAME through a DNS account, whose zone is
+   * the location's `dnsZoneId`. Absent = the account is required
+   * (`needsDnsAccount`) or never taken.
+   */
+  optionalDnsAccount?: true;
   /** Cloudflare-style: can host DNS records for other providers' edges. */
   providesDns: boolean;
   /**
@@ -261,6 +271,40 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     typicalProvisionMs: 10 * MIN,
     discoverySettleMs: 0,
   },
+  // An acceleration domain in the operator's EdgeOne zone, in front of one
+  // origin, with EdgeOne's free certificate for the front's own name. Its
+  // record is EdgeOne's (a zone EdgeOne hosts) or written through a DNS
+  // account (a zone connected by CNAME). WebSocket only (a zone setting
+  // EdgeOne owns; gRPC is not proven through it). The origin's port is the
+  // domain's own (`HttpOriginPort` / `HttpsOriginPort`), any of 1-65535 by
+  // Tencent's data types (https://intl.cloud.tencent.com/document/product/1145/50547).
+  // The Host the
+  // node receives is the domain's `HostHeader`: the front name, or the node's
+  // own (`overrideHost`). A domain goes `process` to `online` within minutes,
+  // the free certificate after the name points at EdgeOne; deletes answer at
+  // once. Sources: https://www.tencentcloud.com/document/api/1145/54134 and
+  // https://cloud.tencent.com/document/product/1552/90437, 2026-11-15.
+  edgeone: {
+    layer: 'l7',
+    role: 'edge',
+    addressKind: 'hostname',
+    l7Transports: ['ws'],
+    needsDnsAccount: false,
+    optionalDnsAccount: true,
+    providesDns: false,
+    originPortMode: 'any-port',
+    originHostHeader: 'option',
+    sharedCertificates: false,
+    asyncOps: true,
+    asyncDelete: false,
+    needsPrivateNetwork: false,
+    ipv6: true,
+    udp: false,
+    idleTimeoutConfigurable: false,
+    memberHealth: false,
+    typicalProvisionMs: 15 * MIN,
+    discoverySettleMs: 0,
+  },
   // LiveDNS: plain DNS, nothing proxied, so a DNS account and never a front
   // (`dnsOnly`). Carries no transport and builds no edge; the layer only says
   // its places are zones (one anycast place, like the CDNs).
@@ -315,6 +359,34 @@ export function frontsAllowed(account: FrontingAccount | null | undefined): bool
   if (!account) return false;
   if (isDnsOnly(account.provider)) return false;
   return edgeRoleOf(account.provider) !== 'dns' || account.frontsTraffic === true;
+}
+
+/**
+ * Whether the provider's fronts can write their records through a DNS
+ * account: always (`needsDnsAccount`), or when a location names one
+ * (`optionalDnsAccount`).
+ */
+export function takesDnsAccount(id: EdgeProviderId | string | null | undefined): boolean {
+  if (!id || !(id in EDGE_PROVIDER_CAPABILITIES)) return false;
+  const caps = EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId];
+  return caps.needsDnsAccount || caps.optionalDnsAccount === true;
+}
+
+/**
+ * The DNS account's zone a front location (or a frozen intent) writes into:
+ * the place's own zone for a provider that always takes a DNS account, the
+ * place's `dnsZoneId` (same zone name) for one that only may. Empty when the
+ * place writes nothing through a DNS account.
+ */
+export function dnsZoneOfPlace(
+  id: EdgeProviderId | string | null | undefined,
+  place: { dnsAccountId?: string; zoneId?: string; zoneName?: string; dnsZoneId?: string },
+): { zoneId?: string; zoneName?: string } {
+  if (!id || !(id in EDGE_PROVIDER_CAPABILITIES) || !place.dnsAccountId) return {};
+  const caps = EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId];
+  if (caps.needsDnsAccount) return { zoneId: place.zoneId, zoneName: place.zoneName };
+  if (caps.optionalDnsAccount) return { zoneId: place.dnsZoneId, zoneName: place.zoneName };
+  return {};
 }
 
 /** Whether the provider can never front member traffic (`dnsOnly`). */
@@ -388,12 +460,15 @@ export function originPortCarriedBy(
 
 /**
  * Whether an L7 front can dial this origin port at all, whatever the
- * transport: a `web-or-high` front only 80, 443 and 1024-65535 (CloudFront
+ * transport: an `any-port` front 1-65535 (EdgeOne), a `web-or-high` front
+ * only 80, 443 and 1024-65535 (CloudFront
  * refuses the other privileged ports). Unknown port = no opinion.
  */
 export function originPortDialable(id: EdgeProviderId, port?: number): boolean {
-  if (port === undefined || EDGE_PROVIDER_CAPABILITIES[id].originPortMode !== 'web-or-high')
-    return true;
+  if (port === undefined) return true;
+  const mode = EDGE_PROVIDER_CAPABILITIES[id].originPortMode;
+  if (mode === 'any-port') return Number.isInteger(port) && port >= 1 && port <= 65535;
+  if (mode !== 'web-or-high') return true;
   return port === 80 || port === 443 || (port >= 1024 && port <= 65535);
 }
 

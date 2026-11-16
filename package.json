@@ -83,6 +83,8 @@
     "pako": "3.0.3",
     "qrcode": "^1.5.4",
     "tailwind-merge": "^3.7.0",
+    "tencentcloud-sdk-nodejs-common": "4.1.220",
+    "tencentcloud-sdk-nodejs-teo": "4.1.333",
     "tldts": "7.5.1",
     "wordlist-english": "1.2.1",
     "yaml": "2.9.1",

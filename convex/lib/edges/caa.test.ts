@@ -185,7 +185,24 @@ describe('caa: one record set', () => {
       'lets-encrypt': 'letsencrypt.org',
       globalsign: 'globalsign.com',
       amazon: 'amazon.com',
+      trustasia: 'trustasia.com',
     });
+  });
+
+  test('a validation method in a CAA record must be the one the issuance uses', async () => {
+    const lookup: CaaLookup = async (name) =>
+      name === 'example.org' ? [issue('letsencrypt.org; validationmethods=http-01')] : [];
+    const at = (validationMethod?: 'dns-01' | 'http-01') =>
+      checkCaa({
+        name: 'front.example.org',
+        certificateAuthority: 'lets-encrypt',
+        lookup,
+        validationMethod,
+      });
+    // DNS unless said otherwise (every certificate FCP ordered before EdgeOne).
+    expect((await at()).verdict).toBe('forbids');
+    expect((await at('dns-01')).verdict).toBe('forbids');
+    expect((await at('http-01')).verdict).toBe('allows');
   });
 
   test("ACM issues under any of Amazon's four CAA domains, issuewild governing a wildcard", async () => {

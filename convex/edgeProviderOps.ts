@@ -38,9 +38,11 @@ import { dnsMarkStoreFor } from './lib/edges/dnsMarks';
 import { EdgeProviderError, refusalOf, scrubNames } from './lib/edges/providers/http';
 import {
   EDGE_PROVIDER_CAPABILITIES,
+  dnsZoneOfPlace,
   edgeLayerOf,
   edgeRoleOf,
   originPortDialable,
+  takesDnsAccount,
   protocolCarriedBy,
   unsupportedTransport,
   zoneModeGovernsOrigin,
@@ -593,6 +595,32 @@ async function loadAdapter(
       zoneId: intent?.zoneId ?? merged.zoneId,
       zoneName: intent?.zoneName ?? merged.zoneName,
     });
+  } else if (EDGE_PROVIDER_CAPABILITIES[acct.provider].optionalDnsAccount) {
+    // A DNS account only where the place names one (EdgeOne: a zone connected
+    // by CNAME). An existing edge keeps what its intent froze, with or without.
+    const merged = cfg as unknown as {
+      dnsAccountId?: string;
+      dnsZoneId?: string;
+      zoneName?: string;
+    };
+    if (intent) {
+      if (intent.dnsAccountId) merged.dnsAccountId = intent.dnsAccountId;
+      else delete merged.dnsAccountId;
+      if (intent.dnsZoneId) merged.dnsZoneId = intent.dnsZoneId;
+      else delete merged.dnsZoneId;
+    }
+    if (merged.dnsAccountId) {
+      const zone = dnsZoneOfPlace(acct.provider, merged);
+      if (!zone.zoneId)
+        throw new ConvexError<EdgeProviderOpsFailure>({
+          code: 'dns_account_missing',
+          message: 'the place names a DNS account without its zone',
+          step: 'load',
+          retryable: false,
+          timedOut: false,
+        });
+      (cfg as { dns?: unknown }).dns = await dnsConfigFor(ctx, merged.dnsAccountId, zone);
+    }
   }
   return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider, intent };
 }
@@ -1258,12 +1286,21 @@ export const rotateCredentials = internalAction({
         const id = loc.id as Id<'edgeLocations'>;
         try {
           if (provider.checkLocation) {
-            const p = where as { dnsAccountId?: string; zoneId?: string; zoneName?: string };
+            const p = where as {
+              dnsAccountId?: string;
+              zoneId?: string;
+              zoneName?: string;
+              dnsZoneId?: string;
+            };
             const needsDns = EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount;
             // A place that names no zone yet has nothing to reach.
             if (needsDns ? !p.dnsAccountId : !p.zoneId) continue;
-            if (needsDns)
-              (where as { dns?: unknown }).dns = await dnsConfigFor(ctx, p.dnsAccountId!, p);
+            if (p.dnsAccountId && takesDnsAccount(acct.provider))
+              (where as { dns?: unknown }).dns = await dnsConfigFor(
+                ctx,
+                p.dnsAccountId,
+                dnsZoneOfPlace(acct.provider, p),
+              );
             const res = await provider.checkLocation(where);
             // Only a zone's own state may refuse a place the new key still
             // reaches in full (paused, encryption off, CAA): that is recorded
@@ -1537,6 +1574,10 @@ const ZONE_STATE_REFUSALS: ReadonlySet<string> = new Set([
   'caa_forbids_ca',
   // What a front needs of a fronting DNS account's zone.
   'edge_certificate_missing',
+  // How an EdgeOne zone is connected to EdgeOne (by name servers or by CNAME).
+  'zone_needs_dns_account',
+  'zone_dns_at_edgeone',
+  'zone_access_unsupported',
 ]);
 
 /** A CDN place the provider reached but refused, in words for the admin (`edge.location_unusable`). */
@@ -1551,6 +1592,11 @@ const LOCATION_REFUSALS: Record<string, string> = {
     "That zone's CAA records do not let the account's certificate authority issue: allow it, or pick another authority",
   edge_certificate_missing:
     'That zone has no edge certificate for its first-level names: turn Universal SSL on, or order one',
+  zone_needs_dns_account:
+    "That EdgeOne zone is connected by CNAME: name the DNS account, and its zone of the same domain, that will hold the fronts' CNAMEs",
+  zone_dns_at_edgeone:
+    "EdgeOne hosts that zone's DNS and writes the fronts' records itself: add it without a DNS account",
+  zone_access_unsupported: 'That EdgeOne zone is connected neither by name servers nor by CNAME',
 };
 
 /**
@@ -1623,8 +1669,11 @@ export const createLocation = internalAction({
     // A zone picked by id alone takes its name from the catalog's listing, or
     // (an id typed by hand) from the provider's own answer.
     if (typeof raw.zoneId === 'string' && typeof raw.zoneName !== 'string') {
+      // A front whose zone is its DNS account's lists it there; one whose
+      // zone is its own (EdgeOne, with or without a DNS account) lists it itself.
       const lister =
-        typeof raw.dnsAccountId === 'string'
+        typeof raw.dnsAccountId === 'string' &&
+        EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount
           ? (raw.dnsAccountId as Id<'edgeProviderAccounts'>)
           : a.accountId;
       const listed = await ctx.runQuery(internal.edgeProviderCatalog.zoneOf, {

@@ -79,7 +79,10 @@ export async function l7PlaceProblemOf(
   // a certificate refusal of the picks on that one (certificateRefusalFor).
   if (location.checkError && location.checkError !== 'caa_forbids_ca')
     return 'location_check_failed';
-  if (EDGE_PROVIDER_CAPABILITIES[account.provider].needsDnsAccount) {
+  if (
+    EDGE_PROVIDER_CAPABILITIES[account.provider].needsDnsAccount ||
+    (EDGE_PROVIDER_CAPABILITIES[account.provider].optionalDnsAccount && place.dnsAccountId)
+  ) {
     const dns = place.dnsAccountId
       ? await db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>)
       : null;

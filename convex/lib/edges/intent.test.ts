@@ -252,6 +252,39 @@ describe('buildProvisionIntent', () => {
   });
 });
 
+describe('buildProvisionIntent: EdgeOne', () => {
+  const edgeone = { id: 'acct-eo', provider: 'edgeone', settings: {} };
+  const eoZone = { zoneId: 'zone-2abcdef01234', zoneName: 'example.org' };
+
+  test('a zone EdgeOne hosts freezes no DNS account', () => {
+    const intent = buildProvisionIntent({ ...args, account: edgeone, place: eoZone })!;
+    expect(intent.zoneId).toBe('zone-2abcdef01234');
+    expect(intent.hostname.endsWith('.example.org')).toBe(true);
+    expect(intent).not.toHaveProperty('dnsAccountId');
+    expect(intent).not.toHaveProperty('dnsZoneId');
+    // EdgeOne is not the zone's proxy in Cloudflare's sense: no encryption mode.
+    expect(intent).not.toHaveProperty('zoneSslMode');
+  });
+
+  test("a zone connected by CNAME freezes the DNS account and that account's zone", () => {
+    const place = intentPlaceOf({
+      ...eoZone,
+      dnsAccountId: 'acct-cf',
+      dnsZoneId: 'z'.repeat(32),
+    });
+    const intent = buildProvisionIntent({ ...args, account: edgeone, place })!;
+    expect(intent.dnsAccountId).toBe('acct-cf');
+    expect(intent.dnsZoneId).toBe('z'.repeat(32));
+    expect(() =>
+      buildProvisionIntent({
+        ...args,
+        account: edgeone,
+        place: { ...eoZone, dnsAccountId: 'acct-cf' },
+      }),
+    ).toThrow(IntentError);
+  });
+});
+
 describe('intentPlaceOf / frozenSettingsOf', () => {
   test("a location's placement and observed facts become the intent's place", () => {
     expect(

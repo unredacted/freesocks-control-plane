@@ -47,6 +47,7 @@ import {
   edgeRoleOf,
   isDnsOnly,
   frontsAllowed,
+  takesDnsAccount,
 } from './lib/edges/providers/capabilities';
 import { LEGACY_DNS_PROVIDERS_FRONT_KEY } from './lib/edgeConfig';
 import { upsertSettingRow } from './appSettings';
@@ -420,7 +421,7 @@ async function accountsWritingThrough(
 ): Promise<Doc<'edgeProviderAccounts'>[]> {
   const out: Doc<'edgeProviderAccounts'>[] = [];
   for (const r of await db.query('edgeProviderAccounts').collect()) {
-    if (!EDGE_PROVIDER_CAPABILITIES[r.provider].needsDnsAccount) continue;
+    if (!takesDnsAccount(r.provider)) continue;
     if ((r.settings as { dnsAccountId?: string }).dnsAccountId === id) {
       out.push(r);
       continue;
@@ -449,7 +450,7 @@ async function edgesDependingOnDnsAccount(
   );
   let n = 0;
   for (const front of await db.query('edgeProviderAccounts').collect()) {
-    if (!EDGE_PROVIDER_CAPABILITIES[front.provider].needsDnsAccount) continue;
+    if (!takesDnsAccount(front.provider)) continue;
     for (const e of await liveEdgesOfAccount(db, front._id)) {
       const intent = parseIntent(e.provisionIntent);
       // No intent yet is not "no dependency": an edge of an account that

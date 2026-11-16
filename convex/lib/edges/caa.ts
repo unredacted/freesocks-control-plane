@@ -34,6 +34,8 @@ export const CA_CAA_DOMAINS = {
   globalsign: 'globalsign.com',
   // Amazon's CA (ACM certificates, a CloudFront front's): the first of the four below.
   amazon: 'amazon.com',
+  // One of the two that issue EdgeOne's free certificate (Let's Encrypt the other).
+  trustasia: 'trustasia.com',
 } as const;
 export type CaaCertificateAuthority = keyof typeof CA_CAA_DOMAINS;
 
@@ -46,6 +48,9 @@ export type CaaCertificateAuthority = keyof typeof CA_CAA_DOMAINS;
 export const CA_CAA_ALIASES: Partial<Record<CaaCertificateAuthority, readonly string[]>> = {
   amazon: ['amazontrust.com', 'awstrust.com', 'amazonaws.com'],
 };
+
+/** How the CA validates control of the name (RFC 8657 `validationmethods`). */
+export type CaaValidationMethod = 'dns-01' | 'http-01';
 
 /** One CAA record as DNS returns it (flags 128 = critical). */
 export interface CaaRecord {
@@ -118,9 +123,11 @@ export function caaParamsOf(value: string): Map<string, string> {
 /**
  * Whether a record that names the right issuer can be met by the issuance FCP
  * asks for: no account binding (the provider's ACME account is not FCP's to
- * name), and DNS validation among the methods it allows, when it lists any.
+ * name), and the issuance's validation method (DNS unless said otherwise:
+ * EdgeOne validates a zone connected by CNAME over HTTP) among the methods it
+ * allows, when it lists any.
  */
-export function caaParamsAllow(value: string): boolean {
+export function caaParamsAllow(value: string, method: CaaValidationMethod = 'dns-01'): boolean {
   const params = caaParamsOf(value);
   if (params.has('accounturi')) return false;
   const methods = params.get('validationmethods');
@@ -128,7 +135,7 @@ export function caaParamsAllow(value: string): boolean {
   return methods
     .split(',')
     .map((m) => m.trim().toLowerCase())
-    .includes('dns-01');
+    .includes(method);
 }
 
 /**
@@ -140,6 +147,7 @@ export function caaSetAllows(
   records: readonly CaaRecord[],
   issuer: string | readonly string[],
   wildcard: boolean,
+  method: CaaValidationMethod = 'dns-01',
 ): boolean {
   const tagOf = (r: CaaRecord) => r.tag.trim().toLowerCase();
   if (records.some((r) => (r.flags & 128) !== 0 && !KNOWN_TAGS.has(tagOf(r)))) return false;
@@ -150,7 +158,7 @@ export function caaSetAllows(
   const want = new Set(
     (typeof issuer === 'string' ? [issuer] : issuer).map((i) => i.toLowerCase()),
   );
-  return governing.some((r) => want.has(caaIssuerOf(r.value)) && caaParamsAllow(r.value));
+  return governing.some((r) => want.has(caaIssuerOf(r.value)) && caaParamsAllow(r.value, method));
 }
 
 /**
@@ -171,6 +179,8 @@ export async function checkCaa(a: {
   name: string;
   certificateAuthority: string;
   lookup: CaaLookup;
+  /** How the CA validates the name (absent: DNS, every certificate FCP orders before EdgeOne). */
+  validationMethod?: CaaValidationMethod;
 }): Promise<CaaVerdict> {
   const wildcard = a.name.trim().startsWith('*.');
   const base = wildcard ? a.name.trim().slice(2) : a.name;
@@ -192,7 +202,7 @@ export async function checkCaa(a: {
     }
     if (records.length === 0) continue;
     return {
-      verdict: caaSetAllows(records, issuers, wildcard) ? 'allows' : 'forbids',
+      verdict: caaSetAllows(records, issuers, wildcard, a.validationMethod) ? 'allows' : 'forbids',
       issuer,
       wildcard,
       decidedAt: name,
