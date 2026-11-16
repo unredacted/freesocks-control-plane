@@ -7237,7 +7237,9 @@ one-per-front certificates do (§ "L7 edges"). While it is issued:
   taken, the wait step reports `tls_challenge_missing` while the record is not in place and
   `domain_not_activated` while the domain is still deploying.
 
-A certificate EdgeOne reports `failed` stops the run (`tls_failed`). Tencent documents no issuance
+A certificate EdgeOne reports `failed` stops the run (`tls_failed`). `issued`, which Tencent's
+SDK glosses as a binding failure, is a passing state on the way to `deployed`, and the wait goes
+on. Tencent documents no issuance
 time. The CAA preflight walks the records for a front's name from `_fcp-caa-check.<zone>`
 (§ "L7 edges") once per authority, since EdgeOne picks either for each certificate: the zone is
 refused (`caa_forbids_ca`, naming the one refused) when records exist and do not allow BOTH

@@ -305,7 +305,10 @@ export function certificateState(d: EdgeOneDomain | null | undefined): Readiness
   if (!d) return 'unknown';
   const list = d.certificates;
   if (list.some((c) => c.status === 'deployed')) return 'ready';
-  if (list.some((c) => c.status === 'failed' || c.status === 'issued')) return 'failed';
+  // `failed` (the application failed) stops the run. `issued`, which the SDK
+  // glosses as a binding failure, is treated as a passing state: a free
+  // certificate can report it and then reach `deployed` with no new request.
+  if (list.some((c) => c.status === 'failed')) return 'failed';
   if (d.certificateMode && d.certificateMode !== 'eofreecert') return 'pending';
   return 'pending';
 }

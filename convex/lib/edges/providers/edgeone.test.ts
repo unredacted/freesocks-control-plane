@@ -445,6 +445,22 @@ describe('edgeone: refusals, lost answers and discovery', () => {
     ]);
   });
 
+  test('an issued certificate is still on its way, not failed', async () => {
+    account();
+    const { ledger } = await provision(ns);
+    fake.state.domains[0]!.Certificate.List[0]!.Status = 'issued';
+    const awaitStep = edgeOneProvider
+      .planProvision(ns, spec, tpl)
+      .find((s) => s.kind === 'await_tls')!;
+    const out = await edgeOneProvider.pollStep!(ns, awaitStep, HOST, ledger);
+    expect(out.status).toBe('requested');
+    expect(out).not.toMatchObject({ code: 'tls_failed' });
+    expect(await edgeOneProvider.describe(ns, ledger)).toMatchObject({ state: 'pending' });
+    // Once it lands deployed, the wait finishes.
+    fake.state.domains[0]!.Certificate.List[0]!.Status = 'deployed';
+    expect((await edgeOneProvider.pollStep!(ns, awaitStep, HOST, ledger)).status).toBe('done');
+  });
+
   test('a failed certificate stops the wait with tls_failed', async () => {
     account();
     const { ledger } = await provision(ns);
