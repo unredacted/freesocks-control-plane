@@ -638,6 +638,11 @@ export interface PanelInboundTestParams {
   changeToken: string;
   /** Its `minClientVer` / `maxClientVer`: which clients it admits (src/shared/contracts/realityClients.ts). */
   clientBounds: RealityClientBounds;
+  /**
+   * The `encryption` a member entry of this transport carries: `none`, or the
+   * client string of its VLESS Encryption (public, lib/backend/vlessEncryption.ts).
+   */
+  encryption: string;
 }
 
 /**
@@ -663,7 +668,11 @@ export interface PanelWrites<C> {
     uuid: string,
     body: { templateJson?: unknown; encodedTemplateYaml?: string },
   ): Promise<void>;
-  /** Live parameters of one REALITY inbound for an isolated test link; null when the tag is not REALITY. */
+  /**
+   * Live parameters of one REALITY inbound for an isolated test link; null when
+   * the tag is not REALITY, or runs a VLESS Encryption FCP cannot read (an
+   * entry built for it could not connect).
+   */
   readInboundForTest(
     config: C,
     profileUuid: string,

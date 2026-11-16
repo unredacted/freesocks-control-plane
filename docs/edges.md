@@ -592,6 +592,17 @@ returned by any read); a credential of the wrong kind is `no_qualification_crede
 other combination is `unsupported_protocol` and never L7-fronted. The account is reset first when
 it is used up, and one that cannot be reset is `test_account_used_up` with no session sent
 (§ "Publication", "The test account is kept usable").
+A VLESS transport that runs **VLESS Encryption** ([backends.md](backends.md) § "VLESS
+Encryption") is spoken the way a member's app speaks it: the session's handshake first, with the
+client string the transport's entries carry (from the last look at the backend,
+`lib/edges/listenerEncryption.ts`), then the same VLESS request inside it
+(`frontCheck/vlessEncryption.ts`). A peer that does not complete the handshake does not hold the
+node's key: `auth_failed` with the detail `encryption`. What the check does not speak is refused
+before any socket is opened, as `unsupported_protocol` with a detail: `encryption_unreadable`
+(the backend holds a server string FCP cannot read), `encryption_mode` (the `random` appearance,
+which masks the whole stream) or `encryption_chain` (several keys, a chain of relays). The proof
+is bound to the listener as before, not to the key: a server string changed on the backend
+behind FCP's back shows as a profile changed elsewhere, and the next proof fails.
 The result is stored with its **binding** (hostname, listener id + revision, the three
 protocol fields, transport parameters, intent hash) and an expiry
 (60 minutes, a constant: `EDGE_PLUMBING.l7QualificationTtlMs`); publication re-derives the binding inside the mutation

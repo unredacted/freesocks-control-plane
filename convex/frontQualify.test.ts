@@ -19,6 +19,7 @@ import { fakePanel, type FakePanelUser } from './lib/edges/testing/fakePanel';
 import { __setFrontChecker } from './frontQualifyOps';
 import type { FrontCheckResult } from './lib/edges/frontCheck';
 import { QUALIFICATION_TRAFFIC_LIMIT_BYTES } from './relayQualification';
+import { clientEncryption, generateVlessEncryption } from './lib/backend/vlessEncryption';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -124,6 +125,92 @@ describe('frontQualify.context', () => {
     });
     expect(c!.binding.transportParamsHash).toMatch(/^[0-9a-f]{16}$/);
     expect(c!.binding.intentHash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  describe('a transport that runs VLESS Encryption', () => {
+    const server = generateVlessEncryption().decryption;
+    const encryption = clientEncryption(server)!;
+
+    /** Binds the listener to a backend transport and stores what was observed of it. */
+    async function observe(
+      t: ReturnType<typeof convexTest>,
+      s: Awaited<ReturnType<typeof seed>>,
+      vlessEncryption?: { encryption: string | null },
+    ) {
+      await t.run(async (ctx) => {
+        const backendServerId = await ctx.db.insert('backendServers', {
+          backend: 'remnawave',
+          name: 'panel',
+          slug: 'panel',
+          config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+          isActive: true,
+          priority: 0,
+          keyCount: 0,
+          updatedAt: Date.now(),
+        });
+        await ctx.db.patch(s.relayId, { backendServerId });
+        await ctx.db.patch(s.listenerId, {
+          panelBinding: {
+            inboundTag: 'FREEDOM_WS_E',
+            configProfileUuid: 'p-1',
+            configProfileInboundUuid: 'i-ws-e',
+          },
+        });
+        await ctx.db.insert('panelProfiles', {
+          backendServerId,
+          profileUuid: 'p-1',
+          name: 'FreeSocks-Config',
+          shapeHash: 'h',
+          changeToken: 't',
+          digestKeyId: 'k',
+          inbounds: [
+            {
+              tag: 'FREEDOM_WS_E',
+              inboundUuid: 'i-ws-e',
+              protocol: 'vless',
+              port: 8444,
+              network: 'ws',
+              security: 'none',
+              ...(vlessEncryption
+                ? {
+                    vlessEncryption: {
+                      digest: vlessEncryption.encryption ? 'd' : null,
+                      mode: vlessEncryption.encryption ? ('native' as const) : null,
+                      auth: vlessEncryption.encryption ? ('mlkem768' as const) : null,
+                      encryption: vlessEncryption.encryption,
+                    },
+                  }
+                : {}),
+            },
+          ],
+          observedAt: Date.now(),
+        });
+      });
+    }
+
+    test('the session is handed the client string its member entries carry', async () => {
+      const t = convexTest(schema, modules);
+      const s = await seed(t, { qualificationUserId: UUID });
+      await observe(t, s, { encryption });
+      const c = await t.query(internal.frontQualify.context, { edgeId: s.edgeId });
+      expect(c!.credential).toEqual({ kind: 'vless', uuid: UUID, encryption });
+    });
+
+    test('a server string FCP could not read is passed on as empty, never as plain', async () => {
+      const t = convexTest(schema, modules);
+      const s = await seed(t, { qualificationUserId: UUID });
+      await observe(t, s, { encryption: null });
+      const c = await t.query(internal.frontQualify.context, { edgeId: s.edgeId });
+      expect(c!.credential).toEqual({ kind: 'vless', uuid: UUID, encryption: '' });
+    });
+
+    test('a transport observed as plain is checked as before', async () => {
+      const t = convexTest(schema, modules);
+      const s = await seed(t, { qualificationUserId: UUID });
+      await observe(t, s);
+      const c = await t.query(internal.frontQualify.context, { edgeId: s.edgeId });
+      expect(c!.credential).toEqual({ kind: 'vless', uuid: UUID });
+    });
   });
 
   test('a listener without an authenticated proof is reported as not carried', async () => {

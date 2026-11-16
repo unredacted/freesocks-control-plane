@@ -359,18 +359,20 @@ export type RealityStream = { kind: 'raw' } | { kind: 'xhttp'; path: string; mod
  * One VLESS REALITY share link (pure). Over raw TCP the backend gives its
  * accounts XTLS Vision, and Xray refuses a session asking for another flow;
  * over XHTTP there is no flow and the link carries the path and mode. An IPv6
- * origin is bracketed in the authority.
+ * origin is bracketed in the authority. A transport that runs VLESS Encryption
+ * gets its client string as `encryption` (a link saying `none` could not
+ * connect to it).
  */
 export function realityEntryLine(
   uuid: string,
   address: string,
   port: number,
-  params: { serverNames: string[]; publicKey: string; shortId: string },
+  params: { serverNames: string[]; publicKey: string; shortId: string; encryption?: string },
   remark: string,
   stream: RealityStream = { kind: 'raw' },
 ): string {
   const q = new URLSearchParams({
-    encryption: 'none',
+    encryption: params.encryption ?? 'none',
     ...(stream.kind === 'raw'
       ? { flow: REALITY_RAW_FLOW, type: 'tcp' }
       : { type: 'xhttp', path: stream.path, mode: stream.mode }),

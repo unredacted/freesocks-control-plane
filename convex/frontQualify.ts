@@ -9,8 +9,9 @@
  *
  * Two functions:
  *  - `context` gathers the edge, its frozen intent, the listener's transport
- *    parameters and what it speaks, and the origin's qualification credential,
- *    and derives the BINDING the result will be valid for;
+ *    parameters and what it speaks, the origin's qualification credential and,
+ *    for a transport that runs VLESS Encryption, the client string it is spoken
+ *    with, and derives the BINDING the result will be valid for;
  *  - `record` writes `edges.frontQualification` and `edges.readiness.front`,
  *    re-deriving the binding from the live rows first: a listener or intent
  *    write that landed while the session was in flight means the session
@@ -33,6 +34,7 @@ import {
 import { isUuid } from './lib/edges/frontCheck/vless';
 import type { FrontCredential } from './lib/edges/frontCheck';
 import { protocolIsHttpTransport, protocolL7Proof } from './lib/edges/protocols';
+import { listenerVlessEncryption } from './lib/edges/listenerEncryption';
 import { evaluateAutoQualificationFor } from './edgeProviderAccounts';
 
 const bindingValidator = v.object({
@@ -111,13 +113,23 @@ export const context = internalQuery({
     };
     const proof = protocolL7Proof(proto);
     const trojanPassword = g.relay.qualificationTrojanPassword ?? '';
+    // A VLESS transport that runs VLESS Encryption is spoken with the client
+    // string its member entries carry (public, from the last look at the
+    // backend). One FCP could not read is passed on as empty: the session
+    // refuses it by name instead of checking the transport as if it were plain.
+    const encrypted =
+      proof === 'vless' ? await listenerVlessEncryption(ctx.db, g.relay, g.listener) : null;
     const credential: FrontCredential | null =
       proof === 'trojan'
         ? trojanPassword
           ? { kind: 'trojan', password: trojanPassword }
           : null
         : isUuid(credentialId)
-          ? { kind: 'vless', uuid: credentialId }
+          ? {
+              kind: 'vless',
+              uuid: credentialId,
+              ...(encrypted ? { encryption: encrypted.encryption ?? '' } : {}),
+            }
           : null;
     return {
       relayId: g.relay._id,
