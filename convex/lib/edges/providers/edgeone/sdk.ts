@@ -341,13 +341,15 @@ export function zoneOf(z: Zone): EdgeOneZone {
 /**
  * Whether a zone can carry fronts, in one word: `active`, `paused`, or the
  * state that keeps it from it. A CNAME-access zone is judged by its
- * verification (`cnameStatus`), since its `status` stays `pending` for good;
- * a blocked, moved or unbound one is refused under either access mode.
+ * verification (`cnameStatus`) only while its `status` is one of the two
+ * name-server states (`pending`, which it keeps for good, or `active`); any
+ * other status (`moved`, `deactivated`, `initializing`, `deleted`, or one
+ * Tencent adds later) is returned as is, so it refuses under either mode.
  */
 export function zoneState(z: EdgeOneZone): string {
   if (z.paused) return 'paused';
-  if (z.status && ['moved', 'deactivated', 'initializing'].includes(z.status)) return z.status;
-  if (z.type === 'partial') return z.cnameStatus === 'finished' ? 'active' : 'pending';
+  if (z.type === 'partial' && (z.status === 'pending' || z.status === 'active'))
+    return z.cnameStatus === 'finished' ? 'active' : 'pending';
   return z.status ?? 'unknown';
 }
 

@@ -624,6 +624,15 @@ describe('edgeone: the account and its locations', () => {
       code: 'zone_not_active',
       observed: { zoneStatus: 'deactivated' },
     });
+    // So is any status other than the two name-server ones, known or not.
+    for (const Status of ['deleted', 'moved', 'initializing', 'something-new']) {
+      account({ zones: [zone({ Type: 'partial', Status, CnameStatus: 'finished' })] });
+      expect(await edgeOneProvider.checkLocation!(viaAccount)).toMatchObject({
+        ok: false,
+        code: 'zone_not_active',
+        observed: { zoneStatus: Status },
+      });
+    }
   });
 
   test('a zone not in effect yet (ActiveStatus) is not active', async () => {

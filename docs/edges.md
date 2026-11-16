@@ -7184,8 +7184,9 @@ counts such edges against the DNS account like Fastly's (a DNS account they writ
 be deleted from under them). The location check reads the zone (`active`, in effect: an
 `ActiveStatus` other than `active` refuses it, not paused, the name recorded; a zone connected
 by CNAME keeps `Status: pending` for good, since its name servers never move, so it counts as
-active once `CnameStatus` is `finished`, its site verified; a `moved`, `deactivated` or
-`initializing` zone is refused under either access mode; for a zone EdgeOne
+active once `CnameStatus` is `finished`, its site verified, while its `Status` is `pending` or
+`active`; any other `Status` (`moved`, `deactivated`, `initializing`, `deleted`, or one Tencent
+adds later) is refused under either access mode; for a zone EdgeOne
 hosts, a read of its records, so a key without `teo:DescribeDnsRecords` is refused before any front
 is half built) and refuses a mismatched mode: a CNAME-access zone without a DNS account
 (`zone_needs_dns_account`), an NS-access zone with one (`zone_dns_at_edgeone`), any other access
