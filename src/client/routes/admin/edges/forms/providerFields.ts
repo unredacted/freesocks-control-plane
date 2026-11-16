@@ -357,8 +357,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       kind: 'text',
       step: 'credentials',
       required: true,
-      placeholder: 'AKID...',
-      help: 'The public id paired with the SecretKey. Not a secret.',
+      help: 'The public id paired with the SecretKey, as the API key page shows it. Not a secret.',
     },
     {
       key: 'site',

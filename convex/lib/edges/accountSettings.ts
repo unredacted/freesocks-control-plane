@@ -85,7 +85,9 @@ export const EDGE_SETTINGS_SCHEMAS = {
   // account of a zone connected by CNAME, are a location's.
   edgeone: z.object({
     type: z.literal('edgeone'),
-    secretId: z.string().regex(/^AKID[A-Za-z0-9]{8,124}$/, 'SecretId like AKIDxxxxxxxx'),
+    // Letters and digits only. No prefix is required: older keys start
+    // AKID, newer Tencent Cloud International keys do not.
+    secretId: z.string().regex(/^[A-Za-z0-9]{12,128}$/, 'SecretId is 12 to 128 letters and digits'),
     site: z.enum(['intl', 'china']).optional(),
   }),
 } as const;
