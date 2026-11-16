@@ -217,8 +217,17 @@ describe('EdgeOne: an optional session token and an optional DNS account', () =>
       EDGE_SETTINGS_SCHEMAS.edgeone.safeParse({ type: 'edgeone', secretId: 'AKIDabcdef0123456789' })
         .success,
     ).toBe(true);
+    // A key without the old AKID prefix is accepted too.
+    expect(
+      EDGE_SETTINGS_SCHEMAS.edgeone.safeParse({ type: 'edgeone', secretId: 'IKIDabcdef0123456789' })
+        .success,
+    ).toBe(true);
     expect(
       EDGE_SETTINGS_SCHEMAS.edgeone.safeParse({ type: 'edgeone', secretId: 'secret' }).success,
+    ).toBe(false);
+    expect(
+      EDGE_SETTINGS_SCHEMAS.edgeone.safeParse({ type: 'edgeone', secretId: 'AKID abc-def 0123' })
+        .success,
     ).toBe(false);
     expect(pickCredentialIdentifiers('edgeone', { secretId: ' AKIDx ', site: 'china' })).toEqual({
       secretId: 'AKIDx',
