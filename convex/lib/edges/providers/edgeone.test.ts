@@ -175,6 +175,37 @@ async function destroyAll(cfg: EdgeOneConfig, ledger: Ledger): Promise<string[]>
 }
 
 describe('edgeone: a zone EdgeOne hosts (NS access)', () => {
+  test('a domain is switched off before it is deleted, and left alone while it deploys', async () => {
+    account();
+    const { ledger } = await provision(ns);
+    const dom = ledger.resources.find((r) => r.kind === 'acceleration_domain')!;
+    expect(fake.state.domains[0]!.DomainStatus).toBe('online');
+    fake.state.readsToOnline = Number.POSITIVE_INFINITY;
+    fake.state.calls.length = 0;
+    // Online: switched off, not deleted (Tencent refuses to delete an online domain).
+    expect(await edgeOneProvider.runDestroy(ns, dom, ledger)).toEqual({
+      status: 'delete_requested',
+    });
+    expect(fake.state.calls).toContain('ModifyAccelerationDomainStatuses');
+    expect(fake.state.calls).not.toContain('DeleteAccelerationDomains');
+    expect(fake.state.domains[0]!.DomainStatus).toBe('process');
+    // Still deploying the switch: nothing is called but the read.
+    fake.state.calls.length = 0;
+    expect(await edgeOneProvider.runDestroy(ns, dom, ledger)).toEqual({
+      status: 'delete_requested',
+    });
+    expect(fake.state.calls).toEqual(['DescribeAccelerationDomains']);
+    // Once it lands offline: deleted, then confirmed gone.
+    fake.state.readsToOnline = 0;
+    expect(await edgeOneProvider.runDestroy(ns, dom, ledger)).toEqual({
+      status: 'delete_requested',
+    });
+    expect(fake.state.domains).toEqual([]);
+    expect(await edgeOneProvider.runDestroy(ns, dom, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+  });
+
   test('creates the domain, switches on the record EdgeOne added, waits for the certificate, and tears it all down', async () => {
     account();
     const { ledger, last } = await provision(ns);

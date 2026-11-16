@@ -145,6 +145,8 @@ export interface EdgeOneApi {
   /** The one domain with exactly this name in the zone, or null. */
   getDomain(zoneId: string, name: string): Promise<EdgeOneDomain | null>;
   listDomains(zoneId: string): Promise<{ items: EdgeOneDomain[]; truncated: boolean }>;
+  /** EdgeOne deletes only a domain switched off: `offline` first, then `deleteDomain`. */
+  setDomainStatus(zoneId: string, name: string, status: 'online' | 'offline'): Promise<void>;
   deleteDomain(zoneId: string, name: string): Promise<void>;
   /** Ask for EdgeOne's free certificate on the host (`eofreecert`). */
   requestFreeCertificate(zoneId: string, host: string): Promise<void>;
@@ -441,6 +443,7 @@ export type EdgeOneSdkClient = Pick<
   | 'DescribeL7AccSetting'
   | 'DescribeAccelerationDomains'
   | 'CreateAccelerationDomain'
+  | 'ModifyAccelerationDomainStatuses'
   | 'DeleteAccelerationDomains'
   | 'ModifyHostsCertificate'
   | 'DescribeDnsRecords'
@@ -536,6 +539,17 @@ export function edgeOneSdkApi(
       return items.find((d) => d.name === lower(name)) ?? null;
     },
     listDomains: (zoneId) => domainsWhere(zoneId),
+    async setDomainStatus(zoneId, name, status) {
+      await call('domain-status', 'ModifyAccelerationDomainStatuses', () =>
+        // Not forced, as the delete: only the domain itself is switched.
+        client.ModifyAccelerationDomainStatuses({
+          ZoneId: zoneId,
+          DomainNames: [name],
+          Status: status,
+          Force: false,
+        }),
+      );
+    },
     async deleteDomain(zoneId, name) {
       await call('domain-delete', 'DeleteAccelerationDomains', () =>
         // Not forced: Force would also delete what other features link to the name.

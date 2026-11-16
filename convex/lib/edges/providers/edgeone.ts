@@ -951,8 +951,14 @@ export const edgeOneProvider: EdgeProvider<EdgeOneConfig, EdgeOneTemplateParams>
           const api = edgeOneApiFor(cfg);
           const zoneId =
             typeof meta.zoneId === 'string' ? meta.zoneId : requireZone(cfg, 'destroy');
-          if (!(await api.getDomain(zoneId, r.resourceId))) return { status: 'confirmed_gone' };
-          await api.deleteDomain(zoneId, r.resourceId);
+          const d = await api.getDomain(zoneId, r.resourceId);
+          if (!d) return { status: 'confirmed_gone' };
+          // EdgeOne refuses to delete a domain that is not switched off
+          // (InvalidParameterValue.InvalidDomainStatus): switch it off first,
+          // wait while it deploys, and delete it on a later pass once offline.
+          if (d.status === 'offline') await api.deleteDomain(zoneId, r.resourceId);
+          else if (d.status !== 'process')
+            await api.setDomainStatus(zoneId, r.resourceId, 'offline');
           return { status: 'delete_requested' };
         }
         case 'tls_subscription':

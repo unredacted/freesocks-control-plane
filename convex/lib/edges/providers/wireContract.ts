@@ -1084,6 +1084,13 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'POST',
         path: '^/$',
+        action: 'ModifyAccelerationDomainStatuses',
+        purpose: "switch the front's acceleration domain off, which a delete needs",
+        body: ['ZoneId', 'DomainNames', 'Status'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
         action: 'DeleteAccelerationDomains',
         purpose: "delete the front's acceleration domain",
         body: ['ZoneId', 'DomainNames'],

@@ -48,6 +48,8 @@ interface FakeDomain {
   Certificate: { Mode: string; List: Array<{ CertId: string; Type: string; Status: string }> };
   reads: number;
   certReads: number;
+  /** Where a `process` (deploying) domain lands: `online` unless switched. */
+  target?: string;
 }
 
 interface FakeRecord {
@@ -191,7 +193,7 @@ export function fakeEdgeOne(init: Partial<FakeEdgeOneState> = {}): FakeEdgeOne {
         for (const d of found) {
           d.reads++;
           if (d.DomainStatus === 'process' && d.reads >= state.readsToOnline)
-            d.DomainStatus = 'online';
+            d.DomainStatus = d.target ?? 'online';
           const cert = d.Certificate.List[0];
           if (cert && cert.Status === 'applying' && ++d.certReads >= state.readsToDeployed)
             cert.Status = 'deployed';
@@ -238,6 +240,21 @@ export function fakeEdgeOne(init: Partial<FakeEdgeOneState> = {}): FakeEdgeOne {
           });
         return {};
       }
+      case 'ModifyAccelerationDomainStatuses': {
+        const names = (req.DomainNames as string[]).map(norm);
+        const hit = state.domains.filter(
+          (d) => d.ZoneId === req.ZoneId && names.includes(d.DomainName),
+        );
+        if (hit.length === 0)
+          throw new FakeTencentError('ResourceUnavailable.DomainNotFound', 'domain not found');
+        // A switch deploys first, then lands (as a new domain does).
+        for (const d of hit) {
+          d.DomainStatus = 'process';
+          d.target = req.Status as string;
+          d.reads = 0;
+        }
+        return {};
+      }
       case 'DeleteAccelerationDomains': {
         const names = (req.DomainNames as string[]).map(norm);
         const gone = state.domains.filter(
@@ -245,6 +262,12 @@ export function fakeEdgeOne(init: Partial<FakeEdgeOneState> = {}): FakeEdgeOne {
         );
         if (gone.length === 0)
           throw new FakeTencentError('ResourceUnavailable.DomainNotFound', 'domain not found');
+        // As Tencent: only a domain switched off may be deleted.
+        if (gone.some((d) => d.DomainStatus !== 'offline'))
+          throw new FakeTencentError(
+            'InvalidParameterValue.InvalidDomainStatus',
+            'Invalid domain name. Please check the status.',
+          );
         state.domains = state.domains.filter((d) => !gone.includes(d));
         state.records = state.records.filter(
           (r) => !(r.auto && gone.some((d) => d.DomainName === r.Name && d.Cname === r.Content)),
