@@ -12,6 +12,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
 import { installFakeBackend } from './lib/edges/testing/fakeBackend';
+import { jsonRes, routeFetch } from './lib/edges/testing/mockFetch';
 import { signValue } from './lib/cookies';
 import { twinProblem } from './lib/backend/modeTwin';
 import { clientEncryption, generateVlessEncryption } from './lib/backend/vlessEncryption';
@@ -168,7 +169,12 @@ describe("a mode's encrypted twin", () => {
     });
     expect(await s.groupTransports()).toEqual([own, twinUuid].sort());
     const view = BackendSetupView.parse(await (await s.call('GET', 'setup')).json());
-    expect(view.modes[0]!.twin).toEqual({ tag: TWIN_TAG, port: 8444, path: '/ws-e' });
+    expect(view.modes[0]!.twin).toEqual({
+      tag: TWIN_TAG,
+      port: 8444,
+      path: '/ws-e',
+      detaching: false,
+    });
 
     // Nothing FCP keeps holds the key: only what is public about the layer.
     const everything = JSON.stringify(
@@ -287,6 +293,164 @@ describe("a mode's encrypted twin", () => {
     expect(await codeOf(await twin(s, { action: 'detach' }))).toBe('servers.manage_disabled');
   });
 
+  test('a group that holds anything else is never rewritten, on the way in or out', async () => {
+    const s = await seed();
+    await addTransport(s, TWIN_TAG, encryptedTwin);
+    await addTransport(s, 'PLAIN_WS', { kind: 'ws', port: 8445, path: '/ws-p' });
+    const uuidOf = (tag: string) =>
+      (s.panel.profiles[0].inbounds as { uuid: string; tag: string }[]).find((i) => i.tag === tag)!
+        .uuid;
+    const m = await s.mode();
+    const squad = s.panel.squads.find((x) => x.uuid === m.groupUuid)!;
+    // Someone put another transport into the mode's group on the backend.
+    const drift = async (uuids: string[]) => {
+      squad.inbounds = uuids.map((uuid) => ({ uuid, tag: uuid }));
+      await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    };
+    const own = m.transport!.uuid;
+    await drift([own, uuidOf('PLAIN_WS')]);
+    expect(await codeOf(await twin(s, { action: 'attach', transportTag: TWIN_TAG }))).toBe(
+      'servers.setup_mode_drifted:freedom-ws',
+    );
+    expect((await s.mode()).twin).toBeUndefined();
+
+    // With the twin attached, the same edit must not be undone by a detach:
+    // rewriting the group to the mode's transport would drop it without a word.
+    await drift([own]);
+    expect((await twin(s, { action: 'attach', transportTag: TWIN_TAG })).status).toBe(200);
+    const three = [own, uuidOf(TWIN_TAG), uuidOf('PLAIN_WS')];
+    await drift(three);
+    expect(await codeOf(await twin(s, { action: 'detach' }))).toBe(
+      'servers.setup_mode_drifted:freedom-ws',
+    );
+    expect(await s.groupTransports()).toEqual([...three].sort());
+    expect((await s.mode()).twin).toMatchObject({ tag: TWIN_TAG });
+  });
+
+  test('an op the backend refuses leaves an attach and a detach that can be asked again', async () => {
+    const s = await seed();
+    await addTransport(s, TWIN_TAG, encryptedTwin);
+    const own = (await s.mode()).transport!.uuid;
+    const twinUuid = (s.panel.profiles[0].inbounds as { uuid: string; tag: string }[]).find(
+      (i) => i.tag === TWIN_TAG,
+    )!.uuid;
+    // The backend refuses every change of a group until told otherwise.
+    let refusing = true;
+    s.panel.stub.route(
+      routeFetch((c) =>
+        refusing && c.path === '/api/internal-squads' && c.method === 'PATCH'
+          ? jsonRes({ message: 'no' }, 400)
+          : s.panel.handle(c),
+      ),
+    );
+
+    // A send that failed has an unknown outcome to the ledger: an operator
+    // settles it (the attested recovery) before the same thing is asked again.
+    const recoverOpenOp = async () => {
+      const open = (await s.t.run((ctx) => ctx.db.query('panelOps').collect())).find(
+        (o) => o.open,
+      )!;
+      const res = await s.call('POST', `ops/${open._id}/recover`, {
+        credentialsRevoked: true,
+        noInFlightExecutor: true,
+        queueDrained: true,
+        note: 'the backend refused it',
+      });
+      expect(res.status).toBe(200);
+    };
+
+    // Attach: the group did not change, the twin is recorded, and asking again works.
+    await twin(s, { action: 'attach', transportTag: TWIN_TAG });
+    expect(await s.groupTransports()).toEqual([own]);
+    expect((await s.mode()).twin).toMatchObject({ tag: TWIN_TAG });
+    refusing = false;
+    await recoverOpenOp();
+    expect((await twin(s, { action: 'attach', transportTag: TWIN_TAG })).status).toBe(200);
+    expect(await s.groupTransports()).toEqual([own, twinUuid].sort());
+
+    // Detach: refused by the backend, the group still carries the twin, so the
+    // setup must still know it (or nobody could ask again).
+    refusing = true;
+    await twin(s, { action: 'detach' });
+    expect(await s.groupTransports()).toEqual([own, twinUuid].sort());
+    expect((await s.mode()).twin).toMatchObject({ tag: TWIN_TAG, detaching: true });
+    refusing = false;
+    await recoverOpenOp();
+    expect((await twin(s, { action: 'detach' })).status).toBe(200);
+    expect(await s.groupTransports()).toEqual([own]);
+    expect((await s.mode()).twin).toBeUndefined();
+    expect(await codeOf(await twin(s, { action: 'detach' }))).toBe('servers.twin_absent');
+  });
+
+  test('a detach that changed its mind: attaching again keeps the twin', async () => {
+    const s = await seed();
+    await addTransport(s, TWIN_TAG, encryptedTwin);
+    expect((await twin(s, { action: 'attach', transportTag: TWIN_TAG })).status).toBe(200);
+    const m = await s.mode();
+    await s.t.run((ctx) =>
+      ctx.db.patch(s.setupId, {
+        modes: [{ ...m, twin: { ...m.twin!, detaching: true } }],
+      }),
+    );
+    expect(await (await twin(s, { action: 'attach', transportTag: TWIN_TAG })).json()).toEqual({
+      op: null,
+    });
+    expect((await s.mode()).twin).toEqual(m.twin);
+  });
+
+  test('a transport something already uses is not attached: a twin is proved before members get it', async () => {
+    const s = await seed();
+    await addTransport(s, TWIN_TAG, encryptedTwin);
+    const own = (await s.mode()).transport!.uuid;
+    const twinUuid = (s.panel.profiles[0].inbounds as { uuid: string; tag: string }[]).find(
+      (i) => i.tag === TWIN_TAG,
+    )!.uuid;
+    const attach = async () => codeOf(await twin(s, { action: 'attach', transportTag: TWIN_TAG }));
+
+    // A node already serves it.
+    const nodeId = await s.t.run((ctx) =>
+      ctx.db.insert('panelNodes', {
+        backendServerId: s.serverId,
+        nodeUuid: 'n-1',
+        name: 'node-a',
+        address: '192.0.2.10',
+        port: 2222,
+        countryCode: 'NL',
+        online: true,
+        isDisabled: false,
+        usersOnline: 0,
+        activeInboundUuids: [own, twinUuid],
+        tags: [],
+        observedAt: Date.now(),
+      }),
+    );
+    expect(await attach()).toBe('servers.twin_already_served');
+    await s.t.run((ctx) => ctx.db.delete(nodeId));
+
+    // An address already names it.
+    const hostId = await s.t.run((ctx) =>
+      ctx.db.insert('panelHosts', {
+        backendServerId: s.serverId,
+        hostUuid: 'h-1',
+        remark: 'someone-made-this',
+        address: 'front.example',
+        port: 443,
+        isDisabled: true,
+        isHidden: false,
+        configProfileInboundUuid: twinUuid,
+        nodeUuids: [],
+        observedAt: Date.now(),
+      }),
+    );
+    expect(await attach()).toBe('servers.twin_already_served');
+    expect(await s.groupTransports()).toEqual([own]);
+    expect((await s.mode()).twin).toBeUndefined();
+
+    // With neither, it is a twin like any other.
+    await s.t.run((ctx) => ctx.db.delete(hostId));
+    expect((await twin(s, { action: 'attach', transportTag: TWIN_TAG })).status).toBe(200);
+  });
+
   test('a twin a node serves is not taken away', async () => {
     const s = await seed();
     await addTransport(s, TWIN_TAG, encryptedTwin);
@@ -384,6 +548,11 @@ describe('twinProblem', () => {
   test("another mode's transport or twin is taken", () => {
     const other = { ...mode, slug: 'other', tag: 'OTHER', twin: { tag: 'WS_E', uuid: 'i-twin' } };
     expect(twinProblem({ mode, modes: [mode, other], inbounds: [inbound()], tag: 'WS_E' })).toBe(
+      'servers.twin_transport_taken',
+    );
+    // Retagged on the backend, it is still the same transport: the uuid says so.
+    const retagged = { ...other, twin: { tag: 'OLD_TAG', uuid: 'i-twin' } };
+    expect(twinProblem({ mode, modes: [mode, retagged], inbounds: [inbound()], tag: 'WS_E' })).toBe(
       'servers.twin_transport_taken',
     );
   });

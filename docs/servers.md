@@ -740,20 +740,28 @@ transportTag}` (`convex/backendTwins.ts`). The transport is checked against the 
    transport, loopback port and path; never a key). `{action: "detach"}` takes it out of the
    group and off the setup; the transport stays on the profile.
 
-| Refused                               | When                                                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `servers.twin_unsupported`            | The mode is not a WebSocket mode behind L7 fronts (a REALITY mode is end to end already).              |
-| `servers.twin_present`                | The mode already has another twin.                                                                     |
-| `servers.twin_transport_unknown`      | The setup's profile, as last observed, has no transport with that tag.                                 |
-| `servers.twin_transport_taken`        | The transport is a mode's own, or another mode's twin.                                                 |
-| `servers.twin_not_websocket`          | It is not a loopback VLESS WebSocket transport with a port and a path.                                 |
-| `servers.twin_not_encrypted`          | It runs no VLESS Encryption.                                                                           |
-| `servers.twin_encryption_unreadable`  | FCP cannot read its VLESS Encryption on the profile.                                                   |
-| `servers.twin_encryption_unsupported` | FCP's own sessions cannot speak it (the `random` appearance, several keys), so it could not be proved. |
-| `servers.twin_same_route`             | It shares the mode's port or path: the node's front server tells the two apart by them.                |
-| `servers.setup_mode_drifted:<slug>`   | The mode's group holds something else than the mode's transport.                                       |
-| `servers.twin_in_use` (detach)        | A node still serves the twin.                                                                          |
-| `servers.twin_absent` (detach)        | The mode has no twin.                                                                                  |
+| Refused                               | When                                                                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers.twin_unsupported`            | The mode is not a WebSocket mode behind L7 fronts (a REALITY mode is end to end already).                                                                   |
+| `servers.twin_present`                | The mode already has another twin.                                                                                                                          |
+| `servers.twin_transport_unknown`      | The setup's profile, as last observed, has no transport with that tag.                                                                                      |
+| `servers.twin_transport_taken`        | The transport is a mode's own, or another mode's twin.                                                                                                      |
+| `servers.twin_not_websocket`          | It is not a loopback VLESS WebSocket transport with a port and a path.                                                                                      |
+| `servers.twin_not_encrypted`          | It runs no VLESS Encryption.                                                                                                                                |
+| `servers.twin_encryption_unreadable`  | FCP cannot read its VLESS Encryption on the profile.                                                                                                        |
+| `servers.twin_encryption_unsupported` | FCP's own sessions cannot speak it (the `random` appearance, several keys), so it could not be proved.                                                      |
+| `servers.twin_same_route`             | It shares the mode's port or path: the node's front server tells the two apart by them.                                                                     |
+| `servers.twin_already_served`         | A node already serves the transport, or an address already uses it: in the group it would go live to members unproved.                                      |
+| `servers.setup_mode_drifted:<slug>`   | The mode's group holds something else than the mode's transport (and its twin). Attach and detach both refuse: a rewrite would drop whatever else it holds. |
+| `servers.twin_in_use` (detach)        | A node still serves the twin.                                                                                                                               |
+| `servers.twin_absent` (detach)        | The mode has no twin.                                                                                                                                       |
+
+**When a change does not land.** The twin is recorded with the attach request, so after an op
+the backend refused, asking again only claims the group again. A detach keeps the record
+(`twin.detaching`) until the group is seen without the twin (`backendTwins.settle` after the
+op, or the next ask): the setup never forgets a transport its group still carries. A failed
+send is an unknown outcome to the ledger like any other (§ Writes: the operations ledger) and
+is settled there before the same thing can be asked again.
 
 A mode's group carries **exactly** the mode's transport and its twin (`groupCarriesMode`): that
 is what a change of the setup checks a set-up mode against, so a mode with a twin is not read as

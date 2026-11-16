@@ -1510,7 +1510,14 @@ export const view = internalQuery({
                 : null,
             }
           : null,
-        twin: m.twin ? { tag: m.twin.tag, port: m.twin.port, path: m.twin.path } : null,
+        twin: m.twin
+          ? {
+              tag: m.twin.tag,
+              port: m.twin.port,
+              path: m.twin.path,
+              detaching: m.twin.detaching === true,
+            }
+          : null,
         family: m.family,
       })),
       templates: row.templates.map((t) => ({ family: t.family, state: t.state })),

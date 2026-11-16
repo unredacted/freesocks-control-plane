@@ -484,6 +484,12 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         : await ctx.runMutation(internal.backendTwins.detach, args);
     if (!opId) return json({ op: null });
     await ctx.runAction(internal.backendWrites.run, { opId });
+    // A detach forgets the twin only once the group is seen without it.
+    if (w.data.action === 'detach')
+      await ctx.runMutation(internal.backendTwins.settle, {
+        backendServerId: instance.id,
+        slug: c,
+      });
     return json({ op: await ctx.runQuery(internal.backendLedger.view, { opId }) });
   }
   if (a && b === 'profiles' && c && (d === 'preview' || d === 'apply')) {

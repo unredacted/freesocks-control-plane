@@ -70,7 +70,12 @@ export function twinProblem(a: {
   if (!inbound) return 'servers.twin_transport_unknown';
   if (
     a.modes.some(
-      (m) => m.tag === tag || m.twin?.tag === tag || m.transport?.uuid === inbound.inboundUuid,
+      (m) =>
+        m.tag === tag ||
+        m.twin?.tag === tag ||
+        m.transport?.uuid === inbound.inboundUuid ||
+        // By its uuid too: a transport retagged on the backend is still the same one.
+        m.twin?.uuid === inbound.inboundUuid,
     )
   )
     return 'servers.twin_transport_taken';

@@ -555,7 +555,16 @@ export const ModeSetupView = z.object({
    * The mode's encrypted twin: a second transport that runs VLESS Encryption,
    * carried by the mode's group beside its own. Null = none.
    */
-  twin: z.object({ tag: z.string(), port: z.number(), path: z.string() }).nullable().default(null),
+  twin: z
+    .object({
+      tag: z.string(),
+      port: z.number(),
+      path: z.string(),
+      /** A detach was asked for and its group change has not been seen to land. */
+      detaching: z.boolean().default(false),
+    })
+    .nullable()
+    .default(null),
   family: z.enum(['none', 'bound', 'unbound', 'target_mismatch', 'bound_elsewhere']),
 });
 export type ModeSetupView = z.infer<typeof ModeSetupView>;

@@ -99,10 +99,52 @@ async function saveMode(ctx: MutationCtx, row: Doc<'panelSetups'>, next: SetupMo
   });
 }
 
+type Twin = NonNullable<SetupMode['twin']>;
+
+/** The mode without its twin: what its group carries once the twin is out. */
+function withoutTwin(mode: SetupMode): SetupMode {
+  const { twin: _gone, ...rest } = mode;
+  void _gone;
+  return rest;
+}
+
+/**
+ * A group that holds neither exactly the mode's transport nor exactly that and
+ * the twin has been changed somewhere else. It is never rewritten from here:
+ * whatever else it holds would be dropped without a word.
+ */
+function refuseDrifted(mode: SetupMode): never {
+  return refuse(
+    `servers.setup_mode_drifted:${mode.slug}`,
+    `The group of mode ${mode.name} changed on the backend. Look at it under Mode groups first`,
+  );
+}
+
+/** Whether anything on the backend already uses a transport: a node serving it, or an address bound to it. */
+async function transportInUse(
+  ctx: MutationCtx,
+  backendServerId: Id<'backendServers'>,
+  uuid: string,
+): Promise<{ node: boolean; address: boolean }> {
+  const nodes = await ctx.db
+    .query('panelNodes')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect();
+  const hosts = await ctx.db
+    .query('panelHosts')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect();
+  return {
+    node: nodes.some((n) => n.activeInboundUuids.includes(uuid)),
+    address: hosts.some((h) => h.configProfileInboundUuid === uuid),
+  };
+}
+
 /**
  * Make a transport of the profile the mode's encrypted twin. Answers the
  * ledger op that puts it into the mode's group (null when the group already
- * carries it): the caller runs it.
+ * carries it): the caller runs it. The record is written with the request, so
+ * asking again after an op that did not land only claims the group again.
  */
 export const attach = internalMutation({
   args: {
@@ -122,29 +164,35 @@ export const attach = internalMutation({
     });
     if (problem) refuse(problem, WORDS[problem]);
     const inbound = c.inbounds.find((i) => i.tag === tag);
-    // Asked again for the twin it has (an op that did not settle): the record
-    // stands, and only the group is looked at again.
-    const twin: NonNullable<SetupMode['twin']> =
-      c.mode.twin ??
-      (inbound
-        ? {
-            tag,
-            uuid: inbound.inboundUuid,
-            ...(inbound.listen ? { listen: inbound.listen } : {}),
-            port: inbound.port!,
-            path: inbound.path!,
-          }
-        : refuse('servers.twin_transport_unknown', WORDS['servers.twin_transport_unknown']));
-    const next: SetupMode = { ...c.mode, twin };
-    // The group: the mode's transport and the twin, nothing else. A group that
-    // holds anything else has drifted, and is not rewritten from here.
+    let twin: Twin;
+    if (c.mode.twin) {
+      // Asked again for the twin it has (an op that did not land, or a detach
+      // changed its mind): the record stands, and the group is looked at again.
+      twin = { ...c.mode.twin };
+      delete twin.detaching;
+    } else {
+      if (!inbound)
+        return refuse('servers.twin_transport_unknown', WORDS['servers.twin_transport_unknown']);
+      // Attaching gives members nothing because nothing serves or names the
+      // transport yet. One a node already serves, or an address already
+      // names, would go live to the mode's members the moment the group
+      // carries it, unproved.
+      const used = await transportInUse(ctx, a.backendServerId, inbound.inboundUuid);
+      if (used.node || used.address)
+        refuse('servers.twin_already_served', WORDS_SERVED[used.node ? 'node' : 'address']);
+      twin = {
+        tag,
+        uuid: inbound.inboundUuid,
+        ...(inbound.listen ? { listen: inbound.listen } : {}),
+        port: inbound.port!,
+        path: inbound.path!,
+      };
+    }
+    const base = withoutTwin(c.mode);
+    const next: SetupMode = { ...base, twin };
     let opId: Id<'panelOps'> | null = null;
     if (!groupCarriesMode(c.group.inboundUuids, next)) {
-      if (!groupCarriesMode(c.group.inboundUuids, c.mode))
-        refuse(
-          `servers.setup_mode_drifted:${c.mode.slug}`,
-          `The group of mode ${c.mode.name} changed on the backend. Look at it under Mode groups first`,
-        );
+      if (!groupCarriesMode(c.group.inboundUuids, base)) refuseDrifted(c.mode);
       opId = (
         await ctx.runMutation(internal.backendWrites.requestModeGroupUpdate, {
           backendServerId: a.backendServerId,
@@ -164,7 +212,7 @@ export const attach = internalMutation({
       payload: {
         backendSlug: c.server.slug,
         mode: c.mode.slug,
-        tag,
+        tag: twin.tag,
         port: twin.port,
         auth: inbound?.vlessEncryption?.auth ?? null,
       },
@@ -173,7 +221,19 @@ export const attach = internalMutation({
   },
 });
 
-/** Take a mode's encrypted twin away: out of its group and off the setup. The transport stays on the profile. */
+const WORDS_SERVED = {
+  node: 'A node already serves that transport. Turn it off there first: a twin is proved before members get it',
+  address:
+    'An address already uses that transport. Remove it first: a twin is proved before members get it',
+} as const;
+
+/**
+ * Take a mode's encrypted twin away: out of its group, then off the setup.
+ * The transport stays on the profile. The record goes only once the group no
+ * longer carries the twin (`settle`, or the next ask), so an op the backend
+ * refused leaves a detach that can be asked again, never a group that holds a
+ * transport the setup has forgotten.
+ */
 export const detach = internalMutation({
   args: { backendServerId: v.id('backendServers'), slug: v.string(), ...actor },
   handler: async (ctx, a): Promise<{ opId: Id<'panelOps'> | null }> => {
@@ -181,20 +241,18 @@ export const detach = internalMutation({
     const twin = c.mode.twin;
     if (!twin) return refuse('servers.twin_absent', 'This mode has no encrypted twin');
     // A node that serves it has members' entries pointing at it.
-    const nodes = await ctx.db
-      .query('panelNodes')
-      .withIndex('by_server', (q) => q.eq('backendServerId', a.backendServerId))
-      .collect();
-    if (nodes.some((n) => n.activeInboundUuids.includes(twin.uuid)))
+    if ((await transportInUse(ctx, a.backendServerId, twin.uuid)).node)
       refuse(
         'servers.twin_in_use',
         'A node still serves the encrypted twin. Turn it off there first',
       );
-    const { twin: _gone, ...rest } = c.mode;
-    void _gone;
-    const next: SetupMode = rest;
+    const base = withoutTwin(c.mode);
     let opId: Id<'panelOps'> | null = null;
-    if (!groupCarriesMode(c.group.inboundUuids, next))
+    if (groupCarriesMode(c.group.inboundUuids, base)) {
+      // Already out of the group (this ask, or one whose op landed): done.
+      await saveMode(ctx, c.row, base);
+    } else {
+      if (!groupCarriesMode(c.group.inboundUuids, { ...base, twin })) refuseDrifted(c.mode);
       opId = (
         await ctx.runMutation(internal.backendWrites.requestModeGroupUpdate, {
           backendServerId: a.backendServerId,
@@ -203,7 +261,8 @@ export const detach = internalMutation({
           actorAdminId: a.actorAdminId,
         })
       ).opId;
-    await saveMode(ctx, c.row, next);
+      await saveMode(ctx, c.row, { ...base, twin: { ...twin, detaching: true } });
+    }
     await writeAuditLog(ctx, {
       actorType: a.actorAdminId ? 'admin' : 'system',
       actorId: a.actorAdminId ?? undefined,
@@ -213,5 +272,32 @@ export const detach = internalMutation({
       payload: { backendSlug: c.server.slug, mode: c.mode.slug, tag: twin.tag },
     });
     return { opId };
+  },
+});
+
+/**
+ * After a detach's op has run: forget the twin once the group, as the backend
+ * was last seen, no longer carries it. Anything else leaves the record as it
+ * is, to be asked again. Never throws: it is a look, not a request.
+ */
+export const settle = internalMutation({
+  args: { backendServerId: v.id('backendServers'), slug: v.string() },
+  handler: async (ctx, a): Promise<{ detached: boolean }> => {
+    const row = await ctx.db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', a.backendServerId))
+      .unique();
+    const mode = row?.modes?.find((m) => m.slug === a.slug);
+    if (!row || !mode?.twin?.detaching || !mode.groupUuid) return { detached: false };
+    const group = await ctx.db
+      .query('panelSquads')
+      .withIndex('by_server_uuid', (q) =>
+        q.eq('backendServerId', a.backendServerId).eq('squadUuid', mode.groupUuid!),
+      )
+      .unique();
+    const base = withoutTwin(mode);
+    if (!group || !groupCarriesMode(group.inboundUuids, base)) return { detached: false };
+    await saveMode(ctx, row, base);
+    return { detached: true };
   },
 });

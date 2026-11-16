@@ -4765,6 +4765,10 @@ export default defineSchema({
             listen: v.optional(v.string()),
             port: v.number(),
             path: v.string(),
+            // A detach was asked for and its group op has not been seen to
+            // land: the twin still counts as the mode's (the group may still
+            // carry it) but is on its way out, and no node may take it up.
+            detaching: v.optional(v.boolean()),
           }),
         ),
         family: v.union(

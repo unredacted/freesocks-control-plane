@@ -472,6 +472,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.twin_same_route':
     'The twin needs a port and a path of its own. The node’s front server tells the two apart by them.',
   'servers.twin_in_use': 'A node still serves the encrypted twin. Turn it off there first.',
+  'servers.twin_already_served':
+    'A node or an address already uses that transport. Take it off there first: a twin is checked before members get it.',
   'servers.extra_mode_unsupported':
     'Only a direct Hysteria 2 transport can be served beside a node’s own mode.',
   'servers.extra_mode_node_not_direct':
