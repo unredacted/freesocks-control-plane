@@ -18,12 +18,13 @@
  */
 import YAML from 'yaml';
 import { AUTO_GROUP_NAME } from '../../../../src/shared/entryNames';
-import { isVlessEncrypted } from '../../backend/vlessEncryption';
+import { parseClientEncryption } from '../../backend/vlessEncryption';
 import { sameAddress } from '../hosts';
 import { codecFor, type ListenerProto } from '../protocols';
 import { cloneJson, pruneRefs, uniqueName } from './refs';
 import {
   planEntries,
+  retainedTemplates,
   templateEntries,
   AUTO_GROUP_TEST_URL,
   orderEndpoints,
@@ -94,7 +95,7 @@ function entriesOf(proxies: readonly unknown[]): MatchableEntry<Obj>[] {
       port: typeof p.port === 'number' ? p.port : null,
       supported: (proto) => codecFor(proto, 'clash').includes(String(p.type)),
       agrees: (proto) => proxyAgrees(p, proto),
-      encrypted: p.type === 'vless' && isVlessEncrypted(p.encryption),
+      encrypted: p.type === 'vless' && parseClientEncryption(p.encryption) !== null,
     });
   }
   return out;
@@ -140,6 +141,15 @@ export function renderClash(input: RenderInput): RenderOutput {
   for (const t of templateObjs) if (typeof t.name === 'string') templateSet.add(t.name);
   const isTemplate = (p: Obj) =>
     templateObjs.has(p) || (typeof p.name === 'string' && templateSet.has(p.name));
+  // The templates that stay beside the rendered entries (drop off): only the
+  // kind the encryption rule hands out. Every other template's name goes from
+  // the groups and rules with it.
+  const retained = retainedTemplates(resolved, input.rule);
+  const retainedNames = templateIdentities(entries, retained);
+  for (const t of retained) if (typeof t.name === 'string') retainedNames.add(t.name);
+  const isRetained = (p: Obj) =>
+    retained.has(p) || (typeof p.name === 'string' && retainedNames.has(p.name));
+  const removedTemplates = [...templateSet].filter((n) => !retainedNames.has(n));
   // Proxies edge-required delivery leaves out; their names go from every group
   // and rule with them (unless a proxy that stays has the same name).
   const withheld = withheldEntries(entries, input.matchers, isTemplate, input.withholds);
@@ -222,7 +232,7 @@ export function renderClash(input: RenderInput): RenderOutput {
         inserted = true;
         nextProxies.push(...emitted);
       }
-      if (!input.rule.dropTemplateEntries) nextProxies.push(p);
+      if (isRetained(p)) nextProxies.push(p);
       continue;
     }
     nextProxies.push(p);
@@ -241,7 +251,7 @@ export function renderClash(input: RenderInput): RenderOutput {
           if (useAuto && g.name !== autoName) members.push(autoName);
           members.push(...names);
         }
-        if (!input.rule.dropTemplateEntries) members.push(m);
+        if (retainedNames.has(m)) members.push(m);
         continue;
       }
       members.push(m);
@@ -268,7 +278,7 @@ export function renderClash(input: RenderInput): RenderOutput {
   }
   const stringify = (d: unknown) => YAML.stringify(d, { lineWidth: 0 });
   const withheldOut = withheld.length > 0 ? { withheld: withheld.map((w) => w.identity) } : {};
-  if (!input.rule.dropTemplateEntries && withheldNames.size === 0) {
+  if (removedTemplates.length === 0 && withheldNames.size === 0) {
     return {
       body: stringify({ ...doc, proxies: nextProxies, 'proxy-groups': nextGroups }),
       applied: true,
@@ -278,10 +288,7 @@ export function renderClash(input: RenderInput): RenderOutput {
     };
   }
 
-  const removed = new Set<string>([
-    ...(input.rule.dropTemplateEntries ? templateSet : []),
-    ...withheldNames,
-  ]);
+  const removed = new Set<string>([...removedTemplates, ...withheldNames]);
   let list = nextGroups;
   for (let changed = true; changed;) {
     changed = false;

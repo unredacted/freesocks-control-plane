@@ -19,6 +19,7 @@ import { renderClash } from './clash';
 import { renderLinks } from './links';
 import { renderSingbox } from './singbox';
 import {
+  listenerServable,
   resolveMatchers,
   type MatchableEntry,
   type RenderEndpoint,
@@ -164,7 +165,9 @@ describe('a link list', () => {
     const b = [twinLink, otherLink].join('\n');
     for (const r of [rule(), rule('only')]) {
       const out = render(r, b);
-      expect(out.listeners).toEqual([{ listenerKey: 'a1', matched: true, encrypted: true }]);
+      expect(out.listeners).toEqual([
+        { listenerKey: 'a1', matched: true, encrypted: true, twinOnly: true },
+      ]);
       expect(linksOut(out.body).slice(0, 2)).toEqual([
         encryptedAt(A, FRONT_A),
         encryptedAt(B, FRONT_B),
@@ -184,6 +187,37 @@ describe('a link list', () => {
     const got = linksOut(out.body);
     expect(got).toEqual([plainAt(A, FRONT_A), plainAt(B, FRONT_B)]);
     expect(out.body).not.toContain('ws-e');
+  });
+
+  test('a twin whose client string Xray would not take is not handed out as encrypted', () => {
+    // Anything but `none` is not enough: a broken string would give `only` an
+    // entry nobody can use, and may make an app refuse the whole list.
+    for (const broken of ['mlkem768x25519plus.native.0rtt', 'yes', ENCRYPTION.slice(0, 60)]) {
+      const out = render(rule('only'), [plainLink, link(TWIN, '/ws-e', broken)].join('\n'));
+      expect(out.listeners).toEqual([{ listenerKey: 'a1', matched: true }]);
+      expect(linksOut(out.body)).toEqual([plainAt(A, FRONT_A), plainAt(B, FRONT_B)]);
+    }
+  });
+
+  test('templates kept beside the rendered entries are only the kind the rule hands out', () => {
+    const kept = (encryption: EncryptionRule | undefined, b = body) =>
+      linksOut(
+        renderLinks({
+          body: b,
+          matchers: [matcher],
+          endpoints,
+          rule: { ...rule(encryption), dropTemplateEntries: false },
+        }).body,
+      )
+        .filter((e) => e.address === TEMPLATE_FRONT)
+        .map((e) => e.name);
+    expect(kept(undefined)).toEqual([PLAIN, TWIN]);
+    expect(kept('plain')).toEqual([PLAIN]);
+    expect(kept('only')).toEqual([TWIN]);
+    // A listener without a twin has only its plain template to keep, and a
+    // twin that is not usable is never kept.
+    expect(kept('only', [plainLink, otherLink].join('\n'))).toEqual([PLAIN]);
+    expect(kept(undefined, [plainLink, link(TWIN, '/ws-e', 'none')].join('\n'))).toEqual([PLAIN]);
   });
 
   test('a cap counts connections: a fallback rides with its entry, so no app is left without one', () => {
@@ -283,6 +317,32 @@ describe('a Clash body', () => {
     expect(plain.out.body).not.toContain('mlkem768x25519plus');
   });
 
+  test('a twin with a broken client string is not handed out, and its name leaves the groups', () => {
+    const b = clashBody([
+      clashProxy(PLAIN, '/ws'),
+      clashProxy(TWIN, '/ws-e', 'mlkem768x25519plus'),
+    ]);
+    const { doc, out } = render(rule('only', true), b);
+    expect(doc.proxies.map((p) => p.name)).toEqual([A, B]);
+    expect(doc.proxies.some((p) => 'encryption' in p)).toBe(false);
+    expect(out.body).not.toContain(TWIN);
+  });
+
+  test('templates kept beside the rendered entries follow the rule, in the proxies and in every group', () => {
+    const kept = (encryption: EncryptionRule | undefined) => {
+      const { doc } = render({ ...rule(encryption, true), dropTemplateEntries: false });
+      const names = doc.proxies.filter((p) => p.server === TEMPLATE_FRONT).map((p) => p.name);
+      const inGroup = (
+        doc['proxy-groups'].find((g) => g.name === 'Proxy')!.proxies as string[]
+      ).filter((n) => n === PLAIN || n === TWIN);
+      expect(inGroup).toEqual(names);
+      return names;
+    };
+    expect(kept(undefined)).toEqual([PLAIN, TWIN]);
+    expect(kept('plain')).toEqual([PLAIN]);
+    expect(kept('only')).toEqual([TWIN]);
+  });
+
   test('a body without the twin keeps the fastest-entry group', () => {
     const { doc, auto } = render(rule(undefined, true), clashBody([clashProxy(PLAIN, '/ws')]));
     expect(doc.proxies.map((p) => p.name)).toEqual([A, B]);
@@ -357,6 +417,23 @@ describe('a sing-box body', () => {
     expect(out.body).not.toContain('ws-e');
     expect(out.body).not.toContain(TWIN);
   });
+
+  test('with templates kept, the plain one stays and the twin-tagged outbound still goes', () => {
+    const out = renderSingbox({
+      body: body([outbound(PLAIN, '/ws'), outbound(TWIN, '/ws-e')]),
+      matchers: [matcher],
+      endpoints,
+      rule: { ...rule(), dropTemplateEntries: false },
+    });
+    const cfg = JSON.parse(out.body) as { outbounds: any[] };
+    expect(cfg.outbounds.filter((o) => o.type === 'vless').map((o) => o.tag)).toEqual([
+      A,
+      B,
+      PLAIN,
+    ]);
+    expect(cfg.outbounds.find((o) => o.tag === 'proxy').outbounds).toEqual([A, B, PLAIN]);
+    expect(out.body).not.toContain(TWIN);
+  });
 });
 
 // --- matching -----------------------------------------------------------------
@@ -403,6 +480,23 @@ describe('resolveMatchers', () => {
     expect(r.encrypted.size).toBe(0);
     // It is still a template to drop.
     expect(r.twinEntries.has(TWIN)).toBe(true);
+  });
+
+  test('a listener the body holds only encrypted has nothing for a family that gets the plain entry', () => {
+    const r = resolveMatchers([entry(TWIN, { encrypted: true })], [matcher], same);
+    expect(r.matches).toEqual([
+      { listenerKey: 'a1', matched: true, encrypted: true, twinOnly: true },
+    ]);
+    const m = r.matches[0]!;
+    expect(listenerServable(m, { encryption: 'plain' })).toBe(false);
+    for (const encryption of ['prefer', 'only', undefined] as const)
+      expect(listenerServable(m, { encryption })).toBe(true);
+    // A listener with its plain entry is servable under every rule, an
+    // unmatched one under none.
+    expect(listenerServable({ listenerKey: 'a1', matched: true }, { encryption: 'plain' })).toBe(
+      true,
+    );
+    expect(listenerServable({ listenerKey: 'a1', matched: false }, {})).toBe(false);
   });
 
   test('a twin that speaks another transport than its listener is not used', () => {

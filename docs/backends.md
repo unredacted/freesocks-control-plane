@@ -946,9 +946,10 @@ listener it is the **encrypted twin** (`relayListeners.encryptedTwin`: the trans
 to and the key it would have as a listener of its own). Its Host is named like every Host of the
 node, `<node>-relay-<twin key>` (`lib/edges/listenerEncryption.ts` `twinRemarksOf`), so it pins
 with the node, hides with it and follows its renames, and the renderer finds its entry in a body
-by that name (`RenderMatcher.encrypted`). A twin entry is used only when it really carries a
-client string and speaks its listener's transport; every entry under a twin's name is a template
-either way and never leaves as it came.
+by that name (`RenderMatcher.encrypted`). A twin entry is used only when it carries a client
+string Xray would take (`parseClientEncryption`, not merely something other than `none`) and
+speaks its listener's transport; every entry under a twin's name is a template either way and
+never leaves as it came.
 
 Which entry an app gets is the client family's **encryption rule**
 (`edge.render.clients.<family>.encryption`, `src/shared/encryptionRule.ts`; Edges settings, per
@@ -976,6 +977,12 @@ family, "Encrypted connections"):
   body with the plain entry alone, rendered as it always was under any rule. A body with the twin
   alone (the plain Host kept out of a format on the backend) resolves the listener and is served
   encrypted, except to a `plain` family, which gets nothing to use.
+- Where a family keeps the template entries beside the rendered ones (`dropTemplateEntries`
+  off), only the kind its rule hands out stays (`retainedTemplates`): `plain` keeps no twin,
+  `only` no plain entry of a listener that has a twin, sing-box never a twin.
+- A listener the body holds only encrypted has nothing for a `plain` family, so its edges are
+  out of that member's assignment before the pick (`listenerServable`): another listener of the
+  same body serves them instead of an empty body.
 - A cap on entries counts connections: a fallback rides with its entry. A single access key and
   an operator's test link are one entry, never a pair. A mirror's link list is made for no
   particular app (the `other` family), so it carries the plain entries.

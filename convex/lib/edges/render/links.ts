@@ -10,11 +10,12 @@
  */
 import { sameAddress } from '../hosts';
 import { decodeBase64Loose, encodeBase64 } from './base64';
-import { isVlessEncrypted } from '../../backend/vlessEncryption';
+import { parseClientEncryption } from '../../backend/vlessEncryption';
 import {
   orderEndpoints,
   planEntries,
   resolveMatchers,
+  retainedTemplates,
   templateEntries,
   templateIdentities,
   withheldEntries,
@@ -80,7 +81,9 @@ function entriesOf(lines: readonly string[]): MatchableEntry<LineEntry>[] {
       supported: (proto) => !!parsed && uriSupported(parsed, proto),
       agrees: (proto) => !!parsed && uriAgrees(parsed, proto),
       encrypted:
-        !!parsed && parsed.scheme === 'vless' && isVlessEncrypted(parsed.params.get('encryption')),
+        !!parsed &&
+        parsed.scheme === 'vless' &&
+        parseClientEncryption(parsed.params.get('encryption')) !== null,
     });
   }
   return out;
@@ -118,6 +121,14 @@ export function renderLinks(input: RenderInput): RenderOutput {
         const r = remarkOf(line);
         return r !== null && templateIds.has(r);
       })());
+  const retained = retainedTemplates(resolved, input.rule);
+  const retainedLines = new Set([...retained].map((t) => t.line));
+  const retainedIds = templateIdentities(entries, retained);
+  const isRetainedLine = (line: string): boolean => {
+    if (retainedLines.has(line)) return true;
+    const r = remarkOf(line);
+    return r !== null && retainedIds.has(r);
+  };
   const withheld = withheldEntries(
     entries,
     input.matchers,
@@ -135,8 +146,9 @@ export function renderLinks(input: RenderInput): RenderOutput {
         out.push('__RELAY_ENDPOINTS__');
       }
       // With drop on, the template line goes: it carries the origin / former
-      // index-0 address, and that is no reason to hand it out.
-      if (!input.rule.dropTemplateEntries) out.push(line);
+      // index-0 address, and that is no reason to hand it out. With it off,
+      // only the kind the encryption rule hands out stays.
+      if (isRetainedLine(line)) out.push(line);
       continue;
     }
     out.push(line);

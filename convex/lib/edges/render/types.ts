@@ -112,6 +112,25 @@ export interface ListenerMatch {
   reason?: MatchFailure;
   /** The listener's encrypted twin resolved in this body. */
   encrypted?: boolean;
+  /**
+   * The body carries the twin and NOT the plain entry: the listener can only
+   * be served encrypted, so an app that must get the plain entry has nothing
+   * to use from it (`listenerServable`).
+   */
+  twinOnly?: boolean;
+}
+
+/**
+ * Whether a resolved listener has an entry to give under the rule. The
+ * pipeline asks BEFORE it assigns edges: an edge of a listener with nothing to
+ * give would otherwise be picked and leave the body empty, while another
+ * listener of the same body could have served the member.
+ */
+export function listenerServable(
+  m: ListenerMatch,
+  rule: Pick<RenderRuleInput, 'encryption'>,
+): boolean {
+  return m.matched && !(m.twinOnly === true && rule.encryption === 'plain');
 }
 
 export interface RenderOutput {
@@ -168,7 +187,11 @@ export interface MatchableEntry<T> {
   supported: (proto: ListenerProto) => boolean;
   /** Whether the entry's transport / security agree with the listener. */
   agrees: (proto: ListenerProto) => boolean;
-  /** The entry runs VLESS Encryption (it carries a client string). Absent = plain. */
+  /**
+   * The entry runs VLESS Encryption: it carries a client string Xray would
+   * take (`parseClientEncryption`), not merely something other than `none`.
+   * Absent = plain.
+   */
   encrypted?: boolean;
 }
 
@@ -247,7 +270,7 @@ export function resolveMatchers<T>(
     if (candidates.length === 0) {
       // A body that carries only the twin (the plain Host kept out of this
       // format on the backend) still resolves the listener.
-      if (encrypted.has(m.listenerKey)) matches.push(matched(m));
+      if (encrypted.has(m.listenerKey)) matches.push({ ...matched(m), twinOnly: true });
       else matches.push({ listenerKey: m.listenerKey, matched: false, reason: 'no_match' });
       continue;
     }
@@ -276,6 +299,29 @@ export function resolveMatchers<T>(
 /** Every template entry of a resolution: the plain ones and every twin. */
 export function templateEntries<T>(r: ResolvedMatchers<T>): Set<T> {
   return new Set<T>([...r.templates.values(), ...r.twinEntries]);
+}
+
+/**
+ * The template entries that stay in a body beside the rendered ones when the
+ * rule keeps templates (`dropTemplateEntries` off). Only the kind the
+ * encryption rule hands out: a kept template is one more entry the app can
+ * use, so `plain` keeps no twin and `only` keeps no plain entry of a listener
+ * that has a twin. A twin that is not usable is never kept, and a format that
+ * cannot speak the layer (`twins: false`) keeps none at all.
+ */
+export function retainedTemplates<T>(
+  r: ResolvedMatchers<T>,
+  rule: Pick<RenderRuleInput, 'dropTemplateEntries' | 'encryption'>,
+  opts: { twins: boolean } = { twins: true },
+): Set<T> {
+  const kept = new Set<T>();
+  if (rule.dropTemplateEntries) return kept;
+  const mode = rule.encryption ?? 'prefer';
+  const twins = opts.twins && mode !== 'plain';
+  for (const [key, plain] of r.templates)
+    if (!(mode === 'only' && twins && r.encrypted.has(key))) kept.add(plain);
+  if (twins) for (const twin of r.encrypted.values()) kept.add(twin);
+  return kept;
 }
 
 /** One entry a codec writes: an endpoint, the template it is a copy of, and its name. */
