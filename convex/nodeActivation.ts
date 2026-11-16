@@ -913,7 +913,9 @@ export const buildDirectTestLink = internalAction({
     const endpoint = endpointOf(targets);
     const links = targets.map(({ address, port, sni }) => {
       const q = new URLSearchParams({
-        encryption: 'none',
+        // `none`, or the client string of a transport that runs VLESS
+        // Encryption: a link saying `none` could not connect to one.
+        encryption: params.encryption,
         flow: REALITY_RAW_FLOW,
         security: 'reality',
         type: 'tcp',
