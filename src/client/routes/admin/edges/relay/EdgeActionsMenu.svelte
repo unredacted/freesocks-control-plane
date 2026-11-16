@@ -203,16 +203,19 @@
       {/if}
       {#if needsOperator}
         <DropdownMenu.Separator />
-        <DropdownMenu.Label>Resolve "needs operator"</DropdownMenu.Label>
-        <DropdownMenu.Item onSelect={() => (resolveAction = 'destroy')}>
-          Destroy at the provider
-        </DropdownMenu.Item>
-        <DropdownMenu.Item onSelect={() => (resolveAction = 'reactivate')}>
-          Reactivate
-        </DropdownMenu.Item>
-        <DropdownMenu.Item variant="destructive" onSelect={() => (resolveAction = 'forget')}>
-          Forget
-        </DropdownMenu.Item>
+        <!-- A label needs its group: bits-ui throws at render without one. -->
+        <DropdownMenu.Group>
+          <DropdownMenu.Label>Resolve "needs operator"</DropdownMenu.Label>
+          <DropdownMenu.Item onSelect={() => (resolveAction = 'destroy')}>
+            Destroy at the provider
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => (resolveAction = 'reactivate')}>
+            Reactivate
+          </DropdownMenu.Item>
+          <DropdownMenu.Item variant="destructive" onSelect={() => (resolveAction = 'forget')}>
+            Forget
+          </DropdownMenu.Item>
+        </DropdownMenu.Group>
       {/if}
       {#if !gone}
         <DropdownMenu.Separator />
