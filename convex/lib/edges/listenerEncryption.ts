@@ -12,6 +12,27 @@
 import type { Doc } from '../../_generated/dataModel';
 import type { DatabaseReader } from '../../_generated/server';
 
+/**
+ * The Host remarks of a listener's encrypted twin (`relayListeners.encryptedTwin`):
+ * the listener's own remarks with the twin's key in place of its own, so the
+ * twin's Host is named like any Host of the node (`<node>-relay-<key>`: it pins
+ * with the node, hides with it and is renamed with it) and follows the same
+ * renames. The current one first. None for a listener without a twin, or one
+ * not found by such a remark (an adopted or manual origin has no twin).
+ */
+export function twinRemarksOf(
+  l: Pick<Doc<'relayListeners'>, 'listenerKey' | 'matchRule' | 'formerRemarks' | 'encryptedTwin'>,
+): string[] {
+  const twin = l.encryptedTwin;
+  if (!twin || l.matchRule.kind !== 'remark') return [];
+  const suffix = `-relay-${l.listenerKey}`;
+  const out: string[] = [];
+  for (const remark of [l.matchRule.remark, ...(l.formerRemarks ?? [])])
+    if (remark.endsWith(suffix))
+      out.push(`${remark.slice(0, remark.length - l.listenerKey.length)}${twin.key}`);
+  return out;
+}
+
 export type ObservedVlessEncryption = NonNullable<
   Doc<'panelProfiles'>['inbounds'][number]['vlessEncryption']
 >;

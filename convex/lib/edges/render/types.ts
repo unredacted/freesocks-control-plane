@@ -7,6 +7,8 @@
  * not understand (`applied:false`); the DB half turns that into an unavailable
  * response for an edge-required subscription (edgeRender.ts).
  */
+import type { EncryptionRule } from '../../../../src/shared/encryptionRule';
+import { plainFallbackName } from '../../../../src/shared/entryNames';
 import type { ListenerProto } from '../protocols';
 import type { MatchRule } from '../registration';
 
@@ -15,6 +17,14 @@ export interface RenderMatcher {
   rule: MatchRule;
   /** Legacy Hosts adopted from a manual deployment also identify the listener. */
   legacyRemarks?: readonly string[];
+  /**
+   * The listener's ENCRYPTED TWIN: a second transport of the same node behind
+   * the same addresses that runs VLESS Encryption (docs/backends.md), found in
+   * the body by its own Host remark (and the remarks that Host had before its
+   * node was renamed). A body may carry the plain entry, the twin, or both;
+   * `RenderRuleInput.encryption` says which of them an app gets.
+   */
+  encrypted?: { remarks: readonly string[] };
   /** What the listener speaks: the matched entry must agree (codec verification). */
   proto: ListenerProto;
   originAddress: string;
@@ -67,6 +77,11 @@ export interface RenderEndpoint {
 export interface RenderRuleInput {
   /** Add the url-test group (`AUTO_GROUP_NAME`, src/shared/entryNames.ts) where the format has one. */
   autoGroup: boolean;
+  /**
+   * Which of a listener's two entries the app gets where the body carries its
+   * encrypted twin (src/shared/encryptionRule.ts). Absent = `prefer`.
+   */
+  encryption?: EncryptionRule;
   dropTemplateEntries: boolean;
   /** 0 = unlimited. */
   maxEntries: number;
@@ -95,6 +110,8 @@ export interface ListenerMatch {
   listenerKey: string;
   matched: boolean;
   reason?: MatchFailure;
+  /** The listener's encrypted twin resolved in this body. */
+  encrypted?: boolean;
 }
 
 export interface RenderOutput {
@@ -151,16 +168,56 @@ export interface MatchableEntry<T> {
   supported: (proto: ListenerProto) => boolean;
   /** Whether the entry's transport / security agree with the listener. */
   agrees: (proto: ListenerProto) => boolean;
+  /** The entry runs VLESS Encryption (it carries a client string). Absent = plain. */
+  encrypted?: boolean;
+}
+
+export interface ResolvedMatchers<T> {
+  /** Each listener's plain template entry. */
+  templates: Map<string, T>;
+  /** Each listener's encrypted twin, where the body carries a usable one. */
+  encrypted: Map<string, T>;
+  /**
+   * Every entry named as some listener's twin, usable or not. They are
+   * templates like the plain ones (they point at whatever the backend Host
+   * carries), so a codec never passes one through.
+   */
+  twinEntries: Set<T>;
+  matches: ListenerMatch[];
 }
 
 export function resolveMatchers<T>(
   entries: readonly MatchableEntry<T>[],
   matchers: readonly RenderMatcher[],
   sameAddress: (a: string, b: string) => boolean,
-): { templates: Map<string, T>; matches: ListenerMatch[] } {
+): ResolvedMatchers<T> {
   const templates = new Map<string, T>();
+  const encrypted = new Map<string, T>();
   const matches: ListenerMatch[] = [];
-  const proxyEntries = entries.filter((e) => e.identity !== null || e.address !== null);
+  // Twins first: a twin sits at its listener's own address, so it must never
+  // be read as the plain entry (an address or whole-body rule would).
+  const twinRemarks = new Set(matchers.flatMap((m) => m.encrypted?.remarks ?? []));
+  const isTwin = (e: MatchableEntry<T>) => e.identity !== null && twinRemarks.has(e.identity);
+  const twinEntries = new Set(entries.filter(isTwin).map((e) => e.entry));
+  for (const m of matchers) {
+    if (!m.encrypted) continue;
+    const own = new Set(m.encrypted.remarks);
+    // Under several of its remarks (a rename in flight) the first is the twin.
+    const c = entries.find((e) => e.identity !== null && own.has(e.identity));
+    // Usable only when it is what it is named as: this listener's transport,
+    // and really encrypted (a twin entry without a client string would hand
+    // out the plain transport under the encrypted name).
+    if (c && c.encrypted === true && c.supported(m.proto) && c.agrees(m.proto))
+      encrypted.set(m.listenerKey, c.entry);
+  }
+  const proxyEntries = entries.filter(
+    (e) => (e.identity !== null || e.address !== null) && !isTwin(e),
+  );
+  const matched = (m: RenderMatcher): ListenerMatch => ({
+    listenerKey: m.listenerKey,
+    matched: true,
+    ...(encrypted.has(m.listenerKey) ? { encrypted: true } : {}),
+  });
   for (const m of matchers) {
     let candidates: MatchableEntry<T>[];
     switch (m.rule.kind) {
@@ -188,7 +245,10 @@ export function resolveMatchers<T>(
         break;
     }
     if (candidates.length === 0) {
-      matches.push({ listenerKey: m.listenerKey, matched: false, reason: 'no_match' });
+      // A body that carries only the twin (the plain Host kept out of this
+      // format on the backend) still resolves the listener.
+      if (encrypted.has(m.listenerKey)) matches.push(matched(m));
+      else matches.push({ listenerKey: m.listenerKey, matched: false, reason: 'no_match' });
       continue;
     }
     if (candidates.length > 1) {
@@ -205,9 +265,57 @@ export function resolveMatchers<T>(
       continue;
     }
     templates.set(m.listenerKey, c.entry);
-    matches.push({ listenerKey: m.listenerKey, matched: true });
+    matches.push(matched(m));
   }
-  return { templates, matches };
+  // A listener whose plain entry FAILED (ambiguous, another transport) is not
+  // rescued by its twin: something about it is not what FCP registered.
+  for (const r of matches) if (!r.matched) encrypted.delete(r.listenerKey);
+  return { templates, encrypted, twinEntries, matches };
+}
+
+/** Every template entry of a resolution: the plain ones and every twin. */
+export function templateEntries<T>(r: ResolvedMatchers<T>): Set<T> {
+  return new Set<T>([...r.templates.values(), ...r.twinEntries]);
+}
+
+/** One entry a codec writes: an endpoint, the template it is a copy of, and its name. */
+export interface PlannedEntry<T> {
+  endpoint: RenderEndpoint;
+  template: T;
+  label: string;
+}
+
+/**
+ * The entries a body gets, in order, for endpoints already ordered and capped
+ * (`orderEndpoints`): each endpoint's first choice under the rule, then (rule
+ * `prefer`) the plain fallbacks in the same order, named as such. `mixed` says
+ * the body holds a fallback: an auto group must then try entries IN ORDER, not
+ * pick the fastest (the two are equally fast, so the fastest would be either).
+ *
+ * A cap (`maxEntries`) counts endpoints: a fallback rides with its endpoint,
+ * so capping never leaves an app with entries it cannot use.
+ */
+export function planEntries<T>(
+  endpoints: readonly RenderEndpoint[],
+  r: Pick<ResolvedMatchers<T>, 'templates' | 'encrypted'>,
+  rule: Pick<RenderRuleInput, 'encryption'>,
+): { entries: PlannedEntry<T>[]; mixed: boolean } {
+  const mode = rule.encryption ?? 'prefer';
+  const first: PlannedEntry<T>[] = [];
+  const fallback: PlannedEntry<T>[] = [];
+  for (const endpoint of endpoints) {
+    const plain = r.templates.get(endpoint.listenerKey);
+    const twin = r.encrypted.get(endpoint.listenerKey);
+    const label = endpoint.label;
+    if (mode === 'plain') {
+      if (plain) first.push({ endpoint, template: plain, label });
+    } else if (twin) {
+      first.push({ endpoint, template: twin, label });
+      if (mode === 'prefer' && plain)
+        fallback.push({ endpoint, template: plain, label: plainFallbackName(label) });
+    } else if (plain) first.push({ endpoint, template: plain, label });
+  }
+  return { entries: [...first, ...fallback], mixed: fallback.length > 0 };
 }
 
 /**
@@ -234,10 +342,9 @@ export function withheldEntries<T>(
 /** Every identity the matched templates carry (what the codecs drop / swap in groups). */
 export function templateIdentities<T>(
   entries: readonly MatchableEntry<T>[],
-  templates: Map<string, T>,
+  chosen: ReadonlySet<T>,
 ): Set<string> {
   const ids = new Set<string>();
-  const chosen = new Set(templates.values());
   for (const e of entries) if (chosen.has(e.entry) && e.identity !== null) ids.add(e.identity);
   return ids;
 }

@@ -18,10 +18,13 @@
  */
 import YAML from 'yaml';
 import { AUTO_GROUP_NAME } from '../../../../src/shared/entryNames';
+import { isVlessEncrypted } from '../../backend/vlessEncryption';
 import { sameAddress } from '../hosts';
 import { codecFor, type ListenerProto } from '../protocols';
 import { cloneJson, pruneRefs, uniqueName } from './refs';
 import {
+  planEntries,
+  templateEntries,
   AUTO_GROUP_TEST_URL,
   orderEndpoints,
   resolveMatchers,
@@ -91,6 +94,7 @@ function entriesOf(proxies: readonly unknown[]): MatchableEntry<Obj>[] {
       port: typeof p.port === 'number' ? p.port : null,
       supported: (proto) => codecFor(proto, 'clash').includes(String(p.type)),
       agrees: (proto) => proxyAgrees(p, proto),
+      encrypted: p.type === 'vless' && isVlessEncrypted(p.encryption),
     });
   }
   return out;
@@ -121,8 +125,10 @@ export function renderClash(input: RenderInput): RenderOutput {
   const proxies = doc.proxies as unknown[];
   const groups = Array.isArray(doc['proxy-groups']) ? (doc['proxy-groups'] as unknown[]) : [];
   const entries = entriesOf(proxies);
-  const { templates, matches } = resolveMatchers(entries, input.matchers, sameAddress);
-  if (templates.size === 0)
+  const resolved = resolveMatchers(entries, input.matchers, sameAddress);
+  const { matches } = resolved;
+  const templateObjs = templateEntries(resolved);
+  if (templateObjs.size === 0)
     return {
       body: input.body,
       applied: false,
@@ -130,8 +136,7 @@ export function renderClash(input: RenderInput): RenderOutput {
       emitted: 0,
       listeners: matches,
     };
-  const templateSet = templateIdentities(entries, templates);
-  const templateObjs = new Set(templates.values());
+  const templateSet = templateIdentities(entries, templateObjs);
   for (const t of templateObjs) if (typeof t.name === 'string') templateSet.add(t.name);
   const isTemplate = (p: Obj) =>
     templateObjs.has(p) || (typeof p.name === 'string' && templateSet.has(p.name));
@@ -163,11 +168,10 @@ export function renderClash(input: RenderInput): RenderOutput {
   if (input.rule.autoGroup) taken.add(autoName);
 
   const emitted: Obj[] = [];
-  for (const ep of orderEndpoints(input.endpoints, input.rule)) {
-    const tpl = templates.get(ep.listenerKey);
-    if (!tpl) continue;
+  const plan = planEntries(orderEndpoints(input.endpoints, input.rule), resolved, input.rule);
+  for (const { endpoint: ep, template: tpl, label } of plan.entries) {
     const clone = cloneJson(tpl);
-    const name = uniqueName(ep.label, taken);
+    const name = uniqueName(label, taken);
     taken.add(name);
     clone.name = name;
     clone.server = ep.address;
@@ -204,6 +208,10 @@ export function renderClash(input: RenderInput): RenderOutput {
     };
   const names = emitted.map((e) => e.name as string);
   const useAuto = input.rule.autoGroup && !dropOnly;
+  // With plain fallbacks in the body the group takes the first entry that
+  // works, in order: an encrypted entry and its plain twin are equally fast,
+  // so "the fastest" would be either of them.
+  const autoType = plan.mixed ? 'fallback' : 'url-test';
 
   const nextProxies: unknown[] = [];
   let inserted = false;
@@ -241,19 +249,20 @@ export function renderClash(input: RenderInput): RenderOutput {
     const out: Obj = { ...g, proxies: members };
     if (useAuto && g.name === autoName && autoGroupIsGroup) {
       sawAuto = true;
-      out.type = 'url-test';
+      out.type = autoType;
       out.proxies = names;
+      if (plan.mixed) delete out.tolerance;
     }
     return out;
   });
   if (useAuto && !sawAuto) {
     nextGroups.unshift({
       name: autoName,
-      type: 'url-test',
+      type: autoType,
       proxies: names,
       url: AUTO_GROUP_TEST_URL,
       interval: 300,
-      tolerance: 50,
+      ...(plan.mixed ? {} : { tolerance: 50 }),
       lazy: true,
     });
   }

@@ -1339,6 +1339,7 @@ place leading edge entries (`… via …`) on 2026-11-05.
 🇨🇦 Example Port via relay A                    an address whose location has no member-facing name
 🇨🇦 Example Port via CDN 1                      a CDN front (L7), numbered; never the CDN's name
 🇨🇦 Example Port via Example Town · Domain #2   a further server name (auto groups only)
+🇨🇦 Example Port via CDN 1 · Old apps           the same connection without VLESS Encryption
 ```
 
 - **Where the traffic leaves comes first.** Every name leads with the NODE's place and flag (the
@@ -1356,6 +1357,11 @@ place leading edge entries (`… via …`) on 2026-11-05.
   leads: `🇨🇦 via Example Town` would read as the front's. The place is part of the fronted
   route's cache token (`edgeRender.epochTokenFor`, a short hash after the epoch), so a changed
   location label, node country or names switch re-renders a member's body at its next fetch.
+- **The plain twin says who it is for.** Where a connection exists both with and without VLESS
+  Encryption ([backends.md](backends.md) § "VLESS Encryption"), the encrypted entry keeps the
+  connection's name and its plain twin reads `… · Old apps` (`PLAIN_FALLBACK_TAG`): a member
+  whose first entry does not connect can tell which one to try, and the tag names no technology.
+  The wording is the renderer's alone and has not been put to the owner.
 - **No transport in a name.** Every body is one connection mode, and the mode is the title apps
   show (below). `via` is English in every locale: a translated word would sit between two
   left-to-right place names and scramble their order in right-to-left apps, and an arrow points

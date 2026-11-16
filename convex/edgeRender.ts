@@ -15,6 +15,7 @@
 import { ownCodesOf } from './lib/edges/ownPools';
 import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
+import { twinRemarksOf } from './lib/edges/listenerEncryption';
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -110,10 +111,12 @@ export async function l7QualificationCurrent(
 }
 
 export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): RenderMatcher {
+  const twinRemarks = twinRemarksOf(l);
   return {
     listenerKey: l.listenerKey,
     rule: l.matchRule,
     legacyRemarks: [...(l.legacyHosts ?? []).map((h) => h.remark), ...(l.formerRemarks ?? [])],
+    ...(twinRemarks.length > 0 ? { encrypted: { remarks: twinRemarks } } : {}),
     proto: { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security },
     originAddress,
     originPort: l.originPort,

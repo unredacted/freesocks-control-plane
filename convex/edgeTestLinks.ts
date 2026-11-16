@@ -124,6 +124,8 @@ export const context = internalQuery({
       maxEntries: 1,
       autoGroup: false,
       dropTemplateEntries: true,
+      // A test link is ONE entry, and every engine has to be able to run it.
+      encryption: 'plain',
       fixedLabel: `FCP test ${relay.slug} ${listener.listenerKey}`,
     };
     const proto: ListenerProto = {

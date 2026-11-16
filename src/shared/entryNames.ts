@@ -22,6 +22,8 @@
  *   🇨🇦 Example City via CDN 1 / 2             a CDN front (L7), numbered in body order; never the CDN's name
  *   … · Domain / · IPv4 / · IPv6               one address in several forms (its name, its raw IPs)
  *   … #2                                       a further server name for the same address (auto groups only)
+ *   … · Old apps                               the same connection without VLESS Encryption, for an app
+ *                                              that cannot speak it (docs/backends.md "VLESS Encryption")
  *
  * The place and flag that lead are the NODE's (where the traffic leaves: the
  * exit), the same place its direct entries read, so one node never has two
@@ -47,6 +49,18 @@ export const AUTO_GROUP_NAME = '⚡ Auto (fastest)';
 export const CDN_MARK = '🌐';
 /** The longest member-facing place name, in characters. */
 export const MAX_PLACE_NAME = 24;
+
+/**
+ * What follows the name of a connection's plain twin, the entry an app falls
+ * back to when it cannot speak VLESS Encryption. It says who it is for, so a
+ * member whose first entry does not connect knows which one to try.
+ */
+export const PLAIN_FALLBACK_TAG = 'Old apps';
+
+/** The name of a connection's plain twin. */
+export function plainFallbackName(name: string): string {
+  return `${name}${ENTRY_NAME_SEP}${PLAIN_FALLBACK_TAG}`;
+}
 
 /** The forms one address can take in a body. */
 export type EntryForm = 'domain' | 'ipv4' | 'ipv6';

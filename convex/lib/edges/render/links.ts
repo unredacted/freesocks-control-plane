@@ -10,9 +10,12 @@
  */
 import { sameAddress } from '../hosts';
 import { decodeBase64Loose, encodeBase64 } from './base64';
+import { isVlessEncrypted } from '../../backend/vlessEncryption';
 import {
   orderEndpoints,
+  planEntries,
   resolveMatchers,
+  templateEntries,
   templateIdentities,
   withheldEntries,
   type MatchableEntry,
@@ -76,6 +79,8 @@ function entriesOf(lines: readonly string[]): MatchableEntry<LineEntry>[] {
       port: parsed?.port ?? null,
       supported: (proto) => !!parsed && uriSupported(parsed, proto),
       agrees: (proto) => !!parsed && uriAgrees(parsed, proto),
+      encrypted:
+        !!parsed && parsed.scheme === 'vless' && isVlessEncrypted(parsed.params.get('encryption')),
     });
   }
   return out;
@@ -92,8 +97,10 @@ export function renderLinks(input: RenderInput): RenderOutput {
   const decoded = decodeLinkList(input.body);
   if (!decoded) return { body: input.body, applied: false, reason: 'empty', emitted: 0 };
   const entries = entriesOf(decoded.lines);
-  const { templates, matches } = resolveMatchers(entries, input.matchers, sameAddress);
-  if (templates.size === 0) {
+  const resolved = resolveMatchers(entries, input.matchers, sameAddress);
+  const { matches } = resolved;
+  const chosen = templateEntries(resolved);
+  if (chosen.size === 0) {
     return {
       body: input.body,
       applied: false,
@@ -102,8 +109,8 @@ export function renderLinks(input: RenderInput): RenderOutput {
       listeners: matches,
     };
   }
-  const templateLines = new Set([...templates.values()].map((t) => t.line));
-  const templateIds = templateIdentities(entries, templates);
+  const templateLines = new Set([...chosen].map((t) => t.line));
+  const templateIds = templateIdentities(entries, chosen);
   const isTemplateLine = (line: string): boolean =>
     templateLines.has(line) ||
     (PROXY_LINE_RE.test(line) &&
@@ -134,17 +141,19 @@ export function renderLinks(input: RenderInput): RenderOutput {
     }
     out.push(line);
   }
+  // Each endpoint's first choice, then the plain fallbacks: a link list has no
+  // auto group, so the order is all that says which entry to use.
   const emitted: string[] = [];
-  for (const ep of orderEndpoints(input.endpoints, input.rule)) {
-    const tpl = templates.get(ep.listenerKey);
-    if (!tpl || !tpl.parsed) continue;
+  const plan = planEntries(orderEndpoints(input.endpoints, input.rule), resolved, input.rule);
+  for (const { endpoint: ep, template: tpl, label } of plan.entries) {
+    if (!tpl.parsed) continue;
     emitted.push(
       rewriteProxyUri(tpl.parsed, {
         address: ep.address,
         port: ep.port,
         sni: ep.sni,
         hostHeader: ep.hostHeader,
-        label: ep.label,
+        label,
       }),
     );
   }

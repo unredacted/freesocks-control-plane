@@ -21,6 +21,7 @@ import { sameAddress } from '../hosts';
 import { codecFor, type ListenerProto } from '../protocols';
 import { cloneJson, pruneRefs, uniqueName } from './refs';
 import {
+  templateEntries,
   AUTO_GROUP_TEST_URL,
   orderEndpoints,
   resolveMatchers,
@@ -116,7 +117,13 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   }
   const outbounds = cfg.outbounds as unknown[];
   const entries = entriesOf(outbounds);
-  const { templates, matches } = resolveMatchers(entries, input.matchers, sameAddress);
+  const resolved = resolveMatchers(entries, input.matchers, sameAddress);
+  const { templates, matches } = resolved;
+  // sing-box has no VLESS Encryption: the backend leaves an encrypted twin out
+  // of this format, and an outbound that still carries a twin's tag would be
+  // the encrypted transport spoken plainly. It is a template to drop, never one
+  // to copy.
+  const templateObjs = templateEntries(resolved);
   if (templates.size === 0)
     return {
       body: input.body,
@@ -125,8 +132,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
       emitted: 0,
       listeners: matches,
     };
-  const templateSet = templateIdentities(entries, templates);
-  const templateObjs = new Set(templates.values());
+  const templateSet = templateIdentities(entries, templateObjs);
   const isTemplate = (ob: Obj) =>
     templateObjs.has(ob) || (typeof ob.tag === 'string' && templateSet.has(ob.tag));
   // Outbounds edge-required delivery leaves out; their tags go from every group

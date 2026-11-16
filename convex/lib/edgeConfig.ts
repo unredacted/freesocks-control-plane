@@ -18,6 +18,7 @@
 import type { DatabaseReader } from '../_generated/server';
 import { resolveCensoredCountries } from './censoredCountries';
 import { PROBE_NETWORKS, type ProbeNetworks } from './edges/probes/networks';
+import { ENCRYPTION_RULES, type EncryptionRule } from '../../src/shared/encryptionRule';
 import { drainWarningCodes } from '../../src/shared/contracts/edgeCodes';
 import {
   MAX_DESIRED_PUBLISHED,
@@ -63,9 +64,23 @@ export interface ClientRenderRule {
   /** 0 = unlimited. */
   maxEntries: number;
   dropTemplateEntries: boolean;
+  /**
+   * Which entry this family gets where a connection has an encrypted twin
+   * (VLESS Encryption, docs/backends.md): the encrypted one with the plain one
+   * as a fallback (`prefer`), the encrypted one alone (`only`), or the plain
+   * one alone (`plain`). It changes nothing where there is no twin.
+   */
+  encryption: EncryptionRule;
 }
 
 const AUTO_FAMILIES: ReadonlySet<RenderClientFamily> = new Set(['singbox', 'mihomo']);
+/**
+ * Families whose apps are not handed an encrypted entry until someone has
+ * seen them work with one: sing-box does not speak the layer (the backend
+ * leaves the entry out of its format anyway), Hiddify runs a sing-box core,
+ * and an app FCP does not recognise may refuse a list it cannot read.
+ */
+const PLAIN_FAMILIES: ReadonlySet<RenderClientFamily> = new Set(['singbox', 'hiddify', 'other']);
 
 export function defaultClientRule(family: RenderClientFamily): ClientRenderRule {
   return {
@@ -76,6 +91,7 @@ export function defaultClientRule(family: RenderClientFamily): ClientRenderRule 
     order: 'primary-first',
     maxEntries: 0,
     dropTemplateEntries: true,
+    encryption: PLAIN_FAMILIES.has(family) ? 'plain' : 'prefer',
   };
 }
 
@@ -556,6 +572,8 @@ export function sanitizeClientRule(v: unknown, family: RenderClientFamily): Clie
     order: sanitizeEnum(o.order, ['primary-first', 'backup-first'] as const, d.order),
     maxEntries: sanitizeInt(o.maxEntries, 0, 20, d.maxEntries),
     dropTemplateEntries: sanitizeBool(o.dropTemplateEntries, d.dropTemplateEntries),
+    // A rule stored before this existed has none: the family's default.
+    encryption: sanitizeEnum(o.encryption, ENCRYPTION_RULES, d.encryption),
   };
 }
 
