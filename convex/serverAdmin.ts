@@ -16,6 +16,8 @@ import type { Doc, Id, TableNames } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { originNameOf } from './lib/backend/nodeRename';
+import { isUnrecordedTwinHost } from './lib/backend/nodeTwin';
+import { relayRemarkRegex } from './lib/edges/hosts';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { poolFromConfig } from './lib/remnawavePlacement';
@@ -258,6 +260,8 @@ function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
     serviceName: i.serviceName ?? null,
     realityPublicKey: i.realityAuth?.publicKey ?? null,
     realityPublicKeyMismatch: i.realityAuth?.publicKeyMismatch ?? false,
+    // Runs VLESS Encryption inside the stream (docs/backends.md); never its key.
+    encrypted: !!i.vlessEncryption,
   };
 }
 
@@ -432,6 +436,39 @@ export const tree = internalQuery({
     ]);
     const frontsOf = await leftOutFronts(ctx.db, sid, nodes);
     const fcpHosts = await listenerHosts(ctx.db, sid);
+    // The transports that are a mode's ENCRYPTED TWIN, and the address FCP
+    // keeps for a node's twin (convex/nodeTwins.ts): a template like the
+    // listener's own, never a member's address as it stands.
+    const setup = await ctx.db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .unique();
+    const twinUuids = new Set(
+      (setup?.modes ?? []).map((m) => m.twin?.uuid).filter((u): u is string => !!u),
+    );
+    const twinHostOf = new Map<string, string>();
+    for (const i of await ctx.db
+      .query('panelNodeIntents')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect())
+      if (i.twin?.hostUuid) twinHostOf.set(i.name, i.twin.hostUuid);
+    const twinHostsOfNode = (n: Pick<Doc<'panelNodes'>, 'name'>) =>
+      hosts
+        .filter(
+          (h) =>
+            // The address FCP recorded for the node's twin is FCP's wherever a
+            // panel edit moved it: it never becomes one to edit by hand.
+            h.hostUuid === twinHostOf.get(n.name) ||
+            // Written, its uuid not recorded yet: only on a twin's transport,
+            // under the form FCP names the node's origin addresses by.
+            (!!h.configProfileInboundUuid &&
+              twinUuids.has(h.configProfileInboundUuid) &&
+              isUnrecordedTwinHost(h, {
+                twinUuid: h.configProfileInboundUuid,
+                originRemark: relayRemarkRegex(originNameOf(n.name)),
+              })),
+        )
+        .map((h) => h.hostUuid);
     const profileBy = new Map(profiles.map((p) => [p.profileUuid, p]));
     const usedProfiles = new Set<string>();
     const placedHosts = new Set<string>();
@@ -444,7 +481,7 @@ export const tree = internalQuery({
         const profile = n.configProfileUuid ? profileBy.get(n.configProfileUuid) : undefined;
         if (profile) usedProfiles.add(profile.profileUuid);
         const active = new Set(n.activeInboundUuids);
-        const fcpOwned = fcpHosts.ofNode(n);
+        const fcpOwned = new Set([...fcpHosts.ofNode(n), ...twinHostsOfNode(n)]);
         const transports = (profile?.inbounds ?? [])
           .filter((i) => active.has(i.inboundUuid))
           .map((i) => {
@@ -456,6 +493,8 @@ export const tree = internalQuery({
             for (const h of mine) placedHosts.add(h.hostUuid);
             return {
               ...mapInbound(i),
+              // A mode's encrypted twin: it rides the node's own addresses.
+              twin: twinUuids.has(i.inboundUuid),
               // Which clients it refuses on this node's Xray (unknown until observed with it).
               realityRefusal: i.realityClients
                 ? realityClientRefusal(i.realityClients, n.xrayVersion ?? null)

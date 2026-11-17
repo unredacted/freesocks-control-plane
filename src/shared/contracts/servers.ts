@@ -108,6 +108,8 @@ export const TransportView = z.object({
   realityPublicKey: z.string().nullable(),
   /** The profile stores a public key that does not belong to its private key. */
   realityPublicKeyMismatch: z.boolean(),
+  /** Runs VLESS Encryption inside the stream (docs/backends.md "VLESS Encryption"). */
+  encrypted: z.boolean().default(false),
 });
 export type TransportView = z.infer<typeof TransportView>;
 
@@ -142,6 +144,12 @@ export const NodeView = z.object({
     TransportView.extend({
       addresses: z.array(AddressView),
       modeGroups: z.array(z.object({ groupUuid: z.string(), name: z.string() })),
+      /**
+       * A mode's encrypted twin (docs/servers.md "A node serving the encrypted
+       * twin"): members reach it through the node's own addresses, and FCP
+       * keeps its one address itself.
+       */
+      twin: z.boolean().default(false),
       /**
        * The clients this REALITY transport refuses on this node's Xray
        * (src/shared/contracts/realityClients.ts); null when it admits them, or is not known yet.

@@ -108,6 +108,13 @@ describe('transport words', () => {
     expect(inboundSummary(inbound({ network: 'ws', security: 'tls', port: 8443 }))).toBe(
       'VLESS over WS, TLS, port 8443',
     );
+    // A transport that runs VLESS Encryption says so, whatever carries it.
+    expect(
+      inboundSummary({
+        ...inbound({ network: 'ws', security: 'none', port: 8444 }),
+        encrypted: true,
+      }),
+    ).toBe('VLESS over WS, encrypted inside, no TLS, port 8444');
   });
 
   test('server name count', () => {
@@ -265,6 +272,17 @@ describe('what the page says', () => {
       frontedAddressWords(o)
         .filter((p) => p.to)
         .map((p) => [p.text, p.to]);
+    // A mode's encrypted twin: the same addresses, encrypted inside, where checked.
+    const twin = { reality: false, list: null, twin: true };
+    expect(text(twin)).toBe(
+      "One of this node's addresses above, encrypted inside the connection. Only through fronts it was checked on.",
+    );
+    expect(links(twin)).toEqual([["this node's addresses above", 'addresses']]);
+    expect(text({ ...twin, encrypted: true })).toBe(text(twin));
+    // A twin someone edited back to plain on the backend is never called encrypted.
+    const plainTwin = text({ ...twin, encrypted: false });
+    expect(plainTwin).toContain('no longer encrypts');
+    expect(plainTwin).not.toContain('encrypted inside the connection');
     // A REALITY transport an SNI list manages: the addresses above and the list.
     const managed = { reality: true, list: { label: 'Shared cover' } };
     expect(text(managed)).toBe(
