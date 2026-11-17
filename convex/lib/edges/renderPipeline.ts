@@ -107,7 +107,7 @@ export interface RenderSnapshot {
   backupTwin?: TwinDelivery;
 }
 
-export type TwinDelivery = 'fallback' | 'only';
+export type TwinDelivery = 'fallback' | 'only' | 'plain';
 
 export interface PipelineResult extends RenderResult {
   snapshot: RenderSnapshot;

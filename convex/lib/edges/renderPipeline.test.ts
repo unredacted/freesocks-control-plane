@@ -611,14 +611,21 @@ describe('applyEdgeRender: the snapshot of a twin', () => {
     expect(only.snapshot.primaryTwin).toBe('only');
     expect([encryptedIn(only.body), plainIn(only.body)]).toEqual([1, 0]);
 
+    // Said, not left out: an absent fact is a snapshot from before it existed.
     const plain = run('plain');
-    expect(plain.snapshot.primaryTwin).toBeUndefined();
+    expect(plain.snapshot.primaryTwin).toBe('plain');
     expect([encryptedIn(plain.body), plainIn(plain.body)]).toEqual([0, 1]);
+  });
+
+  test('a listener with no twin says nothing: there is nothing to tell apart', () => {
+    const out = applyEdgeRender(rctx([edgeA]), plainLink, key(1), { now: NOW });
+    expect(out.snapshot.primaryEdgeId).toBe('eA');
+    expect(out.snapshot).not.toHaveProperty('primaryTwin');
   });
 
   test('an address the twin was not checked through is plain in the body and in the snapshot', () => {
     const unchecked = run(undefined, ['another-edge']);
-    expect(unchecked.snapshot.primaryTwin).toBeUndefined();
+    expect(unchecked.snapshot.primaryTwin).toBe('plain');
     expect([encryptedIn(unchecked.body), plainIn(unchecked.body)]).toEqual([0, 1]);
     const checked = run(undefined, ['eA']);
     expect(checked.snapshot.primaryTwin).toBe('fallback');

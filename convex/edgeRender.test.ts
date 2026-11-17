@@ -876,6 +876,16 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       [`${PRIMARY} · IPv4`, 'encrypted'],
       [`${PRIMARY} · IPv6`, 'encrypted'],
     ]);
+    // The plain entry alone on a twin's listener: one entry, with nothing to tell apart.
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      await ctx.db.patch(subId, { lastRender: { ...sub.lastRender!, primaryTwin: 'plain' } });
+    });
+    view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    expect(view.connections.map((c) => [c.label, c.entry])).toEqual([
+      [`${PRIMARY} · IPv4`, undefined],
+      [`${PRIMARY} · IPv6`, undefined],
+    ]);
   });
 
   test('memberView: labels only from the persisted snapshot; known:false without one; nudge once the epoch moved', async () => {

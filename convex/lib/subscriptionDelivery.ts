@@ -219,8 +219,8 @@ export interface RenderSnapshot {
   /** Whether the body got an auto group (its further server names and order); absent on older snapshots. */
   autoGroup?: boolean;
   /** How each endpoint was handed out where its listener has an encrypted twin (renderPipeline.ts). */
-  primaryTwin?: 'fallback' | 'only';
-  backupTwin?: 'fallback' | 'only';
+  primaryTwin?: 'fallback' | 'only' | 'plain';
+  backupTwin?: 'fallback' | 'only' | 'plain';
   /**
    * The member's STORED country the body was shaped for (names, and edges when
    * steered); never a transient reading (docs/privacy.md).

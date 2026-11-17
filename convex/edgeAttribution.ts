@@ -5,7 +5,7 @@
  * mark that turns a report into a 0/1 detector contribution. Everything here is
  * operator-infrastructure labelling; the telemetry row stays unlinked.
  */
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import type { DatabaseReader, DatabaseWriter } from './_generated/server';
 import { relayForBackendNode } from './relays';
@@ -33,7 +33,7 @@ export function sanitizeConnectionEntry(raw: unknown): ConnectionEntry | null {
  * Whether a report of one address names its EDGE, given how the member's body
  * handed that address out (`lastRender.<role>Twin`, docs/backends.md "VLESS
  * Encryption"):
- *  - the plain entry alone (no twin): yes, as ever;
+ *  - the plain entry alone (`plain`, or a listener with no twin): yes, as ever;
  *  - encrypted first with the plain one behind it (`fallback`, the rule for an
  *    app family nobody has proven speaks the layer): only when the member says
  *    the PLAIN entry failed. An old app fails on the encrypted entry whatever
@@ -42,12 +42,39 @@ export function sanitizeConnectionEntry(raw: unknown): ConnectionEntry | null {
  *    does not say which entry (an older page) is the same uncertainty;
  *  - encrypted alone (`only`, the rule an operator gives a family known to
  *    speak it): yes. There is no other entry to mistake it for.
+ *
+ * A snapshot with no fact at all is read by `twinFactMissing` first.
  */
 export function entryNamesEdge(
-  twin: 'fallback' | 'only' | undefined,
+  twin: 'fallback' | 'only' | 'plain' | undefined,
   entry: ConnectionEntry | null,
 ): boolean {
   return twin !== 'fallback' || entry === 'plain';
+}
+
+/**
+ * A snapshot that says nothing about an edge a twin is handed out through: it
+ * was written before the fact was recorded (every render since says `plain`
+ * where a twin's listener handed out the plain entry alone), so how the member
+ * holds the address is NOT KNOWN, and it may be twice. Read as plain, a report
+ * of the encrypted entry would count against the edge.
+ *
+ * Only such a snapshot can be in this state at the current epoch: a body
+ * rendered before the twin served through the edge is of an older epoch (the
+ * twin's set of fronts changing moves it, convex/nodeTwins.ts `setEdges`).
+ */
+async function twinFactMissing(
+  db: DatabaseReader,
+  relayId: Id<'relays'>,
+  edgeId: string,
+  twin: 'fallback' | 'only' | 'plain' | undefined,
+): Promise<boolean> {
+  if (twin !== undefined) return false;
+  const listeners = await db
+    .query('relayListeners')
+    .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+    .collect();
+  return listeners.some((l) => l.encryptedTwin?.edges?.some((e) => e.edgeId === edgeId) === true);
 }
 
 export interface EdgeAttribution {
@@ -95,14 +122,20 @@ export async function resolveEdgeAttribution(
   // OLD pool: their snapshot names edges of that epoch, and a report about a
   // drained edge must not land on its healthy replacement.
   if (choice && snap && snap.epoch === origin.publicationEpoch && !refreshNotObserved) {
-    if (choice === 'primary' && entryNamesEdge(snap.primaryTwin, entry))
-      relayEdgeId = snap.primaryEdgeId ?? null;
-    else if (choice === 'backup' && entryNamesEdge(snap.backupTwin, entry))
-      relayEdgeId = snap.backupEdgeId ?? null;
     // `auto` denotes one edge only when nothing else was handed out: not a
     // second address, and not a second entry of the one address.
-    else if (choice === 'auto' && !snap.backupEdgeId && entryNamesEdge(snap.primaryTwin, entry))
-      relayEdgeId = snap.primaryEdgeId ?? null;
+    const named =
+      choice === 'primary' || (choice === 'auto' && !snap.backupEdgeId)
+        ? { edgeId: snap.primaryEdgeId, twin: snap.primaryTwin }
+        : choice === 'backup'
+          ? { edgeId: snap.backupEdgeId, twin: snap.backupTwin }
+          : null;
+    if (
+      named?.edgeId &&
+      entryNamesEdge(named.twin, entry) &&
+      !(await twinFactMissing(db, origin._id, named.edgeId, named.twin))
+    )
+      relayEdgeId = named.edgeId;
   }
   return { relaySlug: origin.slug, relayEdgeId, refreshNotObserved };
 }

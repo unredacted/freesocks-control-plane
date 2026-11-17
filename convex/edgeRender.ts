@@ -837,7 +837,11 @@ export const memberView = internalQuery({
     // entries first, then the plain ones under their own name.
     const twinOf = { primary: snap.primaryTwin, backup: snap.backupTwin };
     const connections = [
-      ...entries.map((e) => (twinOf[e.role] ? { ...e, entry: 'encrypted' as const } : e)),
+      ...entries.map((e) =>
+        twinOf[e.role] === 'fallback' || twinOf[e.role] === 'only'
+          ? { ...e, entry: 'encrypted' as const }
+          : e,
+      ),
       ...entries
         .filter((e) => twinOf[e.role] === 'fallback')
         .map((e) => ({
@@ -936,8 +940,8 @@ export const stripReportEntryPage = internalMutation({
  * Before deploying a build whose schema has no
  * `subscriptions.lastRender.primaryTwin` / `backupTwin` and no
  * `issueReports.connectionEntry` (docs/edges.md "Deploy notes"): strip them, so
- * the older schema accepts what is left. Only a key delivered an encrypted twin
- * carries the first two, only a report naming an entry the third. Deliveries
+ * the older schema accepts what is left. Only a key on a listener with an encrypted
+ * twin carries the first two, only a report naming an entry the third. Deliveries
  * and reports keep writing them meanwhile: run it right before the push, and
  * again if the push is refused.
  */

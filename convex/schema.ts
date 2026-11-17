@@ -921,10 +921,16 @@ export default defineSchema({
         // How each endpoint was handed out where its listener has an encrypted
         // twin (docs/backends.md "VLESS Encryption"): `fallback` = the encrypted
         // entry with the plain one behind it, `only` = the encrypted entry
-        // alone; absent = the plain entry. Read by the report dialog and by a
-        // report's attribution (convex/edgeAttribution.ts).
-        primaryTwin: v.optional(v.union(v.literal('fallback'), v.literal('only'))),
-        backupTwin: v.optional(v.union(v.literal('fallback'), v.literal('only'))),
+        // alone, `plain` = the plain entry alone. Absent = the listener has no
+        // twin, OR the snapshot is from before this fact was recorded (told
+        // apart in convex/edgeAttribution.ts). Read by the report dialog and
+        // by a report's attribution.
+        primaryTwin: v.optional(
+          v.union(v.literal('fallback'), v.literal('only'), v.literal('plain')),
+        ),
+        backupTwin: v.optional(
+          v.union(v.literal('fallback'), v.literal('only'), v.literal('plain')),
+        ),
         // The member's STORED country the body was shaped for (never a
         // transient reading), and, when their edges were ordered by it, the
         // tier each endpoint came from there (0 proven, 1 not known, 2 blocked).

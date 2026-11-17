@@ -2627,9 +2627,9 @@ member was using (optional; the labels the pass shows), and an edge-required sin
 **An address the app holds twice.** Where a body carried an address both with VLESS Encryption
 and without ([backends.md](backends.md) § "VLESS Encryption": the plain entry reads
 `… · Old apps`), the render snapshot says so per front (`subscriptions.lastRender.primaryTwin`
-/ `backupTwin`: `fallback` = both entries, `only` = the encrypted one alone; absent = one plain
-entry, as before), decided by the same rule the body was built with (`twinDelivery`,
-`convex/lib/edges/render/types.ts`). The member view lists each entry (`connections[].entry`:
+/ `backupTwin`: `fallback` = both entries, `only` = the encrypted one alone, `plain` = the plain
+one alone; absent = the listener has no twin), decided by the same rule the body was built with
+(`twinDelivery`, `convex/lib/edges/render/types.ts`). The member view lists each entry (`connections[].entry`:
 `encrypted` | `plain`), the dialog offers them as separate options with one line of help ("try
 the one marked Old apps before you report"), and the report carries the answer
 (`connectionEntry` on the wire and on the `issueReports` row, kept only beside a named
@@ -2643,6 +2643,15 @@ front (`entryNamesEdge`, `convex/edgeAttribution.ts`):
 | twice (`fallback`)         | the plain entry    | the front      |
 | twice (`fallback`)         | the encrypted one  | the node only  |
 | twice (`fallback`)         | no entry (old tab) | the node only  |
+| not recorded (see below)   | anything           | the node only  |
+
+**A snapshot from before the fact was recorded.** `plain` is written, never left out, because a
+snapshot written by an earlier build has no value either. On a front a twin is handed out
+through (`relayListeners.encryptedTwin.edges`), a snapshot of the current epoch with no value
+can only be such a one (the twin's set of fronts changing moves the epoch): how the member
+holds the address is not known, so nothing they report names the front (`twinFactMissing`).
+Their next rendered fetch writes the fact; a body still served from the cache of that build
+keeps its old snapshot until then, with the same reading.
 
 An app too old for the encryption fails on the encrypted entry whatever the front does, so that
 report is no evidence about the front. It stays a report of the node, with its usual weight.
@@ -8237,8 +8246,8 @@ deploying the older build (its schema refuses the field); deliveries keep writin
 meanwhile, so run it again if the push is refused.
 
 **Reports name the entry** (§ "An address the app holds twice") adds three optional fields:
-`subscriptions.lastRender.primaryTwin` and `backupTwin`, written only for a key delivered an
-encrypted twin, and `issueReports.connectionEntry`, written only when a member names an entry.
+`subscriptions.lastRender.primaryTwin` and `backupTwin`, written only for a key on a listener
+that has an encrypted twin, and `issueReports.connectionEntry`, written only when a member names an entry.
 One deploy, no migration, no env change; a deployment with no twin served writes none of them.
 To roll back, run `edgeRender:clearEntryFactsForRollback` with no arguments right before
 deploying the older build (its schema refuses the fields), and again if the push is refused.
