@@ -191,3 +191,41 @@ export function vlessEncryptionIdentity(decryption: unknown): VlessEncryptionIde
 export function clientEncryption(decryption: unknown): string | null {
   return vlessEncryptionIdentity(decryption)?.encryption ?? null;
 }
+
+const MLKEM768_CLIENT_KEY_BYTES = 1184;
+
+/** A client string taken apart: what a client needs to open a session. All public. */
+export interface ParsedClientEncryption {
+  mode: VlessEncryptionMode;
+  /** `1rtt`: a full handshake every time; `0rtt`: the client may resume a ticket. */
+  resume: boolean;
+  /** One key verifies the node; more are a chain of relays, each opening its own layer. */
+  keys: Array<{ kind: VlessEncryptionKeyKind; publicKey: Uint8Array }>;
+}
+
+/**
+ * A client string (`encryption`) taken apart, or null when it is not one Xray
+ * would take. Padding blocks are the client's own business (how it shapes its
+ * first bytes) and are not returned: any padding is valid on the wire.
+ */
+export function parseClientEncryption(encryption: unknown): ParsedClientEncryption | null {
+  if (!isVlessEncrypted(encryption)) return null;
+  const [method, mode, rtt, ...rest] = (encryption as string).trim().split('.');
+  if (method !== VLESS_ENCRYPTION_METHOD) return null;
+  if (!MODES.includes(mode as VlessEncryptionMode)) return null;
+  if (rtt !== '0rtt' && rtt !== '1rtt') return null;
+  const keys: ParsedClientEncryption['keys'] = [];
+  for (const block of rest) {
+    const bytes = base64UrlToBytes(block);
+    const kind: VlessEncryptionKeyKind | null =
+      bytes?.length === MLKEM768_CLIENT_KEY_BYTES
+        ? 'mlkem768'
+        : bytes?.length === X25519_KEY_BYTES
+          ? 'x25519'
+          : null;
+    if (kind) keys.push({ kind, publicKey: bytes! });
+    else if (keys.length > 0 || !PADDING_RE.test(block)) return null;
+  }
+  if (keys.length === 0) return null;
+  return { mode: mode as VlessEncryptionMode, resume: rtt === '0rtt', keys };
+}

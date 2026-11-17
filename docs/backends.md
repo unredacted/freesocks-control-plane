@@ -922,10 +922,28 @@ never stored, logged or returned. In the digests (`convex/lib/backend/digest.ts`
 shape hash, covered by the change token, and reduced on the observed transport to what is public:
 the client string, how the handshake looks, what the node is verified by, and a keyed digest.
 
+**FCP's own sessions speak it.** FCP opens VLESS sessions of its own in two places, and both
+follow the transport:
+
+- The **front qualification** of an L7 edge ([edges.md](edges.md) § "L7 edges") runs the
+  session's handshake itself (`convex/lib/edges/frontCheck/vlessEncryption.ts`): one key (either
+  kind), `native` or `xorpub`, a full handshake every time. It was written from Xray-core's own
+  implementation and is proved against the pinned Xray 26.7.28 in the front-check integration
+  test, over WebSocket, gRPC and XHTTP: real Xray completes the handshake and proxies, refuses
+  another node's key, and gives a plain client nothing (and a plain transport gives an encrypted
+  client nothing).
+- A **test link** built from a transport's live parameters carries its client string as
+  `encryption` (`readInboundForTest`); a link built from the test account's own body already
+  has what the backend rendered.
+
+FCP's own client check runs an encrypted entry with Xray alone for now (sing-box does not speak
+the layer, and Mihomo is not asked yet).
+
 **What exists today.** The key material, the template (`buildTransport` takes a server string
-for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, and
-the observation. Nothing sets the flag yet: no route accepts it, every profile FCP builds is
-plain, and delivery does not know the layer. Hysteria is not VLESS and takes no part.
+for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the
+observation, and FCP's own sessions. Nothing sets the flag yet: no route accepts it, every
+profile FCP builds is plain, and delivery does not know the layer. Hysteria is not VLESS and
+takes no part.
 
 ## Sensitive data
 

@@ -28,6 +28,8 @@ import { qualifyFront, type FrontCheckResult } from './index';
 import type { ListenerProto } from '../protocols';
 import { createWsDecoder, WS_GUID, WS_OPCODE } from './ws';
 import { createGrpcDecoder, decodeHunk, encodeHunkFrame } from './grpc';
+import { clientEncryption, generateVlessEncryption } from '../../backend/vlessEncryption';
+import { FakeEncryptedNode } from './vlessEncryption.fake';
 
 const UUID = '01234567-89ab-cdef-0123-456789abcdef';
 /** The VLESS listener behind the front, per HTTP stream transport. */
@@ -143,6 +145,8 @@ interface RawServerOpts {
   node: NodeRole;
   handshake?: HandshakeRole;
   token?: string;
+  /** The node runs VLESS Encryption under this server string. */
+  decryption?: string;
 }
 
 /** Unmasked server frame (RFC 6455 §5.1: the server must not mask). */
@@ -196,8 +200,21 @@ function startRawServer(opts: RawServerOpts): Promise<Running> {
     let upgraded = false;
     let tunnel: Uint8Array = new Uint8Array(0);
     const decoder = createWsDecoder();
+    const encrypted = opts.decryption ? new FakeEncryptedNode(opts.decryption) : null;
 
-    const answerNode = (bytes: Uint8Array, wrap: (b: Uint8Array) => Uint8Array) => {
+    const answerNode = (received: Uint8Array, wrap: (b: Uint8Array) => Uint8Array) => {
+      let bytes = received;
+      if (encrypted) {
+        // The node's side of the session first: what does not open hangs up.
+        const r = encrypted.receive(received);
+        if (encrypted.refused) {
+          socket.destroy();
+          return;
+        }
+        for (const back of r.send) socket.write(Buffer.from(wrap(back)));
+        bytes = concat(r.plain);
+        if (bytes.length === 0) return;
+      }
       tunnel = concat([tunnel, bytes]);
       const action = handleVless(opts.node, tunnel);
       if (action.close) {
@@ -206,7 +223,7 @@ function startRawServer(opts: RawServerOpts): Promise<Running> {
       }
       if (action.reply) {
         tunnel = new Uint8Array(0);
-        socket.write(Buffer.from(wrap(action.reply)));
+        socket.write(Buffer.from(wrap(encrypted ? encrypted.seal(action.reply) : action.reply)));
       }
     };
 
@@ -391,7 +408,13 @@ async function track(p: Promise<Running>): Promise<Running> {
 function run(
   port: number,
   stream: 'ws' | 'httpupgrade' | 'grpc' | 'xhttp',
-  overrides: { uuid?: string; trust?: boolean; stepTimeoutMs?: number; mode?: string } = {},
+  overrides: {
+    uuid?: string;
+    trust?: boolean;
+    stepTimeoutMs?: number;
+    mode?: string;
+    encryption?: string;
+  } = {},
 ): Promise<FrontCheckResult> {
   return qualifyFront(
     {
@@ -403,7 +426,11 @@ function run(
         upgradeToken: 'websocket',
         ...(overrides.mode ? { mode: overrides.mode } : {}),
       },
-      credential: { kind: 'vless', uuid: overrides.uuid ?? UUID },
+      credential: {
+        kind: 'vless',
+        uuid: overrides.uuid ?? UUID,
+        ...(overrides.encryption !== undefined ? { encryption: overrides.encryption } : {}),
+      },
       stepTimeoutMs: overrides.stepTimeoutMs ?? 2_000,
     },
     {
@@ -448,6 +475,68 @@ describe('a working chain', () => {
     const result = await run(s.port, 'grpc');
     expect(result).toMatchObject({ ok: true });
     expectNoSecrets(result);
+  });
+});
+
+describe('a transport that runs VLESS Encryption', () => {
+  const server = generateVlessEncryption().decryption;
+  const encryption = clientEncryption(server)!;
+
+  test('the same session inside the encrypted one, over websocket and over a bare Upgrade', async () => {
+    for (const transport of ['ws', 'httpupgrade'] as const) {
+      const s = await track(startRawServer({ transport, node: 'proxy204', decryption: server }));
+      const result = await run(s.port, transport, { encryption });
+      expect(result).toMatchObject({ ok: true });
+      expect(result.steps.map((x) => x.step)).toEqual(['tls', 'transport', 'vless', 'close']);
+      expectNoSecrets(result);
+      expect(JSON.stringify(result)).not.toContain(encryption.split('.')[3]);
+    }
+  });
+
+  test('a node that does not hold the key hangs up: auth_failed, named as the encryption', async () => {
+    const other = generateVlessEncryption().decryption;
+    const s = await track(startRawServer({ transport: 'ws', node: 'proxy204', decryption: other }));
+    const result = await run(s.port, 'ws', { encryption });
+    expect(result).toMatchObject({ ok: false, code: 'auth_failed', detail: 'encryption' });
+  });
+
+  test('a plain node answering an encrypted client is refused, never read as a pass', async () => {
+    // The plain node sees a hello it cannot parse as a VLESS request and hangs up.
+    const s = await track(startRawServer({ transport: 'ws', node: 'proxy204' }));
+    const result = await run(s.port, 'ws', { encryption });
+    expect(result).toMatchObject({ ok: false, code: 'auth_failed', detail: 'encryption' });
+  });
+
+  test('a plain client gets nothing out of an encrypted node', async () => {
+    // Its short request is not even a whole hello: the node waits for the rest
+    // and the check runs out of time, as it does against real Xray.
+    const s = await track(
+      startRawServer({ transport: 'ws', node: 'proxy204', decryption: server }),
+    );
+    const result = await run(s.port, 'ws', { stepTimeoutMs: 1_000 });
+    expect(result.ok).toBe(false);
+    expect(result.code).toMatch(/^(auth_failed|timeout_vless)$/);
+  });
+
+  test('the right key and a credential the node does not know is still auth_failed', async () => {
+    const s = await track(
+      startRawServer({ transport: 'ws', node: 'proxy204', decryption: server }),
+    );
+    const result = await run(s.port, 'ws', { encryption, uuid: OTHER_UUID });
+    expect(result).toMatchObject({ ok: false, code: 'auth_failed' });
+  });
+
+  test('what the client cannot speak is refused before any socket is opened', async () => {
+    const closed = 1; // a port nothing listens on: a dial would be tls_failed
+    for (const [value, detail] of [
+      [encryption.replace('.native.', '.random.'), 'encryption_mode'],
+      [`${encryption}.${encryption.split('.')[3]}`, 'encryption_chain'],
+      ['', 'encryption_unreadable'],
+    ] as const) {
+      const result = await run(closed, 'ws', { encryption: value });
+      expect(result).toMatchObject({ ok: false, code: 'unsupported_protocol', detail });
+      expect(result.steps).toEqual([]);
+    }
   });
 });
 

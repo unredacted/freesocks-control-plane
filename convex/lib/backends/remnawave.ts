@@ -59,6 +59,7 @@ import {
   vlessEncryptionAuthDigest,
 } from '../backend/digest';
 import { applyPatchOps, type PatchOp } from '../backend/patchOps';
+import { clientEncryption, isVlessEncrypted } from '../backend/vlessEncryption';
 import { PRIVACY_XRAY_LOG } from './xrayPrivacy';
 import { realityClientBoundsOf } from '../../../src/shared/contracts/realityClients';
 
@@ -2281,7 +2282,8 @@ export async function remnawaveUpdateSubscriptionTemplate(
 /**
  * The live parameters an isolated REALITY test link is built from. The raw
  * inbound (private key included) exists only inside this function; what
- * leaves is the derived public key, ONE short id, names, target and digests.
+ * leaves is the derived public key, ONE short id, names, target, digests and
+ * the public `encryption` its entries carry.
  */
 export async function remnawaveReadInboundForTest(
   cfg: RemnawaveConfig,
@@ -2308,6 +2310,11 @@ export async function remnawaveReadInboundForTest(
   const shortIds = (Array.isArray(rs.shortIds) ? rs.shortIds : []).filter(
     (s): s is string => typeof s === 'string',
   );
+  // What a member entry says for `encryption`: the client string of an
+  // encrypted transport (derived here; the server string stays in this scope).
+  const decryption = obj(obj(raw)?.settings)?.decryption;
+  const encryption = isVlessEncrypted(decryption) ? clientEncryption(decryption) : 'none';
+  if (!encryption) return null;
   return {
     tag,
     inboundUuid,
@@ -2319,6 +2326,7 @@ export async function remnawaveReadInboundForTest(
     authDigest: auth.digest,
     changeToken: await changeToken(full.config, digestKey),
     clientBounds: realityClientBoundsOf(rs),
+    encryption,
   };
 }
 

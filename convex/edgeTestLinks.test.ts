@@ -31,6 +31,7 @@ import {
   TEST_LINK_USER_AGENT,
 } from './edgeTestLinks';
 import { parseProxyUri } from './lib/edges/render/uri';
+import { clientEncryption, generateVlessEncryption } from './lib/backend/vlessEncryption';
 import { expireTestCredential } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -551,6 +552,23 @@ describe('realityEntryLine', () => {
       'r',
     );
     expect(v4).toMatch(/@203\.0\.113\.20:443\?/);
+  });
+
+  test('an encrypted transport gets its client string, a plain one says none', () => {
+    const entry = (encryption?: string) =>
+      new URL(
+        realityEntryLine(
+          '11111111-2222-4333-8444-555555555555',
+          '203.0.113.20',
+          443,
+          { ...params, ...(encryption ? { encryption } : {}) },
+          'r',
+        ),
+      ).searchParams.get('encryption');
+    expect(entry()).toBe('none');
+    const client = clientEncryption(generateVlessEncryption().decryption)!;
+    // A base64url key survives the query string unchanged.
+    expect(entry(client)).toBe(client);
   });
 
   test('XHTTP under REALITY carries its path and mode and no flow', () => {

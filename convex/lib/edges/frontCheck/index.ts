@@ -12,6 +12,12 @@
  * proxy `www.gstatic.com:80` and requires the 204 to come back out of the
  * tunnel. Only that sequence proves the whole chain.
  *
+ * A transport that runs VLESS Encryption (docs/backends.md "VLESS Encryption")
+ * is spoken the way a member's app speaks it: the session's handshake first,
+ * with the client string the transport's entries carry, then the same VLESS
+ * request inside it. A node that does not hold the key cannot answer, so the
+ * proof also says the node is the one members verify.
+ *
  * Everything observable is reported as a step with a duration, and every
  * failure gets a specific code so the admin sees WHERE the chain broke. Detail
  * strings carry status numbers and short reason tokens only: never a hostname,
@@ -49,6 +55,7 @@ import {
   xhttpUploadPath,
 } from './xhttp';
 import { buildVlessRequest, parseVlessResponse } from './vless';
+import { encryptionRefusal, VlessEncryptionSession } from './vlessEncryption';
 import { buildTrojanRequest } from './trojan';
 import { tlsConnect, type ConnectFn } from './tls';
 
@@ -73,9 +80,14 @@ export interface FrontCheckResult {
   checkedAt: number;
 }
 
-/** The qualification account, in the form the listener's protocol authenticates. */
+/**
+ * The qualification account, in the form the listener's protocol
+ * authenticates. `encryption` is set for a VLESS transport that runs VLESS
+ * Encryption: the client string its member entries carry (an empty one says
+ * the transport is encrypted and its string could not be read).
+ */
 export type FrontCredential =
-  { kind: 'vless'; uuid: string } | { kind: 'trojan'; password: string };
+  { kind: 'vless'; uuid: string; encryption?: string } | { kind: 'trojan'; password: string };
 
 export interface QualifyFrontArgs {
   /** The fronted hostname: the dial name, the SNI and the HTTP Host. */
@@ -560,6 +572,62 @@ function openXhttpTunnel(
 }
 
 /**
+ * VLESS Encryption around any tunnel: the hello goes out at once, what the
+ * caller sends waits for the handshake, and what comes back is opened before
+ * it is handed on. A peer that does not complete the handshake (it does not
+ * hold the node's key, or is not the node at all) is a failed authentication.
+ */
+class EncryptedTunnel extends Tunnel {
+  private readonly session: VlessEncryptionSession;
+  private waiting: Uint8Array[] = [];
+  constructor(
+    private readonly inner: Tunnel,
+    encryption: string,
+    randomBytes: (n: number) => Uint8Array,
+  ) {
+    super();
+    this.session = new VlessEncryptionSession(encryption, { randomBytes });
+    const refused = () => new StepError('auth_failed', 'encryption');
+    inner.listen({
+      data: (chunk) => {
+        let plain: Uint8Array[];
+        try {
+          plain = this.session.receive(chunk);
+        } catch {
+          this.emitError(refused());
+          return;
+        }
+        if (this.session.ready && this.waiting.length > 0) {
+          const queued = this.waiting;
+          this.waiting = [];
+          for (const data of queued) this.inner.send(this.session.seal(data));
+        }
+        for (const p of plain) this.emitData(p);
+      },
+      close: (info) => {
+        // A transport's own verdict (gRPC trailers) stands; otherwise a close
+        // before the handshake is through is the node refusing it.
+        if (this.session.ready || (info.grpcStatus !== undefined && info.grpcStatus !== 0))
+          this.emitClose(info);
+        else this.emitError(refused());
+      },
+      error: (err) => this.emitError(err),
+    });
+    inner.send(this.session.hello());
+  }
+  send(data: Uint8Array): void {
+    if (this.session.ready) this.inner.send(this.session.seal(data));
+    else this.waiting.push(data);
+  }
+  closeOrderly(): void {
+    this.inner.closeOrderly();
+  }
+  destroy(): void {
+    this.inner.destroy();
+  }
+}
+
+/**
  * The authenticated leg: one write carrying the request header (VLESS or
  * Trojan) plus the HTTP request, then (VLESS only: Trojan has none) the
  * response header and the target's status line.
@@ -720,6 +788,20 @@ export async function qualifyFront(
   // A credential of the wrong protocol could never authenticate: say so.
   if (args.credential.kind !== proof)
     return { ok: false, code: 'no_qualification_credential', detail: 'kind', steps, checkedAt };
+  // An encrypted transport this client cannot speak (its string unreadable, the
+  // whole stream masked, a chain of relays) is not checked with a guess.
+  const encryption = args.credential.kind === 'vless' ? args.credential.encryption : undefined;
+  if (encryption !== undefined) {
+    const refusal = encryptionRefusal(encryption);
+    if (refusal)
+      return {
+        ok: false,
+        code: 'unsupported_protocol',
+        detail: `encryption_${refusal}`,
+        steps,
+        checkedAt,
+      };
+  }
   const stream = args.proto.streamTransport;
 
   let socket: TLSSocket | null = null;
@@ -750,6 +832,7 @@ export async function qualifyFront(
       if (stream === 'xhttp') return openXhttpTunnel(socket!, args, randomBytes);
       return openGrpcTunnel(socket!, args);
     });
+    if (encryption !== undefined) tunnel = new EncryptedTunnel(tunnel, encryption, randomBytes);
     await record('vless', () => runSession(tunnel!, args, budget()));
     // A slow close is evidence about the peer, never a reason to refuse an edge:
     // the step is recorded as not ok and the overall result stays a pass.

@@ -13,6 +13,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { clientEncryption, generateVlessEncryption } from './lib/backend/vlessEncryption';
 import type { Id } from './_generated/dataModel';
 import { FIXTURE_PANEL_SLUG, insertPanelServer } from './lib/edges/testing/fixtures';
 import { generateRealityKey } from './lib/backend/realityKeys';
@@ -442,6 +443,23 @@ describe('a direct node with long names', () => {
     const creds = await t.run((ctx) => ctx.db.query('edgeTestCredentials').collect());
     expect(creds[0]!.backendUserId).toMatch(/^[^:]+:\d+$/);
     expect(panel.users.some((u) => typeof u.id === 'number' && !u.uuid)).toBe(true);
+  });
+
+  test('the test link of a transport that runs VLESS Encryption carries its client string', async () => {
+    const { t, panel, intentId } = await seedLiveDirect();
+    const encryptionOf = async () =>
+      new URL(
+        (await t.action(internal.nodeActivation.buildDirectTestLink, { intentId })).link,
+      ).searchParams.get('encryption');
+    expect(await encryptionOf()).toBe('none');
+    // The same transport, now encrypted on the backend: a link that still said
+    // `none` would be refused by it.
+    const server = generateVlessEncryption().decryption;
+    const reality = (panel.profiles[0].config.inbounds as any[]).find(
+      (i) => i.streamSettings?.security === 'reality',
+    );
+    reality.settings = { ...reality.settings, decryption: server };
+    expect(await encryptionOf()).toBe(clientEncryption(server));
   });
 
   test('the test link of a node with a 30-character name: its backend user fits the 36-character cap', async () => {

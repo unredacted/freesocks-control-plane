@@ -11,7 +11,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { realityPublicKey } from '../backend/digest';
 import { clientEncryption, generateVlessEncryption } from '../backend/vlessEncryption';
-import { remnawaveObservePanel, type RemnawaveConfig } from './remnawave';
+import {
+  remnawaveObservePanel,
+  remnawaveReadInboundForTest,
+  type RemnawaveConfig,
+} from './remnawave';
 
 const cfg: RemnawaveConfig = { baseUrl: 'https://panel.internal', apiToken: 'SECRET_TOKEN' };
 const KEY = 'digest-key';
@@ -305,5 +309,33 @@ describe('remnawaveObservePanel', () => {
     await expect(remnawaveObservePanel(cfg, KEY)).rejects.toThrow(
       /^Remnawave 500 on \/api\/config-profiles\/p-1$/,
     );
+  });
+});
+
+describe('remnawaveReadInboundForTest', () => {
+  const read = (decryption: unknown) => {
+    const p = profile(['a.example']);
+    (p.config.inbounds[0] as ReturnType<typeof realityInbound>).settings.decryption =
+      decryption as string;
+    mockFetch(panel(p));
+    return remnawaveReadInboundForTest(cfg, 'p-1', 'reality-in', KEY);
+  };
+
+  test('a plain transport: its entries say none', async () => {
+    expect((await read('none'))!.encryption).toBe('none');
+    expect((await read(undefined))!.encryption).toBe('none');
+  });
+
+  test('a transport running VLESS Encryption: its client string, and nothing of the server one', async () => {
+    const server = generateVlessEncryption().decryption;
+    const params = (await read(server))!;
+    expect(params.encryption).toBe(clientEncryption(server));
+    const blob = JSON.stringify(params);
+    expect(blob).not.toContain(server.split('.')[3]);
+    expect(blob).not.toContain(PRIVATE_KEY);
+  });
+
+  test('a server string FCP cannot read gives no parameters: a link built without it could not connect', async () => {
+    expect(await read('mlkem768x25519plus.native.600s')).toBeNull();
   });
 });

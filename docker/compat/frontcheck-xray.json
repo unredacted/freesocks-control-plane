@@ -16,7 +16,13 @@
     "distroless), while the client still sends the real request it would send.",
     "",
     "The client id and the Trojan password are fixed, public test values: they authenticate nothing but",
-    "this throwaway container."
+    "this throwaway container.",
+    "",
+    "The last four inbounds run VLESS Encryption (docs/backends.md): websocket,",
+    "gRPC and XHTTP under an ML-KEM-768 key (what FCP makes), and websocket",
+    "under an X25519 key with the share masked (xorpub). Their server strings",
+    "are fixed, public test values printed once by `xray vlessenc`; the test",
+    "derives the client strings from them."
   ],
   "log": { "loglevel": "warning" },
   "inbounds": [
@@ -122,6 +128,90 @@
           ]
         },
         "wsSettings": { "path": "/relay-tw" }
+      }
+    },
+    {
+      "tag": "vless-ws-tls-encrypted",
+      "listen": "0.0.0.0",
+      "port": 18448,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "mlkem768x25519plus.native.600s.Fvh2r1IFz2xQPXUqrNnCHhdPaqQY_ZSylKqHCfP0LCTlXBjPM7rBgU8y_qzQwFgXLVerLACnrIkcidp6SwRxKw"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["http/1.1"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "wsSettings": { "path": "/relay-ws-e" }
+      }
+    },
+    {
+      "tag": "vless-grpc-tls-encrypted",
+      "listen": "0.0.0.0",
+      "port": 18449,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "mlkem768x25519plus.native.600s.Fvh2r1IFz2xQPXUqrNnCHhdPaqQY_ZSylKqHCfP0LCTlXBjPM7rBgU8y_qzQwFgXLVerLACnrIkcidp6SwRxKw"
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["h2"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "grpcSettings": { "serviceName": "relay-svc-e" }
+      }
+    },
+    {
+      "tag": "vless-xhttp-tls-encrypted",
+      "listen": "0.0.0.0",
+      "port": 18450,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "mlkem768x25519plus.native.600s.Fvh2r1IFz2xQPXUqrNnCHhdPaqQY_ZSylKqHCfP0LCTlXBjPM7rBgU8y_qzQwFgXLVerLACnrIkcidp6SwRxKw"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["h2", "http/1.1"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "xhttpSettings": { "path": "/relay-xh-e", "mode": "packet-up" }
+      }
+    },
+    {
+      "tag": "vless-ws-tls-encrypted-x25519",
+      "listen": "0.0.0.0",
+      "port": 18451,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "mlkem768x25519plus.xorpub.600s.gKcizb1S38QLEf6BU2hhJ71xnyP-RPUaQFcnV4KPClE"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["http/1.1"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "wsSettings": { "path": "/relay-ws-x" }
       }
     }
   ],
