@@ -23,7 +23,7 @@ import type { MemberPlace } from '../../../src/shared/entryNames';
 import { RENDER_FORMAT_OF, detectBodyFormat } from './clientFamilies';
 import { pathFigure, type LatencyBand, type LatencyInputs, type PathFigure } from './latency';
 import { formatSupported } from './protocols';
-import { listenerServable } from './render/types';
+import { listenerServable, twinDelivery } from './render/types';
 import {
   edgeAddressesOf,
   formatHasAutoGroup,
@@ -97,7 +97,17 @@ export interface RenderSnapshot {
   /** With an `edgeCountry`: the tier each endpoint came from there (0 proven, 1 not known, 2 blocked). */
   primaryTier?: EdgeTier;
   backupTier?: EdgeTier;
+  /**
+   * How each endpoint was handed out where its listener has an encrypted twin
+   * (docs/backends.md "VLESS Encryption"): `fallback` = the encrypted entry
+   * with the plain one behind it, `only` = the encrypted entry alone. Absent =
+   * the plain entry alone. What a member's report of a connection is read by.
+   */
+  primaryTwin?: TwinDelivery;
+  backupTwin?: TwinDelivery;
 }
+
+export type TwinDelivery = 'fallback' | 'only';
 
 export interface PipelineResult extends RenderResult {
   snapshot: RenderSnapshot;
@@ -226,6 +236,20 @@ export function applyEdgeRender(
     published.some((e) => e.lane === 'trusted' && e.eligible !== false)
       ? { kind: 'unavailable' as const, reason: 'open_lane_empty' as const }
       : out.delivery;
+  // Which endpoints the body carries encrypted: the same reading the codecs
+  // make (render/types.ts `planEntries`). A sing-box body never carries a twin.
+  const twinOf = (a: { edge: PublishedEdge } | null | undefined): TwinDelivery | undefined =>
+    a
+      ? twinDelivery({
+          match: (matches ?? []).find((m) => m.listenerKey === a.edge.listenerKey),
+          matcher: rctx.matchers.find((m) => m.listenerKey === a.edge.listenerKey),
+          edgeId: a.edge.edgeId,
+          rule,
+          twinsInFormat: renderFormat === 'links' || renderFormat === 'clash',
+        })
+      : undefined;
+  const primaryTwin = twinOf(assigned.primary);
+  const backupTwin = twinOf(assigned.backup);
   // (6): the eligibility snapshot the DB half persists on the subscription.
   return {
     ...out,
@@ -235,6 +259,8 @@ export function applyEdgeRender(
       primaryEdgeId: assigned.primary?.edge.edgeId ?? null,
       backupEdgeId: assigned.backup?.edge.edgeId ?? null,
       autoGroup: hasAutoGroup,
+      ...(primaryTwin ? { primaryTwin } : {}),
+      ...(backupTwin ? { backupTwin } : {}),
       ...(assigned.primaryTier !== undefined ? { primaryTier: assigned.primaryTier } : {}),
       ...(assigned.backupTier !== undefined ? { backupTier: assigned.backupTier } : {}),
     },

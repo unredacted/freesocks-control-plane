@@ -130,9 +130,17 @@
     const connection = e.connectionChoice
       ? (CONNECTION_WORDS[e.connectionChoice] ?? e.connectionChoice)
       : 'connection not named';
+    // Where the app held an address twice: which entry. A report of the
+    // encrypted one is never counted against the address (an old app fails on it).
+    const entry =
+      e.connectionEntry === 'encrypted'
+        ? ' (encrypted entry)'
+        : e.connectionEntry === 'plain'
+          ? ' (plain entry)'
+          : '';
     const weight =
       e.detectorWeight === 1 ? ', counted' : e.detectorWeight === 0 ? ', not counted' : '';
-    return `${connection}${weight}`;
+    return `${connection}${entry}${weight}`;
   }
 
   const fmtAt = (iso: string) =>

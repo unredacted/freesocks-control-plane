@@ -393,6 +393,29 @@ export function planEntries<T>(
 }
 
 /**
+ * How ONE endpoint is handed out where its listener has an encrypted twin, by
+ * the rule `planEntries` applies: `fallback` = the encrypted entry first with
+ * the plain one behind it, `only` = the encrypted entry alone, undefined = the
+ * plain entry. For the render snapshot (what a member's report is read by),
+ * from the listener's match and matcher rather than the codec's own entries.
+ */
+export function twinDelivery(a: {
+  match: ListenerMatch | undefined;
+  matcher: Pick<RenderMatcher, 'encrypted'> | undefined;
+  edgeId: string;
+  rule: Pick<RenderRuleInput, 'encryption'>;
+  /** Whether the body's format carries a twin at all (a sing-box body never does). */
+  twinsInFormat: boolean;
+}): 'fallback' | 'only' | undefined {
+  const mode = a.rule.encryption ?? 'prefer';
+  if (!a.twinsInFormat || mode === 'plain') return undefined;
+  if (!a.match?.matched || a.match.encrypted !== true) return undefined;
+  const limit = a.matcher?.encrypted?.edgeIds;
+  if (limit && !limit.includes(a.edgeId)) return undefined;
+  return mode === 'prefer' && a.match.twinOnly !== true ? 'fallback' : 'only';
+}
+
+/**
  * The retained entries edge-required delivery leaves out (`RenderInput.withholds`):
  * not a template, on a transport one of the listeners speaks, at an address the
  * caller cannot vouch for. Entries on a transport no listener covers pass.

@@ -22,9 +22,17 @@
     open: boolean;
     reason: ReportIssueReason | null;
     /** The connection names the pass shows; empty = the question is not asked. */
-    connections?: Array<{ label: string; base?: string; role: 'primary' | 'backup' }>;
+    connections?: Array<{
+      label: string;
+      base?: string;
+      role: 'primary' | 'backup';
+      /** Where the app holds this address twice: its encrypted entry or the plain one. */
+      entry?: 'encrypted' | 'plain';
+    }>;
     /** The member's answer; null = not answered (the question is optional). */
     connection?: 'primary' | 'backup' | 'unsure' | null;
+    /** With it, which of an address's two entries (null where it has one, or not answered). */
+    connectionEntry?: 'encrypted' | 'plain' | null;
     telemetryContext: TelemetryContextResponse | undefined;
     /** The member's chosen country (ConnectionRegion), prefilled in the consent block. */
     ownCountry?: string | null;
@@ -42,6 +50,7 @@
     reason = $bindable(),
     connections = [],
     connection = $bindable(null),
+    connectionEntry = $bindable(null),
     telemetryContext,
     ownCountry = null,
     supportEmail = null,
@@ -63,18 +72,40 @@
       : null,
   );
 
+  type Option = {
+    role: 'primary' | 'backup' | 'unsure';
+    entry: 'encrypted' | 'plain' | null;
+    label: string;
+  };
   // One option per role, named after its address (a role carries one entry per
   // form of its address: `· Domain`, `· IPv4`, `· IPv6` share one base name).
-  const connectionOptions = $derived([
-    ...(['primary', 'backup'] as const)
-      .map((role) => ({
-        role: role as 'primary' | 'backup' | 'unsure',
-        label: [
-          ...new Set(connections.filter((c) => c.role === role).map((c) => c.base ?? c.label)),
-        ].join(' / '),
-      }))
-      .filter((o) => o.label !== ''),
-  ]);
+  // Where the app holds an address twice (an encrypted entry and a plain one
+  // marked for old apps), each is its own option: which of them failed says
+  // whether the address is at fault or the app.
+  const connectionOptions = $derived(
+    (['primary', 'backup'] as const).flatMap((role): Option[] => {
+      const own = connections.filter((c) => c.role === role);
+      const named = (entry: 'encrypted' | 'plain' | undefined) =>
+        [...new Set(own.filter((c) => c.entry === entry).map((c) => c.base ?? c.label))].join(
+          ' / ',
+        );
+      const twice = own.some((c) => c.entry === 'plain');
+      const options: Option[] = twice
+        ? [
+            { role, entry: 'encrypted', label: named('encrypted') },
+            { role, entry: 'plain', label: named('plain') },
+          ]
+        : [
+            {
+              role,
+              entry: null,
+              label: [...new Set(own.map((c) => c.base ?? c.label))].join(' / '),
+            },
+          ];
+      return options.filter((o) => o.label !== '');
+    }),
+  );
+  const twoEntries = $derived(connectionOptions.some((o) => o.entry === 'plain'));
 
   const REASON_LABELS: Record<ReportIssueReason, () => string> = {
     'cant-connect': () => t('report.reasonCantConnect'),
@@ -121,21 +152,27 @@
     {#if connectionOptions.length > 0}
       <fieldset class="space-y-1" disabled={busy}>
         <legend class="mb-2 text-sm font-medium">{t('report.connectionLegend')}</legend>
-        {#each [...connectionOptions, { role: 'unsure' as const, label: t('report.connectionUnsure') }] as o (o.role)}
+        {#each [...connectionOptions, { role: 'unsure' as const, entry: null, label: t('report.connectionUnsure') }] as o (`${o.role}:${o.entry ?? ''}`)}
           <label
             class="flex items-center gap-3 rounded-md px-2 py-2 min-h-[44px] cursor-pointer hover:bg-accent/50"
           >
             <input
               type="radio"
               name="report-issue-connection"
-              value={o.role}
-              checked={connection === o.role}
-              onchange={() => (connection = o.role)}
+              value={`${o.role}:${o.entry ?? ''}`}
+              checked={connection === o.role && connectionEntry === o.entry}
+              onchange={() => {
+                connection = o.role;
+                connectionEntry = o.entry;
+              }}
               class="size-4 shrink-0 accent-current"
             />
             <span class="text-sm">{o.label}</span>
           </label>
         {/each}
+        {#if twoEntries}
+          <p class="px-2 text-sm text-muted-foreground">{t('report.connectionOldAppsHint')}</p>
+        {/if}
       </fieldset>
     {/if}
 

@@ -179,6 +179,8 @@
   let reportIssueOpen = $state(false);
   let reportIssueReason = $state<ReportIssueReason | null>(null);
   let reportIssueConnection = $state<'primary' | 'backup' | 'unsure' | null>(null);
+  // Which of an address's two entries, where the app holds an encrypted and a plain one.
+  let reportIssueConnectionEntry = $state<'encrypted' | 'plain' | null>(null);
 
   // Consent-block context (which fields + the CDN's editable prefill): fetched
   // only while one of the two dialogs that render it is open.
@@ -424,6 +426,9 @@
         {
           reason: reportIssueReason,
           ...(reportIssueConnection ? { connection: reportIssueConnection } : {}),
+          ...(reportIssueConnection && reportIssueConnectionEntry
+            ? { connectionEntry: reportIssueConnectionEntry }
+            : {}),
           ...(telemetry ? { telemetry } : {}),
         },
         ReportIssueResponse,
@@ -433,6 +438,7 @@
       reportIssueOpen = false;
       reportIssueReason = null;
       reportIssueConnection = null;
+      reportIssueConnectionEntry = null;
       liveMessage = t('report.done');
       toast.success(t('report.done'), { description: t('report.doneBody') });
     },
@@ -1164,6 +1170,7 @@
                       : () => {
                           reportIssueReason = null;
                           reportIssueConnection = null;
+                          reportIssueConnectionEntry = null;
                           reportIssueOpen = true;
                         }}
                   />
@@ -1182,6 +1189,7 @@
                       onclick={() => {
                         reportIssueReason = null;
                         reportIssueConnection = null;
+                        reportIssueConnectionEntry = null;
                         reportIssueOpen = true;
                       }}
                       disabled={reportIssue.isPending}
@@ -1585,6 +1593,7 @@
         bind:open={reportIssueOpen}
         bind:reason={reportIssueReason}
         bind:connection={reportIssueConnection}
+        bind:connectionEntry={reportIssueConnectionEntry}
         connections={nodeStatus.data?.node?.relay?.connections ?? []}
         telemetryContext={telemetryContext.data}
         {ownCountry}
@@ -1594,6 +1603,7 @@
           reportIssueOpen = false;
           reportIssueReason = null;
           reportIssueConnection = null;
+          reportIssueConnectionEntry = null;
         }}
         onConfirm={(telemetry) => reportIssue.mutate(telemetry)}
         busy={reportIssue.isPending}

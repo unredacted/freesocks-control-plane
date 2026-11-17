@@ -2624,6 +2624,30 @@ Member side: when the key sits behind edges the report dialog also asks which co
 member was using (optional; the labels the pass shows), and an edge-required single-key
 (Outline) subscription is shown as the dynamic access key.
 
+**An address the app holds twice.** Where a body carried an address both with VLESS Encryption
+and without ([backends.md](backends.md) § "VLESS Encryption": the plain entry reads
+`… · Old apps`), the render snapshot says so per front (`subscriptions.lastRender.primaryTwin`
+/ `backupTwin`: `fallback` = both entries, `only` = the encrypted one alone; absent = one plain
+entry, as before), decided by the same rule the body was built with (`twinDelivery`,
+`convex/lib/edges/render/types.ts`). The member view lists each entry (`connections[].entry`:
+`encrypted` | `plain`), the dialog offers them as separate options with one line of help ("try
+the one marked Old apps before you report"), and the report carries the answer
+(`connectionEntry` on the wire and on the `issueReports` row, kept only beside a named
+connection). A report counts against the front only when the entry says something about the
+front (`entryNamesEdge`, `convex/edgeAttribution.ts`):
+
+| The address was handed out | The member named   | Counts against |
+| -------------------------- | ------------------ | -------------- |
+| once (plain)               | the address        | the front      |
+| encrypted alone (`only`)   | the address        | the front      |
+| twice (`fallback`)         | the plain entry    | the front      |
+| twice (`fallback`)         | the encrypted one  | the node only  |
+| twice (`fallback`)         | no entry (old tab) | the node only  |
+
+An app too old for the encryption fails on the encrypted entry whatever the front does, so that
+report is no evidence about the front. It stays a report of the node, with its usual weight.
+Admin → Telemetry shows the entry beside the connection.
+
 ### Host ownership (`hostMode: fcp`)
 
 `convex/hostOps.ts`. Each listener's Host is a persisted state machine
@@ -8211,6 +8235,13 @@ next fetch, and members get the new entries then (the mirrors at their next swee
 back, run `edgeRender:clearSnapshotAutoGroupForRollback` with no arguments right before
 deploying the older build (its schema refuses the field); deliveries keep writing it
 meanwhile, so run it again if the push is refused.
+
+**Reports name the entry** (§ "An address the app holds twice") adds three optional fields:
+`subscriptions.lastRender.primaryTwin` and `backupTwin`, written only for a key delivered an
+encrypted twin, and `issueReports.connectionEntry`, written only when a member names an entry.
+One deploy, no migration, no env change; a deployment with no twin served writes none of them.
+To roll back, run `edgeRender:clearEntryFactsForRollback` with no arguments right before
+deploying the older build (its schema refuses the fields), and again if the push is refused.
 
 **A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
 detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env

@@ -19,6 +19,37 @@ export function sanitizeConnectionChoice(raw: unknown): ConnectionChoice | null 
   return (CONNECTION_CHOICES as readonly string[]).includes(s) ? (s as ConnectionChoice) : null;
 }
 
+/** Which of an address's two entries the member used, where their body carried both. */
+export const CONNECTION_ENTRIES = ['encrypted', 'plain'] as const;
+export type ConnectionEntry = (typeof CONNECTION_ENTRIES)[number];
+
+export function sanitizeConnectionEntry(raw: unknown): ConnectionEntry | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim().toLowerCase();
+  return (CONNECTION_ENTRIES as readonly string[]).includes(s) ? (s as ConnectionEntry) : null;
+}
+
+/**
+ * Whether a report of one address names its EDGE, given how the member's body
+ * handed that address out (`lastRender.<role>Twin`, docs/backends.md "VLESS
+ * Encryption"):
+ *  - the plain entry alone (no twin): yes, as ever;
+ *  - encrypted first with the plain one behind it (`fallback`, the rule for an
+ *    app family nobody has proven speaks the layer): only when the member says
+ *    the PLAIN entry failed. An old app fails on the encrypted entry whatever
+ *    the address does, so such a report says nothing about the address, and it
+ *    would otherwise read as a block and replace a healthy one. A report that
+ *    does not say which entry (an older page) is the same uncertainty;
+ *  - encrypted alone (`only`, the rule an operator gives a family known to
+ *    speak it): yes. There is no other entry to mistake it for.
+ */
+export function entryNamesEdge(
+  twin: 'fallback' | 'only' | undefined,
+  entry: ConnectionEntry | null,
+): boolean {
+  return twin !== 'fallback' || entry === 'plain';
+}
+
 export interface EdgeAttribution {
   relaySlug: string;
   relayEdgeId: string | null;
@@ -42,6 +73,8 @@ export async function resolveEdgeAttribution(
   sub: Doc<'subscriptions'> | null,
   choice: ConnectionChoice | null,
   _now: number,
+  /** Which of the address's two entries, where the body carried both (`entryNamesEdge`). */
+  entry: ConnectionEntry | null = null,
 ): Promise<EdgeAttribution | null> {
   if (!sub || !sub.backendServerId) return null;
   const origin = await relayForBackendNode(db, sub.backendServerId, sub.pinnedNode ?? undefined);
@@ -62,10 +95,14 @@ export async function resolveEdgeAttribution(
   // OLD pool: their snapshot names edges of that epoch, and a report about a
   // drained edge must not land on its healthy replacement.
   if (choice && snap && snap.epoch === origin.publicationEpoch && !refreshNotObserved) {
-    if (choice === 'primary') relayEdgeId = snap.primaryEdgeId ?? null;
-    else if (choice === 'backup') relayEdgeId = snap.backupEdgeId ?? null;
-    // `auto` denotes one edge only when nothing else was handed out.
-    else if (choice === 'auto' && !snap.backupEdgeId) relayEdgeId = snap.primaryEdgeId ?? null;
+    if (choice === 'primary' && entryNamesEdge(snap.primaryTwin, entry))
+      relayEdgeId = snap.primaryEdgeId ?? null;
+    else if (choice === 'backup' && entryNamesEdge(snap.backupTwin, entry))
+      relayEdgeId = snap.backupEdgeId ?? null;
+    // `auto` denotes one edge only when nothing else was handed out: not a
+    // second address, and not a second entry of the one address.
+    else if (choice === 'auto' && !snap.backupEdgeId && entryNamesEdge(snap.primaryTwin, entry))
+      relayEdgeId = snap.primaryEdgeId ?? null;
   }
   return { relaySlug: origin.slug, relayEdgeId, refreshNotObserved };
 }

@@ -23,6 +23,7 @@ import {
   claimReportMark,
   resolveEdgeAttribution,
   sanitizeConnectionChoice,
+  sanitizeConnectionEntry,
 } from './edgeAttribution';
 
 const DAY_MS = 86_400_000;
@@ -94,6 +95,9 @@ export const reportIssue = internalMutation({
     // failed, and the peppered per-member-per-window dedupe key (computed in
     // the HTTP action; never the member id).
     connectionChoice: v.optional(v.union(v.string(), v.null())),
+    // Which of the address's two entries, where the member's body carried an
+    // encrypted one and a plain one (edgeAttribution.ts `entryNamesEdge`).
+    connectionEntry: v.optional(v.union(v.string(), v.null())),
     markKey: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, a): Promise<{ ok: boolean }> => {
@@ -102,7 +106,8 @@ export const reportIssue = internalMutation({
     const sub = await currentOrActiveSub(ctx.db, user);
     const now = Date.now();
     const choice = sanitizeConnectionChoice(a.connectionChoice);
-    const relay = await resolveEdgeAttribution(ctx.db, sub, choice, now);
+    const entry = sanitizeConnectionEntry(a.connectionEntry);
+    const relay = await resolveEdgeAttribution(ctx.db, sub, choice, now, entry);
     // Fail CLOSED without a dedupe key (no mark pepper configured): the report
     // is stored for the operator but carries weight 0 and no edge attribution,
     // so one member can never move the detector by repeating themselves.
@@ -147,6 +152,8 @@ export const reportIssue = internalMutation({
           ? {
               relaySlug: relay.relaySlug,
               connectionChoice: choice ?? undefined,
+              // Kept only with a named connection: it says which of ITS entries.
+              ...(choice && choice !== 'unsure' && entry ? { connectionEntry: entry } : {}),
               relayEdgeId: relay.relayEdgeId ?? undefined,
               refreshNotObserved: relay.refreshNotObserved,
               detectorWeight,
@@ -407,6 +414,7 @@ export const recent = internalQuery({
         // Origin attribution (operator infrastructure labels on the same unlinked row).
         relaySlug: r.relaySlug ?? null,
         connectionChoice: r.connectionChoice ?? null,
+        connectionEntry: r.connectionEntry ?? null,
         relayEdgeId: r.relayEdgeId ?? null,
         detectorWeight: r.detectorWeight ?? null,
       })),

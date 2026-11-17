@@ -17,6 +17,7 @@ import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { twinRemarksOf } from './lib/edges/listenerEncryption';
 import { servableEdges } from './lib/backend/nodeTwin';
+import { plainFallbackName } from '../src/shared/entryNames';
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -775,6 +776,11 @@ export const memberView = internalQuery({
       base: string;
       role: 'primary' | 'backup';
       family: 'v4' | 'v6' | 'name';
+      /**
+       * Where the body handed this address out twice: the encrypted entry, or
+       * the plain one behind it (named `… · Old apps`). Absent = the one entry.
+       */
+      entry?: 'encrypted' | 'plain';
     }>;
   } | null> => {
     const sub = await ctx.db.get(subscriptionId);
@@ -815,7 +821,7 @@ export const memberView = internalQuery({
       rule.includeBackup ? (backup ?? null) : null,
       namesInBody(rule, hasAutoGroup),
     );
-    const connections = orderEndpoints(
+    const entries = orderEndpoints(
       renderEntries(assigned, rule, hasAutoGroup, origin.originAddress, {
         exit: await entryExitOf(ctx.db, sub.backendServerId),
       }),
@@ -826,6 +832,21 @@ export const memberView = internalQuery({
       role: e.role,
       family: e.family,
     }));
+    // Where the body carried an address twice (the snapshot says so: never
+    // guessed from today's settings), the names follow the body: the encrypted
+    // entries first, then the plain ones under their own name.
+    const twinOf = { primary: snap.primaryTwin, backup: snap.backupTwin };
+    const connections = [
+      ...entries.map((e) => (twinOf[e.role] ? { ...e, entry: 'encrypted' as const } : e)),
+      ...entries
+        .filter((e) => twinOf[e.role] === 'fallback')
+        .map((e) => ({
+          ...e,
+          label: plainFallbackName(e.label),
+          base: plainFallbackName(e.base),
+          entry: 'plain' as const,
+        })),
+    ];
     return { refreshSuggested, known: true, connections };
   },
 });
@@ -870,6 +891,83 @@ export const clearSnapshotAutoGroupForRollback = internalAction({
       cursor = page.continueCursor;
     }
     return { stripped };
+  },
+});
+
+// --- rollback: which entries an address was handed out as ------------------------------------------
+
+/** One page of the rollback strip: render snapshots lose `primaryTwin` / `backupTwin`. */
+export const stripSnapshotTwinPage = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db
+      .query('subscriptions')
+      .paginate({ cursor, numItems: FRONT_KEYS_PAGE });
+    let stripped = 0;
+    for (const s of page.page) {
+      const snap = s.lastRender;
+      if (!snap || (snap.primaryTwin === undefined && snap.backupTwin === undefined)) continue;
+      const { primaryTwin, backupTwin, ...rest } = snap;
+      void primaryTwin;
+      void backupTwin;
+      await ctx.db.patch(s._id, { lastRender: rest });
+      stripped++;
+    }
+    return { stripped, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+/** One page of the rollback strip: reports lose `connectionEntry`. */
+export const stripReportEntryPage = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query('issueReports').paginate({ cursor, numItems: FRONT_KEYS_PAGE });
+    let stripped = 0;
+    for (const r of page.page) {
+      if (r.connectionEntry === undefined) continue;
+      await ctx.db.patch(r._id, { connectionEntry: undefined });
+      stripped++;
+    }
+    return { stripped, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+/**
+ * Before deploying a build whose schema has no
+ * `subscriptions.lastRender.primaryTwin` / `backupTwin` and no
+ * `issueReports.connectionEntry` (docs/edges.md "Deploy notes"): strip them, so
+ * the older schema accepts what is left. Only a key delivered an encrypted twin
+ * carries the first two, only a report naming an entry the third. Deliveries
+ * and reports keep writing them meanwhile: run it right before the push, and
+ * again if the push is refused.
+ */
+export const clearEntryFactsForRollback = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ snapshots: number; reports: number }> => {
+    const drain = async (
+      page: (cursor: string | null) => Promise<{
+        stripped: number;
+        isDone: boolean;
+        continueCursor: string;
+      }>,
+    ) => {
+      let cursor: string | null = null;
+      let stripped = 0;
+      for (;;) {
+        const got = await page(cursor);
+        stripped += got.stripped;
+        if (got.isDone) return stripped;
+        cursor = got.continueCursor;
+      }
+    };
+    return {
+      snapshots: await drain((cursor) =>
+        ctx.runMutation(internal.edgeRender.stripSnapshotTwinPage, { cursor }),
+      ),
+      reports: await drain((cursor) =>
+        ctx.runMutation(internal.edgeRender.stripReportEntryPage, { cursor }),
+      ),
+    };
   },
 });
 

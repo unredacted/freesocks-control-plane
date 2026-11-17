@@ -848,6 +848,36 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     }
   });
 
+  test('memberView: an address the body carried twice is listed twice, as the app shows it', async () => {
+    stubPanel();
+    const { t, subId } = await seed();
+    await get(t);
+    // The body handed the member's address out encrypted with the plain entry
+    // behind it (the snapshot says so: never guessed from today's settings).
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      await ctx.db.patch(subId, { lastRender: { ...sub.lastRender!, primaryTwin: 'fallback' } });
+    });
+    let view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    // The encrypted entries first, then the plain ones under their own name.
+    expect(view.connections.map((c) => [c.label, c.base, c.role, c.entry])).toEqual([
+      [`${PRIMARY} · IPv4`, PRIMARY, 'primary', 'encrypted'],
+      [`${PRIMARY} · IPv6`, PRIMARY, 'primary', 'encrypted'],
+      [`${PRIMARY} · IPv4 · Old apps`, `${PRIMARY} · Old apps`, 'primary', 'plain'],
+      [`${PRIMARY} · IPv6 · Old apps`, `${PRIMARY} · Old apps`, 'primary', 'plain'],
+    ]);
+    // Encrypted alone: one entry per address, marked as the encrypted one.
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      await ctx.db.patch(subId, { lastRender: { ...sub.lastRender!, primaryTwin: 'only' } });
+    });
+    view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    expect(view.connections.map((c) => [c.label, c.entry])).toEqual([
+      [`${PRIMARY} · IPv4`, 'encrypted'],
+      [`${PRIMARY} · IPv6`, 'encrypted'],
+    ]);
+  });
+
   test('memberView: labels only from the persisted snapshot; known:false without one; nudge once the epoch moved', async () => {
     stubPanel();
     const { t, subId, relayId } = await seed();
