@@ -341,6 +341,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // A node serving an extra mode beside its own (nodeExtraModes.ts): the mode
   // slug, the (port, protocol) its firewall opens, and a code word. Never an
   // address, a certificate or a pin.
+  // A mode's encrypted twin (convex/backendTwins.ts): the backend, the mode, the
+  // transport's tag and loopback port, and what the node is verified by. Never
+  // a key or a client string.
+  'admin.servers.mode_twin.attach': ['backendSlug', 'mode', 'tag', 'port', 'auth'],
+  'admin.servers.mode_twin.detach': ['backendSlug', 'mode', 'tag'],
   'admin.servers.extra_mode.add': ['backendSlug', 'name', 'mode', 'port', 'protocol'],
   'admin.servers.extra_mode.remove': ['backendSlug', 'name', 'mode'],
   'servers.node.extra_mode_firewall': ['backendSlug', 'name', 'mode', 'by', 'port', 'protocol'],

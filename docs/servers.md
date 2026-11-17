@@ -260,8 +260,10 @@ uuid; a new transport is appended. A uuid that moved anyway is flagged
   tells the observer the edit was FCP's. A WebSocket or REALITY template marked `encrypted` gets a
   VLESS Encryption server string made in the same attempt, under the same rules
   ([backends.md](backends.md) § "VLESS Encryption"); without it in hand the edit holds a
-  placeholder and is never sent, so an encrypted transport is never built plain. No route sets
-  the flag yet. A tag another transport of the backend has is refused
+  placeholder and is never sent, so an encrypted transport is never built plain. Add a transport
+  offers it for a WebSocket transport ("Encrypt inside the connection"); it is added beside a
+  mode's plain transport, never in its place (§ "A mode's encrypted twin"). A tag another
+  transport of the backend has is refused
   (`servers.tag_taken`; the backend answers 409). **No node serves a new transport** until it is
   assigned to it (measured: the backend re-applies the profile to its nodes, and each keeps
   exactly its own transports), so the add opens no port and closes no node. Setting the backend
@@ -718,6 +720,56 @@ protocol, WebSocket path or port changed (`servers.setup_mode_kept:<slug>`; add 
 instead; a mode a stopped run never set up may be changed or taken out again); another zone, or none, while any node that is not retired has a managed origin name in
 the current one (`servers.origin_zone_in_use`). Another account holding the SAME zone is always
 fine: every name stays, and FCP finds its records again by name and marker.
+
+### A mode's encrypted twin
+
+A WebSocket mode behind a CDN is not end to end: the CDN holds the VLESS stream in the clear
+([backends.md](backends.md) § "VLESS Encryption"). Its nodes can serve the same mode a second
+time, with VLESS Encryption inside the stream, on another loopback port and path behind the same
+front server, so the same fronts reach it. A transport that runs the layer refuses every app
+that does not speak it, so the mode's own transport is never switched: the twin is a **second
+transport of the profile**, and the mode keeps both.
+
+1. **Add the transport.** Add a transport, WebSocket, another port and path, "Encrypt inside the
+   connection" (`addInboundFromTemplate` with `encrypted`). Its server key is made in the
+   attempt and lives on the backend only. No node serves it yet.
+2. **Make it the mode's.** `POST {slug}/modes/{mode}/encrypted-twin {action: "attach",
+transportTag}` (`convex/backendTwins.ts`). The transport is checked against the last look at
+   the backend (`lib/backend/modeTwin.ts`), the mode's group is rewritten through the ledger to
+   carry both transports, and the setup records the twin (`panelSetups.modes[].twin`: tag,
+   transport, loopback port and path; never a key). `{action: "detach"}` takes it out of the
+   group and off the setup; the transport stays on the profile.
+
+| Refused                               | When                                                                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers.twin_unsupported`            | The mode is not a WebSocket mode behind L7 fronts (a REALITY mode is end to end already).                                                                   |
+| `servers.twin_present`                | The mode already has another twin.                                                                                                                          |
+| `servers.twin_transport_unknown`      | The setup's profile, as last observed, has no transport with that tag.                                                                                      |
+| `servers.twin_transport_taken`        | The transport is a mode's own, or another mode's twin.                                                                                                      |
+| `servers.twin_not_websocket`          | It is not a loopback VLESS WebSocket transport with a port and a path.                                                                                      |
+| `servers.twin_not_encrypted`          | It runs no VLESS Encryption.                                                                                                                                |
+| `servers.twin_encryption_unreadable`  | FCP cannot read its VLESS Encryption on the profile.                                                                                                        |
+| `servers.twin_encryption_unsupported` | FCP's own sessions cannot speak it (the `random` appearance, several keys), so it could not be proved.                                                      |
+| `servers.twin_same_route`             | It shares the mode's port or path: the node's front server tells the two apart by them.                                                                     |
+| `servers.twin_already_served`         | A node already serves the transport, or an address already uses it: in the group it would go live to members unproved.                                      |
+| `servers.setup_mode_drifted:<slug>`   | The mode's group holds something else than the mode's transport (and its twin). Attach and detach both refuse: a rewrite would drop whatever else it holds. |
+| `servers.twin_in_use` (detach)        | A node still serves the twin.                                                                                                                               |
+| `servers.twin_absent` (detach)        | The mode has no twin.                                                                                                                                       |
+
+**When a change does not land.** The twin is recorded with the attach request, so after an op
+the backend refused, asking again only claims the group again. A detach keeps the record
+(`twin.detaching`) until the group is seen without the twin (`backendTwins.settle` after the
+op, or the next ask): the setup never forgets a transport its group still carries. A failed
+send is an unknown outcome to the ledger like any other (§ Writes: the operations ledger) and
+is settled there before the same thing can be asked again.
+
+A mode's group carries **exactly** the mode's transport and its twin (`groupCarriesMode`): that
+is what a change of the setup checks a set-up mode against, so a mode with a twin is not read as
+drifted, and one whose group holds anything else still is. Putting the twin into the group gives
+members nothing new by itself: no node serves the transport and no address names it. Turning it
+on for a node, its address and its proof through each front are a later step. Audit:
+`admin.servers.mode_twin.attach|detach` (backend, mode, tag, port, what the node is verified by;
+never a key or a client string).
 
 ### Adopting a backend
 
@@ -1397,6 +1449,7 @@ surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host add
 | `POST {slug}/modeGroups`, `PATCH` / `DELETE {slug}/modeGroups/{uuid}`                                            | `admin:servers:manage` | Mode group writes.                                                                                                                                               |
 | `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage` | Node writes. `DELETE ...?removeOnly=1` is "remove from backend".                                                                                                 |
 | `POST {slug}/nodes/{uuid}/rename`, `GET {slug}/renames`                                                          | manage / read          | Rename a node (§ Renaming a node), and the recent renames with the step each is at.                                                                              |
+| `POST {slug}/modes/{mode}/encrypted-twin`                                                                        | `admin:servers:manage` | Give a mode its encrypted twin, or take it away (§ "A mode's encrypted twin"). Answers the group's op, or `{op: null}`.                                          |
 | `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`   | What a typed profile edit would do. Writes nothing.                                                                                                              |
 | `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage` | An operator has seen that the profile was edited elsewhere.                                                                                                      |
 | `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage` | Apply a previewed edit, conditioned on the previewed token. A port change is refused here: it is staged.                                                         |
