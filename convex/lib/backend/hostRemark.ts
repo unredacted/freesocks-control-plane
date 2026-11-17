@@ -17,6 +17,14 @@
  * must not read `node-a-west | x.example` as its own (and delete it as extra).
  */
 export const HOST_REMARK_MAX = 40;
+/**
+ * What a current backend takes for a remark (its contract's bar; 40 was an
+ * older backend's). An origin listener's address is named
+ * `<node>-relay-<key>`, which runs past 40 for an ordinary node name, and the
+ * address of a listener's encrypted twin is named the same way: it may be as
+ * long as its listener's own, which the backend already took.
+ */
+export const RELAY_REMARK_MAX = 100;
 export const ADDRESS_SEP = ' | ';
 const TAG_LENGTH = 7;
 

@@ -72,7 +72,10 @@ const wsMode = {
 };
 const OWN_TAG = 'FREEDOM_WEBSOCKET';
 const TWIN_TAG = 'FREEDOM_WEBSOCKET_E';
-const NODE = 'node-w';
+// An ordinary node name: with it, an origin's remark runs past 40 characters.
+const NODE = 'clunked-example-album';
+// A listener key as transport discovery makes one (ten letters, six digits).
+const LISTENER_KEY = 'freedomweb2hl30v';
 const NODE_UUID = '00000400-0000-4000-8000-000000000000';
 const LISTENER_HOST_UUID = '00000401-0000-4000-8000-000000000000';
 const QUALIFY_UUID = '99999999-9999-4999-8999-999999999999';
@@ -241,7 +244,7 @@ async function seed(opts: { twin?: boolean; fronted?: boolean } = {}) {
       source: 'admin',
       listeners: [
         wsListener({
-          listenerKey: 'w',
+          listenerKey: LISTENER_KEY,
           tlsNames: ['origin-w.example.net'],
           transportParams: { path: '/ws' },
           panelBinding: {
@@ -256,7 +259,7 @@ async function seed(opts: { twin?: boolean; fronted?: boolean } = {}) {
     listenerId = r.listenerId;
     panel.hosts.push({
       uuid: LISTENER_HOST_UUID,
-      remark: `${NODE}-relay-w`,
+      remark: `${NODE}-relay-${LISTENER_KEY}`,
       address: FRONTS[0],
       port: 443,
       sni: FRONTS[0],
@@ -273,7 +276,7 @@ async function seed(opts: { twin?: boolean; fronted?: boolean } = {}) {
           uuid: LISTENER_HOST_UUID,
           ownership: 'fcp',
           intended: {
-            remark: `${NODE}-relay-w`,
+            remark: `${NODE}-relay-${LISTENER_KEY}`,
             address: FRONTS[0]!,
             port: 443,
             sni: FRONTS[0]!,

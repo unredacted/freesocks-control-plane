@@ -229,6 +229,7 @@ function problemOf(c: RunContext): string | null {
     activeInboundUuids: c.node?.activeInboundUuids ?? null,
     listenerReady: !!c.listener && !!c.listenerHost && c.listener.streamTransport === 'ws',
     twinRemark: c.twinRemark,
+    listenerRemarkLength: c.listenerHost?.remark.length,
   });
 }
 

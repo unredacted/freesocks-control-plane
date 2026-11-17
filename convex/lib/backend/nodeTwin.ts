@@ -12,7 +12,7 @@
  * plain path exactly as it was.
  */
 import { canonicalJson } from './digest';
-import { HOST_REMARK_MAX } from './hostRemark';
+import { HOST_REMARK_MAX, RELAY_REMARK_MAX } from './hostRemark';
 import { clientEncryptionProblem } from './vlessEncryption';
 
 export type NodeTwinState = 'activating' | 'serving' | 'removing';
@@ -61,10 +61,15 @@ export function nodeTwinProblem(a: {
   /** The node's own listener has a settled address FCP wrote, named by FCP's own form. */
   listenerReady: boolean;
   twinRemark: string | null;
+  /** How long the listener's own remark is: one the backend already took. */
+  listenerRemarkLength?: number;
 }): string | null {
   if (!a.twin || a.twin.detaching) return 'servers.twin_absent';
   if (!a.listenerReady || !a.twinRemark) return 'servers.node_twin_no_front';
-  if (a.twinRemark.length > HOST_REMARK_MAX) return 'servers.node_twin_remark_long';
+  // As long as its listener's own remark is fine on this backend; longer than
+  // that only within what every backend takes.
+  const room = Math.min(RELAY_REMARK_MAX, Math.max(HOST_REMARK_MAX, a.listenerRemarkLength ?? 0));
+  if (a.twinRemark.length > room) return 'servers.node_twin_remark_long';
   const i = a.inbound;
   if (
     !i ||

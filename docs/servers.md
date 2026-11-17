@@ -825,17 +825,17 @@ front of. Turning a twin on or off is the one exception, and it is checked, not 
 (`backendWrites.requestNodeUpdate` `twinToggle`, `onlyTogglesTwin`): same address, port and
 profile, and every transport that comes or goes is some mode's twin on the backend's setup.
 
-| Refused / reported                | When                                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `servers.twin_absent`             | The node's mode has no twin on this backend (or it is being taken away).                          |
-| `servers.node_twin_present`       | The node already serves it.                                                                       |
-| `servers.node_twin_absent`        | Remove, on a node that does not serve it.                                                         |
-| `servers.node_twin_no_front`      | FCP runs no front for the node's own transport (no origin, an address FCP does not own, or none). |
-| `servers.node_twin_remark_long`   | The node's name leaves no room for the twin's remark.                                             |
-| `servers.node_twin_transport_off` | The transport is not on for the node yet (the node reconcile turns it on).                        |
-| `servers.node_twin_front_busy`    | A front is being replaced, or the origin is quarantined.                                          |
-| `servers.node_twin_check_failed`  | No published front carried the twin.                                                              |
-| `servers.node_twin_drifted`       | Something its checks were made under moved.                                                       |
+| Refused / reported                | When                                                                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers.twin_absent`             | The node's mode has no twin on this backend (or it is being taken away).                                                                          |
+| `servers.node_twin_present`       | The node already serves it.                                                                                                                       |
+| `servers.node_twin_absent`        | Remove, on a node that does not serve it.                                                                                                         |
+| `servers.node_twin_no_front`      | FCP runs no front for the node's own transport (no origin, an address FCP does not own, or none).                                                 |
+| `servers.node_twin_remark_long`   | The twin's remark is longer than the listener's own and past 40 characters (it may be as long as the listener's, which the backend already took). |
+| `servers.node_twin_transport_off` | The transport is not on for the node yet (the node reconcile turns it on).                                                                        |
+| `servers.node_twin_front_busy`    | A front is being replaced, or the origin is quarantined.                                                                                          |
+| `servers.node_twin_check_failed`  | No published front carried the twin.                                                                                                              |
+| `servers.node_twin_drifted`       | Something its checks were made under moved.                                                                                                       |
 
 A retiring node's twin address is removed with its other addresses. The mode's twin cannot be
 taken off the backend while a node serves it (`servers.twin_in_use`). Audit:

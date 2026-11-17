@@ -54,7 +54,7 @@ import { currentNodeName } from './lib/backend/nodeAliases';
 import { PROFILE_DEFAULTS, generateObfsPassword } from './lib/backend/profileTemplate';
 import { generateHysteriaCertificate } from './lib/backend/hysteriaCert';
 import { addressTransportsOf, addressesOf, closeForSharedChange } from './nodeIntents';
-import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
+import { HOST_REMARK_MAX, RELAY_REMARK_MAX } from './lib/backend/hostRemark';
 import { assertClaimable, claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
 import { inboundPortProtocol } from './lib/edges/inboundMapping';
@@ -127,9 +127,12 @@ function checkHostFields(f: {
   alpn?: string | null;
   fingerprint?: string | null;
   securityLayer?: string | null;
+  relayTwin?: true;
 }) {
-  if (f.remark !== undefined && (f.remark.trim().length < 1 || f.remark.length > HOST_REMARK_MAX))
-    refuse('validation', `A remark is 1 to ${HOST_REMARK_MAX} characters`);
+  // A twin's address is named like its listener's own (`RELAY_REMARK_MAX`).
+  const max = f.relayTwin ? RELAY_REMARK_MAX : HOST_REMARK_MAX;
+  if (f.remark !== undefined && (f.remark.trim().length < 1 || f.remark.length > max))
+    refuse('validation', `A remark is 1 to ${max} characters`);
   if (f.address !== undefined && f.address.trim().length < 2)
     refuse('validation', 'An address is required');
   if (f.port !== undefined && (!Number.isInteger(f.port) || f.port < 1 || f.port > 65535))

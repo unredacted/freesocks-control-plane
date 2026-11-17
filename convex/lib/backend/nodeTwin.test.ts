@@ -43,6 +43,16 @@ describe('whether a node can be checked on its twin', () => {
     ['no front of FCP’s', { listenerReady: false }, 'servers.node_twin_no_front'],
     ['a listener FCP did not name', { twinRemark: null }, 'servers.node_twin_no_front'],
     ['a name too long', { twinRemark: 'n'.repeat(41) }, 'servers.node_twin_remark_long'],
+    [
+      'a name longer than its listener’s own, past what every backend takes',
+      { twinRemark: 'n'.repeat(45), listenerRemarkLength: 44 },
+      'servers.node_twin_remark_long',
+    ],
+    [
+      'a name past what any backend takes',
+      { twinRemark: 'n'.repeat(101), listenerRemarkLength: 101 },
+      'servers.node_twin_remark_long',
+    ],
     ['not on the profile', { inbound: undefined }, 'servers.twin_not_websocket'],
     [
       'another transport',
@@ -83,6 +93,12 @@ describe('whether a node can be checked on its twin', () => {
   ])('%s', (_name, change, code) => {
     expect(nodeTwinProblem({ ...ok, ...change })).toBe(code);
   });
+});
+
+test('a name as long as its listener’s own is one the backend already took', () => {
+  expect(
+    nodeTwinProblem({ ...ok, twinRemark: 'n'.repeat(44), listenerRemarkLength: 44 }),
+  ).toBeNull();
 });
 
 describe('the twin’s transport and route', () => {
