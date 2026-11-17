@@ -4,6 +4,7 @@ import {
   adoptRefusalWords,
   blockerWords,
   groupLine,
+  modeTwinWords,
   nodeTwinWords,
   opGroupTitle,
   opGroups,
@@ -1057,5 +1058,59 @@ describe('nodeTwinWords', () => {
     for (const state of ['activating', 'serving', 'removing'] as const)
       for (const code of [null, 'servers.node_twin_check_failed', 'servers.node_twin_drifted'])
         expect(nodeTwinWords({ ...base, state, code }).sentence).not.toMatch(/—|servers\./);
+  });
+});
+
+describe('modeTwinWords', () => {
+  const twin = { tag: 'FREEDOM_WEBSOCKET_E', port: 8444, path: '/wse', detaching: false };
+  const none = { serving: 0, total: 0 };
+
+  test('no twin: what that means, and whether there is a transport to make one from', () => {
+    expect(modeTwinWords({ twin: null, twinCandidates: [{ tag: 'X_E' }] }, none)).toEqual({
+      dot: 'grey',
+      sentence:
+        'No encrypted twin. A CDN in front of this mode can read what members send through it.',
+    });
+    expect(modeTwinWords({ twin: null, twinCandidates: [] }, none).sentence).toContain(
+      'no encrypted WebSocket transport to make one from',
+    );
+  });
+
+  test('a twin says where it listens and how many nodes serve it', () => {
+    const m = { twin, twinCandidates: [] };
+    expect(modeTwinWords(m, none)).toEqual({
+      dot: 'amber',
+      sentence:
+        'Encrypted twin: Freedom WebSocket E, port 8444, path /wse. No node of this mode yet.',
+    });
+    expect(modeTwinWords(m, { serving: 0, total: 2 })).toEqual({
+      dot: 'amber',
+      sentence:
+        'Encrypted twin: Freedom WebSocket E, port 8444, path /wse. No node serves it yet. Turn it on from a node’s page.',
+    });
+    expect(modeTwinWords(m, { serving: 1, total: 2 })).toEqual({
+      dot: 'amber',
+      sentence: 'Encrypted twin: Freedom WebSocket E, port 8444, path /wse. 1 of 2 nodes serve it.',
+    });
+    expect(modeTwinWords(m, { serving: 1, total: 1 })).toEqual({
+      dot: 'green',
+      sentence: 'Encrypted twin: Freedom WebSocket E, port 8444, path /wse. 1 of 1 node serves it.',
+    });
+  });
+
+  test('being taken away', () => {
+    expect(modeTwinWords({ twin: { ...twin, detaching: true }, twinCandidates: [] }, none)).toEqual(
+      { dot: 'amber', sentence: 'Its encrypted twin is being taken away.' },
+    );
+  });
+
+  test('no em-dashes, and no code leaks into the copy', () => {
+    for (const m of [
+      { twin: null, twinCandidates: [] },
+      { twin: null, twinCandidates: [{ tag: 'X' }] },
+      { twin, twinCandidates: [] },
+    ])
+      for (const n of [none, { serving: 1, total: 3 }])
+        expect(modeTwinWords(m, n).sentence).not.toMatch(/—|servers\./);
   });
 });

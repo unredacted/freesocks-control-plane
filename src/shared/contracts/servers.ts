@@ -565,6 +565,15 @@ export const ModeSetupView = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * The transports of the backend's profile this mode could take as its twin
+   * (an encrypted loopback WebSocket transport no mode has, on another port
+   * and path than the mode's own). Empty for a mode that has a twin, and for
+   * one that takes none.
+   */
+  twinCandidates: z
+    .array(z.object({ tag: z.string(), port: z.number(), path: z.string() }))
+    .default([]),
   family: z.enum(['none', 'bound', 'unbound', 'target_mismatch', 'bound_elsewhere']),
 });
 export type ModeSetupView = z.infer<typeof ModeSetupView>;

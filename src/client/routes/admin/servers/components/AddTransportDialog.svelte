@@ -12,6 +12,8 @@
    * again with a mode of this tag adopts it.
    *
    * Props: open (bindable), slug, profileUuid, profileName
+   *   preset?: { tag, port, path }   opens as an encrypted WebSocket transport
+   *                                   with these (a mode's encrypted twin)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -34,8 +36,9 @@
     slug: string;
     profileUuid: string;
     profileName: string;
+    preset?: { tag: string; port: number; path: string } | null;
   }
-  let { open = $bindable(false), slug, profileUuid, profileName }: Props = $props();
+  let { open = $bindable(false), slug, profileUuid, profileName, preset = null }: Props = $props();
   const qc = useQueryClient();
   const uid = $props.id();
   const families = familiesQuery();
@@ -54,15 +57,15 @@
 
   $effect(() => {
     if (!open) return;
-    tag = '';
-    kind = 'reality';
-    port = '443';
+    tag = preset?.tag ?? '';
+    kind = preset ? 'ws' : 'reality';
+    port = preset ? String(preset.port) : '443';
     familySlug = '';
-    path = '/ws';
+    path = preset?.path ?? '/ws';
     proxyProtocol = false;
     serverName = '';
     salamander = false;
-    encrypted = false;
+    encrypted = !!preset;
     preview = null;
   });
   // A loopback WebSocket sits behind the node proxy on a high port.

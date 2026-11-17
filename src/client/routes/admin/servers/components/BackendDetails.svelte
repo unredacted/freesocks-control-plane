@@ -2,7 +2,8 @@
   /**
    * One backend's set-up-once parts on Nodes, below the table: its quiet notes
    * (leftovers worth knowing, words.ts `quietNotes`), how it is set up (with
-   * Change setup), its mode groups and its recent changes. With more than one
+   * Change setup), the encrypted twins of its CDN-fronted modes, its mode
+   * groups and its recent changes. With more than one
    * backend, the block is headed by the backend's name.
    *
    * Props:
@@ -16,6 +17,7 @@
   import { Button } from '@client/components/ui/button';
   import { serverTreeQuery, setupQuery } from '@client/lib/serversApi';
   import ModeGroupsCard from './ModeGroupsCard.svelte';
+  import ModeTwinsCard from './ModeTwinsCard.svelte';
   import OpsList from './OpsList.svelte';
   import { setupSummary } from '../lib/setupChange';
   import { quietNotes } from '../lib/words';
@@ -65,6 +67,9 @@
       </section>
     {/if}
 
+    {#if setup.data?.established && setup.data.state === 'ready'}
+      <ModeTwinsCard {slug} {canWrite} />
+    {/if}
     <ModeGroupsCard {slug} tree={tree.data} {canWrite} />
     {#if canChangeSetup}
       <OpsList {slug} />

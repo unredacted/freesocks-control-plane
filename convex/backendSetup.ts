@@ -69,6 +69,7 @@ import { observeInstance } from './backendObserve';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { catalogOf } from './edgeProviderCatalog';
 import { locationsOfAccount } from './edgeLocations';
+import { twinProblem } from './lib/backend/modeTwin';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -1481,6 +1482,26 @@ export const view = internalQuery({
         established: false,
         updatedAt: null,
       };
+    // The transports of the setup's profile, as last observed: which of them a
+    // mode could take as its encrypted twin (lib/backend/modeTwin.ts).
+    const inbounds = row.profileUuid
+      ? ((
+          await ctx.db
+            .query('panelProfiles')
+            .withIndex('by_server_uuid', (q) =>
+              q.eq('backendServerId', backendServerId).eq('profileUuid', row.profileUuid!),
+            )
+            .unique()
+        )?.inbounds ?? [])
+      : [];
+    const twinCandidates = (m: SetupMode) =>
+      m.twin
+        ? []
+        : inbounds
+            .filter(
+              (i) => twinProblem({ mode: m, modes: row.modes, inbounds, tag: i.tag }) === null,
+            )
+            .map((i) => ({ tag: i.tag, port: i.port!, path: i.path! }));
     return {
       exists: true,
       state: row.state,
@@ -1518,6 +1539,7 @@ export const view = internalQuery({
               detaching: m.twin.detaching === true,
             }
           : null,
+        twinCandidates: twinCandidates(m),
         family: m.family,
       })),
       templates: row.templates.map((t) => ({ family: t.family, state: t.state })),

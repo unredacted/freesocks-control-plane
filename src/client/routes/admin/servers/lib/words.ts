@@ -1249,6 +1249,49 @@ export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
 
 // --- extra modes ------------------------------------------------------------------------------------
 
+/** A WebSocket mode behind a CDN, as far as its encrypted twin goes (the backend page). */
+export interface ModeTwinLike {
+  twin: { tag: string; port: number; path: string; detaching: boolean } | null;
+  twinCandidates: readonly { tag: string }[];
+}
+
+/**
+ * Where a mode's encrypted twin stands, in one sentence. `nodes`: how many
+ * nodes of the mode there are and how many serve the twin.
+ */
+export function modeTwinWords(
+  m: ModeTwinLike,
+  nodes: { serving: number; total: number },
+): { dot: Dot; sentence: string } {
+  if (m.twin?.detaching)
+    return { dot: 'amber', sentence: 'Its encrypted twin is being taken away.' };
+  if (m.twin) {
+    const where = `${transportName(m.twin.tag)}, port ${m.twin.port}, path ${m.twin.path}`;
+    if (nodes.total === 0)
+      return { dot: 'amber', sentence: `Encrypted twin: ${where}. No node of this mode yet.` };
+    return nodes.serving === 0
+      ? {
+          dot: 'amber',
+          sentence: `Encrypted twin: ${where}. No node serves it yet. Turn it on from a node’s page.`,
+        }
+      : {
+          dot: nodes.serving === nodes.total ? 'green' : 'amber',
+          sentence: `Encrypted twin: ${where}. ${nodes.serving} of ${nodes.total} ${nodes.total === 1 ? 'node serves' : 'nodes serve'} it.`,
+        };
+  }
+  return m.twinCandidates.length > 0
+    ? {
+        dot: 'grey',
+        sentence:
+          'No encrypted twin. A CDN in front of this mode can read what members send through it.',
+      }
+    : {
+        dot: 'grey',
+        sentence:
+          'No encrypted twin, and no encrypted WebSocket transport to make one from. A CDN in front of this mode can read what members send through it.',
+      };
+}
+
 /** A node's encrypted twin, as the node page shows it. */
 export interface NodeTwinLike {
   state: 'activating' | 'serving' | 'removing';

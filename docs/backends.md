@@ -1016,8 +1016,7 @@ gets that member through. With Xray, the encrypted entry spoken plain, or with a
 not connect.
 
 Not done yet: the names a member can pick in a report do not list the plain twins, no GUI app
-has been run against an encrypted entry, and the backend page has no control to give a mode its
-twin (the route exists).
+has been run against an encrypted entry.
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the

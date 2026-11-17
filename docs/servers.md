@@ -740,6 +740,14 @@ transportTag}` (`convex/backendTwins.ts`). The transport is checked against the 
    transport, loopback port and path; never a key). `{action: "detach"}` takes it out of the
    group and off the setup; the transport stays on the profile.
 
+Both steps are on Nodes, below the table, under **Encryption behind a CDN**
+(`ModeTwinsCard.svelte`), one row per WebSocket mode behind a CDN. A mode with no encrypted
+transport to take is offered "Add an encrypted transport", which opens Add a transport filled
+in (the mode's tag with `_E`, its port plus one, its path with an `e`). The setup view lists the
+transports a mode could take (`twinCandidates`, by the same rule the attach applies), so the
+row offers only those. A mode with a twin says how many of its nodes serve it; each node is
+turned on from its own page (§ "A node serving the encrypted twin").
+
 | Refused                               | When                                                                                                                                                        |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `servers.twin_unsupported`            | The mode is not a WebSocket mode behind L7 fronts (a REALITY mode is end to end already).                                                                   |
