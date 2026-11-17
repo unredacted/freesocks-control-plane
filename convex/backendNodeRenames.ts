@@ -39,6 +39,7 @@ import { claimKey } from './lib/backend/ops';
 import { HOST_REMARK_MAX, roleWroteAddress } from './lib/backend/hostRemark';
 import {
   bridgeNodeRename,
+  listenerRemarkKeys,
   longestListenerRemark,
   originNameOf,
   renamedRemark,
@@ -231,12 +232,7 @@ export const request = internalMutation({
           'servers.node_rename_foreign_hosts',
           `${relay.slug} serves Hosts adopted from the operator. Their remarks are theirs, and FCP does not change them`,
         );
-      if (
-        longestListenerRemark(
-          listeners.map((l) => l.listenerKey),
-          to,
-        ) > HOST_REMARK_MAX
-      )
+      if (longestListenerRemark(listenerRemarkKeys(listeners), to) > HOST_REMARK_MAX)
         refuse(
           'servers.node_name_too_long',
           `With this name a Host remark of ${relay.slug} is longer than the backend allows`,

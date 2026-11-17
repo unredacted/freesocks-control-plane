@@ -253,6 +253,17 @@ export const extraModeAction = (
     z.object({ state: z.string().nullable() }),
   );
 
+/**
+ * A node's encrypted twin (docs/servers.md "A node serving the encrypted
+ * twin"): serve the mode's encrypted transport on this node, or stop.
+ */
+export const nodeTwinAction = (slug: string, id: string, action: 'add' | 'remove') =>
+  apiClient.post(
+    `${intentPath(slug, id)}/encrypted-twin`,
+    { action },
+    z.object({ state: z.string() }),
+  );
+
 const ROOT = ['admin', 'servers'] as const;
 export const serverKeys = {
   all: ROOT,
@@ -305,8 +316,18 @@ export const intentsQuery = (slug: () => string | null) =>
     queryKey: serverKeys.intents(slug() ?? ''),
     queryFn: () => fetchIntents(slug()!),
     enabled: !!slug(),
-    refetchInterval: (q: { state: { data?: { intents: { stage: string; state: string }[] } } }) =>
-      q.state.data?.intents.some((i) => i.stage !== 'live' || i.state === 'pending')
+    refetchInterval: (q: {
+      state: {
+        data?: { intents: { stage: string; state: string; twin?: { state: string } | null }[] };
+      };
+    }) =>
+      q.state.data?.intents.some(
+        (i) =>
+          i.stage !== 'live' ||
+          i.state === 'pending' ||
+          // An encrypted twin turning on or being removed moves by itself.
+          (!!i.twin && i.twin.state !== 'serving'),
+      )
         ? 5_000
         : 60_000,
   }));

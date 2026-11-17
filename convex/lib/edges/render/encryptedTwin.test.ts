@@ -267,6 +267,89 @@ const clashBody = (proxies: unknown[]) =>
     rules: ['MATCH,Proxy'],
   });
 
+describe('a twin handed out only through the fronts it was checked on', () => {
+  const body = [plainLink, twinLink, otherLink].join('\n');
+  const limited = (edgeIds: string[]): RenderMatcher => ({
+    ...matcher,
+    encrypted: { remarks: [TWIN], edgeIds },
+  });
+  const render = (edgeIds: string[], r: RenderRuleInput = rule()) =>
+    renderLinks({ body, matchers: [limited(edgeIds)], endpoints, rule: r });
+
+  test('a front never checked on the twin gets the plain entry alone, under its ordinary name', () => {
+    const out = render(['edge-primary']);
+    expect(linksOut(out.body).slice(0, 3)).toEqual([
+      encryptedAt(A, FRONT_A),
+      plainAt(B, FRONT_B),
+      plainAt(plainFallbackName(A), FRONT_A),
+    ]);
+    expect(out.emitted).toBe(3);
+    expect(out.body).not.toContain(TEMPLATE_FRONT);
+  });
+
+  test('`only` never leaves a front without an entry: the unchecked one gets the plain entry', () => {
+    expect(linksOut(render(['edge-primary'], rule('only')).body).slice(0, 2)).toEqual([
+      encryptedAt(A, FRONT_A),
+      plainAt(B, FRONT_B),
+    ]);
+  });
+
+  test('with no front checked nobody gets the twin, and its entry still never leaves as it came', () => {
+    const out = render([]);
+    expect(out.listeners).toEqual([{ listenerKey: 'a1', matched: true }]);
+    const got = linksOut(out.body);
+    expect(got.slice(0, 2)).toEqual([plainAt(A, FRONT_A), plainAt(B, FRONT_B)]);
+    expect(got.some((e) => e.encryption !== 'none')).toBe(false);
+    expect(out.body).not.toContain(TEMPLATE_FRONT);
+    expect(out.body).not.toContain(encodeURIComponent(TWIN));
+  });
+
+  test('a body holding the twin alone resolves nothing while no front is checked', () => {
+    const out = renderLinks({
+      body: [twinLink, otherLink].join('\n'),
+      matchers: [limited([])],
+      endpoints,
+      rule: rule(),
+    });
+    expect(out.listeners).toEqual([{ listenerKey: 'a1', matched: false, reason: 'no_match' }]);
+  });
+
+  test('a kept template is never the twin: its own address is whatever front the backend names', () => {
+    const kept = linksOut(
+      renderLinks({
+        body,
+        matchers: [limited(['edge-primary', 'edge-backup'])],
+        endpoints,
+        rule: { ...rule(), dropTemplateEntries: false },
+      }).body,
+    )
+      .filter((e) => e.address === TEMPLATE_FRONT)
+      .map((e) => e.name);
+    expect(kept).toEqual([PLAIN]);
+  });
+
+  test('a Clash body with one front checked: the ordered group, the unchecked front plain', () => {
+    const out = renderClash({
+      body: clashBody([clashProxy(PLAIN, '/ws'), clashProxy(TWIN, '/ws-e', ENCRYPTION)]),
+      matchers: [limited(['edge-backup'])],
+      endpoints,
+      rule: rule(undefined, true),
+    });
+    const doc = YAML.parse(out.body) as {
+      proxies: Array<Record<string, any>>;
+      'proxy-groups': Array<Record<string, any>>;
+    };
+    expect(doc.proxies.map((p) => [p.name, p.server, p.encryption])).toEqual([
+      [A, FRONT_A, undefined],
+      [B, FRONT_B, ENCRYPTION],
+      [plainFallbackName(B), FRONT_B, undefined],
+    ]);
+    expect(doc['proxy-groups'].find((g) => g.name === AUTO_GROUP_NAME)).toMatchObject({
+      type: 'fallback',
+    });
+  });
+});
+
 describe('a Clash body', () => {
   const body = clashBody([clashProxy(PLAIN, '/ws'), clashProxy(TWIN, '/ws-e', ENCRYPTION)]);
   const render = (r: RenderRuleInput, b = body) => {

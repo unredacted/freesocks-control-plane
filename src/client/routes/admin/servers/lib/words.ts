@@ -474,6 +474,27 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.twin_in_use': 'A node still serves the encrypted twin. Turn it off there first.',
   'servers.twin_already_served':
     'A node or an address already uses that transport. Take it off there first: a twin is checked before members get it.',
+  'servers.node_twin_present': 'The node already serves the encrypted twin.',
+  'servers.node_twin_absent': 'The node does not serve the encrypted twin.',
+  'servers.node_twin_no_front':
+    'FCP runs no front for this node’s own transport yet. Put the node behind a front first.',
+  'servers.node_twin_not_rendered':
+    'This node’s members are not served through its fronts yet. Take the node live behind them first.',
+  'servers.twin_listen':
+    'The twin has to listen on 127.0.0.1. The node’s front server sends its routes there.',
+  'servers.node_twin_remark_long':
+    'The node’s name is too long for the twin’s address. Rename the node to something shorter.',
+  'servers.node_twin_transport_off':
+    'The twin’s transport is not on for this node yet. It is turned on with the node’s next look.',
+  'servers.node_twin_front_busy':
+    'The node’s fronts are being changed. The twin is looked at again when that is done.',
+  'servers.node_twin_drifted':
+    'The twin’s key, port or path changed. Every front is checked again before members get it.',
+  'servers.node_twin_check_failed':
+    'No front carried the twin. Check the node’s front server routes the twin’s path to its port.',
+  'servers.node_twin_close_failed':
+    'The twin’s address could not be turned off. It is tried again.',
+  'servers.node_twin_failed': 'The twin could not be looked at. It is tried again.',
   'servers.extra_mode_unsupported':
     'Only a direct Hysteria 2 transport can be served beside a node’s own mode.',
   'servers.extra_mode_node_not_direct':
@@ -1227,6 +1248,64 @@ export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
 }
 
 // --- extra modes ------------------------------------------------------------------------------------
+
+/** A node's encrypted twin, as the node page shows it. */
+export interface NodeTwinLike {
+  state: 'activating' | 'serving' | 'removing';
+  code: string | null;
+  route: { path: string; port: number } | null;
+  routeBy: 'role' | 'operator';
+  fronts: { checked: number; published: number };
+}
+
+/** Codes of a twin that is simply still on its way (nothing for the operator to do). */
+const TWIN_WAITING = new Set([
+  'servers.op_running',
+  'servers.observe_lag',
+  'servers.node_twin_transport_off',
+  'servers.node_twin_front_busy',
+  'servers.node_rename_running',
+]);
+
+/** Where a node's encrypted twin stands, in one sentence, and what (if anything) the operator does. */
+export function nodeTwinWords(t: NodeTwinLike): { dot: Dot; sentence: string } {
+  const route = t.route ? `${t.route.path} to 127.0.0.1:${t.route.port}` : null;
+  switch (t.state) {
+    case 'activating': {
+      if (t.code === 'servers.node_twin_check_failed')
+        return {
+          dot: t.routeBy === 'operator' ? 'amber' : 'red',
+          sentence:
+            t.routeBy === 'operator'
+              ? `No front carries it yet. No role runs this node: add the route ${route ?? 'for the twin'} to its front server. It is checked again every few minutes.`
+              : `No front carries it yet. Run the node role on this node so its front server gets the route ${route ?? 'for the twin'}. It is checked again every few minutes.`,
+        };
+      if (t.code && !TWIN_WAITING.has(t.code))
+        return { dot: 'red', sentence: `Not serving it yet: ${serverErrorWords(t.code)}` };
+      return {
+        dot: 'amber',
+        sentence:
+          'Turning on. Its address stays off until a test connection through each front reaches the twin.',
+      };
+    }
+    case 'serving':
+      return t.fronts.checked >= t.fronts.published
+        ? {
+            dot: 'green',
+            sentence: `Serving. Members get it through ${frontCount(t.fronts.checked)}. The plain connection stays for apps that cannot use it.`,
+          }
+        : {
+            dot: 'amber',
+            sentence: `Serving through ${t.fronts.checked} of ${frontCount(t.fronts.published)}. The others hand out the plain connection until their check passes.`,
+          };
+    case 'removing':
+      return { dot: 'amber', sentence: 'Being removed: its address first, then the transport.' };
+  }
+}
+
+function frontCount(n: number): string {
+  return `${n} ${n === 1 ? 'front' : 'fronts'}`;
+}
 
 /** A mode a node serves beside its own, as the node page shows it. */
 export interface ExtraModeLike {

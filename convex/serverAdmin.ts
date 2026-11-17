@@ -21,6 +21,7 @@ import { resolveModeCatalog } from './lib/connectionModes';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
 import { modeRefOf } from './nodeIntents';
+import { twinViewOf } from './nodeTwins';
 import { deliveryBindingFor } from './relays';
 import { frontKeysFor } from './lib/edges/frontKeys';
 import { realityClientRefusal } from '../src/shared/contracts/realityClients';
@@ -168,6 +169,8 @@ export const intentsView = internalQuery({
           checked: m.evidence?.checked ?? null,
           since: new Date(m.since).toISOString(),
         })),
+        // Its mode's encrypted twin (docs/servers.md "A node serving the encrypted twin").
+        twin: await twinViewOf(ctx, i),
         registeredAt: new Date(i.registeredAt).toISOString(),
         updatedAt: new Date(i.updatedAt).toISOString(),
       });

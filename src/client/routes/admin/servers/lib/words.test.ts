@@ -4,6 +4,7 @@ import {
   adoptRefusalWords,
   blockerWords,
   groupLine,
+  nodeTwinWords,
   opGroupTitle,
   opGroups,
   RECENT_CHANGES_SHOWN,
@@ -993,5 +994,68 @@ describe('groupLine', () => {
     );
     expect(groupLine('Legacy', ['VLESS_TCP'], null)).toBe('VLESS TCP');
     expect(groupLine('Empty', [null], 0)).toBe('No transports · 0 members');
+  });
+});
+
+describe('nodeTwinWords', () => {
+  const base = {
+    state: 'activating' as const,
+    code: null,
+    route: { path: '/ws-e', port: 8444 },
+    routeBy: 'role' as const,
+    fronts: { checked: 0, published: 2 },
+  };
+
+  test('turning on, and waiting for something that clears by itself, is not an error', () => {
+    for (const code of [null, 'servers.op_running', 'servers.node_twin_transport_off'])
+      expect(nodeTwinWords({ ...base, code })).toEqual({
+        dot: 'amber',
+        sentence:
+          'Turning on. Its address stays off until a test connection through each front reaches the twin.',
+      });
+  });
+
+  test('no front carries it: who adds the route, and the route itself', () => {
+    const failed = { ...base, code: 'servers.node_twin_check_failed' };
+    expect(nodeTwinWords(failed)).toEqual({
+      dot: 'red',
+      sentence:
+        'No front carries it yet. Run the node role on this node so its front server gets the route /ws-e to 127.0.0.1:8444. It is checked again every few minutes.',
+    });
+    expect(nodeTwinWords({ ...failed, routeBy: 'operator' })).toEqual({
+      dot: 'amber',
+      sentence:
+        'No front carries it yet. No role runs this node: add the route /ws-e to 127.0.0.1:8444 to its front server. It is checked again every few minutes.',
+    });
+  });
+
+  test('anything else that stops it is said in the usual words', () => {
+    expect(nodeTwinWords({ ...base, code: 'servers.node_offline' })).toEqual({
+      dot: 'red',
+      sentence: `Not serving it yet: ${serverErrorWords('servers.node_offline')}`,
+    });
+  });
+
+  test('serving says through how many fronts, and when one is still out', () => {
+    const serving = { ...base, state: 'serving' as const };
+    expect(nodeTwinWords({ ...serving, fronts: { checked: 2, published: 2 } })).toEqual({
+      dot: 'green',
+      sentence:
+        'Serving. Members get it through 2 fronts. The plain connection stays for apps that cannot use it.',
+    });
+    expect(nodeTwinWords({ ...serving, fronts: { checked: 1, published: 1 } }).sentence).toContain(
+      'through 1 front.',
+    );
+    expect(nodeTwinWords({ ...serving, fronts: { checked: 1, published: 3 } })).toEqual({
+      dot: 'amber',
+      sentence:
+        'Serving through 1 of 3 fronts. The others hand out the plain connection until their check passes.',
+    });
+  });
+
+  test('no em-dashes, and no code leaks into the copy', () => {
+    for (const state of ['activating', 'serving', 'removing'] as const)
+      for (const code of [null, 'servers.node_twin_check_failed', 'servers.node_twin_drifted'])
+        expect(nodeTwinWords({ ...base, state, code }).sentence).not.toMatch(/—|servers\./);
   });
 });

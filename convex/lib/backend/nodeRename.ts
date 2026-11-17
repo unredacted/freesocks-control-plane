@@ -49,6 +49,19 @@ export function renamedListenerRemark(remark: string, from: string, to: string):
   return `${originNameOf(to)}${remark.slice(f.length)}`;
 }
 
+/**
+ * The keys an origin's addresses are named by: each listener's own, and the key
+ * of its encrypted twin, whose address is renamed with it (convex/nodeTwins.ts).
+ */
+export function listenerRemarkKeys(
+  listeners: readonly { listenerKey: string; encryptedTwin?: { key: string } }[],
+): string[] {
+  return listeners.flatMap((l) => [
+    l.listenerKey,
+    ...(l.encryptedTwin ? [l.encryptedTwin.key] : []),
+  ]);
+}
+
 /** The longest remark a listener of this origin would carry under `to` (the backend caps remarks). */
 export function longestListenerRemark(keys: readonly string[], to: string): number {
   return Math.max(0, ...keys.map((k) => templateHostRemark(originNameOf(to), k).length));

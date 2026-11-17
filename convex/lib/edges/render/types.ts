@@ -24,7 +24,15 @@ export interface RenderMatcher {
    * node was renamed). A body may carry the plain entry, the twin, or both;
    * `RenderRuleInput.encryption` says which of them an app gets.
    */
-  encrypted?: { remarks: readonly string[] };
+  encrypted?: {
+    remarks: readonly string[];
+    /**
+     * The fronts the twin was checked through (convex/nodeTwins.ts): it is
+     * handed out through these and no other, so a front published since gets
+     * the plain entry alone. Absent = no limit.
+     */
+    edgeIds?: readonly string[];
+  };
   /** What the listener speaks: the matched entry must agree (codec verification). */
   proto: ListenerProto;
   originAddress: string;
@@ -206,6 +214,8 @@ export interface ResolvedMatchers<T> {
    * carries), so a codec never passes one through.
    */
   twinEntries: Set<T>;
+  /** Per listener whose twin is limited to some fronts (`RenderMatcher.encrypted.edgeIds`): those fronts. */
+  twinEdges: Map<string, ReadonlySet<string>>;
   matches: ListenerMatch[];
 }
 
@@ -216,6 +226,7 @@ export function resolveMatchers<T>(
 ): ResolvedMatchers<T> {
   const templates = new Map<string, T>();
   const encrypted = new Map<string, T>();
+  const twinEdges = new Map<string, ReadonlySet<string>>();
   const matches: ListenerMatch[] = [];
   // Twins first: a twin sits at its listener's own address, so it must never
   // be read as the plain entry (an address or whole-body rule would).
@@ -230,7 +241,17 @@ export function resolveMatchers<T>(
     // Usable only when it is what it is named as: this listener's transport,
     // and really encrypted (a twin entry without a client string would hand
     // out the plain transport under the encrypted name).
-    if (c && c.encrypted === true && c.supported(m.proto) && c.agrees(m.proto))
+    // And only where some front was checked on it: a twin no front carries
+    // yet is nobody's to use (its entry is still a template, never passed on).
+    const limit = m.encrypted.edgeIds;
+    if (limit) twinEdges.set(m.listenerKey, new Set(limit));
+    if (
+      c &&
+      c.encrypted === true &&
+      c.supported(m.proto) &&
+      c.agrees(m.proto) &&
+      (!limit || limit.length > 0)
+    )
       encrypted.set(m.listenerKey, c.entry);
   }
   const proxyEntries = entries.filter(
@@ -293,7 +314,7 @@ export function resolveMatchers<T>(
   // A listener whose plain entry FAILED (ambiguous, another transport) is not
   // rescued by its twin: something about it is not what FCP registered.
   for (const r of matches) if (!r.matched) encrypted.delete(r.listenerKey);
-  return { templates, encrypted, twinEntries, matches };
+  return { templates, encrypted, twinEntries, twinEdges, matches };
 }
 
 /** Every template entry of a resolution: the plain ones and every twin. */
@@ -320,7 +341,9 @@ export function retainedTemplates<T>(
   const twins = opts.twins && mode !== 'plain';
   for (const [key, plain] of r.templates)
     if (!(mode === 'only' && twins && r.encrypted.has(key))) kept.add(plain);
-  if (twins) for (const twin of r.encrypted.values()) kept.add(twin);
+  // A twin limited to some fronts is never kept as it came: its own address
+  // is whatever front the backend address names, checked on the twin or not.
+  if (twins) for (const [key, twin] of r.encrypted) if (!r.twinEdges.has(key)) kept.add(twin);
   return kept;
 }
 
@@ -343,7 +366,8 @@ export interface PlannedEntry<T> {
  */
 export function planEntries<T>(
   endpoints: readonly RenderEndpoint[],
-  r: Pick<ResolvedMatchers<T>, 'templates' | 'encrypted'>,
+  r: Pick<ResolvedMatchers<T>, 'templates' | 'encrypted'> &
+    Partial<Pick<ResolvedMatchers<T>, 'twinEdges'>>,
   rule: Pick<RenderRuleInput, 'encryption'>,
 ): { entries: PlannedEntry<T>[]; mixed: boolean } {
   const mode = rule.encryption ?? 'prefer';
@@ -351,7 +375,11 @@ export function planEntries<T>(
   const fallback: PlannedEntry<T>[] = [];
   for (const endpoint of endpoints) {
     const plain = r.templates.get(endpoint.listenerKey);
-    const twin = r.encrypted.get(endpoint.listenerKey);
+    // Through a front the twin was not checked on, the endpoint has no twin:
+    // it gets the plain entry, whatever the rule.
+    const limit = r.twinEdges?.get(endpoint.listenerKey);
+    const twin =
+      !limit || limit.has(endpoint.edgeId) ? r.encrypted.get(endpoint.listenerKey) : undefined;
     const label = endpoint.label;
     if (mode === 'plain') {
       if (plain) first.push({ endpoint, template: plain, label });

@@ -33,6 +33,9 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { addressTransportsOf, addressesOf, closeForRetirement } from './nodeIntents';
 import { runningRenameOf } from './lib/backend/nodeAliases';
+import { isUnrecordedTwinHost } from './lib/backend/nodeTwin';
+import { originNameOf } from './lib/backend/nodeRename';
+import { relayRemarkRegex } from './lib/edges/hosts';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -194,6 +197,13 @@ export const context = internalQuery({
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
       .collect();
+    // The transport of its mode's encrypted twin, whatever state the setup is in.
+    const twinUuid = (
+      await ctx.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+        .unique()
+    )?.modes?.find((m) => m.slug === intent.mode)?.twin?.uuid;
     // By name while its uuid was never recorded (a create that landed late).
     const node = intent.nodeUuid
       ? await ctx.db
@@ -241,6 +251,18 @@ export const context = internalQuery({
           (await addressTransportsOf(ctx, intent.backendServerId))(intent),
         ),
         ...hosts.filter((h) => (intent.extraModes ?? []).some((m) => m.hostUuid === h.hostUuid)),
+        // And the one address of its mode's encrypted twin: by the uuid
+        // recorded, or (a create that landed while its run stopped) on the
+        // twin's transport under the node's origin remark form.
+        ...hosts.filter(
+          (h) =>
+            !!intent.twin &&
+            (h.hostUuid === intent.twin.hostUuid ||
+              isUnrecordedTwinHost(h, {
+                twinUuid,
+                originRemark: relayRemarkRegex(originNameOf(intent.name)),
+              })),
+        ),
       ],
       node,
       openOps,

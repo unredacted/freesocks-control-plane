@@ -9,6 +9,7 @@
  * holds only what is public about the layer (lib/backend/digest.ts): never a
  * key.
  */
+import { TWIN_LISTEN } from './nodeTwin';
 import { clientEncryptionProblem } from './vlessEncryption';
 
 export type TwinProblem =
@@ -42,13 +43,12 @@ interface InboundLike {
   vlessEncryption?: { encryption: string | null };
 }
 
+/**
+ * The one loopback address a node's front server proxies its routes to: a
+ * route names a path and a port, never an address.
+ */
 function isLoopback(listen: string | undefined): boolean {
-  if (!listen) return false;
-  const l = listen
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, '');
-  return l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l);
+  return (listen ?? '').trim() === TWIN_LISTEN;
 }
 
 /** A code word for the first thing wrong with `tag` as `mode`'s encrypted twin, or null. */

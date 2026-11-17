@@ -2376,6 +2376,10 @@ export default defineSchema({
           configProfileUuid: v.string(),
           configProfileInboundUuid: v.string(),
         }),
+        // The fronts the twin was checked through (convex/nodeTwins.ts): the
+        // only ones it is handed out through. A front published later serves
+        // the plain entry alone until its own check passes.
+        edges: v.optional(v.array(v.object({ edgeId: v.string(), checkedAt: v.number() }))),
       }),
     ),
     // Remarks this listener's Host carried before its node was renamed: the
@@ -5041,6 +5045,31 @@ export default defineSchema({
           updatedAt: v.number(),
         }),
       ),
+    ),
+    // The node serves its mode's ENCRYPTED TWIN (convex/nodeTwins.ts,
+    // docs/servers.md "A node serving the encrypted twin"): the mode's own
+    // WebSocket transport a second time, with VLESS Encryption inside the
+    // stream, behind the same fronts. `activating`: the transport is on, the
+    // node's front server is given its route, its address exists switched off
+    // and each front is checked on the twin's path; `serving`: the address is
+    // on and the twin is handed out through the fronts that passed
+    // (`relayListeners.encryptedTwin.edges`), bound to `evidence.revision`;
+    // `removing`: address off and gone, then the transport. `hostUuid` is the
+    // one address FCP wrote for it. The node's own transport, address and
+    // approval are never touched by any of it.
+    twin: v.optional(
+      v.object({
+        state: v.union(v.literal('activating'), v.literal('serving'), v.literal('removing')),
+        code: v.optional(v.string()),
+        hostUuid: v.optional(v.string()),
+        evidence: v.optional(v.object({ revision: v.string(), at: v.number() })),
+        lease: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
+        rerun: v.optional(v.boolean()),
+        retries: v.optional(v.number()),
+        byAdminId: v.optional(v.id('adminUsers')),
+        since: v.number(),
+        updatedAt: v.number(),
+      }),
     ),
     retirementId: v.optional(v.id('panelRetirements')),
     tokenId: v.optional(v.id('apiTokens')),
