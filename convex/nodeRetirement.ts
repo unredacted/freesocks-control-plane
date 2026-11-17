@@ -241,6 +241,8 @@ export const context = internalQuery({
           (await addressTransportsOf(ctx, intent.backendServerId))(intent),
         ),
         ...hosts.filter((h) => (intent.extraModes ?? []).some((m) => m.hostUuid === h.hostUuid)),
+        // And the one address of its mode's encrypted twin.
+        ...hosts.filter((h) => !!intent.twin?.hostUuid && h.hostUuid === intent.twin.hostUuid),
       ],
       node,
       openOps,

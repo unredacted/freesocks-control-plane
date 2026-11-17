@@ -767,9 +767,82 @@ A mode's group carries **exactly** the mode's transport and its twin (`groupCarr
 is what a change of the setup checks a set-up mode against, so a mode with a twin is not read as
 drifted, and one whose group holds anything else still is. Putting the twin into the group gives
 members nothing new by itself: no node serves the transport and no address names it. Turning it
-on for a node, its address and its proof through each front are a later step. Audit:
+on for a node is its own step (§ "A node serving the encrypted twin"). Audit:
 `admin.servers.mode_twin.attach|detach` (backend, mode, tag, port, what the node is verified by;
 never a key or a client string).
+
+### A node serving the encrypted twin
+
+A mode's twin does nothing until a node serves it. That is switched on per node
+(`POST {slug}/nodes/intents/{id}/encrypted-twin {action: "add" | "remove"}`, the node page's
+"Encrypted twin" card; `convex/nodeTwins.ts`, `panelNodeIntents.twin`). The twin has a lifecycle
+and evidence of its own: nothing in it touches the node's own transport, its address, its
+machine revision or its approval, and closing the twin leaves the plain path exactly as it was.
+
+| Stage        | What holds                                                                                                                                                                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `activating` | The node reconcile turns the twin's transport on for the node (its active set is its own transports plus the twin: the node's connections restart once). The node's front server is handed the twin's route. FCP writes the twin's address **switched off**, names it to the renderer, and checks the twin's path through every published front. |
+| `serving`    | The address is on. The twin is handed out through the fronts that passed and no other. Each front is checked again before its check is an hour old.                                                                                                                                                                                              |
+| `removing`   | No front counted, the address off and then deleted, the renderer forgets it, and the transport is dropped from the node.                                                                                                                                                                                                                         |
+
+**The route.** The node's front server must send the twin's path to its loopback port. A node
+the role runs reads it with its other routes: the bootstrap answer's `ingress.routes` carries
+the twin's route beside the node's own while the node activates or serves it. It is not a
+machine setting, so no machine revision moves and nothing is approved again. On a node no role
+runs (an adopted one), an operator adds the route by hand; the node page shows it. Nobody
+confirms the route: the check through each front is what proves it, and it is made again every
+few minutes until it passes.
+
+**The address.** One address per node, named like any address of the node's listener with the
+twin's key in place of the listener's (`<node>-relay-<twin key>`,
+`lib/edges/listenerEncryption.ts`), bound to the twin's transport, at the target of the
+listener's own address (`lib/backend/nodeTwin.ts` `desiredTwinHost`). It writes no path: the
+path is the twin transport's own. It follows the listener's address when a front is replaced,
+without being closed for it, since the renderer rewrites both per front. It goes through the
+ledger like every write; FCP's own run is the one writer there that may use a remark of that
+form.
+
+**The check.** One session per published front (`frontQualifyOps.runTwin`): the front's own
+name, the listener's transport and FCP's test account, at the twin's path, spoken with the
+twin's client string. That one session proves the route, the transport and the front together.
+Nothing is recorded on the edge; the listener keeps the fronts that passed
+(`relayListeners.encryptedTwin.edges`), and the renderer hands the twin out through those
+fronts only. A front published later gets the plain entry alone until its own check passes,
+and a check three hours old no longer counts (`matcherOf`), so a run that stopped withholds the
+twin instead of handing it out on old evidence. With no front passing, the address stays off.
+
+**What closes it.** The checks are bound to the twin's transport, what its node is verified by,
+its port, its path and the listener (`twinRevision`): a change of any of them switches the
+address off and counts no front until every front is checked again
+(`servers.node_twin_drifted`). So does the transport going off on the node, the node going
+offline, the listener losing its address, and the node leaving its fronts (a restore to
+direct, a removal): the twin's address goes off first, so it never outlives the listener that
+makes its entry a template. While a front is being replaced or the origin is quarantined,
+nothing of the twin is written or checked; what it is handed out through stays as it was.
+
+**A node behind fronts.** The ledger refuses any change that restarts a node an origin stands in
+front of. Turning a twin on or off is the one exception, and it is checked, not trusted
+(`backendWrites.requestNodeUpdate` `twinToggle`, `onlyTogglesTwin`): same address, port and
+profile, and every transport that comes or goes is some mode's twin on the backend's setup.
+
+| Refused / reported                | When                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `servers.twin_absent`             | The node's mode has no twin on this backend (or it is being taken away).                          |
+| `servers.node_twin_present`       | The node already serves it.                                                                       |
+| `servers.node_twin_absent`        | Remove, on a node that does not serve it.                                                         |
+| `servers.node_twin_no_front`      | FCP runs no front for the node's own transport (no origin, an address FCP does not own, or none). |
+| `servers.node_twin_remark_long`   | The node's name leaves no room for the twin's remark.                                             |
+| `servers.node_twin_transport_off` | The transport is not on for the node yet (the node reconcile turns it on).                        |
+| `servers.node_twin_front_busy`    | A front is being replaced, or the origin is quarantined.                                          |
+| `servers.node_twin_check_failed`  | No published front carried the twin.                                                              |
+| `servers.node_twin_drifted`       | Something its checks were made under moved.                                                       |
+
+A retiring node's twin address is removed with its other addresses. The mode's twin cannot be
+taken off the backend while a node serves it (`servers.twin_in_use`). Audit:
+`admin.servers.node_twin.add|remove`, `servers.node.twin_serving` (how many fronts),
+`servers.node.twin_closed`, `servers.node.twin_check_failed` and `servers.node.twin_front_failed`
+(a code word; said once, not on every look), `servers.node.twin_removed`. Never a front's name,
+a path, a key or a client string.
 
 ### Adopting a backend
 

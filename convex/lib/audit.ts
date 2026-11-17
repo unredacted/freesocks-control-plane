@@ -346,6 +346,16 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // a key or a client string.
   'admin.servers.mode_twin.attach': ['backendSlug', 'mode', 'tag', 'port', 'auth'],
   'admin.servers.mode_twin.detach': ['backendSlug', 'mode', 'tag'],
+  // A node serving its mode's encrypted twin (convex/nodeTwins.ts). `code`: a
+  // refusal or check code word; `fronts`: how many fronts it is handed out
+  // through. Never a front's name, a path, a key or a client string.
+  'admin.servers.node_twin.add': ['backendSlug', 'name', 'mode'],
+  'admin.servers.node_twin.remove': ['backendSlug', 'name', 'mode'],
+  'servers.node.twin_serving': ['backendSlug', 'name', 'mode', 'fronts'],
+  'servers.node.twin_closed': ['backendSlug', 'name', 'mode', 'code'],
+  'servers.node.twin_check_failed': ['backendSlug', 'name', 'mode', 'code'],
+  'servers.node.twin_front_failed': ['backendSlug', 'name', 'mode', 'code', 'fronts'],
+  'servers.node.twin_removed': ['backendSlug', 'name', 'mode'],
   'admin.servers.extra_mode.add': ['backendSlug', 'name', 'mode', 'port', 'protocol'],
   'admin.servers.extra_mode.remove': ['backendSlug', 'name', 'mode'],
   'servers.node.extra_mode_firewall': ['backendSlug', 'name', 'mode', 'by', 'port', 'protocol'],

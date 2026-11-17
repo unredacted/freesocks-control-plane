@@ -60,6 +60,7 @@
   import ActivationSection from './components/ActivationSection.svelte';
   import DetailsFold from './components/DetailsFold.svelte';
   import ExtraModesCard from './components/ExtraModesCard.svelte';
+  import EncryptedTwinCard from './components/EncryptedTwinCard.svelte';
   import HostDialog from './components/HostDialog.svelte';
   import NamesDialog from './components/NamesDialog.svelte';
   import NodeActions from './components/NodeActions.svelte';
@@ -598,6 +599,7 @@
       {/if}
       {#if intent && slug}
         <ExtraModesCard {slug} {intent} {canWrite} />
+        <EncryptedTwinCard {slug} {intent} {canWrite} />
       {/if}
     </section>
 

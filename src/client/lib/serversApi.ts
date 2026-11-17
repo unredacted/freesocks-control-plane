@@ -253,6 +253,17 @@ export const extraModeAction = (
     z.object({ state: z.string().nullable() }),
   );
 
+/**
+ * A node's encrypted twin (docs/servers.md "A node serving the encrypted
+ * twin"): serve the mode's encrypted transport on this node, or stop.
+ */
+export const nodeTwinAction = (slug: string, id: string, action: 'add' | 'remove') =>
+  apiClient.post(
+    `${intentPath(slug, id)}/encrypted-twin`,
+    { action },
+    z.object({ state: z.string() }),
+  );
+
 const ROOT = ['admin', 'servers'] as const;
 export const serverKeys = {
   all: ROOT,

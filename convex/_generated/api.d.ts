@@ -177,6 +177,7 @@ import type * as backendObserve from "../backendObserve.js";
 import type * as backendPortChanges from "../backendPortChanges.js";
 import type * as panelReservations from "../panelReservations.js";
 import type * as nodeRetirement from "../nodeRetirement.js";
+import type * as nodeTwins from "../nodeTwins.js";
 import type * as backendSetup from "../backendSetup.js";
 import type * as backendTwins from "../backendTwins.js";
 import type * as backendWrites from "../backendWrites.js";
@@ -395,6 +396,7 @@ declare const fullApi: ApiFromModules<{
   backendPortChanges: typeof backendPortChanges;
   panelReservations: typeof panelReservations;
   nodeRetirement: typeof nodeRetirement;
+  nodeTwins: typeof nodeTwins;
   backendSetup: typeof backendSetup;
   backendTwins: typeof backendTwins;
   backendWrites: typeof backendWrites;

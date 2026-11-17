@@ -107,3 +107,42 @@ export const run = internalAction({
     });
   },
 });
+
+/**
+ * The same session for a listener's ENCRYPTED TWIN (convex/nodeTwins.ts): the
+ * listener's own front, name, account and transport, at the twin's path and
+ * spoken with the twin's client string. It proves the three things a twin
+ * needs through this front at once: the node's front server routes the path,
+ * the twin's transport is on, and the front carries the encrypted stream.
+ *
+ * Nothing is recorded on the edge: its own qualification is the listener's
+ * plain path. The caller keeps the verdict (`relayListeners.encryptedTwin.edges`).
+ */
+export const runTwin = internalAction({
+  args: { edgeId: v.id('edges'), path: v.string(), encryption: v.string() },
+  handler: async (
+    ctx,
+    { edgeId, path, encryption },
+  ): Promise<{ ok: boolean; code: string | null; detail: string | null }> => {
+    const c = await ctx.runQuery(internal.frontQualify.context, { edgeId });
+    const refused = (code: string) => ({ ok: false, code, detail: null });
+    if (!c) return refused('not_qualifiable');
+    if (!c.carried || c.proto.protocol !== 'vless' || c.proto.streamTransport !== 'ws')
+      return refused('unsupported_protocol');
+    if (!c.credential || c.credential.kind !== 'vless')
+      return refused('no_qualification_credential');
+    if (!(await accountUsable(ctx, c.relayId))) return refused('test_account_used_up');
+    const result = providerVerdict(
+      c.provider,
+      c.proto.streamTransport,
+      await checker({
+        hostname: c.hostname,
+        proto: c.proto,
+        params: { ...c.params, path },
+        credential: { kind: 'vless', uuid: c.credential.uuid, encryption },
+        stepTimeoutMs: c.stepTimeoutMs,
+      }),
+    );
+    return { ok: result.ok, code: result.code ?? null, detail: result.detail ?? null };
+  },
+});

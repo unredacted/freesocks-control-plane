@@ -50,6 +50,7 @@ import {
 } from './lib/edges/verification';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { extraTransportOn } from './lib/backend/extraModes';
+import { twinRoute, twinTransportOn } from './lib/backend/nodeTwin';
 import {
   confirmExtraModesFromRole,
   confirmFromRole,
@@ -1737,15 +1738,26 @@ export const reconcile = internalAction({
         .filter((m) => extraTransportOn(m.state, m.hostUuid))
         .map((m) => modeOf(setup, m.slug)?.transport?.uuid)
         .filter((u): u is string => !!u);
-      const own = adopted
-        ? (adopted.activeInboundUuids ?? c.node?.activeInboundUuids ?? [t.uuid])
-        : [t.uuid];
+      // Its mode's ENCRYPTED TWIN (nodeTwins.ts) is on while the node
+      // activates or serves it, and until its address is gone. It is never
+      // one of the node's own transports: an adopted node's set (read from
+      // its row) would otherwise keep it on after it was removed.
+      const twinUuid = modeOf(setup, modeSlug(c.intent))?.twin?.uuid;
+      const twinOn =
+        !!twinUuid &&
+        !!c.intent.twin &&
+        twinTransportOn(c.intent.twin.state, c.intent.twin.hostUuid);
+      const own = (
+        adopted ? (adopted.activeInboundUuids ?? c.node?.activeInboundUuids ?? [t.uuid]) : [t.uuid]
+      ).filter((u) => u !== twinUuid);
       const want = {
         address: c.intent.observed.management.address,
         port: c.intent.settings.nodePort,
         countryCode: c.intent.settings.countryCode,
         configProfileUuid: setup.profileUuid!,
-        activeInboundUuids: [...new Set([...own, ...extraTransports])],
+        activeInboundUuids: [
+          ...new Set([...own, ...extraTransports, ...(twinOn && twinUuid ? [twinUuid] : [])]),
+        ],
       };
       const sameSet = (x: readonly string[], y: readonly string[]) =>
         x.length === y.length && x.every((u) => y.includes(u));
@@ -1793,6 +1805,9 @@ export const reconcile = internalAction({
               backendServerId: sid,
               nodeUuid: c.node.nodeUuid,
               ...diff,
+              // The twin's transport may come and go on a node behind a front
+              // (the ledger checks that nothing else moves).
+              ...(twinUuid ? { twinToggle: true as const } : {}),
             }));
           } catch (err) {
             await stop('blocked', codeOf(err));
@@ -2031,6 +2046,10 @@ export const reconcile = internalAction({
       await ctx
         .runMutation(internal.nodeExtraModes.kick, { intentId: f.intentId })
         .catch(() => undefined);
+      // So does its mode's encrypted twin.
+      await ctx
+        .runMutation(internal.nodeTwins.kick, { intentId: f.intentId })
+        .catch(() => undefined);
     }
   },
 });
@@ -2201,6 +2220,17 @@ export const bootstrap = internalAction({
       { intentId },
     );
     const ingress = c.ingress;
+    // The node's front server also routes its mode's ENCRYPTED TWIN while the
+    // node serves it (nodeTwins.ts): its path to its loopback port, beside the
+    // node's own. It is no machine setting: the node's own route, revision and
+    // approval stay as they are, and the twin is handed to members only once a
+    // session through each front proved the route.
+    const twin = c.intent.twin;
+    const setupTwin = modeOf(c.setup, modeSlug(c.intent))?.twin;
+    const twinRoutes =
+      twin && twin.state !== 'removing' && setupTwin && !setupTwin.detaching
+        ? [twinRoute(setupTwin)]
+        : [];
     return {
       machineRevision: c.intent.machineRevision,
       secretKey,
@@ -2209,7 +2239,12 @@ export const bootstrap = internalAction({
         ? {
             hostname: ingress.hostname,
             externalPort: ingress.external.port,
-            routes: ingress.internal.map(ingressRoute),
+            routes: [
+              ...ingress.internal.map(ingressRoute),
+              ...twinRoutes.filter(
+                (r) => !ingress.internal.some((i) => i.path === r.path || i.port === r.port),
+              ),
+            ],
           }
         : null,
       origin: { hostname: c.hostname ?? null, dns: c.intent.origin.dns },
@@ -2865,6 +2900,9 @@ export const sweep = internalAction({
         if (await ctx.runMutation(internal.nodeIntents.resumeSetup, { setupId: id })) b++;
       const templates: number = await ctx.runAction(internal.backendSetup.resyncTemplates, {});
       await ctx.runAction(internal.nodeRetirement.sweep, {});
+      // Each node's encrypted twin with something due (a front's check an hour
+      // old, a moved address, a start that failed).
+      await ctx.runAction(internal.nodeTwins.sweep, {}).catch(() => undefined);
       return { intents: a, setups: b, templates };
     }),
 });

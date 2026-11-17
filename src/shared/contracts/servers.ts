@@ -781,6 +781,24 @@ export const NodeIntentView = z.object({
       }),
     )
     .default([]),
+  /**
+   * Its mode's ENCRYPTED TWIN on this node (docs/servers.md "A node serving
+   * the encrypted twin"), or null. `route`: what the node's front server needs
+   * (the twin's path to its loopback port), given by the node role or, on a
+   * node no role runs, by an operator (`routeBy`). `fronts`: through how many
+   * of its published fronts the twin is handed out.
+   */
+  twin: z
+    .object({
+      state: z.enum(['activating', 'serving', 'removing']),
+      code: z.string().nullable(),
+      route: z.object({ path: z.string(), port: z.number() }).nullable(),
+      routeBy: z.enum(['role', 'operator']),
+      fronts: z.object({ checked: z.number(), published: z.number() }),
+      since: z.string(),
+    })
+    .nullable()
+    .default(null),
   registeredAt: z.string(),
   updatedAt: z.string(),
 });
@@ -792,6 +810,9 @@ export const ExtraModeRequest = z.object({
   action: z.enum(['add', 'firewall-confirmed', 'remove']),
 });
 export type ExtraModeRequest = z.infer<typeof ExtraModeRequest>;
+/** `POST {slug}/nodes/intents/{id}/encrypted-twin`: serve the mode's encrypted twin on this node, or stop. */
+export const NodeTwinRequest = z.object({ action: z.enum(['add', 'remove']) });
+export type NodeTwinRequest = z.infer<typeof NodeTwinRequest>;
 /** `carried`: tested edge addresses whose confirmations the adoption kept (a node Edges protect). */
 export const AdoptNodeResult = z.object({
   intentId: z.string(),

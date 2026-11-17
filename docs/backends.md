@@ -987,19 +987,30 @@ family, "Encrypted connections"):
   an operator's test link are one entry, never a pair. A mirror's link list is made for no
   particular app (the `other` family), so it carries the plain entries.
 
-On the backend, the twin is a second transport of the profile that the mode's group carries
-beside the mode's own ([servers.md](servers.md) § "A mode's encrypted twin").
+- **Only through fronts it was checked on.** A twin is handed out through the fronts in
+  `relayListeners.encryptedTwin.edges` and no other (`RenderMatcher.encrypted.edgeIds`): an
+  endpoint on any other front has no twin and gets the plain entry under its ordinary name,
+  whatever the rule (`only` included: no front is ever left without an entry). With no front
+  checked nobody gets the twin; its entry is a template all the same and never leaves as it
+  came. A kept template is never such a twin: its own address is whatever front the backend
+  address names.
 
-Not done yet: no node serves a twin, nothing writes one onto a listener or creates its Host, the
-front qualification proves the plain path only, and the names a member can pick in a report do
-not list the plain twins.
+On the backend, the twin is a second transport of the profile that the mode's group carries
+beside the mode's own ([servers.md](servers.md) § "A mode's encrypted twin"). A node serves it
+once it is switched on there: its transport on, its address written switched off, and each
+published front checked on the twin's path with the twin's client string before the address
+goes on ([servers.md](servers.md) § "A node serving the encrypted twin").
+
+Not done yet: the names a member can pick in a report do not list the plain twins, no real app
+or engine has been run against an encrypted entry or an ordered group, and the backend page has
+no control to give a mode its twin (the route exists).
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the
-observation, FCP's own sessions, the renderer's handling of a twin, and a mode's twin on the
-backend (Add a transport offers the flag; a mode can take the transport as its twin). Every
-profile FCP builds is still born plain, no node serves a twin and no listener has one. Hysteria is not VLESS and
-takes no part.
+observation, FCP's own sessions, the renderer's handling of a twin, a mode's twin on the
+backend (Add a transport offers the flag; a mode can take the transport as its twin), and the
+per-node switch with its checks. Every profile FCP builds is still born plain, and a node
+serves a twin only where an admin switched it on. Hysteria is not VLESS and takes no part.
 
 ## Sensitive data
 

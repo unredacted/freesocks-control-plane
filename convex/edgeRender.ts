@@ -16,6 +16,7 @@ import { ownCodesOf } from './lib/edges/ownPools';
 import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { twinRemarksOf } from './lib/edges/listenerEncryption';
+import { servableEdges } from './lib/backend/nodeTwin';
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -24,6 +25,7 @@ import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import {
+  EDGE_PLUMBING,
   resolveEdgeConfig,
   RENDER_CLIENT_FAMILIES,
   RETIRED_RENDER_LABEL_KEYS,
@@ -110,13 +112,33 @@ export async function l7QualificationCurrent(
   );
 }
 
-export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): RenderMatcher {
+/**
+ * How old a front's twin check may be and still count. The twin's run makes
+ * each check again before it is an hour old (convex/nodeTwins.ts); one three
+ * times that age means the run stopped, and the twin is withheld rather than
+ * handed out on old evidence.
+ */
+const TWIN_CHECK_MAX_AGE_MS = 3 * EDGE_PLUMBING.l7QualificationTtlMs;
+
+export function matcherOf(
+  l: Doc<'relayListeners'>,
+  originAddress: string,
+  now: number = Date.now(),
+): RenderMatcher {
   const twinRemarks = twinRemarksOf(l);
   return {
     listenerKey: l.listenerKey,
     rule: l.matchRule,
     legacyRemarks: [...(l.legacyHosts ?? []).map((h) => h.remark), ...(l.formerRemarks ?? [])],
-    ...(twinRemarks.length > 0 ? { encrypted: { remarks: twinRemarks } } : {}),
+    ...(twinRemarks.length > 0
+      ? {
+          encrypted: {
+            remarks: twinRemarks,
+            // Only through the fronts it was checked on (none = nobody gets it).
+            edgeIds: servableEdges(l.encryptedTwin?.edges, now, TWIN_CHECK_MAX_AGE_MS),
+          },
+        }
+      : {}),
     proto: { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security },
     originAddress,
     originPort: l.originPort,

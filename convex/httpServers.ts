@@ -41,6 +41,7 @@ import {
   NodeRegistration,
   NodeRenameRequest,
   ExtraModeRequest,
+  NodeTwinRequest,
   PortChangeAcknowledge,
   ProfilePatchApply,
   ProfilePatchPreviewRequest,
@@ -707,6 +708,19 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       if (w.data.action === 'firewall-confirmed')
         return json(await ctx.runMutation(internal.nodeExtraModes.acknowledgeFirewall, args));
       return json(await ctx.runMutation(internal.nodeExtraModes.remove, args));
+    }
+    // Its mode's encrypted twin (docs/servers.md "A node serving the encrypted
+    // twin"): serve it on this node (checked through each front before members
+    // get it), or stop.
+    if (verb === 'encrypted-twin') {
+      const w = parseWrite(NodeTwinRequest, body, {});
+      if (!w.ok) return w.res;
+      const args = { intentId, ...actorOf(admin) };
+      return json(
+        w.data.action === 'add'
+          ? await ctx.runMutation(internal.nodeTwins.add, args)
+          : await ctx.runMutation(internal.nodeTwins.remove, args),
+      );
     }
     if (verb === 'settings')
       return json(

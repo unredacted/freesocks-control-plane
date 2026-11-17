@@ -101,6 +101,10 @@ const hostFields = {
 // short `<kind>:<id>` the audit names it by (an activation, a node's address
 // reconcile, a retirement).
 const actor = { actorAdminId: v.optional(v.id('adminUsers')), actorRun: v.optional(v.string()) };
+// FCP's own run writing the address of a node's encrypted twin
+// (convex/nodeTwins.ts): the one writer here that may use a remark of the
+// form origins are named by (`<node>-relay-<key>`). Never set from a request.
+const relayTwin = { relayTwin: v.optional(v.literal(true)) };
 
 const ALPN = new Set(['h3', 'h2', 'http/1.1', 'h2,http/1.1', 'h3,h2,http/1.1', 'h3,h2']);
 const FINGERPRINTS = new Set([
@@ -237,12 +241,13 @@ export const requestAddressCreate = internalMutation({
     inboundUuid: v.string(),
     /** Recreate something that was removed on purpose. */
     restore: v.optional(v.boolean()),
+    ...relayTwin,
     ...actor,
   },
   handler: async (ctx, a) => {
     checkHostFields(a);
     const sid = a.backendServerId;
-    if (looksLikeRelayRemark(a.remark, await nodeNames(ctx, sid)))
+    if (!a.relayTwin && looksLikeRelayRemark(a.remark, await nodeNames(ctx, sid)))
       refuse('servers.relay_remark', 'Remarks ending in -origin belong to edges. Pick another');
     const inbound = await inboundBinding(ctx, sid, a.inboundUuid);
     const identity = hostIdentity({
@@ -258,6 +263,7 @@ export const requestAddressCreate = internalMutation({
       actorRun,
       inboundUuid: _i,
       restore: _r,
+      relayTwin: _t,
       ...fields
     } = a;
     const spec: PanelHostCreate = { ...fields, inbound };
@@ -278,17 +284,31 @@ export const requestAddressCreate = internalMutation({
 });
 
 export const requestAddressUpdate = internalMutation({
-  args: { backendServerId: v.id('backendServers'), hostUuid: v.string(), ...hostFields, ...actor },
+  args: {
+    backendServerId: v.id('backendServers'),
+    hostUuid: v.string(),
+    ...hostFields,
+    ...relayTwin,
+    ...actor,
+  },
   handler: async (ctx, a) => {
     checkHostFields(a);
     const sid = a.backendServerId;
     const current = await cachedHost(ctx, sid, a.hostUuid);
     await assertHostEditable(ctx, sid, a.hostUuid);
     if (a.remark !== undefined && a.remark !== current.remark) {
-      if (looksLikeRelayRemark(a.remark, await nodeNames(ctx, sid)))
+      if (!a.relayTwin && looksLikeRelayRemark(a.remark, await nodeNames(ctx, sid)))
         refuse('servers.relay_remark', 'Remarks ending in -origin belong to edges. Pick another');
     }
-    const { backendServerId: _s, hostUuid, actorAdminId, actorRun, inboundUuid, ...rest } = a;
+    const {
+      backendServerId: _s,
+      hostUuid,
+      actorAdminId,
+      actorRun,
+      inboundUuid,
+      relayTwin: _t,
+      ...rest
+    } = a;
     const fields: BackendAddressFields = { ...rest };
     const expected: Record<string, unknown> = { ...rest };
     // The postcondition is what a later read must SHOW, not what was asked. A
@@ -590,6 +610,32 @@ async function assertNotRelayOrigin(ctx: MutationCtx, sid: Id<'backendServers'>,
     );
 }
 
+/**
+ * Whether a node update does nothing but turn a mode's ENCRYPTED TWIN on or
+ * off for the node (convex/nodeTwins.ts): same address, port and profile, and
+ * every transport that comes or goes is some mode's twin on this backend's
+ * setup. Every transport a listener is bound to stays on, so the node restarts
+ * (as a restart asked from here would) and nobody behind an edge is stranded.
+ */
+async function onlyTogglesTwin(
+  ctx: MutationCtx,
+  sid: Id<'backendServers'>,
+  node: { configProfileUuid?: string; activeInboundUuids: string[] },
+  fields: BackendNodeFields,
+): Promise<boolean> {
+  if (fields.address !== undefined || fields.port !== undefined || !fields.profile) return false;
+  if (fields.profile.configProfileUuid !== node.configProfileUuid) return false;
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .unique();
+  const twins = new Set((setup?.modes ?? []).map((m) => m.twin?.uuid));
+  const was = new Set(node.activeInboundUuids);
+  const now = new Set(fields.profile.activeInboundUuids);
+  const moved = [...was].filter((u) => !now.has(u)).concat([...now].filter((u) => !was.has(u)));
+  return moved.length > 0 && moved.every((u) => twins.has(u));
+}
+
 /** Transport uuids must all belong to the profile, as Servers last read it. */
 async function checkProfileInbounds(
   ctx: MutationCtx,
@@ -670,6 +716,12 @@ export const requestNodeUpdate = internalMutation({
     countryCode: v.optional(v.string()),
     configProfileUuid: v.optional(v.string()),
     activeInboundUuids: v.optional(v.array(v.string())),
+    /**
+     * The node reconcile turning a mode's encrypted twin on or off: the one
+     * change of a fronted node's transports made from here. Checked below
+     * (`onlyTogglesTwin`), never taken on trust; never set from a request.
+     */
+    twinToggle: v.optional(v.literal(true)),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -715,7 +767,8 @@ export const requestNodeUpdate = internalMutation({
       restarts = true;
     }
     if (Object.keys(expected).length === 0) refuse('validation', 'Nothing to change');
-    if (restarts) await assertNotRelayOrigin(ctx, sid, node.name);
+    if (restarts && !(a.twinToggle && (await onlyTogglesTwin(ctx, sid, node, fields))))
+      await assertNotRelayOrigin(ctx, sid, node.name);
     const opId = await claimOp(ctx, {
       backendServerId: sid,
       kind: 'node',
