@@ -6,6 +6,7 @@ import {
   groupLine,
   modeTwinWords,
   nodeTwinWords,
+  twinPreset,
   opGroupTitle,
   opGroups,
   RECENT_CHANGES_SHOWN,
@@ -1098,6 +1099,25 @@ describe('modeTwinWords', () => {
     });
   });
 
+  test('recorded but not in the mode’s group: the change did not land', () => {
+    const w = modeTwinWords(
+      { twin: { ...twin, attached: false }, twinCandidates: [] },
+      { serving: 0, total: 2 },
+    );
+    expect(w.dot).toBe('red');
+    expect(w.sentence).toBe(
+      'Encrypted twin: Freedom WebSocket E, port 8444, path /wse. The mode’s group does not carry it yet: the change did not land. Try again, or settle it under Recent changes first.',
+    );
+    expect(w.sentence).not.toContain('Turn it on');
+  });
+
+  test('while the node list is not known it says nothing about nodes', () => {
+    expect(modeTwinWords({ twin, twinCandidates: [] }, null)).toEqual({
+      dot: 'amber',
+      sentence: 'Encrypted twin: Freedom WebSocket E, port 8444, path /wse.',
+    });
+  });
+
   test('being taken away', () => {
     expect(modeTwinWords({ twin: { ...twin, detaching: true }, twinCandidates: [] }, none)).toEqual(
       { dot: 'amber', sentence: 'Its encrypted twin is being taken away.' },
@@ -1112,5 +1132,43 @@ describe('modeTwinWords', () => {
     ])
       for (const n of [none, { serving: 1, total: 3 }])
         expect(modeTwinWords(m, n).sentence).not.toMatch(/—|servers\./);
+  });
+});
+
+describe('twinPreset', () => {
+  const m = (port: number, path: string | null) => ({
+    tag: 'FREEDOM_WEBSOCKET',
+    transport: { port, path },
+  });
+  /** What "Add a transport" takes for a WebSocket transport. */
+  const takes = (p: { port: number; path: string }, own: number) =>
+    /^\/\S*$/.test(p.path) && p.port >= 1024 && p.port <= 65535 && p.port !== own;
+
+  test('the mode’s tag, port and path, one step on', () => {
+    expect(twinPreset(m(8443, '/ws'))).toEqual({
+      tag: 'FREEDOM_WEBSOCKET_E',
+      port: 8444,
+      path: '/wse',
+    });
+  });
+
+  test('always something the dialog takes, at the edges too', () => {
+    for (const [port, path] of [
+      [8443, '/'],
+      [8443, '/ws/'],
+      [65535, '/ws'],
+      [65534, '/ws'],
+      [1024, null],
+    ] as const) {
+      const p = twinPreset(m(port, path));
+      expect(takes(p, port), `${port} ${path}`).toBe(true);
+      expect(p.path).not.toBe(path);
+    }
+    expect(twinPreset(m(8443, '/')).path).toBe('/e');
+    expect(twinPreset(m(65535, '/ws')).port).toBe(65534);
+  });
+
+  test('a long tag still fits the 40 characters a tag may have', () => {
+    expect(twinPreset({ tag: 'T'.repeat(40), transport: null }).tag).toHaveLength(40);
   });
 });

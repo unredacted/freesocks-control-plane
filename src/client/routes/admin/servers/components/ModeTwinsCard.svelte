@@ -29,7 +29,7 @@
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
   import { codeOf } from '../lib/run';
-  import { modeTwinWords, opTitle, opWords, serverErrorWords } from '../lib/words';
+  import { modeTwinWords, opTitle, opWords, serverErrorWords, twinPreset } from '../lib/words';
   import AddTransportDialog from './AddTransportDialog.svelte';
 
   let { slug, canWrite }: { slug: string; canWrite: boolean } = $props();
@@ -53,17 +53,12 @@
   );
   let profile = $derived(setup.data?.profile ?? null);
 
+  // Null until the node list is read: "not known" is not "no nodes".
   const nodesOf = (mode: string) => {
-    const own = (intents.data?.intents ?? []).filter((i) => i.mode.slug === mode && !i.retirement);
+    if (!intents.data) return null;
+    const own = intents.data.intents.filter((i) => i.mode.slug === mode && !i.retirement);
     return { total: own.length, serving: own.filter((i) => i.twin?.state === 'serving').length };
   };
-
-  /** What "Add a transport" opens with: the mode's own tag, port and path, one step on. */
-  const presetFor = (m: ModeSetupView) => ({
-    tag: `${m.tag}_E`.slice(0, 40),
-    port: (m.transport?.port ?? 8443) + 1,
-    path: `${(m.transport?.path ?? '/ws').replace(/\/$/, '')}e`,
-  });
 
   async function act(
     m: ModeSetupView,
@@ -104,7 +99,35 @@
           <span class="break-all">{w.sentence}</span>
         </p>
         {#if canWrite}
-          {#if m.twin && !m.twin.detaching}
+          {#if m.twin && !m.twin.detaching && !m.twin.attached}
+            <!-- The attach's group change did not land: the same attach is asked again. -->
+            <div class="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                disabled={busy}
+                onclick={() =>
+                  act(
+                    m,
+                    { action: 'attach', transportTag: m.twin!.tag },
+                    'The group carries it now.',
+                  )}
+              >
+                Try again
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-destructive"
+                disabled={busy}
+                onclick={() => {
+                  removeFor = m;
+                  removeOpen = true;
+                }}
+              >
+                Take it away
+              </Button>
+            </div>
+          {:else if m.twin && !m.twin.detaching}
             <Button
               size="sm"
               variant="ghost"
@@ -183,7 +206,7 @@
       {slug}
       profileUuid={profile.uuid}
       profileName={profile.name}
-      preset={presetFor(addFor)}
+      preset={twinPreset(addFor)}
     />
   {/if}
   <ConfirmDialog

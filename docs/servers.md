@@ -743,10 +743,13 @@ transportTag}` (`convex/backendTwins.ts`). The transport is checked against the 
 Both steps are on Nodes, below the table, under **Encryption behind a CDN**
 (`ModeTwinsCard.svelte`), one row per WebSocket mode behind a CDN. A mode with no encrypted
 transport to take is offered "Add an encrypted transport", which opens Add a transport filled
-in (the mode's tag with `_E`, its port plus one, its path with an `e`). The setup view lists the
-transports a mode could take (`twinCandidates`, by the same rule the attach applies), so the
-row offers only those. A mode with a twin says how many of its nodes serve it; each node is
-turned on from its own page (§ "A node serving the encrypted twin").
+in (the mode's tag with `_E`, its port plus one, its path with an `e`; `twinPreset`). The setup
+view lists the transports a mode could take (`twinCandidates`: the rule the attach applies, and
+none a node already serves or an address already uses), so the row offers only those. A mode
+with a twin says how many of its nodes serve it, once the node list is read; each node is
+turned on from its own page (§ "A node serving the encrypted twin"). A twin whose group change
+did not land (`twin.attached` false: recorded, but the mode's group does not carry it) is
+shown as that, with the same attach to ask again.
 
 | Refused                               | When                                                                                                                                                        |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |

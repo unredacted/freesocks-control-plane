@@ -562,6 +562,12 @@ export const ModeSetupView = z.object({
       path: z.string(),
       /** A detach was asked for and its group change has not been seen to land. */
       detaching: z.boolean().default(false),
+      /**
+       * The mode's group carries the twin, as last observed. False after an
+       * attach whose group change the backend refused or never confirmed: the
+       * record is kept so the same attach can be asked again.
+       */
+      attached: z.boolean().default(true),
     })
     .nullable()
     .default(null),

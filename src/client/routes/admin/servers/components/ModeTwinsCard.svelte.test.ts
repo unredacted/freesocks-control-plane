@@ -12,7 +12,13 @@ vi.mock('@client/lib/serversApi', async (importOriginal) => ({
   setupQuery: vi.fn(),
 }));
 
-type Twin = { tag: string; port: number; path: string; detaching: boolean } | null;
+type Twin = {
+  tag: string;
+  port: number;
+  path: string;
+  detaching: boolean;
+  attached: boolean;
+} | null;
 
 const mode = (over: Record<string, unknown> = {}) => ({
   slug: 'freedom-ws',
@@ -45,13 +51,16 @@ let app: ReturnType<typeof mountWithQuery> | null = null;
 
 function mount(
   modes: unknown[],
-  nodes: unknown[] = [],
+  nodes: unknown[] | null = [],
   canWrite = true,
 ): { text: () => string; button: (label: string) => HTMLButtonElement | undefined } {
   vi.mocked(setupQuery).mockReturnValue({
     data: { modes, profile: { name: 'FreeSocks-Config', uuid: 'p1' } },
   } as never);
-  vi.mocked(intentsQuery).mockReturnValue({ data: { intents: nodes } } as never);
+  // `null`: the node list is still loading, or could not be read.
+  vi.mocked(intentsQuery).mockReturnValue(
+    (nodes ? { data: { intents: nodes } } : { data: undefined, isError: true }) as never,
+  );
   vi.mocked(modeTwinAction).mockReset().mockResolvedValue({ op: null });
   app = mountWithQuery(new QueryClient(), ModeTwinsCard, { slug: 'panel', canWrite });
   flushSync();
@@ -98,7 +107,13 @@ describe('the encrypted twins of a backend’s modes', () => {
   });
 
   test('a twin says how many of the mode’s nodes serve it, and can be taken away', () => {
-    const twin = { tag: 'FREEDOM_WEBSOCKET_E', port: 8444, path: '/wse', detaching: false };
+    const twin = {
+      tag: 'FREEDOM_WEBSOCKET_E',
+      port: 8444,
+      path: '/wse',
+      detaching: false,
+      attached: true,
+    };
     const v = mount(
       [mode({ twin })],
       [node('node-a', 'serving'), node('node-b', null), node('node-c', 'activating')],
@@ -107,6 +122,39 @@ describe('the encrypted twins of a backend’s modes', () => {
     expect(v.button('Take it away')).toBeDefined();
     expect(v.button('Make it the twin')).toBeUndefined();
     expect(v.button('Add an encrypted transport')).toBeUndefined();
+  });
+
+  test('while the node list is unknown it does not claim that no node serves the twin', () => {
+    const twin = {
+      tag: 'FREEDOM_WEBSOCKET_E',
+      port: 8444,
+      path: '/wse',
+      detaching: false,
+      attached: true,
+    };
+    const v = mount([mode({ twin })], null);
+    expect(v.text()).toContain('Encrypted twin: Freedom WebSocket E, port 8444, path /wse.');
+    expect(v.text()).not.toMatch(/No node|nodes? serves?/);
+  });
+
+  test('an attach that did not land offers the same attach again', async () => {
+    const twin = {
+      tag: 'FREEDOM_WEBSOCKET_E',
+      port: 8444,
+      path: '/wse',
+      detaching: false,
+      attached: false,
+    };
+    const v = mount([mode({ twin })], [node('node-a', null)]);
+    expect(v.text()).toContain('the change did not land');
+    expect(v.text()).not.toContain('Turn it on from a node’s page');
+    expect(v.button('Take it away')).toBeDefined();
+    v.button('Try again')!.click();
+    await tick();
+    expect(vi.mocked(modeTwinAction)).toHaveBeenCalledWith('panel', 'freedom-ws', {
+      action: 'attach',
+      transportTag: 'FREEDOM_WEBSOCKET_E',
+    });
   });
 
   test('without the right to change the backend it only says where things stand', () => {

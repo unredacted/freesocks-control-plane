@@ -1251,22 +1251,31 @@ export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
 
 /** A WebSocket mode behind a CDN, as far as its encrypted twin goes (the backend page). */
 export interface ModeTwinLike {
-  twin: { tag: string; port: number; path: string; detaching: boolean } | null;
+  twin: { tag: string; port: number; path: string; detaching: boolean; attached?: boolean } | null;
   twinCandidates: readonly { tag: string }[];
 }
 
 /**
  * Where a mode's encrypted twin stands, in one sentence. `nodes`: how many
- * nodes of the mode there are and how many serve the twin.
+ * nodes of the mode there are and how many serve the twin; null while that is
+ * not known (the node list is loading, or could not be read), which says
+ * nothing about nodes rather than "none".
  */
 export function modeTwinWords(
   m: ModeTwinLike,
-  nodes: { serving: number; total: number },
+  nodes: { serving: number; total: number } | null,
 ): { dot: Dot; sentence: string } {
   if (m.twin?.detaching)
     return { dot: 'amber', sentence: 'Its encrypted twin is being taken away.' };
   if (m.twin) {
     const where = `${transportName(m.twin.tag)}, port ${m.twin.port}, path ${m.twin.path}`;
+    // Recorded, but the mode's group does not carry it: the change did not land.
+    if (m.twin.attached === false)
+      return {
+        dot: 'red',
+        sentence: `Encrypted twin: ${where}. The mode’s group does not carry it yet: the change did not land. Try again, or settle it under Recent changes first.`,
+      };
+    if (!nodes) return { dot: 'amber', sentence: `Encrypted twin: ${where}.` };
     if (nodes.total === 0)
       return { dot: 'amber', sentence: `Encrypted twin: ${where}. No node of this mode yet.` };
     return nodes.serving === 0
@@ -1290,6 +1299,27 @@ export function modeTwinWords(
         sentence:
           'No encrypted twin, and no encrypted WebSocket transport to make one from. A CDN in front of this mode can read what members send through it.',
       };
+}
+
+/**
+ * What "Add a transport" opens with for a mode's encrypted twin: the mode's
+ * own tag, port and path, one step on, and always something the dialog takes
+ * (a path that starts with a slash, a port from 1024 to 65535 that is not the
+ * mode's own).
+ */
+export function twinPreset(m: {
+  tag: string;
+  transport: { port: number; path: string | null } | null;
+}): { tag: string; port: number; path: string } {
+  const own = m.transport?.port ?? 8443;
+  const port = own >= 65535 ? own - 1 : Math.max(own + 1, 1024);
+  const base = (m.transport?.path ?? '/ws').replace(/\/+$/, '');
+  return {
+    tag: `${m.tag}_E`.slice(0, 40),
+    port,
+    // The mode's own path with an `e`; the bare root path gets a name of its own.
+    path: base === '' ? '/e' : `${base}e`,
+  };
 }
 
 /** A node's encrypted twin, as the node page shows it. */

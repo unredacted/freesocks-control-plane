@@ -30,7 +30,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internalMutation, type MutationCtx } from './_generated/server';
 import { writeAuditLog } from './lib/audit';
 import { resolveServerConfig } from './lib/serverConfig';
-import { fcpWrites, groupCarriesMode, setupReady, type SetupMode } from './backendSetup';
+import {
+  fcpWrites,
+  groupCarriesMode,
+  setupReady,
+  transportsInUse,
+  type SetupMode,
+} from './backendSetup';
 import { twinProblem, type TwinProblem } from './lib/backend/modeTwin';
 
 const refuse = (code: string, message: string): never => {
@@ -126,18 +132,8 @@ async function transportInUse(
   backendServerId: Id<'backendServers'>,
   uuid: string,
 ): Promise<{ node: boolean; address: boolean }> {
-  const nodes = await ctx.db
-    .query('panelNodes')
-    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-    .collect();
-  const hosts = await ctx.db
-    .query('panelHosts')
-    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-    .collect();
-  return {
-    node: nodes.some((n) => n.activeInboundUuids.includes(uuid)),
-    address: hosts.some((h) => h.configProfileInboundUuid === uuid),
-  };
+  const used = await transportsInUse(ctx, backendServerId);
+  return { node: used.nodes.has(uuid), address: used.addresses.has(uuid) };
 }
 
 /**

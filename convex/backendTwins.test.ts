@@ -200,6 +200,7 @@ describe("a mode's encrypted twin", () => {
       port: 8444,
       path: '/ws-e',
       detaching: false,
+      attached: true,
     });
 
     // Nothing FCP keeps holds the key: only what is public about the layer.
@@ -386,13 +387,18 @@ describe("a mode's encrypted twin", () => {
     };
 
     // Attach: the group did not change, the twin is recorded, and asking again works.
+    const viewTwin = async () =>
+      BackendSetupView.parse(await (await s.call('GET', 'setup')).json()).modes[0]!.twin;
     await twin(s, { action: 'attach', transportTag: TWIN_TAG });
     expect(await s.groupTransports()).toEqual([own]);
     expect((await s.mode()).twin).toMatchObject({ tag: TWIN_TAG });
+    // The page is told the record is not in the group yet: it offers the retry.
+    expect(await viewTwin()).toMatchObject({ tag: TWIN_TAG, attached: false });
     refusing = false;
     await recoverOpenOp();
     expect((await twin(s, { action: 'attach', transportTag: TWIN_TAG })).status).toBe(200);
     expect(await s.groupTransports()).toEqual([own, twinUuid].sort());
+    expect(await viewTwin()).toMatchObject({ tag: TWIN_TAG, attached: true });
 
     // Detach: refused by the backend, the group still carries the twin, so the
     // setup must still know it (or nobody could ask again).
@@ -451,7 +457,14 @@ describe("a mode's encrypted twin", () => {
       }),
     );
     expect(await attach()).toBe('servers.twin_already_served');
+    // What the attach refuses is not offered on the page either.
+    const offered = async () =>
+      BackendSetupView.parse(
+        await (await s.call('GET', 'setup')).json(),
+      ).modes[0]!.twinCandidates.map((c) => c.tag);
+    expect(await offered()).toEqual([]);
     await s.t.run((ctx) => ctx.db.delete(nodeId));
+    expect(await offered()).toEqual([TWIN_TAG]);
 
     // An address already names it.
     const hostId = await s.t.run((ctx) =>
@@ -469,6 +482,7 @@ describe("a mode's encrypted twin", () => {
       }),
     );
     expect(await attach()).toBe('servers.twin_already_served');
+    expect(await offered()).toEqual([]);
     expect(await s.groupTransports()).toEqual([own]);
     expect((await s.mode()).twin).toBeUndefined();
 
