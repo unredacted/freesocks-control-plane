@@ -1001,9 +1001,23 @@ once it is switched on there: its transport on, its address written switched off
 published front checked on the twin's path with the twin's client string before the address
 goes on ([servers.md](servers.md) § "A node serving the encrypted twin").
 
-Not done yet: the names a member can pick in a report do not list the plain twins, no real app
-or engine has been run against an encrypted entry or an ordered group, and the backend page has
-no control to give a mode its twin (the route exists).
+**Engines run against it** (a test deployment, real fronts, the bodies as delivered,
+2026-11-17). They are engines, not the apps built on them: no GUI app was run.
+
+| Engine                          | Encrypted entries               | Plain entries | Auto group                              |
+| ------------------------------- | ------------------------------- | ------------- | --------------------------------------- |
+| Mihomo 1.19.30                  | connect                         | connect       | ordered, on the first encrypted entry   |
+| Mihomo 1.19.12 (before 1.19.13) | time out (it ignores the field) | connect       | ordered, lands on the first plain entry |
+| Xray 26.7.28 (the link list)    | connect                         | connect       | none in a link list                     |
+
+An old Mihomo loads the body without complaint and speaks plain VLESS to the encrypted
+transport, which refuses it: only the ordered group (or picking a `… · Old apps` entry by hand)
+gets that member through. With Xray, the encrypted entry spoken plain, or with another key, does
+not connect.
+
+Not done yet: the names a member can pick in a report do not list the plain twins, no GUI app
+has been run against an encrypted entry, and the backend page has no control to give a mode its
+twin (the route exists).
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the
