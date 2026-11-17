@@ -33,6 +33,7 @@ import {
   type AddressWrite,
   type ModeGroupPatch,
   type ModeGroupWrite,
+  type ModeTwinRequest,
   type NodeWrite,
   type ProfilePatchApply,
   type ProfilePatchOp,
@@ -251,6 +252,18 @@ export const extraModeAction = (
     `${intentPath(slug, id)}/extra-mode`,
     { mode, action },
     z.object({ state: z.string().nullable() }),
+  );
+
+/**
+ * A mode's encrypted twin on a backend (docs/servers.md "A mode's encrypted
+ * twin"): make a transport of the profile the mode's twin, or take it away.
+ * `op` is null when there was nothing to change.
+ */
+export const modeTwinAction = (slug: string, mode: string, body: ModeTwinRequest) =>
+  apiClient.post(
+    `${slugPath(slug)}/modes/${encodeURIComponent(mode)}/encrypted-twin`,
+    body,
+    z.object({ op: OpView.nullable() }),
   );
 
 /**

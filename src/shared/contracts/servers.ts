@@ -562,9 +562,24 @@ export const ModeSetupView = z.object({
       path: z.string(),
       /** A detach was asked for and its group change has not been seen to land. */
       detaching: z.boolean().default(false),
+      /**
+       * The mode's group carries the twin, as last observed. False after an
+       * attach whose group change the backend refused or never confirmed: the
+       * record is kept so the same attach can be asked again.
+       */
+      attached: z.boolean().default(true),
     })
     .nullable()
     .default(null),
+  /**
+   * The transports of the backend's profile this mode could take as its twin
+   * (an encrypted loopback WebSocket transport no mode has, on another port
+   * and path than the mode's own). Empty for a mode that has a twin, and for
+   * one that takes none.
+   */
+  twinCandidates: z
+    .array(z.object({ tag: z.string(), port: z.number(), path: z.string() }))
+    .default([]),
   family: z.enum(['none', 'bound', 'unbound', 'target_mismatch', 'bound_elsewhere']),
 });
 export type ModeSetupView = z.infer<typeof ModeSetupView>;

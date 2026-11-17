@@ -129,6 +129,32 @@ const encryptedTwin = { kind: 'ws', port: 8444, path: '/ws-e', encrypted: true }
 const twin = (s: Seeded, body: unknown) => s.call('POST', 'modes/freedom-ws/encrypted-twin', body);
 const codeOf = async (res: Response) => ((await res.json()) as any).error?.code as string;
 
+describe('which transports a mode is offered as its twin', () => {
+  const candidates = async (s: Seeded) =>
+    BackendSetupView.parse(await (await s.call('GET', 'setup')).json()).modes[0]!.twinCandidates;
+
+  test('an encrypted WebSocket transport no mode has, and nothing once the mode has a twin', async () => {
+    const s = await seed();
+    // The mode's own transport is never its own twin.
+    expect(await candidates(s)).toEqual([]);
+    // A plain second WebSocket transport is no twin either.
+    await addTransport(s, 'FREEDOM_WEBSOCKET_B', { kind: 'ws', port: 8445, path: '/ws-b' });
+    expect(await candidates(s)).toEqual([]);
+    // An encrypted one on the mode's own port or path could not be told apart on the node.
+    await addTransport(s, 'FREEDOM_WEBSOCKET_SAME', {
+      kind: 'ws',
+      port: 8446,
+      path: '/ws',
+      encrypted: true,
+    });
+    expect(await candidates(s)).toEqual([]);
+    await addTransport(s, TWIN_TAG, encryptedTwin);
+    expect(await candidates(s)).toEqual([{ tag: TWIN_TAG, port: 8444, path: '/ws-e' }]);
+    expect((await twin(s, { action: 'attach', transportTag: TWIN_TAG })).status).toBe(200);
+    expect(await candidates(s)).toEqual([]);
+  });
+});
+
 describe("a mode's encrypted twin", () => {
   test('the encrypted transport is added beside the mode, becomes its twin, and is taken away again', async () => {
     const s = await seed();
@@ -174,6 +200,7 @@ describe("a mode's encrypted twin", () => {
       port: 8444,
       path: '/ws-e',
       detaching: false,
+      attached: true,
     });
 
     // Nothing FCP keeps holds the key: only what is public about the layer.
@@ -360,13 +387,18 @@ describe("a mode's encrypted twin", () => {
     };
 
     // Attach: the group did not change, the twin is recorded, and asking again works.
+    const viewTwin = async () =>
+      BackendSetupView.parse(await (await s.call('GET', 'setup')).json()).modes[0]!.twin;
     await twin(s, { action: 'attach', transportTag: TWIN_TAG });
     expect(await s.groupTransports()).toEqual([own]);
     expect((await s.mode()).twin).toMatchObject({ tag: TWIN_TAG });
+    // The page is told the record is not in the group yet: it offers the retry.
+    expect(await viewTwin()).toMatchObject({ tag: TWIN_TAG, attached: false });
     refusing = false;
     await recoverOpenOp();
     expect((await twin(s, { action: 'attach', transportTag: TWIN_TAG })).status).toBe(200);
     expect(await s.groupTransports()).toEqual([own, twinUuid].sort());
+    expect(await viewTwin()).toMatchObject({ tag: TWIN_TAG, attached: true });
 
     // Detach: refused by the backend, the group still carries the twin, so the
     // setup must still know it (or nobody could ask again).
@@ -425,7 +457,14 @@ describe("a mode's encrypted twin", () => {
       }),
     );
     expect(await attach()).toBe('servers.twin_already_served');
+    // What the attach refuses is not offered on the page either.
+    const offered = async () =>
+      BackendSetupView.parse(
+        await (await s.call('GET', 'setup')).json(),
+      ).modes[0]!.twinCandidates.map((c) => c.tag);
+    expect(await offered()).toEqual([]);
     await s.t.run((ctx) => ctx.db.delete(nodeId));
+    expect(await offered()).toEqual([TWIN_TAG]);
 
     // An address already names it.
     const hostId = await s.t.run((ctx) =>
@@ -443,6 +482,7 @@ describe("a mode's encrypted twin", () => {
       }),
     );
     expect(await attach()).toBe('servers.twin_already_served');
+    expect(await offered()).toEqual([]);
     expect(await s.groupTransports()).toEqual([own]);
     expect((await s.mode()).twin).toBeUndefined();
 

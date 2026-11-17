@@ -69,6 +69,7 @@ import { observeInstance } from './backendObserve';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { catalogOf } from './edgeProviderCatalog';
 import { locationsOfAccount } from './edgeLocations';
+import { twinProblem } from './lib/backend/modeTwin';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -1458,6 +1459,32 @@ export const resyncTemplates = internalAction({
   },
 });
 
+/**
+ * The transports of a backend something already uses, as last observed: the
+ * ones a node serves, and the ones an address is bound to. A transport in
+ * either set is live to members the moment a group carries it, so it is never
+ * taken as a mode's encrypted twin (convex/backendTwins.ts).
+ */
+export async function transportsInUse(
+  ctx: { db: QueryCtx['db'] },
+  backendServerId: Id<'backendServers'>,
+): Promise<{ nodes: Set<string>; addresses: Set<string> }> {
+  const nodes = await ctx.db
+    .query('panelNodes')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect();
+  const hosts = await ctx.db
+    .query('panelHosts')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect();
+  return {
+    nodes: new Set(nodes.flatMap((n) => n.activeInboundUuids)),
+    addresses: new Set(
+      hosts.map((h) => h.configProfileInboundUuid).filter((u): u is string => !!u),
+    ),
+  };
+}
+
 // --- the view ---------------------------------------------------------------------------------------
 
 export const view = internalQuery({
@@ -1481,6 +1508,42 @@ export const view = internalQuery({
         established: false,
         updatedAt: null,
       };
+    // The transports of the setup's profile, as last observed: which of them a
+    // mode could take as its encrypted twin (lib/backend/modeTwin.ts).
+    const inbounds = row.profileUuid
+      ? ((
+          await ctx.db
+            .query('panelProfiles')
+            .withIndex('by_server_uuid', (q) =>
+              q.eq('backendServerId', backendServerId).eq('profileUuid', row.profileUuid!),
+            )
+            .unique()
+        )?.inbounds ?? [])
+      : [];
+    // Not one a node already serves or an address already uses: the attach
+    // refuses those (`servers.twin_already_served`), so they are not offered.
+    const used = await transportsInUse(ctx, backendServerId);
+    const twinCandidates = (m: SetupMode) =>
+      m.twin
+        ? []
+        : inbounds
+            .filter(
+              (i) =>
+                twinProblem({ mode: m, modes: row.modes, inbounds, tag: i.tag }) === null &&
+                !used.nodes.has(i.inboundUuid) &&
+                !used.addresses.has(i.inboundUuid),
+            )
+            .map((i) => ({ tag: i.tag, port: i.port!, path: i.path! }));
+    // Whether each mode's group carries its twin, as last observed. The twin
+    // is recorded with the attach request, so a change the backend refused
+    // leaves a record whose group does not carry it yet.
+    const squads = await ctx.db
+      .query('panelSquads')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    const groupCarries = (m: SetupMode) =>
+      !!m.twin &&
+      !!squads.find((q) => q.squadUuid === m.groupUuid)?.inboundUuids.includes(m.twin.uuid);
     return {
       exists: true,
       state: row.state,
@@ -1516,8 +1579,10 @@ export const view = internalQuery({
               port: m.twin.port,
               path: m.twin.path,
               detaching: m.twin.detaching === true,
+              attached: groupCarries(m),
             }
           : null,
+        twinCandidates: twinCandidates(m),
         family: m.family,
       })),
       templates: row.templates.map((t) => ({ family: t.family, state: t.state })),
