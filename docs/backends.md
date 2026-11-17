@@ -939,10 +939,62 @@ follow the transport:
 FCP's own client check runs an encrypted entry with Xray alone for now (sing-box does not speak
 the layer, and Mihomo is not asked yet).
 
+**Delivery: the encrypted twin.** A WebSocket node serves the layer as a second transport beside
+its plain one: another loopback port and another path behind the same front server, so it is
+reached through the **same fronts** (a CDN forwards any path), with no front of its own. On the
+listener it is the **encrypted twin** (`relayListeners.encryptedTwin`: the transport it is bound
+to and the key it would have as a listener of its own). Its Host is named like every Host of the
+node, `<node>-relay-<twin key>` (`lib/edges/listenerEncryption.ts` `twinRemarksOf`), so it pins
+with the node, hides with it and follows its renames, and the renderer finds its entry in a body
+by that name (`RenderMatcher.encrypted`). A twin entry is used only when it carries a client
+string Xray would take (`parseClientEncryption`, not merely something other than `none`) and
+speaks its listener's transport; every entry under a twin's name is a template either way and
+never leaves as it came.
+
+Which entry an app gets is the client family's **encryption rule**
+(`edge.render.clients.<family>.encryption`, `src/shared/encryptionRule.ts`; Edges settings, per
+family, "Encrypted connections"):
+
+| Rule     | The app is handed                                                             | Default for                                  |
+| -------- | ----------------------------------------------------------------------------- | -------------------------------------------- |
+| `prefer` | per front the encrypted entry, then (after every first choice) its plain twin | Mihomo, v2rayNG, Happ, Streisand, Xray links |
+| `only`   | the encrypted entry alone                                                     | none: a family moves here on evidence        |
+| `plain`  | the plain entry alone                                                         | sing-box, Hiddify, every other client        |
+
+- **`prefer` keeps every app connected.** An app that cannot speak the layer fails the first
+  entry and uses the second. In a Clash body the automatic group then becomes a `fallback` group
+  (the first entry that works, in order) instead of `url-test`: an entry and its twin are equally
+  fast, so "the fastest" would be either. A link list has no group: the order is all it says, and
+  the plain twin's name says who it is for (`… · Old apps`, [edges.md](edges.md) § "Names in
+  apps"). A member of such an app is protected when they use the first entry, which FCP cannot
+  enforce until the family is `only`.
+- **`plain` is where nobody has seen the app work.** sing-box does not speak the layer (the
+  backend leaves the entry out of its format anyway, and an outbound under a twin's name is
+  dropped, never copied: it would be the encrypted transport spoken plainly). Hiddify runs a
+  sing-box core. An app FCP does not recognise may refuse a whole list over one entry it cannot
+  read.
+- **The body decides.** A node without a twin, or a twin whose Host does not exist yet, gives a
+  body with the plain entry alone, rendered as it always was under any rule. A body with the twin
+  alone (the plain Host kept out of a format on the backend) resolves the listener and is served
+  encrypted, except to a `plain` family, which gets nothing to use.
+- Where a family keeps the template entries beside the rendered ones (`dropTemplateEntries`
+  off), only the kind its rule hands out stays (`retainedTemplates`): `plain` keeps no twin,
+  `only` no plain entry of a listener that has a twin, sing-box never a twin.
+- A listener the body holds only encrypted has nothing for a `plain` family, so its edges are
+  out of that member's assignment before the pick (`listenerServable`): another listener of the
+  same body serves them instead of an empty body.
+- A cap on entries counts connections: a fallback rides with its entry. A single access key and
+  an operator's test link are one entry, never a pair. A mirror's link list is made for no
+  particular app (the `other` family), so it carries the plain entries.
+
+Not done yet: nothing writes a twin onto a listener or creates its Host, the front qualification
+proves the plain path only, and the names a member can pick in a report do not list the plain
+twins.
+
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the
-observation, and FCP's own sessions. Nothing sets the flag yet: no route accepts it, every
-profile FCP builds is plain, and delivery does not know the layer. Hysteria is not VLESS and
+observation, FCP's own sessions, and the renderer's handling of a twin. Nothing sets the flag
+yet: no route accepts it, every profile FCP builds is plain, and no listener has a twin. Hysteria is not VLESS and
 takes no part.
 
 ## Sensitive data

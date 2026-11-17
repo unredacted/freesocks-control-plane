@@ -23,6 +23,7 @@ import type { MemberPlace } from '../../../src/shared/entryNames';
 import { RENDER_FORMAT_OF, detectBodyFormat } from './clientFamilies';
 import { pathFigure, type LatencyBand, type LatencyInputs, type PathFigure } from './latency';
 import { formatSupported } from './protocols';
+import { listenerServable } from './render/types';
 import {
   edgeAddressesOf,
   formatHasAutoGroup,
@@ -156,9 +157,14 @@ export function applyEdgeRender(
     format === 'links' || format === 'singbox-json' || format === 'clash-yaml'
       ? RENDER_FORMAT_OF[format]
       : null;
-  // (1)+(2): which listeners this body carries, verified against what they speak.
+  const rule = ruleForDelivery(rctx.rule, rctx.deliveryStyle ?? 'subscription');
+  // (1)+(2): which listeners this body carries, verified against what they
+  // speak, and with an entry this app may be given (a listener the body holds
+  // only encrypted has none for a family that gets the plain entry).
   const { matches } = matchListeners(body, rctx.matchers);
-  const resolved = new Set((matches ?? []).filter((m) => m.matched).map((m) => m.listenerKey));
+  const resolved = new Set(
+    (matches ?? []).filter((m) => listenerServable(m, rule)).map((m) => m.listenerKey),
+  );
   // (3): eligibility = the edge's listener resolved AND a codec exists for the format.
   const published: PublishedEdge[] = rctx.published.map((e) =>
     e.eligible === false ||
@@ -166,7 +172,6 @@ export function applyEdgeRender(
       ? e
       : { ...e, eligible: false },
   );
-  const rule = ruleForDelivery(rctx.rule, rctx.deliveryStyle ?? 'subscription');
   const hasAutoGroup = formatHasAutoGroup(rule, format);
   const canEmitV6 = ruleCanEmitV6(rule, hasAutoGroup);
   // Latency ordering: each address's whole path for a steered member's country.

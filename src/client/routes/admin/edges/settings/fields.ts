@@ -448,6 +448,18 @@ export const RULE_FIELDS: RuleField[] = [
     helper: 'Follow the fleet setting or override it for this family.',
     options: [{ value: 'inherit', label: 'Follow the fleet setting' }, ...IPV6_GLOBAL],
   },
+  {
+    kind: 'select',
+    key: 'encryption',
+    label: 'Encrypted connections',
+    helper:
+      'Where a connection also exists with VLESS Encryption, which one this family gets. Changes nothing for a connection without one.',
+    options: [
+      { value: 'prefer', label: 'Encrypted first, plain as a fallback' },
+      { value: 'only', label: 'Encrypted only' },
+      { value: 'plain', label: 'Plain only' },
+    ],
+  },
 ];
 
 export const FAMILY_LABELS: Record<string, string> = {

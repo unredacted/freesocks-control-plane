@@ -6,6 +6,7 @@
  * edges that were handed out.
  */
 import { describe, expect, test } from 'vitest';
+import { clientEncryption, generateVlessEncryption } from '../backend/vlessEncryption';
 import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
 import { assignEndpoints, type PublishedEdge } from './assignment';
 import type { ListenerProto } from './protocols';
@@ -527,5 +528,43 @@ describe('applyEdgeRender: an entry FCP cannot place on a covered transport', ()
     expect(out.body).not.toContain(BY_NAME);
     expect(out.body).not.toContain(direct);
     expect(out.body).toContain('203.0.113.10');
+  });
+});
+
+// A listener's encrypted twin (docs/backends.md "VLESS Encryption"): what an
+// app may be given decides which edges it can be assigned, before the pick.
+describe('applyEdgeRender: a listener the body holds only encrypted', () => {
+  const TWIN_REMARK = `${NODE}-relay-e`;
+  const encryption = clientEncryption(generateVlessEncryption().decryption)!;
+  // Listener `a` in this body is its encrypted twin alone; listener `s` is plain.
+  const twinLink = `vless://${UUID}@${ORIGIN}:443?encryption=${encryption}&flow=xtls-rprx-vision&security=reality&sni=target.example&fp=chrome&pbk=PUBKEY&sid=abcd&type=tcp#${encodeURIComponent(TWIN_REMARK)}`;
+  const body = [twinLink, ssLink].join('\n');
+  const twinMatchers: RenderMatcher[] = [
+    { ...matchers[0]!, encrypted: { remarks: [TWIN_REMARK] } },
+    matchers[1]!,
+  ];
+  const ctx = (encryptionRule: 'plain' | 'prefer') =>
+    rctx([edgeA, edgeS], { matchers: twinMatchers, rule: { ...rule, encryption: encryptionRule } });
+
+  test('a family that gets the plain entry is never assigned its edge: every member is served by the other listener', () => {
+    for (let i = 0; i < 40; i++) {
+      const out = applyEdgeRender(ctx('plain'), body, key(i), { now: NOW });
+      expect(out.delivery).toEqual({ kind: 'serve' });
+      expect(out.snapshot.listenerKeys).toEqual(['s']);
+      expect(out.snapshot.primaryEdgeId).toBe('eS');
+      expect(out.snapshot.backupEdgeId).toBeNull();
+      expect(out.body).not.toContain('mlkem768x25519plus');
+    }
+  });
+
+  test('a family that may get the encrypted entry can be assigned either', () => {
+    const primaries = new Set<string | null>();
+    for (let i = 0; i < 40; i++) {
+      const out = applyEdgeRender(ctx('prefer'), body, key(i), { now: NOW });
+      expect(out.delivery).toEqual({ kind: 'serve' });
+      expect(out.snapshot.listenerKeys).toEqual(['a', 's']);
+      primaries.add(out.snapshot.primaryEdgeId);
+    }
+    expect(primaries).toEqual(new Set(['eA', 'eS']));
   });
 });

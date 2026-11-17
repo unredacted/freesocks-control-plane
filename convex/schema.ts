@@ -2362,6 +2362,22 @@ export default defineSchema({
       }),
     ),
     host: v.optional(listenerHost),
+    // The listener's ENCRYPTED TWIN (docs/backends.md "VLESS Encryption"): a
+    // second transport of the same node, reached through the same addresses,
+    // that runs VLESS Encryption inside the stream. `key` is the key it would
+    // have as a listener of its own (from its tag); it names the twin's Host
+    // (`<node>-relay-<key>`, lib/edges/listenerEncryption.ts), whose entry the
+    // renderer hands out beside or instead of the plain one.
+    encryptedTwin: v.optional(
+      v.object({
+        key: v.string(),
+        panelBinding: v.object({
+          inboundTag: v.string(),
+          configProfileUuid: v.string(),
+          configProfileInboundUuid: v.string(),
+        }),
+      }),
+    ),
     // Remarks this listener's Host carried before its node was renamed: the
     // renderer keeps matching them, so a body fetched before the Host changed
     // (or a cached one) still resolves.

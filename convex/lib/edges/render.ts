@@ -69,6 +69,7 @@ export function effectiveRule(cfg: EdgeConfig['render'], rule: ClientRenderRule)
     dropTemplateEntries: rule.dropTemplateEntries,
     maxEntries: rule.maxEntries,
     order: rule.order,
+    encryption: rule.encryption,
     includeBackup: rule.includeBackup,
     ipv6Mode: rule.ipv6Mode === 'inherit' ? cfg.ipv6Mode : rule.ipv6Mode,
     namesPerEndpoint: cfg.namesPerEndpoint,
@@ -93,6 +94,8 @@ export function ruleForDelivery(rule: EffectiveRule, style: DeliveryStyle): Effe
     maxEntries: 1,
     autoGroup: false,
     dropTemplateEntries: true,
+    // One key is one entry: never a fallback beside it.
+    encryption: rule.encryption === 'prefer' ? 'plain' : rule.encryption,
   };
 }
 

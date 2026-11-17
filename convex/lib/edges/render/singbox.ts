@@ -21,6 +21,8 @@ import { sameAddress } from '../hosts';
 import { codecFor, type ListenerProto } from '../protocols';
 import { cloneJson, pruneRefs, uniqueName } from './refs';
 import {
+  retainedTemplates,
+  templateEntries,
   AUTO_GROUP_TEST_URL,
   orderEndpoints,
   resolveMatchers,
@@ -116,7 +118,13 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   }
   const outbounds = cfg.outbounds as unknown[];
   const entries = entriesOf(outbounds);
-  const { templates, matches } = resolveMatchers(entries, input.matchers, sameAddress);
+  const resolved = resolveMatchers(entries, input.matchers, sameAddress);
+  const { templates, matches } = resolved;
+  // sing-box has no VLESS Encryption: the backend leaves an encrypted twin out
+  // of this format, and an outbound that still carries a twin's tag would be
+  // the encrypted transport spoken plainly. It is a template to drop, never one
+  // to copy.
+  const templateObjs = templateEntries(resolved);
   if (templates.size === 0)
     return {
       body: input.body,
@@ -125,8 +133,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
       emitted: 0,
       listeners: matches,
     };
-  const templateSet = templateIdentities(entries, templates);
-  const templateObjs = new Set(templates.values());
+  const templateSet = templateIdentities(entries, templateObjs);
   const isTemplate = (ob: Obj) =>
     templateObjs.has(ob) || (typeof ob.tag === 'string' && templateSet.has(ob.tag));
   // Outbounds edge-required delivery leaves out; their tags go from every group
@@ -199,6 +206,14 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   // A template found by address may carry a tag no group names; groups are
   // swapped by tag, so every template's tag (when it has one) is in the set.
   for (const t of templateObjs) if (typeof t.tag === 'string') templateSet.add(t.tag);
+  // The templates that stay beside the rendered outbounds (drop off): the
+  // plain ones only. A twin is never kept in this format.
+  const retained = retainedTemplates(resolved, input.rule, { twins: false });
+  const retainedTags = templateIdentities(entries, retained);
+  for (const t of retained) if (typeof t.tag === 'string') retainedTags.add(t.tag);
+  const isRetained = (ob: Obj) =>
+    retained.has(ob) || (typeof ob.tag === 'string' && retainedTags.has(ob.tag));
+  const removedTemplates = [...templateSet].filter((t) => !retainedTags.has(t));
 
   const next: unknown[] = [];
   let inserted = false;
@@ -215,7 +230,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
         inserted = true;
         next.push(...emitted);
       }
-      if (!input.rule.dropTemplateEntries) next.push(ob);
+      if (isRetained(ob)) next.push(ob);
       continue;
     }
     if (Array.isArray(ob.outbounds)) {
@@ -230,7 +245,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
             if (useAuto && tag !== autoName) members.push(autoName);
             members.push(...emittedTags);
           }
-          if (!input.rule.dropTemplateEntries) members.push(m);
+          if (retainedTags.has(m)) members.push(m);
           continue;
         }
         members.push(m);
@@ -274,7 +289,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
     });
   }
   const withheldOut = withheld.length > 0 ? { withheld: withheld.map((w) => w.identity) } : {};
-  if (!input.rule.dropTemplateEntries && withheldTags.size === 0) {
+  if (removedTemplates.length === 0 && withheldTags.size === 0) {
     return {
       body: JSON.stringify({ ...cfg, outbounds: next }),
       applied: true,
@@ -288,10 +303,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   // reference them. Groups left without members go too, and so does anything
   // that pointed at them (iterate until stable; a selector of only dropped
   // tags cascades).
-  const removed = new Set<string>([
-    ...(input.rule.dropTemplateEntries ? templateSet : []),
-    ...withheldTags,
-  ]);
+  const removed = new Set<string>([...removedTemplates, ...withheldTags]);
   let list = next;
   for (let changed = true; changed;) {
     changed = false;

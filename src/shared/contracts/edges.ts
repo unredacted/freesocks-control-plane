@@ -2637,6 +2637,8 @@ export const ClientRenderRule = z
     order: z.enum(['primary-first', 'backup-first']),
     maxEntries: z.number(),
     dropTemplateEntries: z.boolean(),
+    // Which entry a family gets where a connection has an encrypted twin.
+    encryption: z.enum(['prefer', 'only', 'plain']),
   })
   .passthrough();
 export type ClientRenderRule = z.infer<typeof ClientRenderRule>;
