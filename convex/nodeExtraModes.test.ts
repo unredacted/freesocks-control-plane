@@ -392,6 +392,35 @@ describe('a node serving Hysteria beside its own REALITY', () => {
   });
 });
 
+describe('an extra mode taken away and asked for again', () => {
+  test('serves again: the removal’s mark on its address does not stand in the way', async () => {
+    const s = await seed();
+    expect(await bringToServing(s)).toMatchObject({ state: 'serving' });
+    expect((await extraMode(s, 'remove')).status).toBe(200);
+    await until(
+      () => intentOf(s),
+      (i) => !i?.extraModes?.length,
+    );
+    await until(
+      async () => nodeActive(s),
+      (a) => !a.includes(s.hyUuid),
+    );
+    // The ledger's own sweep settles the delete, which marks the address's
+    // name as removed on purpose.
+    await s.t.action(internal.backendWrites.reconcile, {});
+    const marks = await s.t.run(async (ctx) =>
+      (await ctx.db.query('panelOwnership').collect()).filter(
+        (r) => r.kind === 'host' && r.state === 'tombstoned',
+      ),
+    );
+    expect(marks.length).toBeGreaterThan(0);
+    const again = await bringToServing(s);
+    expect(again).toMatchObject({ state: 'serving' });
+    expect(again!.code).toBeUndefined();
+    expect(hyHosts(s)).toHaveLength(1);
+  });
+});
+
 describe('what is refused up front', () => {
   test('a Hysteria name that is one of the REALITY names', async () => {
     const s = await seed({ hysteriaName: 'decoy-a.example' });

@@ -869,6 +869,9 @@ async function step(
         mapper: want.mapper,
         isDisabled: true,
         inboundUuid: transportUuid,
+        // A mode taken away and asked for again is recreated on purpose: the
+        // mark its removal left on the address's name does not stand in the way.
+        restore: true,
         actorRun,
       }),
     );

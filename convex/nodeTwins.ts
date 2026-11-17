@@ -54,6 +54,7 @@ import { listenerKeyForTag } from './lib/edges/inboundMapping';
 import { parseIntent } from './lib/edges/intent';
 import { twinRemarksOf } from './lib/edges/listenerEncryption';
 import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
+import { deliveryBindingFor } from './relays';
 import {
   desiredTwinHost,
   dueEdges,
@@ -85,6 +86,8 @@ const WORDS: Record<string, string> = {
   'servers.node_twin_absent': 'The node does not serve the encrypted twin',
   'servers.node_twin_no_front':
     'FCP runs no front for this node’s own transport yet. Put the node behind a front first',
+  'servers.node_twin_not_rendered':
+    'This node’s members are not served through its fronts yet. Take the node live behind them first',
 };
 
 // --- reads -----------------------------------------------------------------------------------------
@@ -176,6 +179,23 @@ async function build(ctx: { db: QueryCtx['db'] }, intent: Intent) {
     .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
     .collect();
   const front = await frontOf(ctx, intent, setup, hosts);
+  // Its members are served through its fronts: this origin holds the node's
+  // delivery binding (a deferred or released one means raw bodies).
+  const delivery = front.relay
+    ? await deliveryBindingFor(ctx.db, intent.backendServerId, intent.name)
+    : null;
+  const rendered =
+    !!front.relay &&
+    !front.relay.bindingDeferred &&
+    !!delivery &&
+    delivery.relaySlug === front.relay.slug;
+  // A rename in flight moves the node's name and every remark with it.
+  const renaming = (
+    await ctx.db
+      .query('panelNodeRenames')
+      .withIndex('by_state', (q) => q.eq('state', 'running'))
+      .collect()
+  ).some((r) => r.backendServerId === intent.backendServerId && r.intentId === intent._id);
   const twinKey = twin ? await listenerKeyForTag(twin.tag) : null;
   const binding =
     twin && twinKey && setup.profileUuid
@@ -198,6 +218,8 @@ async function build(ctx: { db: QueryCtx['db'] }, intent: Intent) {
   return {
     intent,
     server: { _id: s._id, backend: s.backend, config: s.config, slug: s.slug },
+    rendered,
+    renaming,
     twin: twin ?? null,
     binding,
     twinRemark,
@@ -228,6 +250,7 @@ function problemOf(c: RunContext): string | null {
     inbound: c.inbound ?? undefined,
     activeInboundUuids: c.node?.activeInboundUuids ?? null,
     listenerReady: !!c.listener && !!c.listenerHost && c.listener.streamTransport === 'ws',
+    rendered: c.rendered,
     twinRemark: c.twinRemark,
     listenerRemarkLength: c.listenerHost?.remark.length,
   });
@@ -245,6 +268,7 @@ async function revisionOf(c: RunContext): Promise<string | null> {
       port: c.inbound.port,
       path: c.inbound.path,
       listenerId: c.listener._id,
+      listenerRevision: c.listener.revision,
     }),
   );
 }
@@ -360,6 +384,9 @@ export const add = internalMutation({
     const front = await frontOf(ctx, intent, setup, hosts);
     if (intent.adopted?.externallyFronted || !front.listener || !front.listenerHost)
       refuse('servers.node_twin_no_front', WORDS['servers.node_twin_no_front']!);
+    const delivery = await deliveryBindingFor(ctx.db, intent.backendServerId, intent.name);
+    if (front.relay!.bindingDeferred || delivery?.relaySlug !== front.relay!.slug)
+      refuse('servers.node_twin_not_rendered', WORDS['servers.node_twin_not_rendered']!);
     const now = Date.now();
     await ctx.db.patch(intent._id, {
       twin: { state: 'activating', byAdminId: a.actorAdminId, since: now, updatedAt: now },
@@ -726,6 +753,7 @@ async function step(ctx: ActionCtx, intentId: Id<'panelNodeIntents'>, attemptId:
   };
 
   if (twin().state === 'removing') {
+    if (c.renaming) throw new Stop('servers.node_rename_running');
     await close();
     const host = hostOf(c);
     if (host) {
@@ -763,6 +791,8 @@ async function step(ctx: ActionCtx, intentId: Id<'panelNodeIntents'>, attemptId:
     throw new Stop(code);
   };
 
+  // A rename moves the node's name and the twin's remark with it: it waits.
+  if (c.renaming) throw new Stop('servers.node_rename_running');
   // The node is leaving its fronts: the twin's address goes off first, so it
   // never outlives the listener that makes its entry a template.
   if (c.relay?.leaving) await stopOn('servers.node_twin_no_front');
@@ -799,6 +829,9 @@ async function step(ctx: ActionCtx, intentId: Id<'panelNodeIntents'>, attemptId:
         isDisabled: true,
         inboundUuid: c!.twin!.uuid,
         relayTwin: true,
+        // A twin taken away and asked for again is recreated on purpose: the
+        // mark its removal left on the name does not stand in the way.
+        restore: true,
         actorRun,
       }),
     );

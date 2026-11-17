@@ -316,8 +316,18 @@ export const intentsQuery = (slug: () => string | null) =>
     queryKey: serverKeys.intents(slug() ?? ''),
     queryFn: () => fetchIntents(slug()!),
     enabled: !!slug(),
-    refetchInterval: (q: { state: { data?: { intents: { stage: string; state: string }[] } } }) =>
-      q.state.data?.intents.some((i) => i.stage !== 'live' || i.state === 'pending')
+    refetchInterval: (q: {
+      state: {
+        data?: { intents: { stage: string; state: string; twin?: { state: string } | null }[] };
+      };
+    }) =>
+      q.state.data?.intents.some(
+        (i) =>
+          i.stage !== 'live' ||
+          i.state === 'pending' ||
+          // An encrypted twin turning on or being removed moves by itself.
+          (!!i.twin && i.twin.state !== 'serving'),
+      )
         ? 5_000
         : 60_000,
   }));

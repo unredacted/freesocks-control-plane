@@ -811,8 +811,15 @@ fronts only. A front published later gets the plain entry alone until its own ch
 and a check three hours old no longer counts (`matcherOf`), so a run that stopped withholds the
 twin instead of handing it out on old evidence. With no front passing, the address stays off.
 
+**Only where bodies are rendered.** A node serves a twin only while its members are served
+through its fronts: the origin holds the node's delivery binding, and it is not deferred
+(`servers.node_twin_not_rendered`). Without it members get the backend's body as it comes, and
+the twin's entry would reach every app raw, past the per-app rule and the per-front limit. It
+is refused up front, and a serving twin closes when the binding goes.
+
 **What closes it.** The checks are bound to the twin's transport, what its node is verified by,
-its port, its path and the listener (`twinRevision`): a change of any of them switches the
+its port, its path, the listener and the listener's revision (`twinRevision`; a material change
+of the listener in place moves it, as it does its fronts' own proofs): a change of any of them switches the
 address off and counts no front until every front is checked again
 (`servers.node_twin_drifted`). So does the transport going off on the node, the node going
 offline, the listener losing its address, and the node leaving its fronts (a restore to
@@ -831,13 +838,23 @@ profile, and every transport that comes or goes is some mode's twin on the backe
 | `servers.node_twin_present`       | The node already serves it.                                                                                                                       |
 | `servers.node_twin_absent`        | Remove, on a node that does not serve it.                                                                                                         |
 | `servers.node_twin_no_front`      | FCP runs no front for the node's own transport (no origin, an address FCP does not own, or none).                                                 |
+| `servers.node_twin_not_rendered`  | The node's members are not served through its fronts (no active delivery binding, or a deferred one).                                             |
+| `servers.twin_listen`             | The twin's transport listens on another address than `127.0.0.1`.                                                                                 |
 | `servers.node_twin_remark_long`   | The twin's remark is longer than the listener's own and past 40 characters (it may be as long as the listener's, which the backend already took). |
 | `servers.node_twin_transport_off` | The transport is not on for the node yet (the node reconcile turns it on).                                                                        |
 | `servers.node_twin_front_busy`    | A front is being replaced, or the origin is quarantined.                                                                                          |
 | `servers.node_twin_check_failed`  | No published front carried the twin.                                                                                                              |
 | `servers.node_twin_drifted`       | Something its checks were made under moved.                                                                                                       |
 
-A retiring node's twin address is removed with its other addresses. The mode's twin cannot be
+A twin listens on `127.0.0.1` (`servers.twin_listen`; a mode takes no other transport as its
+twin): the node's front server is given a path and a port and proxies to that one address. A
+twin taken away and asked for again is recreated on purpose, past the mark its removal left on
+the address's name. A rename waits out the twin's run and the twin's run waits out a rename;
+the rename's length check counts the twin's key with the listener's own.
+
+A retiring node's twin address is removed with its other addresses (by the uuid recorded, or,
+after a create that landed while its run stopped, on the twin's transport under the node's
+origin remark form). The mode's twin cannot be
 taken off the backend while a node serves it (`servers.twin_in_use`). Audit:
 `admin.servers.node_twin.add|remove`, `servers.node.twin_serving` (how many fronts),
 `servers.node.twin_closed`, `servers.node.twin_check_failed` and `servers.node.twin_front_failed`

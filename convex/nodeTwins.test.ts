@@ -710,6 +710,111 @@ describe('a node serving the encrypted twin', () => {
     ).toBe(200);
   });
 
+  test('taken away and asked for again, it serves again', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    const first = s.twinHosts()[0]!.uuid;
+    expect((await s.nodeTwin('remove')).status).toBe(200);
+    await until(s.intent, (i) => !i.twin);
+    await s.settled();
+    // The ledger's own sweep settles the delete, which marks the address's
+    // name as removed on purpose.
+    await s.t.action(internal.backendWrites.reconcile, {});
+    await s.settled();
+    const marks = await s.t.run(async (ctx) =>
+      (await ctx.db.query('panelOwnership').collect()).filter(
+        (r) => r.kind === 'host' && r.state === 'tombstoned',
+      ),
+    );
+    expect(marks).toHaveLength(1);
+    // Asked for again, it is recreated on purpose.
+    await bringToServing(s);
+    expect(s.twinHosts()).toHaveLength(1);
+    expect(s.twinHosts()[0]!.uuid).not.toBe(first);
+    expect(s.twinHosts()[0]!.isDisabled).toBe(false);
+    expect(await s.servedThrough()).toEqual([...s.edgeIds].sort());
+  });
+
+  test('a material change of the listener closes it until every front is checked again', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    const l = await s.listener();
+    // The listener was updated in place (its transport, its names): its
+    // revision moved, and so did what its fronts' own proofs are bound to.
+    await s.t.run((ctx) => ctx.db.patch(l._id, { revision: l.revision + 1 }));
+    expect(await s.t.query(internal.nodeTwins.due, { now: Date.now() })).toEqual([s.intentId]);
+    const sessions = s.sessions.length;
+    await s.runTwin();
+    // Every front again, none on the strength of a check made before.
+    expect(
+      s.sessions
+        .slice(sessions)
+        .map((x) => x.hostname)
+        .sort(),
+    ).toEqual([...FRONTS].sort());
+    expect(await s.twinState()).toBe('serving');
+    const closed = (await s.t.run((ctx) => ctx.db.query('auditLog').collect())).filter(
+      (a) => a.action === 'servers.node.twin_closed',
+    );
+    expect(closed.map((a) => (a.payload as { code?: string }).code)).toEqual([
+      'servers.node_twin_drifted',
+    ]);
+  });
+
+  test('members served the backend’s body as it comes never get the twin', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    // The node's delivery through its fronts is released: bodies go out raw.
+    const binding = await s.t.run((ctx) => ctx.db.query('edgeDeliveryBindings').first());
+    expect(binding).toMatchObject({ state: 'active', relaySlug: NODE });
+    await s.t.run((ctx) => ctx.db.patch(binding!._id, { state: 'released' }));
+    expect(await s.t.query(internal.nodeTwins.due, { now: Date.now() })).toEqual([s.intentId]);
+    await s.runTwin();
+    // Off before any raw body could carry it.
+    expect(s.twinHosts()[0]!.isDisabled).toBe(true);
+    expect(await s.servedThrough()).toEqual([]);
+    expect((await s.intent()).twin).toMatchObject({
+      state: 'activating',
+      code: 'servers.node_twin_not_rendered',
+    });
+    // And it is not switched on for such a node in the first place.
+    const fresh = await seed();
+    const b = await fresh.t.run((ctx) => ctx.db.query('edgeDeliveryBindings').first());
+    await fresh.t.run((ctx) => ctx.db.patch(b!._id, { state: 'released' }));
+    const res = await fresh.nodeTwin('add');
+    expect(res.status).toBe(409);
+    expect(await codeOf(res)).toBe('servers.node_twin_not_rendered');
+    // A deferred binding is the same thing.
+    const deferred = await seed();
+    const relay = await deferred.relay();
+    await deferred.t.run((ctx) => ctx.db.patch(relay._id, { bindingDeferred: true }));
+    expect(await codeOf(await deferred.nodeTwin('add'))).toBe('servers.node_twin_not_rendered');
+  });
+
+  test('a twin address whose uuid was never recorded leaves with a retiring node', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    const host = s.twinHosts()[0]!;
+    // The create landed, the run stopped before it recorded the address.
+    const i = await s.intent();
+    await s.t.run((ctx) => ctx.db.patch(i._id, { twin: { ...i.twin!, hostUuid: undefined } }));
+    const retirementId = await s.t.run((ctx) =>
+      ctx.db.insert('panelRetirements', {
+        backendServerId: s.serverId,
+        intentId: s.intentId,
+        requestedBy: 'admin',
+        stage: 'draining',
+        events: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const c = await s.t.query(internal.nodeRetirement.context, { retirementId });
+    expect(c!.addresses.map((h) => h.hostUuid)).toContain(host.uuid);
+    // The listener's own address is not the node's to remove this way.
+    expect(c!.addresses.map((h) => h.hostUuid)).not.toContain(LISTENER_HOST_UUID);
+  });
+
   test('the mode’s twin cannot be taken off the backend while a node serves it', async () => {
     const s = await seed();
     await bringToServing(s);

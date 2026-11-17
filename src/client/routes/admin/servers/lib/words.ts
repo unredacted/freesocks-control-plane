@@ -478,6 +478,10 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.node_twin_absent': 'The node does not serve the encrypted twin.',
   'servers.node_twin_no_front':
     'FCP runs no front for this node’s own transport yet. Put the node behind a front first.',
+  'servers.node_twin_not_rendered':
+    'This node’s members are not served through its fronts yet. Take the node live behind them first.',
+  'servers.twin_listen':
+    'The twin has to listen on 127.0.0.1. The node’s front server sends its routes there.',
   'servers.node_twin_remark_long':
     'The node’s name is too long for the twin’s address. Rename the node to something shorter.',
   'servers.node_twin_transport_off':
@@ -1260,6 +1264,7 @@ const TWIN_WAITING = new Set([
   'servers.observe_lag',
   'servers.node_twin_transport_off',
   'servers.node_twin_front_busy',
+  'servers.node_rename_running',
 ]);
 
 /** Where a node's encrypted twin stands, in one sentence, and what (if anything) the operator does. */

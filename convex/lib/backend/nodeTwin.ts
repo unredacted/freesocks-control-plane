@@ -43,6 +43,9 @@ export interface ObservedTwinInbound {
   vlessEncryption?: { digest: string | null; encryption: string | null };
 }
 
+/** The loopback address a node's front server proxies its routes to. */
+export const TWIN_LISTEN = '127.0.0.1';
+
 /** The route the node's front server needs for the twin: its path to its loopback port. */
 export function twinRoute(twin: SetupTwin): { path: string; port: number } {
   return { path: twin.path, port: twin.port };
@@ -60,12 +63,20 @@ export function nodeTwinProblem(a: {
   activeInboundUuids: readonly string[] | null;
   /** The node's own listener has a settled address FCP wrote, named by FCP's own form. */
   listenerReady: boolean;
+  /**
+   * The node's members are served through its fronts (an active delivery
+   * binding, not deferred). Without it they get the backend's body as it
+   * comes: the twin's entry would reach every app raw, past the per-app rule
+   * and the per-front limit.
+   */
+  rendered: boolean;
   twinRemark: string | null;
   /** How long the listener's own remark is: one the backend already took. */
   listenerRemarkLength?: number;
 }): string | null {
   if (!a.twin || a.twin.detaching) return 'servers.twin_absent';
   if (!a.listenerReady || !a.twinRemark) return 'servers.node_twin_no_front';
+  if (!a.rendered) return 'servers.node_twin_not_rendered';
   // As long as its listener's own remark is fine on this backend; longer than
   // that only within what every backend takes.
   const room = Math.min(RELAY_REMARK_MAX, Math.max(HOST_REMARK_MAX, a.listenerRemarkLength ?? 0));
@@ -80,6 +91,9 @@ export function nodeTwinProblem(a: {
     !i.path
   )
     return 'servers.twin_not_websocket';
+  // The node's front server is given a path and a port, and proxies to this
+  // one address: a twin listening on another loopback address is out of its reach.
+  if ((i.listen ?? '').trim() !== TWIN_LISTEN) return 'servers.twin_listen';
   if (!i.vlessEncryption) return 'servers.twin_not_encrypted';
   if (i.vlessEncryption.encryption === null || i.vlessEncryption.digest === null)
     return 'servers.twin_encryption_unreadable';
@@ -159,7 +173,7 @@ export function twinHostDiff(
  * What a serving twin's checks are bound to, besides the front each was made
  * through: the twin's transport, what its node is verified by (`authDigest`
  * moves on a new key, mode or padding), its loopback port and path, and the
- * listener it rides. A change of any of it closes the twin on this node until
+ * listener it rides with that listener's revision. A change of any of it closes the twin on this node until
  * every front is checked again. Public values and a keyed digest only.
  *
  * The address members are handed is NOT part of it: the twin's address follows
@@ -172,14 +186,17 @@ export function twinRevision(a: {
   port: number;
   path: string;
   listenerId: string;
+  /** Moves with every material change of the listener (its transport, its names), like its fronts' own proofs. */
+  listenerRevision: number;
 }): string {
   return canonicalJson({
-    v: 1,
+    v: 2,
     transport: a.transportUuid,
     auth: a.authDigest,
     port: a.port,
     path: a.path,
     listener: a.listenerId,
+    listenerRevision: a.listenerRevision,
   });
 }
 
@@ -226,4 +243,19 @@ export function servableEdges(
   maxAgeMs: number,
 ): string[] {
   return (checks ?? []).filter((c) => now - c.checkedAt < maxAgeMs).map((c) => c.edgeId);
+}
+
+/**
+ * Whether a Host is this node's twin address though its uuid was never
+ * recorded (a create that landed while the run stopped): on the mode's twin
+ * transport, under a remark of the form FCP names the node's origin addresses
+ * by. Nothing else is ever written on a twin's transport under that form.
+ */
+export function isUnrecordedTwinHost(
+  host: { remark: string; configProfileInboundUuid?: string | null },
+  a: { twinUuid: string | undefined; originRemark: RegExp },
+): boolean {
+  return (
+    !!a.twinUuid && host.configProfileInboundUuid === a.twinUuid && a.originRemark.test(host.remark)
+  );
 }

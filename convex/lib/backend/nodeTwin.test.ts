@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest';
+import { listenerRemarkKeys, longestListenerRemark } from './nodeRename';
+import { twinProblem } from './modeTwin';
 import {
+  isUnrecordedTwinHost,
   desiredTwinHost,
   dueEdges,
   keptChecks,
@@ -29,6 +32,7 @@ const ok = {
   inbound,
   activeInboundUuids: ['own-uuid', 'twin-uuid'],
   listenerReady: true,
+  rendered: true,
   twinRemark: 'node-a-relay-wse123456',
 };
 
@@ -42,6 +46,16 @@ describe('whether a node can be checked on its twin', () => {
     ['it is being taken away', { twin: { ...twin, detaching: true } }, 'servers.twin_absent'],
     ['no front of FCP’s', { listenerReady: false }, 'servers.node_twin_no_front'],
     ['a listener FCP did not name', { twinRemark: null }, 'servers.node_twin_no_front'],
+    [
+      'members not served through its fronts (raw bodies)',
+      { rendered: false },
+      'servers.node_twin_not_rendered',
+    ],
+    [
+      'another loopback address than the one the front server proxies to',
+      { inbound: { ...inbound, listen: '::1' } },
+      'servers.twin_listen',
+    ],
     ['a name too long', { twinRemark: 'n'.repeat(41) }, 'servers.node_twin_remark_long'],
     [
       'a name longer than its listener’s own, past what every backend takes',
@@ -164,6 +178,7 @@ describe('what a serving twin’s checks are bound to', () => {
     port: 8444,
     path: '/ws-e',
     listenerId: 'l1',
+    listenerRevision: 3,
   };
 
   test('a new key, port, path, transport or listener is another revision', () => {
@@ -175,6 +190,8 @@ describe('what a serving twin’s checks are bound to', () => {
       { path: '/other' },
       { transportUuid: 'u2' },
       { listenerId: 'l2' },
+      // A material change of the listener in place (its transport, its names).
+      { listenerRevision: 4 },
     ])
       expect(twinRevision({ ...base, ...change })).not.toBe(r);
   });
@@ -201,5 +218,79 @@ describe('which fronts are checked, kept and handed out through', () => {
     expect(servableEdges(checks, now, 3 * HOUR)).toEqual(['a', 'b', 'gone']);
     expect(servableEdges(checks, now + 3 * HOUR, 3 * HOUR)).toEqual([]);
     expect(servableEdges(undefined, now, 3 * HOUR)).toEqual([]);
+  });
+});
+
+describe('a twin address nobody recorded', () => {
+  const a = { twinUuid: 'twin-uuid', originRemark: /^node-a-relay(?:-[a-z0-9]{1,16})?$/ };
+
+  test('is the node’s: on the twin’s transport, under the node’s origin remark form', () => {
+    expect(
+      isUnrecordedTwinHost(
+        { remark: 'node-a-relay-wse123456', configProfileInboundUuid: 'twin-uuid' },
+        a,
+      ),
+    ).toBe(true);
+  });
+
+  test('another node’s, another transport’s, or no twin at all is not', () => {
+    expect(
+      isUnrecordedTwinHost(
+        { remark: 'node-b-relay-wse123456', configProfileInboundUuid: 'twin-uuid' },
+        a,
+      ),
+    ).toBe(false);
+    expect(
+      isUnrecordedTwinHost(
+        { remark: 'node-a-relay-wse123456', configProfileInboundUuid: 'own-uuid' },
+        a,
+      ),
+    ).toBe(false);
+    expect(
+      isUnrecordedTwinHost(
+        { remark: 'node-a-relay-wse123456', configProfileInboundUuid: 'twin-uuid' },
+        { ...a, twinUuid: undefined },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('renaming a node whose listener has a twin', () => {
+  test('the twin’s key counts toward the longest remark', () => {
+    const listeners = [{ listenerKey: 'w', encryptedTwin: { key: 'freedomweb2hl30v' } }];
+    expect(listenerRemarkKeys(listeners)).toEqual(['w', 'freedomweb2hl30v']);
+    expect(listenerRemarkKeys([{ listenerKey: 'w' }])).toEqual(['w']);
+    // The plain remark fits a 40-character bar under this name; the twin's does not.
+    const to = 'a-node-name-of-twenty';
+    expect(longestListenerRemark(['w'], to)).toBeLessThanOrEqual(40);
+    expect(longestListenerRemark(listenerRemarkKeys(listeners), to)).toBeGreaterThan(40);
+  });
+});
+
+describe('a transport offered as a mode’s twin', () => {
+  const mode = {
+    slug: 'freedom-ws',
+    shape: { transport: 'ws', fronting: 'edge-l7' },
+    tag: 'WS',
+    transport: { uuid: 'own-uuid', port: 8443, path: '/ws' },
+  };
+  const candidate = (listen: string) => ({
+    tag: 'WS_E',
+    inboundUuid: 'twin-uuid',
+    protocol: 'vless',
+    port: 8444,
+    listen,
+    network: 'ws',
+    security: 'none',
+    path: '/ws-e',
+    vlessEncryption: { encryption },
+  });
+  const problem = (listen: string) =>
+    twinProblem({ mode, modes: [mode], inbounds: [candidate(listen)], tag: 'WS_E' });
+
+  test('listens where the node’s front server proxies to, and nowhere else', () => {
+    expect(problem('127.0.0.1')).toBeNull();
+    for (const listen of ['::1', 'localhost', '127.0.0.2', '0.0.0.0'])
+      expect(problem(listen)).toBe('servers.twin_not_websocket');
   });
 });

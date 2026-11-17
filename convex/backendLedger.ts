@@ -593,10 +593,20 @@ async function bridgePortChange(
   if (setup?.modes) {
     let touched = false;
     const modes = setup.modes.map((m) => {
+      let next = m;
       const hit = moved.find((x) => x.uuid === m.transport?.uuid);
-      if (!hit || !m.transport || m.transport.port === hit.port) return m;
-      touched = true;
-      return { ...m, transport: { ...m.transport, port: hit.port } };
+      if (hit && m.transport && m.transport.port !== hit.port) {
+        touched = true;
+        next = { ...next, transport: { ...m.transport, port: hit.port } };
+      }
+      // Its encrypted twin's record follows its own transport the same way:
+      // the node's front server is handed the twin's route from it.
+      const twinHit = moved.find((x) => x.uuid === m.twin?.uuid);
+      if (twinHit && m.twin && m.twin.port !== twinHit.port) {
+        touched = true;
+        next = { ...next, twin: { ...m.twin, port: twinHit.port } };
+      }
+      return next;
     });
     if (touched) await ctx.db.patch(setup._id, { modes, updatedAt: Date.now() });
   }
