@@ -152,6 +152,8 @@ services:
       - EC_ORIGIN_HOSTNAME
       - EC_WS_PATH=${EC_WS_PATH:?set by the run script}
       - EC_WS_PORT=${EC_WS_PORT:?set by the run script}
+      - EC_WS_TWIN_PATH=${EC_WS_TWIN_PATH:?set by the run script}
+      - EC_WS_TWIN_PORT=${EC_WS_TWIN_PORT:?set by the run script}
     volumes:
       - ./docker/edge-connection-test/ingress.Caddyfile:/etc/caddy/Caddyfile:ro
       - ./.cache/edge-connection-test/pki:/pki:ro
@@ -300,6 +302,8 @@ services:
       - EC_L7_ZONE
       - EC_WS_PATH
       - EC_WS_PORT
+      - EC_WS_TWIN_PATH
+      - EC_WS_TWIN_PORT
       - EC_TLS_NAME
       - EC_OUTLINE_PASSWORD
       - NODE_EXTRA_CA_CERTS=${PWD}/.cache/edge-connection-test/pki/ca.pem

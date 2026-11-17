@@ -24,6 +24,15 @@
 	handle @transport {
 		reverse_proxy 127.0.0.1:{$EC_WS_PORT}
 	}
+	# The mode's ENCRYPTED TWIN (docs/servers.md "A node serving the encrypted
+	# twin"): a second path to a second loopback inbound, as the node role
+	# deploys it from the routes FCP hands it. The test asserts FCP names
+	# exactly this route. Until the twin's transport is on, nothing listens
+	# there and the path answers 502.
+	@twin path {$EC_WS_TWIN_PATH}
+	handle @twin {
+		reverse_proxy 127.0.0.1:{$EC_WS_TWIN_PORT}
+	}
 	handle {
 		respond 404
 	}

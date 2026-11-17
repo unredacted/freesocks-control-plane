@@ -263,6 +263,16 @@ export function sandboxServed(
   engine: Engine,
   body: string,
   pick: string,
+  /**
+   * For a run left to one of the body's own Mihomo groups:
+   *  - `groupTestUrl`: where the groups' health checks go. The body names a
+   *    page on the public internet, which this network does not have; the
+   *    stack's own page stands in, like its resolver does for DNS.
+   *  - `log`: the engine's log level (`info` logs which proxy carried each
+   *    connection).
+   * The proxies and each group's type, members and order stay FCP's.
+   */
+  opts: { groupTestUrl?: string; log?: 'info' } = {},
 ): { config: string; port: number } {
   if (engine === 'singbox') {
     const c = JSON.parse(body);
@@ -280,11 +290,16 @@ export function sandboxServed(
   }
   const c = YAML.parse(body) as Record<string, unknown>;
   const port = 7890;
+  const groups = c['proxy-groups'] as Array<Record<string, unknown>> | undefined;
   const out: Record<string, unknown> = {
     ...MIHOMO_SANDBOX(port),
+    ...(opts.log ? { 'log-level': opts.log } : {}),
     mode: c.mode,
     proxies: c.proxies,
-    'proxy-groups': c['proxy-groups'],
+    'proxy-groups':
+      opts.groupTestUrl && groups
+        ? groups.map((g) => ('url' in g ? { ...g, url: opts.groupTestUrl } : g))
+        : groups,
     rules: [`MATCH,${pick}`],
   };
   return { config: YAML.stringify(out), port };

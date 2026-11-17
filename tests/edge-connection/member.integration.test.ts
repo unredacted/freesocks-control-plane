@@ -57,6 +57,8 @@ import type { Cohort, CohortCursor, CohortPage } from '../../convex/lib/edges/co
 import { detectBodyFormat } from '../../convex/lib/edges/clientFamilies';
 import { ActivationReview } from '../../src/shared/contracts/servers';
 import { clients } from '../compat/manifest';
+import { AUTO_GROUP_NAME, plainFallbackName } from '../../src/shared/entryNames';
+import YAML from 'yaml';
 import {
   ADDR,
   ENABLED,
@@ -64,6 +66,7 @@ import {
   accessLog,
   clientReachesDirectly,
   env,
+  clientLog,
   fetchThroughClientEventually,
   forwarderConnections,
   forwarderStats,
@@ -1117,6 +1120,217 @@ describe.skipIf(!ENABLED)(
               );
               await connectThrough(engine, served, edge, node.addr.origin);
             }
+          });
+
+        // The mode's ENCRYPTED TWIN (docs/servers.md "A node serving the
+        // encrypted twin"): the same node behind the same front, a second time
+        // with VLESS Encryption inside the stream. Taken the whole way: the
+        // transport added on the real panel, the mode's twin, the node switched
+        // on, FCP's own encrypted session through the front, and then the
+        // member's real body in a real engine.
+        if (key === 'ws')
+          test('its encrypted twin: proved through the front, then Mihomo connects on the encrypted entry and sing-box keeps the plain one', async () => {
+            const TWIN_TAG = 'FREEDOM_WEBSOCKET_E';
+            const settleOps = () =>
+              settle(
+                async () => {
+                  const open = await t.run(async (c) =>
+                    (await c.db.query('panelOps').collect()).filter((o) => o.open),
+                  );
+                  for (const o of open)
+                    await t.action(internal.backendWrites.run, { opId: o._id }).catch(() => null);
+                  return open.length;
+                },
+                (n) => n === 0,
+                'the backend changes',
+                (n) => `${n} still open`,
+              );
+            const ok = async (res: Response, what: string) => {
+              const text = await res.text();
+              expect(res.status, `${what}: ${text.slice(0, 300)}`).toBe(200);
+              return text ? JSON.parse(text) : null;
+            };
+
+            // 1. The encrypted transport, beside the mode's own (its key is made
+            //    in the attempt and lives on the panel only).
+            const profileUuid = (await t.run((c) => c.db.query('panelSetups').first()))!
+              .profileUuid!;
+            const preview = await ok(
+              await servers('POST', `profiles/${profileUuid}/preview`, {
+                ops: [
+                  {
+                    op: 'addInboundFromTemplate',
+                    transportTag: TWIN_TAG,
+                    template: {
+                      kind: 'ws',
+                      port: env.wsTwinPort,
+                      path: env.wsTwinPath,
+                      encrypted: true,
+                    },
+                  },
+                ],
+              }),
+              'preview',
+            );
+            await ok(
+              await servers('POST', `profiles/${profileUuid}/apply`, {
+                ops: preview.ops,
+                baseToken: preview.baseToken,
+                expectedToken: preview.expectedToken,
+                transportUuids: preview.transportUuids,
+              }),
+              'apply',
+            );
+            await settleOps();
+            await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+
+            // 2. The mode's twin: its group carries both transports.
+            await ok(
+              await servers('POST', `modes/${node.mode}/encrypted-twin`, {
+                action: 'attach',
+                transportTag: TWIN_TAG,
+              }),
+              'attach',
+            );
+            await settleOps();
+            await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+
+            // 3. The node: FCP hands the node role the twin's route beside the
+            //    node's own (the ingress of this stack carries exactly that
+            //    route), turns the transport on and proves the path.
+            await ok(
+              await servers('POST', `nodes/intents/${intentId}/encrypted-twin`, { action: 'add' }),
+              'switching the node on',
+            );
+            const boot = await t.action(internal.nodeIntents.bootstrap, { intentId });
+            expect(boot.ingress?.routes).toEqual([
+              { path: env.wsPath, port: env.wsPort },
+              { path: env.wsTwinPath, port: env.wsTwinPort },
+            ]);
+            const twinOf = async () => (await t.run((c) => c.db.get(intentId)))!.twin ?? null;
+            const serving = await settle(
+              async () => {
+                await t.action(internal.nodeTwins.run, { intentId }).catch(() => null);
+                return twinOf();
+              },
+              (x) => x?.state === 'serving',
+              'the encrypted twin',
+              (x) => `${x?.state ?? 'none'} ${x?.code ?? ''} ops: ?`,
+            ).catch(async (e) => {
+              throw new Error(`${(e as Error).message} ops: ${await opsSummary()}`);
+            });
+            expect(serving!.code).toBeUndefined();
+            // The node's own path was never touched by any of it.
+            const intent = (await t.run((c) => c.db.get(intentId)))!;
+            expect(intent.delivery.disposition).toBe('live');
+
+            const edges = await edgesByTag(node.name);
+            const edge = [...edges.values()][0]!;
+            // FCP's own proof ran at the twin's path, through the front.
+            expect(
+              accessLog('ingress').some(
+                (e) => e.uri === env.wsTwinPath && e.host === edge.address && e.status === 101,
+              ),
+              "the front proof never reached the twin's path",
+            ).toBe(true);
+
+            // 4. The member's Mihomo body: per front the encrypted entry first,
+            //    the plain one behind it, in a group that takes them in order.
+            const mihomo = await (async () => {
+              const res = await fetchSub(token, UA.mihomo);
+              expect(res.status).toBe(200);
+              return res.text();
+            })();
+            expectNoOrigin(mihomo);
+            const mine = servedEntries('mihomo', mihomo).filter((x) => x.server === edge.address);
+            const encrypted = mine.find((x) => typeof x.raw.encryption === 'string');
+            const plain = mine.find((x) => x.raw.encryption === undefined);
+            expect(mine).toHaveLength(2);
+            expect(encrypted, 'no encrypted entry in the Mihomo body').toBeTruthy();
+            expect(plain, 'no plain entry behind it').toBeTruthy();
+            expect(String(encrypted!.raw.encryption)).toMatch(/^mlkem768x25519plus\.native\./);
+            expect((encrypted!.raw['ws-opts'] as { path: string }).path).toBe(env.wsTwinPath);
+            expect((plain!.raw['ws-opts'] as { path: string }).path).toBe(env.wsPath);
+            expect(plain!.name).toBe(plainFallbackName(encrypted!.name));
+            const auto = (YAML.parse(mihomo) as { 'proxy-groups': Array<Record<string, unknown>> })[
+              'proxy-groups'
+            ].find((g) => g.name === AUTO_GROUP_NAME)!;
+            expect(auto).toMatchObject({
+              type: 'fallback',
+              proxies: [encrypted!.name, plain!.name],
+            });
+
+            // The real engine, on the encrypted entry: the page comes back from
+            // the node, through the front, on the twin's path.
+            const upgradesAt = (path: string) =>
+              accessLog('ingress').filter(
+                (e) => e.uri === path && e.host === edge.address && e.status === 101,
+              ).length;
+            const twinBefore = upgradesAt(env.wsTwinPath);
+            await connectThrough(
+              'mihomo',
+              { body: mihomo, entry: encrypted!.name },
+              edge,
+              node.addr.origin,
+            );
+            expect(upgradesAt(env.wsTwinPath)).toBeGreaterThan(twinBefore);
+            // The plain entry still works for an app that cannot use the other.
+            const plainBefore = upgradesAt(env.wsPath);
+            await connectThrough(
+              'mihomo',
+              { body: mihomo, entry: plain!.name },
+              edge,
+              node.addr.origin,
+            );
+            expect(upgradesAt(env.wsPath)).toBeGreaterThan(plainBefore);
+            // Left to itself (the body's own ordered group), it takes the
+            // encrypted one. Both paths see upgrades then (the group checks
+            // every member), so the ingress cannot say which entry carried the
+            // page: the engine's own connection log does.
+            {
+              const { config, port } = sandboxServed('mihomo', mihomo, AUTO_GROUP_NAME, {
+                groupTestUrl: `http://${env.originPage}/generate_204`,
+                log: 'info',
+              });
+              // The group is FCP's but for where its checks go.
+              const groupOf = (text: string) => {
+                const g = (YAML.parse(text) as { 'proxy-groups': Array<Record<string, unknown>> })[
+                  'proxy-groups'
+                ].find((x) => x.name === AUTO_GROUP_NAME)!;
+                return { type: g.type, proxies: g.proxies };
+              };
+              expect(groupOf(config)).toEqual(groupOf(mihomo));
+              expect(servedEntries('mihomo', config).map((e) => e.raw)).toEqual(
+                servedEntries('mihomo', mihomo).map((e) => e.raw),
+              );
+              await startClient(config, port, 'mihomo', { log: true });
+              try {
+                const page = await fetchThroughClientEventually(port, 45_000);
+                expect(page?.token, 'no page through the group').toBe(env.originToken);
+                expect(page!.peer).toBe(node.addr.origin);
+              } finally {
+                stopClient();
+              }
+              // "[TCP] <client> --> <page>:80 match Match using <group>[<proxy>]"
+              const carried = clientLog()
+                .split('\n')
+                .filter((l) => l.includes(`--> ${env.originPage}:80`) && l.includes(' using '));
+              expect(carried.length, 'the engine logged no connection to the page').toBeGreaterThan(
+                0,
+              );
+              for (const line of carried)
+                expect(line, 'the page went over another entry than the encrypted one').toContain(
+                  `using ${AUTO_GROUP_NAME}[${encrypted!.name}]`,
+                );
+            }
+
+            // 5. sing-box cannot speak the layer: its body carries the plain
+            //    entry alone, and still connects.
+            const served = await bodyCarrying(token, 'singbox', edge, edgeAddresses(edges));
+            expect(served.body).not.toContain('mlkem768x25519plus');
+            expect(served.body).not.toContain(env.wsTwinPath);
+            expect(servedEntries('singbox', served.body)).toHaveLength(1);
+            await connectThrough('singbox', served, edge, node.addr.origin);
           });
       });
     }

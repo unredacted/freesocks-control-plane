@@ -1010,6 +1010,11 @@ goes on ([servers.md](servers.md) § "A node serving the encrypted twin").
 | Mihomo 1.19.12 (before 1.19.13) | time out (it ignores the field) | connect       | ordered, lands on the first plain entry |
 | Xray 26.7.28 (the link list)    | connect                         | connect       | none in a link list                     |
 
+Of these, Mihomo 1.19.30 is also run on every pull request, on a body FCP delivers for a real
+node behind a front (`docs/client-compatibility.md` "Edge connection": the WebSocket node's
+encrypted twin), and sing-box on the plain entry it gets. Xray as a client and the old Mihomo
+are not in that gate: their results above are from the one manual run.
+
 An old Mihomo loads the body without complaint and speaks plain VLESS to the encrypted
 transport, which refuses it: only the ordered group (or picking a `… · Old apps` entry by hand)
 gets that member through. With Xray, the encrypted entry spoken plain, or with another key, does

@@ -9,7 +9,7 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 export const ENABLED = process.env.EC_ENABLED === '1';
 
@@ -37,6 +37,8 @@ export const env = ENABLED
       l7Zone: need('EC_L7_ZONE'),
       wsPath: need('EC_WS_PATH'),
       wsPort: Number(need('EC_WS_PORT')),
+      wsTwinPath: need('EC_WS_TWIN_PATH'),
+      wsTwinPort: Number(need('EC_WS_TWIN_PORT')),
       tlsName: need('EC_TLS_NAME'),
       outlinePassword: need('EC_OUTLINE_PASSWORD'),
     }
@@ -231,6 +233,17 @@ export function stopClient(): void {
     spawnSync('docker', ['exec', 'ec-client', 'pkill', '-x', binary], { stdio: 'ignore' });
 }
 
+const CLIENT_LOG = 'client.log';
+
+/**
+ * The engine's own log of the run started with `log` (kept in the work
+ * directory, which the next run wipes; never printed). Empty without one.
+ */
+export function clientLog(): string {
+  const file = `${WORK}/client/${CLIENT_LOG}`;
+  return existsSync(file) ? readFileSync(file, 'utf8') : '';
+}
+
 /**
  * Validate and start one reference engine with `config` (verbatim) in the
  * client container: sing-box (JSON) or Mihomo (YAML).
@@ -239,6 +252,8 @@ export async function startClient(
   config: string,
   port = 1080,
   engine: 'singbox' | 'mihomo' = 'singbox',
+  /** Keep the engine's own log (`clientLog`): which proxy carried a request is in it. */
+  opts: { log?: boolean } = {},
 ): Promise<void> {
   stopClient();
   const file = engine === 'singbox' ? 'client.json' : 'client.yaml';
@@ -257,7 +272,18 @@ export async function startClient(
     encoding: 'utf8',
   });
   if (checked.status !== 0) throw new Error(`${binary} refused the configuration (check failed)`);
-  docker('exec', '-d', 'ec-client', binary, ...run);
+  rmSync(`${WORK}/client/${CLIENT_LOG}`, { force: true });
+  if (opts.log)
+    // `exec` keeps the engine's own process name, so `stopClient` still finds it.
+    docker(
+      'exec',
+      '-d',
+      'ec-client',
+      'sh',
+      '-c',
+      `exec ${[binary, ...run].join(' ')} > /work/${CLIENT_LOG} 2>&1`,
+    );
+  else docker('exec', '-d', 'ec-client', binary, ...run);
   const ready = await until(
     async () => {
       const r = spawnSync(
