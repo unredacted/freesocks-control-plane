@@ -70,9 +70,11 @@
           <p class="text-muted-foreground text-xs break-all">
             Route on the node’s front server: {intent.twin.route.path} to 127.0.0.1:{intent.twin
               .route.port}.
-            {intent.twin.routeBy === 'role'
-              ? 'The node role adds it on its next run.'
-              : 'No role runs this node, so it is added by hand.'}
+            {#if intent.twin.state === 'activating'}
+              {intent.twin.routeBy === 'role'
+                ? 'The node role adds it on its next run.'
+                : 'No role runs this node, so it is added by hand.'}
+            {/if}
           </p>
         {/if}
         {#if canWrite && intent.twin.state !== 'removing'}

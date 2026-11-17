@@ -813,6 +813,11 @@ without being closed for it, since the renderer rewrites both per front. It goes
 ledger like every write; FCP's own run is the one writer there that may use a remark of that
 form.
 
+On the node's page the twin's transport is listed as "encrypted inside" (`TransportView.encrypted`)
+and marked as a twin: its one address is FCP's (`AddressView.fcpOwned`, by the uuid recorded or
+its remark form on a twin's transport), shown as "one of this node's addresses above, encrypted
+inside the connection" like the listener's own, and no address is added to it by hand.
+
 **The check.** One session per published front (`frontQualifyOps.runTwin`): the front's own
 name, the listener's transport and FCP's test account, at the twin's path, spoken with the
 twin's client string. That one session proves the route, the transport and the front together.

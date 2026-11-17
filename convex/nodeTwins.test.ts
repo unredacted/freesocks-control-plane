@@ -23,7 +23,7 @@ import { matcherOf } from './edgeRender';
 import { __setFrontChecker } from './frontQualifyOps';
 import { __setFrontIngressCheckForTests } from './nodeIntentOps';
 import type { QualifyFrontArgs } from './lib/edges/frontCheck';
-import { NodeIntentList, ProfilePatchPreview } from '../src/shared/contracts/servers';
+import { NodeIntentList, ProfilePatchPreview, ServerTree } from '../src/shared/contracts/servers';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = ReturnType<typeof convexTest>;
@@ -821,6 +821,54 @@ describe('a node serving the encrypted twin', () => {
     const res = await s.call('POST', 'modes/freedom-ws/encrypted-twin', { action: 'detach' });
     expect(res.status).toBe(409);
     expect(await codeOf(res)).toBe('servers.twin_in_use');
+  });
+});
+
+describe('the node page', () => {
+  test('shows the twin’s transport as encrypted, and its address as one FCP keeps', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    const tree = ServerTree.parse(await (await s.call('GET', 'tree')).json());
+    const node = tree.nodes.find((n) => n.name === NODE)!;
+    const own = node.transports.find((t) => t.tag === OWN_TAG)!;
+    const twin = node.transports.find((t) => t.tag === TWIN_TAG)!;
+    expect(own).toMatchObject({ encrypted: false, twin: false });
+    expect(twin).toMatchObject({ encrypted: true, twin: true });
+    // One address each, both templates FCP writes: neither is a member's as it stands.
+    expect(own.addresses.map((a) => a.fcpOwned)).toEqual([true]);
+    expect(twin.addresses.map((a) => a.fcpOwned)).toEqual([true]);
+    // Nothing of the layer's key or client string is in the view.
+    const text = JSON.stringify(tree);
+    expect(text).not.toContain('mlkem768x25519plus');
+  });
+
+  test('an address someone else put on the twin’s transport is not taken for FCP’s', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    s.panel.hosts.push({
+      uuid: '00000499-0000-4000-8000-000000000000',
+      remark: 'someone-made-this',
+      address: 'elsewhere.example.org',
+      port: 443,
+      inbound: {
+        configProfileUuid: s.panel.profiles[0].uuid,
+        configProfileInboundUuid: s.twinUuid(),
+      },
+      isDisabled: false,
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const tree = ServerTree.parse(await (await s.call('GET', 'tree')).json());
+    const twin = tree.nodes
+      .find((n) => n.name === NODE)!
+      .transports.find((t) => t.tag === TWIN_TAG)!;
+    expect(
+      twin.addresses.map((a) => [a.remark, a.fcpOwned]).sort((a, b) => (a[0]! < b[0]! ? -1 : 1)),
+    ).toEqual(
+      [
+        [twin.addresses.find((a) => a.fcpOwned)!.remark, true],
+        ['someone-made-this', false],
+      ].sort((a, b) => (a[0]! < b[0]! ? -1 : 1)),
+    );
   });
 });
 

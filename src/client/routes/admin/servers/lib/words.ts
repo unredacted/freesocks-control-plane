@@ -39,12 +39,15 @@ const SECURITY_WORDS: Record<string, string> = { reality: 'REALITY', tls: 'TLS',
 
 /** `VLESS over TCP, REALITY, port 443`. */
 export function inboundSummary(
-  i: Pick<TransportView, 'protocol' | 'network' | 'security' | 'port'>,
+  i: Pick<TransportView, 'protocol' | 'network' | 'security' | 'port'> &
+    Partial<Pick<TransportView, 'encrypted'>>,
 ): string {
   const transport = i.network === 'raw' ? 'TCP' : i.network.toUpperCase();
   const security = SECURITY_WORDS[i.security] ?? i.security;
   const port = i.port === null ? 'several ports' : `port ${i.port}`;
-  return `${i.protocol.toUpperCase()} over ${transport}, ${security}, ${port}`;
+  // Encrypted inside the stream, whatever carries it (a CDN's TLS ends at the CDN).
+  const inside = i.encrypted ? 'encrypted inside, ' : '';
+  return `${i.protocol.toUpperCase()} over ${transport}, ${inside}${security}, ${port}`;
 }
 
 /** `3 server names` / `1 server name` / null when the transport presents none. */
@@ -296,8 +299,16 @@ export interface LinePart {
 export function frontedAddressWords(o: {
   reality: boolean;
   list: { label: string } | null | 'unknown';
+  /** The transport is the mode's encrypted twin: the same addresses, encrypted inside. */
+  twin?: boolean;
 }): LinePart[] {
   const addresses: LinePart = { text: "this node's addresses above", to: 'addresses' };
+  if (o.twin)
+    return [
+      { text: 'One of ' },
+      addresses,
+      { text: ', encrypted inside the connection. Only through fronts it was checked on.' },
+    ];
   if (!o.reality) return [{ text: 'One of ' }, addresses, { text: '.' }];
   const sni: LinePart[] =
     o.list === 'unknown'
