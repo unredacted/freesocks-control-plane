@@ -37,6 +37,8 @@ export const env = ENABLED
       l7Zone: need('EC_L7_ZONE'),
       wsPath: need('EC_WS_PATH'),
       wsPort: Number(need('EC_WS_PORT')),
+      wsTwinPath: need('EC_WS_TWIN_PATH'),
+      wsTwinPort: Number(need('EC_WS_TWIN_PORT')),
       tlsName: need('EC_TLS_NAME'),
       outlinePassword: need('EC_OUTLINE_PASSWORD'),
     }

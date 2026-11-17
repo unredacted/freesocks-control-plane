@@ -46,6 +46,10 @@ export EC_REALITY_TARGET=decoy.example
 export EC_L7_ZONE=edges.example
 export EC_WS_PATH=/ws
 export EC_WS_PORT=8443
+# The WebSocket mode's encrypted twin: its own path and loopback port on the
+# same node, behind the same ingress.
+export EC_WS_TWIN_PATH=/wse
+export EC_WS_TWIN_PORT=8444
 # The server name of the operator nodes' TLS transports (their certificate
 # also covers the fake CDN zone, as an origin certificate for a zone does).
 export EC_TLS_NAME=tls-origin.relay.example
