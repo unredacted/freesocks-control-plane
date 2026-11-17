@@ -278,6 +278,11 @@ describe('what the page says', () => {
       "One of this node's addresses above, encrypted inside the connection. Only through fronts it was checked on.",
     );
     expect(links(twin)).toEqual([["this node's addresses above", 'addresses']]);
+    expect(text({ ...twin, encrypted: true })).toBe(text(twin));
+    // A twin someone edited back to plain on the backend is never called encrypted.
+    const plainTwin = text({ ...twin, encrypted: false });
+    expect(plainTwin).toContain('no longer encrypts');
+    expect(plainTwin).not.toContain('encrypted inside the connection');
     // A REALITY transport an SNI list manages: the addresses above and the list.
     const managed = { reality: true, list: { label: 'Shared cover' } };
     expect(text(managed)).toBe(

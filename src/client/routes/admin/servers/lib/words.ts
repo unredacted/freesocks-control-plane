@@ -301,14 +301,27 @@ export function frontedAddressWords(o: {
   list: { label: string } | null | 'unknown';
   /** The transport is the mode's encrypted twin: the same addresses, encrypted inside. */
   twin?: boolean;
+  /**
+   * Whether the twin's transport runs the encryption, as last observed. A twin
+   * someone edited back to plain on the backend is never called encrypted.
+   */
+  encrypted?: boolean;
 }): LinePart[] {
   const addresses: LinePart = { text: "this node's addresses above", to: 'addresses' };
   if (o.twin)
-    return [
-      { text: 'One of ' },
-      addresses,
-      { text: ', encrypted inside the connection. Only through fronts it was checked on.' },
-    ];
+    return o.encrypted === false
+      ? [
+          { text: 'One of ' },
+          addresses,
+          {
+            text: '. This is the mode’s encrypted twin, but its transport no longer encrypts: it was changed on the backend. FCP stops handing it out.',
+          },
+        ]
+      : [
+          { text: 'One of ' },
+          addresses,
+          { text: ', encrypted inside the connection. Only through fronts it was checked on.' },
+        ];
   if (!o.reality) return [{ text: 'One of ' }, addresses, { text: '.' }];
   const sni: LinePart[] =
     o.list === 'unknown'

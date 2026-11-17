@@ -872,6 +872,25 @@ describe('the node page', () => {
   });
 });
 
+describe('the node page, after an edit on the backend', () => {
+  test('the recorded twin address stays FCP’s when someone moves it to another transport', async () => {
+    const s = await seed();
+    await bringToServing(s);
+    const host = s.twinHosts()[0]!;
+    // A panel edit binds the twin's address to the node's own transport.
+    host.inbound = {
+      configProfileUuid: s.panel.profiles[0].uuid,
+      configProfileInboundUuid: s.own,
+    };
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const tree = ServerTree.parse(await (await s.call('GET', 'tree')).json());
+    const own = tree.nodes.find((n) => n.name === NODE)!.transports.find((t) => t.tag === OWN_TAG)!;
+    const moved = own.addresses.find((a) => a.addressUuid === host.uuid)!;
+    // Still not an address to change or delete by hand.
+    expect(moved.fcpOwned).toBe(true);
+  });
+});
+
 describe('the node behind its fronts', () => {
   test('only a twin may come or go on it, and nothing else with it', async () => {
     const s = await seed();

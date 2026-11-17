@@ -433,7 +433,7 @@
                           (t) => t.transportUuid === inbound.transportUuid,
                         )?.list ?? null)}
                   <p class="mt-1" data-testid="fronted-addresses">
-                    {#each frontedAddressWords( { reality: inbound.security === 'reality', list, twin: inbound.twin } ) as part, i (i)}{#if part.to === 'list' && list && list !== 'unknown'}<Link
+                    {#each frontedAddressWords( { reality: inbound.security === 'reality', list, twin: inbound.twin, encrypted: inbound.encrypted } ) as part, i (i)}{#if part.to === 'list' && list && list !== 'unknown'}<Link
                           href={edgesPaths.family(list.slug)}
                           class="text-primary underline underline-offset-4">{part.text}</Link
                         >{:else if part.to === 'addresses' || part.to === 'snis'}{@const to =

@@ -456,15 +456,18 @@ export const tree = internalQuery({
       hosts
         .filter(
           (h) =>
+            // The address FCP recorded for the node's twin is FCP's wherever a
+            // panel edit moved it: it never becomes one to edit by hand.
             h.hostUuid === twinHostOf.get(n.name) ||
-            // Written, its uuid not recorded yet: on a twin's transport, under
-            // the form FCP names the node's origin addresses by.
-            isUnrecordedTwinHost(h, {
-              twinUuid: h.configProfileInboundUuid,
-              originRemark: relayRemarkRegex(originNameOf(n.name)),
-            }),
+            // Written, its uuid not recorded yet: only on a twin's transport,
+            // under the form FCP names the node's origin addresses by.
+            (!!h.configProfileInboundUuid &&
+              twinUuids.has(h.configProfileInboundUuid) &&
+              isUnrecordedTwinHost(h, {
+                twinUuid: h.configProfileInboundUuid,
+                originRemark: relayRemarkRegex(originNameOf(n.name)),
+              })),
         )
-        .filter((h) => !!h.configProfileInboundUuid && twinUuids.has(h.configProfileInboundUuid))
         .map((h) => h.hostUuid);
     const profileBy = new Map(profiles.map((p) => [p.profileUuid, p]));
     const usedProfiles = new Set<string>();
