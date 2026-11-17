@@ -66,6 +66,7 @@ import {
   accessLog,
   clientReachesDirectly,
   env,
+  clientLog,
   fetchThroughClientEventually,
   forwarderConnections,
   forwarderStats,
@@ -1265,7 +1266,7 @@ describe.skipIf(!ENABLED)(
               accessLog('ingress').filter(
                 (e) => e.uri === path && e.host === edge.address && e.status === 101,
               ).length;
-            let twinBefore = upgradesAt(env.wsTwinPath);
+            const twinBefore = upgradesAt(env.wsTwinPath);
             await connectThrough(
               'mihomo',
               { body: mihomo, entry: encrypted!.name },
@@ -1282,15 +1283,46 @@ describe.skipIf(!ENABLED)(
               node.addr.origin,
             );
             expect(upgradesAt(env.wsPath)).toBeGreaterThan(plainBefore);
-            // Left to itself (the body's own ordered group), it takes the encrypted one.
-            twinBefore = upgradesAt(env.wsTwinPath);
-            await connectThrough(
-              'mihomo',
-              { body: mihomo, entry: AUTO_GROUP_NAME },
-              edge,
-              node.addr.origin,
-            );
-            expect(upgradesAt(env.wsTwinPath)).toBeGreaterThan(twinBefore);
+            // Left to itself (the body's own ordered group), it takes the
+            // encrypted one. Both paths see upgrades then (the group checks
+            // every member), so the ingress cannot say which entry carried the
+            // page: the engine's own connection log does.
+            {
+              const { config, port } = sandboxServed('mihomo', mihomo, AUTO_GROUP_NAME, {
+                groupTestUrl: `http://${env.originPage}/generate_204`,
+                log: 'info',
+              });
+              // The group is FCP's but for where its checks go.
+              const groupOf = (text: string) => {
+                const g = (YAML.parse(text) as { 'proxy-groups': Array<Record<string, unknown>> })[
+                  'proxy-groups'
+                ].find((x) => x.name === AUTO_GROUP_NAME)!;
+                return { type: g.type, proxies: g.proxies };
+              };
+              expect(groupOf(config)).toEqual(groupOf(mihomo));
+              expect(servedEntries('mihomo', config).map((e) => e.raw)).toEqual(
+                servedEntries('mihomo', mihomo).map((e) => e.raw),
+              );
+              await startClient(config, port, 'mihomo', { log: true });
+              try {
+                const page = await fetchThroughClientEventually(port, 45_000);
+                expect(page?.token, 'no page through the group').toBe(env.originToken);
+                expect(page!.peer).toBe(node.addr.origin);
+              } finally {
+                stopClient();
+              }
+              // "[TCP] <client> --> <page>:80 match Match using <group>[<proxy>]"
+              const carried = clientLog()
+                .split('\n')
+                .filter((l) => l.includes(`--> ${env.originPage}:80`) && l.includes(' using '));
+              expect(carried.length, 'the engine logged no connection to the page').toBeGreaterThan(
+                0,
+              );
+              for (const line of carried)
+                expect(line, 'the page went over another entry than the encrypted one').toContain(
+                  `using ${AUTO_GROUP_NAME}[${encrypted!.name}]`,
+                );
+            }
 
             // 5. sing-box cannot speak the layer: its body carries the plain
             //    entry alone, and still connects.
