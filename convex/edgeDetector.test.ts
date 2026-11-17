@@ -162,6 +162,7 @@ async function handed(
   relayId: Id<'relays'>,
   primaryEdgeId: Id<'edges'>,
   backupEdgeId?: Id<'edges'>,
+  twin: { primaryTwin?: 'fallback' | 'only'; backupTwin?: 'fallback' | 'only' } = {},
 ) {
   await t.run(async (ctx) => {
     const epoch = (await ctx.db.get(relayId))!.publicationEpoch;
@@ -174,10 +175,82 @@ async function handed(
         listenerKeys: ['a'],
         primaryEdgeId,
         backupEdgeId,
+        ...twin,
       },
     });
   });
 }
+
+describe('a report of an address the app holds twice (encrypted, and plain for old apps)', () => {
+  test('the encrypted entry never counts against the address; the plain one does', async () => {
+    const s = await seed();
+    const rows = () => s.t.run((ctx) => ctx.db.query('issueReports').collect());
+    // An old app: the encrypted entry fails whatever the address does.
+    const old = await member(s.t, s.tierId, s.serverId, 1);
+    await handed(s.t, old.subId, s.relayId, s.edgeA, s.edgeB, { primaryTwin: 'fallback' });
+    expect(
+      (
+        await report(s.t, old.cookie, {
+          reason: 'cant-connect',
+          connection: 'primary',
+          connectionEntry: 'encrypted',
+        })
+      ).status,
+    ).toBe(200);
+    expect((await rows())[0]).toMatchObject({
+      relaySlug: 'node-one',
+      connectionChoice: 'primary',
+      connectionEntry: 'encrypted',
+      // Still a member's report of this node, counted once.
+      detectorWeight: 1,
+    });
+    expect((await rows())[0]!.relayEdgeId).toBeUndefined();
+
+    // A page from before the question existed: the same uncertainty.
+    const stale = await member(s.t, s.tierId, s.serverId, 2);
+    await handed(s.t, stale.subId, s.relayId, s.edgeA, s.edgeB, { primaryTwin: 'fallback' });
+    await report(s.t, stale.cookie, { reason: 'cant-connect', connection: 'primary' });
+    expect((await rows())[1]!.relayEdgeId).toBeUndefined();
+    expect((await rows())[1]!.connectionEntry).toBeUndefined();
+
+    // The plain entry failed too: that is the address.
+    const tried = await member(s.t, s.tierId, s.serverId, 3);
+    await handed(s.t, tried.subId, s.relayId, s.edgeA, s.edgeB, { primaryTwin: 'fallback' });
+    await report(s.t, tried.cookie, {
+      reason: 'cant-connect',
+      connection: 'primary',
+      connectionEntry: 'plain',
+    });
+    expect((await rows())[2]).toMatchObject({ connectionEntry: 'plain', detectorWeight: 1 });
+    expect((await rows())[2]!.relayEdgeId).toBe(s.edgeA);
+
+    // Anything but the two words is dropped, and changes nothing.
+    const odd = await member(s.t, s.tierId, s.serverId, 4);
+    await handed(s.t, odd.subId, s.relayId, s.edgeA, s.edgeB);
+    await report(s.t, odd.cookie, {
+      reason: 'cant-connect',
+      connection: 'primary',
+      connectionEntry: 'everything',
+    });
+    expect((await rows())[3]!.connectionEntry).toBeUndefined();
+    expect((await rows())[3]!.relayEdgeId).toBe(s.edgeA);
+
+    // Before a build without these fields: they are stripped, nothing else is.
+    const kept = (await rows()).map(({ connectionEntry, ...rest }) => (void connectionEntry, rest));
+    expect(await s.t.action(internal.edgeRender.clearEntryFactsForRollback, {})).toEqual({
+      snapshots: 3,
+      reports: 2,
+    });
+    expect(await rows()).toEqual(kept);
+    const snap = (await s.t.run((ctx) => ctx.db.get(old.subId)))!.lastRender!;
+    expect(snap).not.toHaveProperty('primaryTwin');
+    expect(snap).toMatchObject({ primaryEdgeId: s.edgeA, backupEdgeId: s.edgeB });
+    expect(await s.t.action(internal.edgeRender.clearEntryFactsForRollback, {})).toEqual({
+      snapshots: 0,
+      reports: 0,
+    });
+  });
+});
 
 describe('origin attribution on member reports', () => {
   test('a report carries the origin slug; the edge only for an explicit choice; the first report per window weighs 1', async () => {

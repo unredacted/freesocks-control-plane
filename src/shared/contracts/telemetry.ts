@@ -127,6 +127,8 @@ export const AdminTelemetryEvents = z.object({
        *  0 not). Null on other rows. Defaulted for skew. */
       relaySlug: z.string().nullable().optional().default(null),
       connectionChoice: z.string().nullable().optional().default(null),
+      /** Which of that connection's two entries (`encrypted` | `plain`), where the app held both. */
+      connectionEntry: z.string().nullable().optional().default(null),
       relayEdgeId: z.string().nullable().optional().default(null),
       detectorWeight: z.number().nullable().optional().default(null),
     }),

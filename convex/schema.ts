@@ -918,6 +918,19 @@ export default defineSchema({
         // Whether the body got an auto group (its further server names and
         // order, lib/edges/render.ts `namesInBody`); absent on older snapshots.
         autoGroup: v.optional(v.boolean()),
+        // How each endpoint was handed out where its listener has an encrypted
+        // twin (docs/backends.md "VLESS Encryption"): `fallback` = the encrypted
+        // entry with the plain one behind it, `only` = the encrypted entry
+        // alone, `plain` = the plain entry alone. Absent = the listener has no
+        // twin, OR the snapshot is from before this fact was recorded (told
+        // apart in convex/edgeAttribution.ts). Read by the report dialog and
+        // by a report's attribution.
+        primaryTwin: v.optional(
+          v.union(v.literal('fallback'), v.literal('only'), v.literal('plain')),
+        ),
+        backupTwin: v.optional(
+          v.union(v.literal('fallback'), v.literal('only'), v.literal('plain')),
+        ),
         // The member's STORED country the body was shaped for (never a
         // transient reading), and, when their edges were ordered by it, the
         // tier each endpoint came from there (0 proven, 1 not known, 2 blocked).
@@ -5572,6 +5585,9 @@ export default defineSchema({
     // Which connection the member said they were using; the edge id is set ONLY
     // when that choice resolves to one edge (never inferred from the primary).
     connectionChoice: v.optional(v.string()),
+    // Which of that connection's two entries, where the member's app held an
+    // encrypted one and a plain one (`encrypted` | `plain`; convex/edgeAttribution.ts).
+    connectionEntry: v.optional(v.string()),
     relayEdgeId: v.optional(v.string()),
     // FCP has not observed a fronted delivery of content generated after the
     // origin's last rotation for this key (an approximation, see docs/edges.md).

@@ -12,7 +12,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
-import { resolveEdgeAttribution } from './edgeAttribution';
+import { entryNamesEdge, resolveEdgeAttribution, sanitizeConnectionEntry } from './edgeAttribution';
 import { publishedEdgesOf } from './edgeRender';
 import { relayForBackendNode } from './relays';
 import { assignEndpoints } from './lib/edges/assignment';
@@ -249,9 +249,20 @@ describe('resolveEdgeAttribution: which origin, and whether the member has the c
 });
 
 describe('resolveEdgeAttribution reads the persisted render snapshot, never a recomputation', () => {
+  const TWIN_BINDING = {
+    inboundTag: 'TWIN',
+    configProfileUuid: '00000000-0000-4000-8000-0000000000aa',
+    configProfileInboundUuid: '00000000-0000-4000-8000-0000000000ab',
+  };
   const snapshot = async (
     s: Awaited<ReturnType<typeof seed>>,
-    snap: { primary?: Id<'edges'>; backup?: Id<'edges'>; epochDelta?: number },
+    snap: {
+      primary?: Id<'edges'>;
+      backup?: Id<'edges'>;
+      epochDelta?: number;
+      primaryTwin?: 'fallback' | 'only' | 'plain';
+      backupTwin?: 'fallback' | 'only' | 'plain';
+    },
   ) =>
     s.t.run(async (ctx) => {
       const relay = (await ctx.db.get(s.relayId))!;
@@ -263,6 +274,8 @@ describe('resolveEdgeAttribution reads the persisted render snapshot, never a re
           listenerKeys: ['u'],
           primaryEdgeId: snap.primary,
           backupEdgeId: snap.backup,
+          ...(snap.primaryTwin ? { primaryTwin: snap.primaryTwin } : {}),
+          ...(snap.backupTwin ? { backupTwin: snap.backupTwin } : {}),
         },
       });
     });
@@ -301,6 +314,97 @@ describe('resolveEdgeAttribution reads the persisted render snapshot, never a re
     });
   });
 
+  // An address the body handed out twice (docs/backends.md "VLESS Encryption"):
+  // the encrypted entry first, the plain one behind it. An old app fails on
+  // the encrypted entry whatever the address does.
+  test('an address handed out encrypted with a plain entry behind it: only a report of the PLAIN entry names it', async () => {
+    const s = await seed();
+    await snapshot(s, { primary: s.edges[2], backup: s.edges[0], primaryTwin: 'fallback' });
+    await s.t.run(async (ctx) => {
+      const sub = (await ctx.db.get(s.subId))!;
+      const edgeOf = async (choice: 'primary' | 'backup', entry: 'encrypted' | 'plain' | null) =>
+        (await resolveEdgeAttribution(ctx.db, sub, choice, s.now, entry))!.relayEdgeId;
+      // The plain entry failed: the address is at fault.
+      expect(await edgeOf('primary', 'plain')).toBe(s.edges[2]);
+      // The encrypted one, or a report that does not say which (an older
+      // page): the origin only, never a mark against a healthy address.
+      expect(await edgeOf('primary', 'encrypted')).toBeNull();
+      expect(await edgeOf('primary', null)).toBeNull();
+      // Still attributed to the origin, so the report is not lost.
+      expect(
+        await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now, 'encrypted'),
+      ).toMatchObject({ relaySlug: 'node-one', relayEdgeId: null });
+      // The other address has one entry: as ever, whatever the report claims.
+      expect(await edgeOf('backup', null)).toBe(s.edges[0]);
+      expect(await edgeOf('backup', 'encrypted')).toBe(s.edges[0]);
+    });
+  });
+
+  test('an address handed out encrypted ALONE (a family known to speak it) is named like any other', async () => {
+    const s = await seed();
+    await snapshot(s, { primary: s.edges[0], primaryTwin: 'only' });
+    await s.t.run(async (ctx) => {
+      const sub = (await ctx.db.get(s.subId))!;
+      for (const entry of ['encrypted', null] as const)
+        expect(
+          (await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now, entry))!.relayEdgeId,
+        ).toBe(s.edges[0]);
+      expect((await resolveEdgeAttribution(ctx.db, sub, 'auto', s.now))!.relayEdgeId).toBe(
+        s.edges[0],
+      );
+    });
+  });
+
+  test('`auto` with one address but two entries of it names nothing, unless the plain one is said', async () => {
+    const s = await seed();
+    await snapshot(s, { primary: s.edges[0], primaryTwin: 'fallback' });
+    await s.t.run(async (ctx) => {
+      const sub = (await ctx.db.get(s.subId))!;
+      expect((await resolveEdgeAttribution(ctx.db, sub, 'auto', s.now))!.relayEdgeId).toBeNull();
+      expect((await resolveEdgeAttribution(ctx.db, sub, 'auto', s.now, 'plain'))!.relayEdgeId).toBe(
+        s.edges[0],
+      );
+    });
+  });
+
+  test('a snapshot from before the fact was recorded says nothing about an address a twin goes through', async () => {
+    const s = await seed();
+    // The twin is handed out through edges[0] (and not through edges[1]).
+    await s.t.run(async (ctx) => {
+      const listener = (await ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', s.relayId))
+        .first())!;
+      await ctx.db.patch(listener._id, {
+        encryptedTwin: {
+          key: 'e',
+          panelBinding: TWIN_BINDING,
+          edges: [{ edgeId: s.edges[0], checkedAt: s.now }],
+        },
+      });
+    });
+    const named = (choice: 'primary' | 'backup' | 'auto', entry: 'encrypted' | 'plain' | null) =>
+      s.t.run(async (ctx) => {
+        const sub = (await ctx.db.get(s.subId))!;
+        return (await resolveEdgeAttribution(ctx.db, sub, choice, s.now, entry))!.relayEdgeId;
+      });
+    // Written by a build that did not record it: the member may hold the
+    // address twice, and nothing they say tells which entry failed.
+    await snapshot(s, { primary: s.edges[0], backup: s.edges[1] });
+    for (const entry of [null, 'encrypted', 'plain'] as const)
+      expect(await named('primary', entry)).toBeNull();
+    // The other address carries no twin: named as ever.
+    expect(await named('backup', null)).toBe(s.edges[1]);
+    await snapshot(s, { primary: s.edges[0] });
+    expect(await named('auto', null)).toBeNull();
+    // A render since says it: the plain entry alone is the address.
+    await snapshot(s, { primary: s.edges[0], backup: s.edges[1], primaryTwin: 'plain' });
+    expect(await named('primary', null)).toBe(s.edges[0]);
+    await snapshot(s, { primary: s.edges[0], backup: s.edges[1], primaryTwin: 'fallback' });
+    expect(await named('primary', 'plain')).toBe(s.edges[0]);
+    expect(await named('primary', 'encrypted')).toBeNull();
+  });
+
   test('no snapshot, or one from an older epoch, stays at origin level', async () => {
     const s = await seed();
     await s.t.run(async (ctx) => {
@@ -315,5 +419,28 @@ describe('resolveEdgeAttribution reads the persisted render snapshot, never a re
       const out = await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now);
       expect(out).toMatchObject({ relayEdgeId: null, refreshNotObserved: true });
     });
+  });
+});
+
+describe('which entry of an address a report names', () => {
+  test('entryNamesEdge', () => {
+    // One entry: the address.
+    expect(entryNamesEdge(undefined, null)).toBe(true);
+    expect(entryNamesEdge(undefined, 'encrypted')).toBe(true);
+    expect(entryNamesEdge('plain', null)).toBe(true);
+    // Encrypted alone: the address.
+    expect(entryNamesEdge('only', null)).toBe(true);
+    expect(entryNamesEdge('only', 'encrypted')).toBe(true);
+    // Both: only the plain one.
+    expect(entryNamesEdge('fallback', 'plain')).toBe(true);
+    expect(entryNamesEdge('fallback', 'encrypted')).toBe(false);
+    expect(entryNamesEdge('fallback', null)).toBe(false);
+  });
+
+  test('only the two words are taken from a request', () => {
+    expect(sanitizeConnectionEntry('plain')).toBe('plain');
+    expect(sanitizeConnectionEntry(' Encrypted ')).toBe('encrypted');
+    for (const raw of ['', 'both', 'primary', null, undefined, 3, {}])
+      expect(sanitizeConnectionEntry(raw)).toBeNull();
   });
 });

@@ -1020,8 +1020,11 @@ transport, which refuses it: only the ordered group (or picking a `… · Old ap
 gets that member through. With Xray, the encrypted entry spoken plain, or with another key, does
 not connect.
 
-Not done yet: the names a member can pick in a report do not list the plain twins, no GUI app
-has been run against an encrypted entry.
+A member's report names the entry it is about, and a failed encrypted entry is never counted
+against the front while the plain one is in the same body ([edges.md](edges.md) § "An address
+the app holds twice"): an old app fails there whatever the front does.
+
+Not done yet: no GUI app has been run against an encrypted entry.
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the

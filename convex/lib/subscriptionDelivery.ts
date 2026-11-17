@@ -218,6 +218,9 @@ export interface RenderSnapshot {
   backupEdgeId?: Id<'edges'>;
   /** Whether the body got an auto group (its further server names and order); absent on older snapshots. */
   autoGroup?: boolean;
+  /** How each endpoint was handed out where its listener has an encrypted twin (renderPipeline.ts). */
+  primaryTwin?: 'fallback' | 'only' | 'plain';
+  backupTwin?: 'fallback' | 'only' | 'plain';
   /**
    * The member's STORED country the body was shaped for (names, and edges when
    * steered); never a transient reading (docs/privacy.md).
@@ -507,6 +510,8 @@ export async function deliverBody(
           primaryEdgeId: (out.snapshot.primaryEdgeId as Id<'edges'> | null) ?? undefined,
           backupEdgeId: (out.snapshot.backupEdgeId as Id<'edges'> | null) ?? undefined,
           autoGroup: out.snapshot.autoGroup,
+          ...(out.snapshot.primaryTwin ? { primaryTwin: out.snapshot.primaryTwin } : {}),
+          ...(out.snapshot.backupTwin ? { backupTwin: out.snapshot.backupTwin } : {}),
           ...(stored ? { country: stored } : {}),
           ...(stored && out.snapshot.primaryTier !== undefined
             ? { primaryTier: out.snapshot.primaryTier }

@@ -20,7 +20,7 @@ import { suggestionCountry } from './lib/memberCountry';
 import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
-import { sanitizeConnectionChoice } from './edgeAttribution';
+import { sanitizeConnectionChoice, sanitizeConnectionEntry } from './edgeAttribution';
 import {
   deliverBody,
   finishMemberBody,
@@ -1994,6 +1994,7 @@ http.route({
       reason?: string;
       telemetry?: unknown;
       connection?: unknown;
+      connectionEntry?: unknown;
     }>(req);
     if (!isReportIssueReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
@@ -2023,6 +2024,7 @@ http.route({
       detectedCity: detected.city,
       detectedAsn: detected.asn,
       connectionChoice: sanitizeConnectionChoice(body.connection),
+      connectionEntry: sanitizeConnectionEntry(body.connectionEntry),
       markKey,
     });
     return json(result);

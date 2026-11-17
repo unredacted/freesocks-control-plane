@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**234 of 837 strings are missing** (the app currently shows English for
+**235 of 838 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -1025,7 +1025,7 @@ review.
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
 
-## `report` — Miscellaneous strings. *(19 missing)*
+## `report` — Miscellaneous strings. *(20 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -1035,6 +1035,7 @@ review.
 | `report.reasonLegend` | What's the problem? | ⚠️ **MISSING** |
 | `report.connectionLegend` | Which connection were you using? | ⚠️ **MISSING** |
 | `report.connectionUnsure` | Not sure | ⚠️ **MISSING** |
+| `report.connectionOldAppsHint` | Your app has two entries for each address. If the first one does not connect, try the one marked Old apps before you report. | ⚠️ **MISSING** |
 | `report.reasonCantConnect` | I can't connect at all | ⚠️ **MISSING** |
 | `report.reasonSlow` | It connects, but it's very slow | ⚠️ **MISSING** |
 | `report.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |

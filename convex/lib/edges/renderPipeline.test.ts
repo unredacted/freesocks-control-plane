@@ -564,7 +564,70 @@ describe('applyEdgeRender: a listener the body holds only encrypted', () => {
       expect(out.delivery).toEqual({ kind: 'serve' });
       expect(out.snapshot.listenerKeys).toEqual(['a', 's']);
       primaries.add(out.snapshot.primaryEdgeId);
+      // The snapshot says how each address was handed out: the twin's edge
+      // encrypted alone (the body has no plain entry of it), the other plain.
+      const twinOfEdge = { [out.snapshot.primaryEdgeId ?? '']: out.snapshot.primaryTwin };
+      if (out.snapshot.backupEdgeId)
+        twinOfEdge[out.snapshot.backupEdgeId] = out.snapshot.backupTwin;
+      if ('eA' in twinOfEdge) expect(twinOfEdge.eA).toBe('only');
+      if ('eS' in twinOfEdge) expect(twinOfEdge.eS).toBeUndefined();
     }
     expect(primaries).toEqual(new Set(['eA', 'eS']));
+  });
+});
+
+// The snapshot of a body that carries an address twice: what the report
+// dialog lists and what a report's attribution reads (edgeAttribution.ts).
+describe('applyEdgeRender: the snapshot of a twin', () => {
+  const TWIN_REMARK = `${NODE}-relay-e`;
+  const encryption = clientEncryption(generateVlessEncryption().decryption)!;
+  const plainLink = `vless://${UUID}@${ORIGIN}:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=target.example&fp=chrome&pbk=PUBKEY&sid=abcd&type=tcp#${encodeURIComponent(`${NODE}-relay-a`)}`;
+  const twinLink = `vless://${UUID}@${ORIGIN}:443?encryption=${encryption}&flow=xtls-rprx-vision&security=reality&sni=target.example&fp=chrome&pbk=PUBKEY&sid=abcd&type=tcp#${encodeURIComponent(TWIN_REMARK)}`;
+  const body = [plainLink, twinLink].join('\n');
+  const run = (encryptionRule: 'plain' | 'prefer' | 'only' | undefined, edgeIds?: string[]) =>
+    applyEdgeRender(
+      rctx([edgeA], {
+        matchers: [
+          {
+            ...matchers[0]!,
+            encrypted: { remarks: [TWIN_REMARK], ...(edgeIds ? { edgeIds } : {}) },
+          },
+        ],
+        rule: { ...rule, ...(encryptionRule ? { encryption: encryptionRule } : {}) },
+      }),
+      body,
+      key(1),
+      { now: NOW },
+    );
+  const encryptedIn = (text: string) => (text.match(/encryption=mlkem768x25519plus/g) ?? []).length;
+  const plainIn = (text: string) => (text.match(/encryption=none/g) ?? []).length;
+
+  test('says exactly what the body carries, under every rule', () => {
+    const prefer = run(undefined);
+    expect(prefer.snapshot.primaryTwin).toBe('fallback');
+    expect([encryptedIn(prefer.body), plainIn(prefer.body)]).toEqual([1, 1]);
+
+    const only = run('only');
+    expect(only.snapshot.primaryTwin).toBe('only');
+    expect([encryptedIn(only.body), plainIn(only.body)]).toEqual([1, 0]);
+
+    // Said, not left out: an absent fact is a snapshot from before it existed.
+    const plain = run('plain');
+    expect(plain.snapshot.primaryTwin).toBe('plain');
+    expect([encryptedIn(plain.body), plainIn(plain.body)]).toEqual([0, 1]);
+  });
+
+  test('a listener with no twin says nothing: there is nothing to tell apart', () => {
+    const out = applyEdgeRender(rctx([edgeA]), plainLink, key(1), { now: NOW });
+    expect(out.snapshot.primaryEdgeId).toBe('eA');
+    expect(out.snapshot).not.toHaveProperty('primaryTwin');
+  });
+
+  test('an address the twin was not checked through is plain in the body and in the snapshot', () => {
+    const unchecked = run(undefined, ['another-edge']);
+    expect(unchecked.snapshot.primaryTwin).toBe('plain');
+    expect([encryptedIn(unchecked.body), plainIn(unchecked.body)]).toEqual([0, 1]);
+    const checked = run(undefined, ['eA']);
+    expect(checked.snapshot.primaryTwin).toBe('fallback');
   });
 });
