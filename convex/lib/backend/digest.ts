@@ -24,6 +24,13 @@
  *    them returns the node's endpoints to "needs a test". An unmanaged node's
  *    confirmations do not carry it.
  *
+ * A transport running VLESS Encryption (vlessEncryption.ts) holds one more
+ * secret, its `settings.decryption`: redacted like a key (the plain `none`
+ * stays visible, so a plain profile hashes as it always did), covered by the
+ * change token, and given a keyed digest of its own
+ * (`vlessEncryptionAuthDigest`) that moves whenever a member's copied entry
+ * would stop matching.
+ *
  * The backend NORMALISES a config on write (measured, docs/backends.md
  * "Management contract"): it trims each `serverNames` entry and clears
  * `settings.clients`. `normalizeForToken` applies the same two rules, so a
@@ -36,6 +43,11 @@
 import { x25519 } from '@noble/curves/ed25519.js';
 import { hmacSha256Hex, sha256Hex } from '../crypto';
 import { certificatePins } from './hysteriaCert';
+import {
+  isVlessEncrypted,
+  vlessEncryptionIdentity,
+  type VlessEncryptionIdentity,
+} from './vlessEncryption';
 
 /** What replaces a secret leaf in the redacted view. */
 export const REDACTED = '[redacted]';
@@ -59,6 +71,8 @@ const SECRET_KEYS = new Set([
   'psk',
   'seed',
   'auth',
+  // A VLESS inbound's server string (its private half); `none` is no secret.
+  'decryption',
 ]);
 /** A belt over the list: anything that names itself a secret is treated as one. */
 const SECRET_KEY_RE = /(private|secret|passw|token|seed|credential)/i;
@@ -83,10 +97,15 @@ export function canonicalJson(v: unknown): string {
   return JSON.stringify(v ?? null);
 }
 
+/** A `decryption` that says "plain" (`none`): a fact, not a secret. */
+const isPlainDecryption = (k: string, val: unknown): boolean =>
+  k.toLowerCase() === 'decryption' && typeof val === 'string' && !isVlessEncrypted(val);
+
 /**
  * The config with every secret leaf replaced by a marker. An empty secret
- * stays visibly empty (`[]` / `''`): "no clients" and "no short ids" are facts
- * an operator may see, the values are not.
+ * stays visibly empty (`[]` / `''`, and a VLESS transport's `decryption:
+ * 'none'`): "no clients", "no short ids" and "not encrypted" are facts an
+ * operator may see, the values are not.
  */
 export function redactConfig(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(redactConfig);
@@ -95,6 +114,7 @@ export function redactConfig(v: unknown): unknown {
   for (const [k, val] of Object.entries(v)) {
     if (!isSecretKey(k)) out[k] = redactConfig(val);
     else if (Array.isArray(val)) out[k] = val.length === 0 ? [] : REDACTED;
+    else if (isPlainDecryption(k, val)) out[k] = val;
     else out[k] = val === '' || val === null || val === undefined ? val : REDACTED;
   }
   return out;
@@ -243,6 +263,44 @@ export async function hysteriaAuthDigest(
     serverName,
     alpn,
     obfs,
+  };
+}
+
+/**
+ * The VLESS Encryption identity of one VLESS inbound: how the handshake looks,
+ * what the node is verified by, the client string every member entry carries
+ * (all public: the string is in every share link, like a REALITY public key),
+ * and a keyed digest of that string.
+ */
+export interface VlessEncryptionAuth {
+  /** Null when the server string is not one FCP can read: members' entries cannot be predicted. */
+  digest: string | null;
+  mode: VlessEncryptionIdentity['mode'] | null;
+  auth: VlessEncryptionIdentity['auth'] | null;
+  /** The `encryption` of a member entry, derived from the server string. */
+  encryption: string | null;
+}
+
+/**
+ * The VLESS Encryption identity of an inbound's `settings`, or null for a
+ * plain transport (`decryption` absent, empty or `none`). The digest moves on
+ * a new key, mode, padding or ticket setting: every change a member's copied
+ * entry would stop matching. Nothing of the server string's private half is
+ * returned.
+ */
+export async function vlessEncryptionAuthDigest(
+  settings: unknown,
+  key: string,
+): Promise<VlessEncryptionAuth | null> {
+  const decryption = isObj(settings) ? settings.decryption : undefined;
+  if (!isVlessEncrypted(decryption)) return null;
+  const id = vlessEncryptionIdentity(decryption);
+  if (!id) return { digest: null, mode: null, auth: null, encryption: null };
+  return {
+    digest: await hmacSha256Hex(key, `fcp.panel.vless-encryption.v1\n${id.encryption}`),
+    mode: id.mode,
+    auth: id.auth,
+    encryption: id.encryption,
   };
 }
 

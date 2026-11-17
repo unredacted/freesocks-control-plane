@@ -51,7 +51,13 @@ import type {
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry, SUBSCRIPTION_PASSTHROUGH_HEADERS } from './types';
 import { hostMapperJson } from '../backend/hostMapper';
-import { changeToken, hysteriaAuthDigest, realityAuthDigest, shapeHash } from '../backend/digest';
+import {
+  changeToken,
+  hysteriaAuthDigest,
+  realityAuthDigest,
+  shapeHash,
+  vlessEncryptionAuthDigest,
+} from '../backend/digest';
 import { applyPatchOps, type PatchOp } from '../backend/patchOps';
 import { PRIVACY_XRAY_LOG } from './xrayPrivacy';
 import { realityClientBoundsOf } from '../../../src/shared/contracts/realityClients';
@@ -1683,6 +1689,12 @@ export async function observeConfigProfile(
     // from the profile, are what members verify the node by.
     if (inbound.protocol === 'hysteria' || inbound.network === 'hysteria')
       out.hysteriaAuth = await hysteriaAuthDigest(obj(raw)?.streamSettings, digestKey);
+    // VLESS Encryption inside the stream: only whether and how, and a keyed
+    // digest. The server string itself stays in this scope.
+    if (inbound.protocol === 'vless') {
+      const enc = await vlessEncryptionAuthDigest(obj(raw)?.settings, digestKey);
+      if (enc) out.vlessEncryption = enc;
+    }
     inbounds.push(out);
   }
   return {

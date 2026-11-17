@@ -56,6 +56,14 @@ const observedInbound = v.object({
       obfs: v.boolean(),
     }),
   ),
+  vlessEncryption: v.optional(
+    v.object({
+      digest: nullableString,
+      mode: v.union(v.literal('native'), v.literal('xorpub'), v.literal('random'), v.null()),
+      auth: v.union(v.literal('mlkem768'), v.literal('x25519'), v.literal('mixed'), v.null()),
+      encryption: nullableString,
+    }),
+  ),
 });
 
 /** One Host as the provider reads it (`ObservedAddress`). */
@@ -102,6 +110,7 @@ export function toStoredInbound(i: ObservedTransport): StoredInbound {
   if (i.realityAuth) out.realityAuth = i.realityAuth;
   if (i.realityClients) out.realityClients = i.realityClients;
   if (i.hysteriaAuth) out.hysteriaAuth = i.hysteriaAuth;
+  if (i.vlessEncryption) out.vlessEncryption = i.vlessEncryption;
   return out;
 }
 

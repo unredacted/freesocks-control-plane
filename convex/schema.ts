@@ -3747,6 +3747,19 @@ export default defineSchema({
             obfs: v.boolean(),
           }),
         ),
+        // A VLESS transport running VLESS Encryption inside its stream
+        // (lib/backend/vlessEncryption.ts): how the handshake looks, what the
+        // node is verified by, the client string members hold (public: it is
+        // in every share link, about 1.6 kB) and a keyed digest of it. Absent
+        // on a plain transport. Never the server string.
+        vlessEncryption: v.optional(
+          v.object({
+            digest: v.union(v.string(), v.null()),
+            mode: v.union(v.literal('native'), v.literal('xorpub'), v.literal('random'), v.null()),
+            auth: v.union(v.literal('mlkem768'), v.literal('x25519'), v.literal('mixed'), v.null()),
+            encryption: v.union(v.string(), v.null()),
+          }),
+        ),
       }),
     ),
     observedAt: v.number(),

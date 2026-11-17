@@ -862,6 +862,71 @@ single access key by address rewrite, there is no Host, delivery is a dynamic
 a **manual** address. `accessKeyDelivery` selects single-key rendering (one entry, no backup, no
 auto group). See `docs/edges.md` § "Origins and Host modes".
 
+## VLESS Encryption
+
+**Why.** VLESS has no encryption of its own. A REALITY transport is end to end between the
+member's app and the node, but a WebSocket transport behind a CDN is not: the CDN ends the
+member's TLS and opens a second one to the node, so in between it holds the VLESS stream in the
+clear: the member's id, the destination of every connection and any payload that is not itself
+encrypted. VLESS Encryption is Xray's answer: a second handshake **inside** the VLESS stream,
+between the app and the node's Xray, so whatever carries the stream sees ciphertext only. It
+changes nothing about what a carrier sees outside the stream (the member's address, timing and
+volume).
+
+**What it is** (`convex/lib/backend/vlessEncryption.ts`). One method exists,
+`mlkem768x25519plus`: every session's key exchange is the hybrid of X25519 and ML-KEM-768. The
+key held in the configuration is what the member's app verifies the **node** by, so a carrier
+cannot sit in the middle. Two kinds exist; FCP makes the first and reads both:
+
+| Key        | Server holds          | Client holds         | The node stays verified against a quantum computer |
+| ---------- | --------------------- | -------------------- | -------------------------------------------------- |
+| ML-KEM-768 | a 64-byte seed        | a 1184-byte key      | yes                                                |
+| X25519     | a 32-byte private key | a 32-byte public key | no (the session keys are hybrid either way)        |
+
+It is set with two strings, dot-separated:
+
+```
+server (an inbound's settings.decryption)
+  mlkem768x25519plus.<native|xorpub|random>.<ticket, e.g. 600s>[.<padding>...].<key>[.<key>...]
+client (every entry's encryption)
+  mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>...].<key>[.<key>...]
+```
+
+FCP writes `native` (the handshake as it is: the carrier already hides it from the network) with
+10-minute tickets (`600s`): a client resumes within that time (`0rtt`) and pays the full
+handshake otherwise. `0s` on the server turns tickets off and makes every client `1rtt`.
+
+**Measured facts the design rests on.**
+
+- **Xray 26.7.28**, the version the node image runs, has it (`xray vlessenc` prints a pair). The
+  unit test derives exactly the client strings that command printed, for both key kinds.
+- **An encrypted inbound refuses plain clients.** Xray's VLESS inbound runs the handshake on
+  every connection once `decryption` is set (`proxy/vless/inbound/inbound.go`). A transport is
+  encrypted or plain, never both, and `fallbacks` cannot be combined with it. So an existing
+  transport is **never switched**: that would cut off every member holding its plain entry until
+  their app fetched a new one, and an app that never refreshes for good. An encrypted transport
+  is added **beside** the plain one (`addInboundFromTemplate` with `encrypted`), and the plain
+  one keeps serving what members already hold.
+- **The backend derives the client string itself** from the stored server string and writes it
+  into the bodies it renders: link lists (`encryption=`), Clash (`encryption:`, Mihomo 1.19.13 or
+  newer) and Xray JSON. A **sing-box** body leaves the encrypted entry out: sing-box has no VLESS
+  Encryption. `clientEncryption` is the same derivation, and the management integration test
+  proves the two agree against a live backend: FCP adds the transport through its own guarded
+  edit, and the entries the backend then renders carry exactly FCP's string.
+- The ML-KEM-768 client key makes an entry about 1.6 kB longer.
+
+**The server string is a secret**, handled like a REALITY private key: made inside the attempt
+that writes it (`backendWrites.ts` `freshMaterial`), held in memory and the provider call only,
+never stored, logged or returned. In the digests (`convex/lib/backend/digest.ts`,
+[servers.md](servers.md) § "Nothing secret is read into FCP's database") it is redacted from the
+shape hash, covered by the change token, and reduced on the observed transport to what is public:
+the client string, how the handshake looks, what the node is verified by, and a keyed digest.
+
+**What exists today.** The key material, the template (`buildTransport` takes a server string
+for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, and
+the observation. Nothing sets the flag yet: no route accepts it, every profile FCP builds is
+plain, and delivery does not know the layer. Hysteria is not VLESS and takes no part.
+
 ## Sensitive data
 
 Backends need credentials that must never leak:
@@ -874,7 +939,7 @@ Backends need credentials that must never leak:
 - A Remnawave error normally also carries a short slice of the backend's own error text (useful:
   validation and auth messages). **Config-profile calls are the exception.** A profile holds the
   REALITY private key, the short ids and the client list, and a rejection can echo what was
-  submitted, so every such call is made with `sensitive: true` (`call()` in `remnawave.ts`): the
+  submitted (a VLESS Encryption server string too), so every such call is made with `sensitive: true` (`call()` in `remnawave.ts`): the
   response body is not read, the error is `Remnawave <status> on <path>` and nothing more, and a
   schema mismatch lists the failing paths without zod's messages (an enum or literal mismatch
   quotes the received value). Any new call whose request or response can carry key material must

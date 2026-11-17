@@ -15,6 +15,11 @@
  *                   transport on TCP 443, so a node may serve both (an extra
  *                   mode beside its primary one).
  *
+ * A VLESS transport (every shape but hysteria) may also run VLESS Encryption
+ * inside its stream (vlessEncryption.ts): given a server string, it is the
+ * transport's `settings.decryption`, and the transport then refuses every
+ * client that does not speak it. Without one the transport is plain (`none`).
+ *
  * Every REALITY transport listens on TCP 443 (a node serves ONE REALITY mode,
  * so they never collide) and carries its own key pair. The no-client-IP log block and
  * `statsUserOnline: false` are the posture `hardenXrayLoggingConfig` enforces,
@@ -22,6 +27,7 @@
  * and never read back out of the result by anything but the provider call.
  */
 import { PRIVACY_XRAY_LOG } from '../backends/xrayPrivacy';
+import type { VlessEncryptionMaterial } from './vlessEncryption';
 
 export type ModeTransport = 'reality' | 'xhttp-reality' | 'ws' | 'hysteria';
 export type ModeFronting = 'direct' | 'edge-l4' | 'edge-l7';
@@ -263,12 +269,18 @@ function hysteriaTransport(
   };
 }
 
-/** One transport of the profile, from its mode and (REALITY) its keys or (Hysteria) its material. */
+/**
+ * One transport of the profile, from its mode and (REALITY) its keys or
+ * (Hysteria) its material. `encryption` turns VLESS Encryption on for a VLESS
+ * transport: its server string is injected like a key and never stored.
+ */
 export function buildTransport(
   m: ModeTemplateInput,
   keys: { privateKey: string; shortIds: readonly string[] } | undefined,
   material?: HysteriaMaterial,
+  encryption?: VlessEncryptionMaterial,
 ): Record<string, unknown> {
+  const decryption = encryption?.decryption ?? 'none';
   const tag = transportTagOf(m.name);
   if (m.shape.transport === 'hysteria') {
     if (!material) throw new Error(`profile template: no certificate for ${m.slug}`);
@@ -281,7 +293,7 @@ export function buildTransport(
       listen: PROFILE_DEFAULTS.ws.listen,
       port: ws.port,
       protocol: 'vless',
-      settings: { clients: [], decryption: 'none' },
+      settings: { clients: [], decryption },
       streamSettings: { network: 'ws', security: 'none', wsSettings: { path: ws.path } },
       sniffing: SNIFFING,
     };
@@ -310,7 +322,7 @@ export function buildTransport(
     listen: PROFILE_DEFAULTS.publicListen,
     port: PROFILE_DEFAULTS.publicPort,
     protocol: 'vless',
-    settings: { clients: [], decryption: 'none' },
+    settings: { clients: [], decryption },
     streamSettings: stream,
     sniffing: SNIFFING,
   };

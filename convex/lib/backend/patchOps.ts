@@ -30,7 +30,11 @@
  * A REALITY transport made from a template carries its own key pair. The key is
  * generated inside the claimed attempt and INJECTED (`PatchMaterial`); without
  * it a placeholder stands in and `needsMaterial` says the result cannot be sent
- * and its token cannot be predicted.
+ * and its token cannot be predicted. An `encrypted` VLESS template (WebSocket
+ * or REALITY) carries a VLESS Encryption server string made the same way
+ * (lib/backend/vlessEncryption.ts): the transport is encrypted from birth,
+ * because an existing transport's is never switched (that would cut off every
+ * member holding its plain entry).
  */
 import { parseRealityTarget } from '../edges/inboundMapping';
 import { normalizeName } from '../edges/registration';
@@ -41,6 +45,7 @@ import {
   type HysteriaMaterial,
   type ModeTemplateInput,
 } from './profileTemplate';
+import type { VlessEncryptionMaterial } from './vlessEncryption';
 
 /**
  * The catalogue a new transport is made from: the shapes nodes are built for
@@ -55,8 +60,10 @@ export type TransportTemplate =
       target: string;
       serverNames: string[];
       acceptProxyProtocol: boolean;
+      /** VLESS Encryption inside the stream; absent = plain. */
+      encrypted?: true;
     }
-  | { kind: 'ws'; port: number; path: string }
+  | { kind: 'ws'; port: number; path: string; encrypted?: true }
   /**
    * Hysteria 2 (QUIC, UDP) on a direct node: the server name its certificate
    * is made for, and whether Salamander obfuscation is on. The certificate is
@@ -70,26 +77,64 @@ export type PatchOp =
   | { op: 'setInboundPort'; inboundTag: string; port: number }
   | { op: 'addInboundFromTemplate'; inboundTag: string; template: TransportTemplate };
 
-/** A REALITY transport's key material. */
+/** A REALITY transport's key material, with its VLESS Encryption server string when it is `encrypted`. */
 export interface RealityKeyMaterial {
   privateKey: string;
   shortIds: readonly string[];
+  decryption?: string;
 }
+
+/** What one new transport needs: a REALITY key, a Hysteria certificate, or (an encrypted WebSocket) a server string alone. */
+export type TransportMaterial = RealityKeyMaterial | HysteriaMaterial | VlessEncryptionMaterial;
 
 /**
  * Secret material for the transports an edit creates, by tag (a REALITY key, a
- * Hysteria certificate and its key): generated in the attempt immediately
- * before the write, held in memory only, never stored, logged or returned.
+ * Hysteria certificate and its key, a VLESS Encryption server string):
+ * generated in the attempt immediately before the write, held in memory only,
+ * never stored, logged or returned.
  */
-export type PatchMaterial = Readonly<Record<string, RealityKeyMaterial | HysteriaMaterial>>;
+export type PatchMaterial = Readonly<Record<string, TransportMaterial>>;
+
+/** Whether a template makes a transport whose secrets are made in the attempt. */
+export const templateNeedsKeys = (t: TransportTemplate): boolean =>
+  t.kind !== 'ws' || t.encrypted === true;
+
+const isHysteriaMaterial = (m: TransportMaterial): m is HysteriaMaterial => 'certificate' in m;
+const isRealityMaterial = (m: TransportMaterial): m is RealityKeyMaterial => 'privateKey' in m;
+const hasDecryption = (m: TransportMaterial): m is TransportMaterial & VlessEncryptionMaterial =>
+  'decryption' in m && typeof m.decryption === 'string' && m.decryption !== '';
+
+/** Whether `m` is everything `t` needs, and of its kind. */
+function materialFits(t: TransportTemplate, m: TransportMaterial | undefined): boolean {
+  if (!m) return false;
+  if (t.kind === 'hysteria') return isHysteriaMaterial(m);
+  if (isHysteriaMaterial(m)) return false;
+  if (t.encrypted && !hasDecryption(m)) return false;
+  return t.kind === 'ws' ? !isRealityMaterial(m) : isRealityMaterial(m);
+}
+
+const PLACEHOLDER = 'material-made-in-the-attempt';
+
+/** What stands in for material that is not there: the result cannot be sent. */
+function placeholderMaterial(t: TransportTemplate): TransportMaterial {
+  if (t.kind === 'hysteria')
+    return {
+      certificate: [PLACEHOLDER],
+      key: [PLACEHOLDER],
+      ...(t.salamander ? { obfsPassword: PLACEHOLDER } : {}),
+    };
+  const decryption = t.encrypted ? { decryption: PLACEHOLDER } : {};
+  if (t.kind === 'ws') return { decryption: PLACEHOLDER };
+  return { privateKey: PLACEHOLDER, shortIds: PROFILE_DEFAULTS.shortIds, ...decryption };
+}
 
 /** Whether an op list makes a node listen on a port it may not listen on yet. */
 export const opensPort = (ops: readonly PatchOp[]): boolean =>
   ops.some((o) => o.op === 'setInboundPort');
 
-/** Whether an op list creates a REALITY or Hysteria transport, whose secrets are made in the attempt. */
+/** Whether an op list creates a transport whose secrets are made in the attempt (REALITY, Hysteria, anything encrypted). */
 export const needsFreshKeys = (ops: readonly PatchOp[]): boolean =>
-  ops.some((o) => o.op === 'addInboundFromTemplate' && o.template.kind !== 'ws');
+  ops.some((o) => o.op === 'addInboundFromTemplate' && templateNeedsKeys(o.template));
 
 /** A transport tag as FCP writes one (a backend keys transports by tag, backend-wide). */
 export const TRANSPORT_TAG_RE = /^[A-Za-z0-9_-]{2,40}$/;
@@ -148,7 +193,7 @@ function checkTemplate(tag: string, raw: unknown): TransportTemplate {
     if (!PATH_RE.test(path)) return refuse('servers.template_invalid', 'A path starts with /');
     if (t.port < 1024)
       return refuse('servers.template_invalid', 'A loopback WebSocket port is 1024 or higher');
-    return { kind: 'ws', port: t.port, path };
+    return { kind: 'ws', port: t.port, path, ...(t.encrypted === true ? { encrypted: true } : {}) };
   }
   if (t.kind === 'hysteria') {
     const serverName = normalizeName(t.serverName);
@@ -187,6 +232,7 @@ function checkTemplate(tag: string, raw: unknown): TransportTemplate {
     target,
     serverNames: names,
     acceptProxyProtocol: t.acceptProxyProtocol === true,
+    ...(t.encrypted === true ? { encrypted: true as const } : {}),
   };
   // The setup's own validation, so an added transport is one setup can adopt.
   const bad = checkModes([templateMode(tag, out)]);
@@ -224,21 +270,22 @@ function templateMode(tag: string, t: TransportTemplate): ModeTemplateInput {
 export function templateTransport(
   tag: string,
   t: TransportTemplate,
-  material: RealityKeyMaterial | HysteriaMaterial | undefined,
+  material: TransportMaterial | undefined,
 ): Record<string, unknown> {
   const mode = templateMode(tag, t);
-  const built =
-    t.kind === 'hysteria'
-      ? buildTransport(
-          mode,
-          undefined,
-          material && 'certificate' in material ? material : undefined,
-        )
-      : buildTransport(
-          mode,
-          t.kind === 'ws' || !material || 'certificate' in material ? undefined : material,
-        );
-  return { ...built, tag, port: t.port };
+  if (t.kind === 'hysteria') {
+    const cert = material && isHysteriaMaterial(material) ? material : undefined;
+    return { ...buildTransport(mode, undefined, cert), tag, port: t.port };
+  }
+  const usable = material && !isHysteriaMaterial(material) ? material : undefined;
+  // An encrypted transport is never built plain: without its server string the
+  // builder is not called at all.
+  if (t.encrypted && !(usable && hasDecryption(usable)))
+    throw new Error('profile template: no VLESS Encryption string');
+  const encryption =
+    t.encrypted && usable && hasDecryption(usable) ? { decryption: usable.decryption } : undefined;
+  const keys = t.kind !== 'ws' && usable && isRealityMaterial(usable) ? usable : undefined;
+  return { ...buildTransport(mode, keys, undefined, encryption), tag, port: t.port };
 }
 
 /** Validate an op list on its own (shape, names, targets), before any config is read. */
@@ -323,23 +370,13 @@ export function applyPatchOps(
     if (op.op === 'addInboundFromTemplate') {
       if (next.some((ib) => isObj(ib) && ib.tag === op.inboundTag))
         refuse('servers.tag_taken', `A transport is already tagged ${op.inboundTag}`);
-      let keys: RealityKeyMaterial | HysteriaMaterial | undefined;
-      if (op.template.kind !== 'ws') {
+      let keys: TransportMaterial | undefined;
+      if (templateNeedsKeys(op.template)) {
         const given = material?.[op.inboundTag];
-        const fits = !!given && (op.template.kind === 'hysteria') === 'certificate' in given;
-        keys = fits ? given : undefined;
+        keys = materialFits(op.template, given) ? given : undefined;
         if (!keys) {
           needsMaterial = true;
-          keys =
-            op.template.kind === 'hysteria'
-              ? {
-                  certificate: ['material-made-in-the-attempt'],
-                  key: ['material-made-in-the-attempt'],
-                  ...(op.template.salamander
-                    ? { obfsPassword: 'material-made-in-the-attempt' }
-                    : {}),
-                }
-              : { privateKey: 'material-made-in-the-attempt', shortIds: PROFILE_DEFAULTS.shortIds };
+          keys = placeholderMaterial(op.template);
         }
       }
       next.push(templateTransport(op.inboundTag, op.template, keys));

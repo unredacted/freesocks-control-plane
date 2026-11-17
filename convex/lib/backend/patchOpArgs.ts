@@ -13,8 +13,15 @@ const transportTemplate = v.union(
     target: v.string(),
     serverNames: v.array(v.string()),
     acceptProxyProtocol: v.boolean(),
+    // VLESS Encryption inside the stream (lib/backend/vlessEncryption.ts); absent = plain.
+    encrypted: v.optional(v.literal(true)),
   }),
-  v.object({ kind: v.literal('ws'), port: v.number(), path: v.string() }),
+  v.object({
+    kind: v.literal('ws'),
+    port: v.number(),
+    path: v.string(),
+    encrypted: v.optional(v.literal(true)),
+  }),
   v.object({
     kind: v.literal('hysteria'),
     port: v.number(),

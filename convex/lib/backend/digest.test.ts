@@ -12,7 +12,9 @@ import {
   realityPublicKey,
   redactConfig,
   shapeHash,
+  vlessEncryptionAuthDigest,
 } from './digest';
+import { clientEncryption, generateVlessEncryption } from './vlessEncryption';
 
 const KEY = 'test-digest-key';
 const b64u = (b: Uint8Array) =>
@@ -79,6 +81,18 @@ describe('redactConfig', () => {
     expect(red).toEqual({ settings: { clients: [] }, shortIds: [], password: '' });
   });
 
+  test("a VLESS Encryption server string is a secret; 'none' is a fact that stays visible", () => {
+    const server = generateVlessEncryption().decryption;
+    const blob = JSON.stringify(redactConfig({ settings: { clients: [], decryption: server } }));
+    expect(blob).not.toContain(server.split('.')[3]);
+    expect(blob).toContain(REDACTED);
+    for (const plain of ['none', ''])
+      expect(redactConfig({ settings: { clients: [], decryption: plain } })).toEqual({
+        settings: { clients: [], decryption: plain },
+      });
+    expect(isSecretKey('decryption')).toBe(true);
+  });
+
   test('anything that names itself a secret is one', () => {
     for (const k of [
       'privateKey',
@@ -107,6 +121,90 @@ describe('canonicalJson / shapeHash', () => {
     expect(await shapeHash(config({ names: ['a.example'] }))).not.toBe(base);
     expect(await shapeHash(config({ sk: 'ANOTHER_PRIVATE_KEY' }))).toBe(base);
     expect(await shapeHash(config({ shortIds: ['ffff0000'] }))).toBe(base);
+  });
+});
+
+describe('a plain profile', () => {
+  // The hash this exact profile had before `decryption` became a secret key:
+  // every profile stored before then is plain, and must not read as changed.
+  test('hashes as it did before VLESS Encryption existed', async () => {
+    const plain = {
+      log: { loglevel: 'none' },
+      inbounds: [
+        {
+          tag: 'ws-in',
+          listen: '127.0.0.1',
+          port: 8443,
+          protocol: 'vless',
+          settings: { clients: [], decryption: 'none' },
+          streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/ws' } },
+        },
+      ],
+    };
+    expect(await shapeHash(plain)).toBe(
+      '90cc9572d4e2fc6177a3ed3f801a5e17d2beeaeb1743c909c0d097e82d7ae2ea',
+    );
+  });
+});
+
+describe('vlessEncryptionAuthDigest', () => {
+  const server = generateVlessEncryption(() => new Uint8Array(64).fill(3)).decryption;
+  const other = generateVlessEncryption(() => new Uint8Array(64).fill(4)).decryption;
+  const settings = (decryption: unknown) => ({
+    clients: [{ id: 'client-uuid-value' }],
+    decryption,
+  });
+
+  test('a plain transport has none', async () => {
+    for (const plain of [undefined, '', 'none'])
+      expect(await vlessEncryptionAuthDigest(settings(plain), KEY)).toBeNull();
+    expect(await vlessEncryptionAuthDigest(undefined, KEY)).toBeNull();
+  });
+
+  test('says how the node is verified and what members hold, and never carries the server string', async () => {
+    const a = await vlessEncryptionAuthDigest(settings(server), KEY);
+    expect(a).toEqual({
+      digest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      mode: 'native',
+      auth: 'mlkem768',
+      encryption: clientEncryption(server),
+    });
+    expect(JSON.stringify(a)).not.toContain(server.split('.')[3]);
+  });
+
+  test('moves with the key, the mode and the tickets; is keyed; and is stable', async () => {
+    const digest = async (d: string, key = KEY) =>
+      (await vlessEncryptionAuthDigest(settings(d), key))!.digest;
+    const base = await digest(server);
+    expect(await digest(server)).toBe(base);
+    expect(await digest(other)).not.toBe(base);
+    expect(await digest(server.replace('.native.', '.random.'))).not.toBe(base);
+    expect(await digest(server.replace('.600s.', '.0s.'))).not.toBe(base);
+    expect(await digest(server, 'another-key')).not.toBe(base);
+    // The ticket LIFETIME is the server's own business: members' entries hold.
+    expect(await digest(server.replace('.600s.', '.300s.'))).toBe(base);
+  });
+
+  test('a server string FCP cannot read is still reported as encrypted', async () => {
+    expect(
+      await vlessEncryptionAuthDigest(settings('mlkem768x25519plus.native.600s'), KEY),
+    ).toEqual({
+      digest: null,
+      mode: null,
+      auth: null,
+      encryption: null,
+    });
+  });
+
+  test('a rotation is invisible to the shape hash and moves the change token', async () => {
+    const profile = (d: string) => ({
+      inbounds: [{ tag: 'ws-e', protocol: 'vless', settings: { clients: [], decryption: d } }],
+    });
+    expect(await shapeHash(profile(other))).toBe(await shapeHash(profile(server)));
+    expect(await shapeHash(profile('none'))).not.toBe(await shapeHash(profile(server)));
+    expect(await changeToken(profile(other), KEY)).not.toBe(
+      await changeToken(profile(server), KEY),
+    );
   });
 });
 
