@@ -160,6 +160,7 @@
     "getOne": "Get a free account",
     "failed": "Sign-in failed",
     "success": "Signed in",
+    "credentialManagement": "Sign in again to manage your account number or passkeys.",
     "sessionExpired": "Please sign in again - your session may have ended.",
     "popBroken": "Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again.",
     "digitProgress": "{count} of {total} digits entered",

@@ -30,10 +30,12 @@
 
   // Post-login destination: a strict ALLOWLIST, not a free redirect — an
   // attacker-crafted /login?returnTo=… must never steer a fresh session to an
-  // arbitrary path (let alone another origin). Today only the donate flow
-  // round-trips through sign-in; everything else lands on /account as always.
+  // arbitrary path (let alone another origin). Credential management always
+  // returns to the Security tab so the member can retry the action.
+  const credentialManagement = $derived(router.searchParams.get('reauth') === 'security');
   const RETURN_TO_ALLOWLIST = ['/donate'];
   function postLoginTarget(): string {
+    if (credentialManagement) return '/account?tab=security';
     const rt = router.searchParams.get('returnTo');
     return rt && RETURN_TO_ALLOWLIST.includes(rt) ? rt : '/account';
   }
@@ -154,12 +156,12 @@
     </p>
   </header>
 
-  {#if sessionExpired}
+  {#if credentialManagement || sessionExpired}
     <div
       class="rounded-sm border border-primary/40 bg-primary/10 px-4 py-3 text-[15px] text-foreground"
       role="status"
     >
-      {t('login.sessionExpired')}
+      {credentialManagement ? t('login.credentialManagement') : t('login.sessionExpired')}
     </div>
   {/if}
   {#if popBroken}

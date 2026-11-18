@@ -557,6 +557,87 @@ describe('route-level scope enforcement', () => {
   });
 });
 
+describe('member login credential management', () => {
+  const routes = [
+    ['POST', 'account-id/rotate'],
+    ['POST', 'passkey/register/options'],
+    ['POST', 'passkey/register/verify'],
+    ['GET', 'passkeys'],
+    ['POST', 'passkey/revoke'],
+  ] as const;
+
+  async function expectSignInRequired(
+    t: ReturnType<typeof convexTest>,
+    headers: Record<string, string>,
+  ) {
+    for (const [method, path] of routes) {
+      const res = await t.fetch(`/api/v1/account/${path}`, {
+        method,
+        headers: { ...headers, 'content-type': 'application/json' },
+        ...(method === 'POST' ? { body: '{}' } : {}),
+      });
+      expect(res.status, path).toBe(401);
+      expect(await res.json()).toMatchObject({ error: { code: 'auth.reauthentication_required' } });
+    }
+  }
+
+  test('delegated writers cannot manage login credentials, even with account:read', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    for (const scopes of [['account:write'], ['account:write', 'account:read']]) {
+      const token = await insertToken(t, { scopes, subjectType: 'user', subjectUserId: userId });
+      await expectSignInRequired(t, { authorization: `Bearer ${token}` });
+    }
+    const user = await t.query(internal.users.get, { id: userId });
+    expect(user?.accountIdHash).toBeUndefined();
+    expect(
+      await t.run((ctx) => ctx.db.query('memberWebauthnRegistrationChallenges').collect()),
+    ).toEqual([]);
+  });
+
+  test('an older session keeps ordinary account access; a new owner session can rotate', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const token = await insertToken(t, {
+      scopes: ['account:read', 'account:write'],
+      subjectType: 'user',
+      subjectUserId: userId,
+    });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 6 * 60_000);
+    try {
+      expect((await t.fetch('/api/v1/account', { headers: { cookie } })).status).toBe(200);
+      await expectSignInRequired(t, { cookie });
+      await expectSignInRequired(t, { cookie, authorization: `Bearer ${token}` });
+      const fresh = await memberCookie(t, userId);
+      const res = await t.fetch('/api/v1/account/account-id/rotate', {
+        method: 'POST',
+        headers: { cookie: fresh, 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ accountId: expect.stringMatching(/^\d{32}$/) });
+      expect((await t.fetch('/api/v1/account', { headers: { cookie: fresh } })).status).toBe(200);
+      expect((await t.fetch('/api/v1/account', { headers: { cookie } })).status).toBe(401);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  test('a fresh cookie without required proof cannot fall back to a bearer', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const token = await insertToken(t, {
+      scopes: ['account:write', 'account:read'],
+      subjectType: 'user',
+      subjectUserId: userId,
+    });
+    vi.stubEnv('POP_REQUIRED', 'true');
+    await expectSignInRequired(t, { cookie, authorization: `Bearer ${token}` });
+  });
+});
+
 describe('account-id rotate throttle (policy account.rotate, max 5)', () => {
   test('the 6th rotate in the window is a 429 rate_limit.exceeded', async () => {
     const t = convexTest(schema, modules);

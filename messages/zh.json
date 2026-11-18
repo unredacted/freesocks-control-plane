@@ -82,6 +82,7 @@
     "getOne": "获取免费账户",
     "failed": "登录失败",
     "success": "已登录",
+    "credentialManagement": "请重新登录以管理账户号码或通行密钥。",
     "sessionExpired": "请重新登录 - 你的会话可能已结束。",
     "digitProgress": "{count}位数，共{total}位数字",
     "or": "或",

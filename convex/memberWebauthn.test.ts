@@ -12,6 +12,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hmacSha256Hex } from './lib/crypto';
+import { signValue } from './lib/cookies';
 import { verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
 
 // Use the real assertion verifier for signed fixtures and stub it for account-state tests.
@@ -127,16 +128,22 @@ describe('registerVerify', () => {
     ).rejects.toThrow(/No valid challenge/);
   });
 
-  test('happy path: a verified attestation inserts the member credential + audits', async () => {
+  test('a freshly signed-in owner can enroll, list and revoke a passkey', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedMember(t);
-    await t.run((ctx) =>
-      ctx.db.insert('memberWebauthnRegistrationChallenges', {
-        userId,
-        challenge: 'stored-challenge',
-        expiresAt: Date.now() + 60_000,
-      }),
-    );
+    const sid = 'owner-session';
+    await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
+    const cookie = `fs_session=${await signValue(sid, 'test-member-signing-key')}`;
+    const headers = { cookie, 'content-type': 'application/json' };
+    const post = (path: string, body: unknown) =>
+      t.fetch(`/api/v1/account/passkey/${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+    const options = await post('register/options', {});
+    expect(options.status).toBe(200);
+    expect(await options.json()).toMatchObject({ options: { challenge: expect.any(String) } });
     vi.mocked(verifyRegistrationResponse).mockResolvedValue({
       verified: true,
       registrationInfo: {
@@ -145,12 +152,12 @@ describe('registerVerify', () => {
       },
     } as unknown as Awaited<ReturnType<typeof verifyRegistrationResponse>>);
 
-    const res = await t.action(internal.memberWebauthn.registerVerify, {
-      userId,
+    const res = await post('register/verify', {
       response: { id: 'new-member-cred', rawId: 'x', response: {}, type: 'public-key' },
       deviceLabel: 'My phone',
     });
-    expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
     const { creds, audit } = await t.run(async (ctx) => ({
       creds: (await ctx.db.query('memberPasskeyCredentials').collect()).filter(
         (c) => c.userId === userId,
@@ -163,6 +170,14 @@ describe('registerVerify', () => {
     expect(creds[0]!.credentialId).toBe('new-member-cred');
     expect(creds[0]!.deviceLabel).toBe('My phone');
     expect(audit).toHaveLength(1);
+    const list = await t.fetch('/api/v1/account/passkeys', { headers });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({
+      passkeys: [{ id: creds[0]!._id, deviceLabel: 'My phone' }],
+    });
+    const revoked = await post('revoke', { id: creds[0]!._id });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({ ok: true, revoked: true });
   });
 });
 

@@ -2068,12 +2068,20 @@ http.route({
   }),
 });
 
+function recentMemberSessionRequired(): Response {
+  return errorJson(
+    'auth.reauthentication_required',
+    'Sign in again to manage account credentials.',
+    401,
+  );
+}
+
 http.route({
   path: '/api/v1/account/account-id/rotate',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.rotate',
       subject: member.userId,
@@ -2161,15 +2169,15 @@ http.route({
 // creation options (a single-use, origin-bound challenge), an attestation (the
 // credential's PUBLIC key), and credential ids + labels — nothing a passive CDN
 // can replay or use. Listed in convex/sealedRoutePolicy.test.ts. Enrolling a
-// passkey is authorized by the existing session (no invite token needed, unlike
+// passkey requires a recently created member session (no invite token needed, unlike
 // admin onboarding). The account number stays valid, so revoke has no
 // last-credential guard.
 http.route({
   path: '/api/v1/account/passkey/register/options',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     try {
       const out = await ctx.runAction(internal.memberWebauthn.registerOptions, {
         userId: member.userId,
@@ -2186,8 +2194,8 @@ http.route({
   path: '/api/v1/account/passkey/register/verify',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const body = await readJson<{ response?: unknown; deviceLabel?: string }>(req);
     if (!body.response) return errorJson('validation', 'response required', 400);
     try {
@@ -2208,8 +2216,8 @@ http.route({
   path: '/api/v1/account/passkeys',
   method: 'GET',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:read');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const passkeys = await ctx.runQuery(internal.memberPasskeys.listCredentials, {
       userId: member.userId,
     });
@@ -2221,8 +2229,8 @@ http.route({
   path: '/api/v1/account/passkey/revoke',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const body = await readJson<{ id?: string }>(req);
     if (typeof body.id !== 'string' || !body.id) return errorJson('validation', 'id required', 400);
     const result = await ctx.runMutation(internal.memberPasskeys.revokeCredential, {

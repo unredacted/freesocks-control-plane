@@ -467,6 +467,7 @@ export type MessageKey =
   | "location.pickerHintRecommended"
   | "location.pickerLabel"
   | "location.recommended"
+  | "login.credentialManagement"
   | "login.digitProgress"
   | "login.failed"
   | "login.getOne"

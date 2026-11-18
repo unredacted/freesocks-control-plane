@@ -154,6 +154,14 @@ export const apiClient = {
 
 export { ApiCallError };
 
+export function requiresMemberSignIn(error: unknown): boolean {
+  return (
+    error instanceof ApiCallError &&
+    error.status === 401 &&
+    error.payload.error.code === 'auth.reauthentication_required'
+  );
+}
+
 /** Up to six `path (problem)` entries of a failed response parse; no values. */
 export function responseShapeIssues(
   issues: ReadonlyArray<{ path: PropertyKey[]; code: string }>,

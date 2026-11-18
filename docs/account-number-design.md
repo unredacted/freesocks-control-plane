@@ -28,7 +28,10 @@ is the **only** member credential.
 >   (`users.accountIdHash` / `accountIdPrefix`).
 > - **Rotate**: `POST /api/v1/account/account-id/rotate`
 >   (`convex/auth.ts:rotateAccountId`): new number revealed once, old hash
->   overwritten, audited.
+>   overwritten, audited. Rotation and passkey management (list, enroll, revoke)
+>   require a member session created within the last five minutes. Members with
+>   an older session can sign in again with their account number or an existing
+>   passkey. Delegated API tokens cannot manage these login credentials.
 > - **Admin search**: `GET /api/v1/admin/users?q=` matches the W3 **support ID**
 >   (`FS-…`) or the stored 4-digit prefix (`convex/adminApi.ts`); full-number lookup
 >   is never permitted.
@@ -229,10 +232,10 @@ built, and neither is planned.
   issuance ("You won't be able to recover this. Save it now."). Do NOT add an
   out-of-band recovery channel: it would reintroduce the account-takeover
   dependency the system avoids. There is no second recovery path.
-- **Account takeover**: if a number leaks, the legitimate user (while still
-  signed in) rotates via `POST /api/v1/account/account-id/rotate`, which
-  immediately invalidates the old number. If they've already lost access, the
-  account is unrecoverable by design. _(The original OIDC recovery path is gone.)_
+- **Account takeover**: if a number leaks, the owner can rotate it from a fresh
+  member session via `POST /api/v1/account/account-id/rotate`. Rotation immediately
+  invalidates the old number. After five minutes the owner must sign in again
+  with the current number or an enrolled passkey before rotating.
 - **2FA / device association**: future work, out of scope for v1.
 
 ## 8. Audit and admin
