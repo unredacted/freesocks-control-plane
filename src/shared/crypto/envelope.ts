@@ -359,7 +359,10 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // Admin secret reveals (server returns a fresh secret once).
   'POST /api/v1/admin/tokens': REVEAL,
   'POST /api/v1/admin/membership-codes': REVEAL,
-  'POST /api/v1/admin/admins/invite': REVEAL,
+  // A reveal-only client builds a query link. Mint only for clients using the sealed flow.
+  'POST /api/v1/admin/admins/invite': SEAL_BOTH_REQUIRED,
+  'POST /api/admin/auth/register/options': { ...SEAL_REQ, required: true },
+  'POST /api/admin/auth/register/verify': { ...SEAL_REQ, required: true },
   // Admin credential uploads (admin sends infra secrets). Dual-mode server keeps
   // plaintext `fsv1_`-token / Ansible callers working.
   'POST /api/v1/admin/backend-servers': SEAL_REQ,

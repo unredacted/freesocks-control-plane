@@ -318,6 +318,9 @@ export const authenticateVerify = internalAction({
 
 const INVITE_TTL_MS = 24 * 3_600_000; // 24h to open the link + register a passkey.
 
+// Separate new invites from still-live tokens that may have appeared in a legacy URL.
+const inviteHash = (token: string) => sha256Hex(`admin-invite-fragment-v1:${token}`);
+
 /**
  * Mint a single-use invite for a NEW admin (called by an authenticated admin).
  * Creates (or reuses a credential-less) adminUsers row and stores the invite
@@ -357,7 +360,7 @@ export const createInvite = internalAction({
     });
 
     const token = randomHex(32); // 256-bit, single-use; only the hash is stored.
-    const tokenHash = await sha256Hex(token);
+    const tokenHash = await inviteHash(token);
     await ctx.runMutation(internal.admins.insertInvite, {
       adminUserId,
       tokenHash,
@@ -400,7 +403,7 @@ export const registerInviteOptions = internalAction({
       }
     }
     const found = await ctx.runQuery(internal.admins.inviteByTokenHash, {
-      tokenHash: await sha256Hex(invite),
+      tokenHash: await inviteHash(invite),
     });
     if (!found)
       throw new ConvexError({ code: 'auth.forbidden', message: 'Invalid or expired invite' });
@@ -449,7 +452,7 @@ export const registerInviteVerify = internalAction({
     { invite, response, deviceLabel, requestId },
   ): Promise<{ ok: true; username: string }> => {
     const found = await ctx.runQuery(internal.admins.inviteByTokenHash, {
-      tokenHash: await sha256Hex(invite),
+      tokenHash: await inviteHash(invite),
     });
     if (!found)
       throw new ConvexError({ code: 'auth.forbidden', message: 'Invalid or expired invite' });

@@ -64,13 +64,18 @@ async function request<S extends z.ZodTypeAny>(
     ? await (await loadHpke()).prepareOutbound(path, method, outBodyStr)
     : undefined;
 
-  if (seal?.policy.request !== 'seal' && outBodyStr) {
-    const fields = routePolicy(path, method)?.requireSealWith;
-    if (fields && hasBodyField(fields, JSON.parse(outBodyStr))) {
+  if (seal?.policy.request !== 'seal') {
+    const policy = routePolicy(path, method);
+    if (
+      (policy?.required && policy.request === 'seal') ||
+      (policy?.requireSealWith &&
+        outBodyStr &&
+        hasBodyField(policy.requireSealWith, JSON.parse(outBodyStr)))
+    ) {
       throw new ApiCallError(400, {
         error: {
           code: 'hpke.sealed_required',
-          message: 'Sending connection details requires an encrypted request.',
+          message: 'This action requires an HPKE-enabled web client.',
         },
       });
     }

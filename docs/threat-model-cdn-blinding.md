@@ -77,6 +77,14 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   defense there is out-of-band bundle verification + the (planned) verifier extension / native app, not
   sealing. The passkey login ceremony is left unsealed on purpose (the assertion is single-use +
   origin-bound + non-exfiltratable, so a passive CDN can do nothing with it).
+- **Admin invitations.** Minting requires HPKE on both legs. The sharing link carries
+  its one-time token in the URL fragment. The registration page removes it from the
+  address bar on load and encrypts both enrollment requests to the origin. Inviting
+  and invited admins need a client built with the server key pinned. Reissue pending
+  invitations after upgrading since tokens from earlier query links may have been logged.
+  If rolling back the origin, block invite minting and redemption until 24 hours have
+  elapsed since the last legacy invite was issued. Older code can otherwise accept a
+  still-live legacy token, even after a fresh link was issued.
 - **The policy table decides, not the wrapper.** `SEALED_ROUTES` / `SEALED_PREFIXES` in
   `src/shared/crypto/envelope.ts` is the single source of truth for both the SPA seam and the
   server's `sealed()` wrapper; a wrapped `httpAction` with no entry passes plaintext straight

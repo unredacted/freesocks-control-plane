@@ -16,7 +16,14 @@ import { hmacSha256Hex, hmacSha512Hex, sha256Hex } from './lib/crypto';
 import { resolveCountry } from './lib/http';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import { upsertSettingRow } from './appSettings';
-import { bytesToB64Url } from '../src/shared/crypto/envelope';
+import {
+  bytesToB64Url,
+  isSealedWire,
+  kidFromPublicKey,
+  routePolicy,
+} from '../src/shared/crypto/envelope';
+import { clientOpenResponse, clientPrepareRequest } from '../src/shared/crypto/channel';
+import { serverKeyPairFromSeed, serializePublicKey } from '../src/shared/crypto/hpke';
 import { refuseNetwork } from './lib/edges/testing/mockFetch';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -1216,6 +1223,81 @@ describe('referral routes', () => {
   });
 });
 
+describe('admin invitation transport', () => {
+  test('mint and both registration steps require HPKE even in dual mode', async () => {
+    const seed = new Uint8Array(32).fill(5);
+    vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(seed));
+    vi.stubEnv('FS_HPKE_REQUIRED', 'false');
+    vi.stubEnv('FS_HPKE_ADMIN_REQUIRED', 'false');
+    vi.stubEnv('WEBAUTHN_RP_ID', 'localhost');
+    vi.stubEnv('WEBAUTHN_ORIGIN', 'http://localhost');
+    const t = convexTest(schema, modules);
+    const cookie = await adminCookie(t);
+    const { publicKey } = await serverKeyPairFromSeed(seed);
+    const kid = await kidFromPublicKey(await serializePublicKey(publicKey));
+    const mint = '/api/v1/admin/admins/invite';
+    const options = '/api/admin/auth/register/options';
+    const verify = '/api/admin/auth/register/verify';
+    const seal = (path: string, bodyObj: unknown) =>
+      clientPrepareRequest({
+        serverPub: publicKey,
+        serverKid: kid,
+        method: 'POST',
+        path,
+        policy: routePolicy(path, 'POST')!,
+        bodyObj,
+      });
+    const post = (path: string, body: unknown, ip = true) =>
+      t.fetch(path, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(path === mint ? { cookie } : {}),
+          ...(ip ? { 'x-forwarded-for': '192.0.2.1' } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    const expectRequired = async (path: string, body: unknown) => {
+      const res = await post(path, body);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+    };
+    const subject = { username: 'invitee' };
+    const request = await seal(mint, subject);
+    // The former admin console asked for an encrypted reply but produced a query link.
+    await expectRequired(mint, { ...subject, fsRespEph: request.respEphPubB64 });
+    expect(await t.run((ctx) => ctx.db.query('adminInvites').collect())).toHaveLength(0);
+    const res = await post(mint, request.body);
+    expect(res.status).toBe(200);
+    const minted = await res.json();
+    expect(isSealedWire(minted)).toBe(true);
+    const { inviteToken: invite } = (await clientOpenResponse({
+      serverKid: kid,
+      method: 'POST',
+      path: mint,
+      respEphPriv: request.respEphPriv!,
+      wire: minted,
+    })) as { inviteToken: string };
+    expect(invite).toMatch(/^[a-f0-9]{64}$/);
+    for (const path of [options, verify]) {
+      const body = { invite, ...(path === verify ? { response: {} } : {}) };
+      const prep = await seal(path, body);
+      if (!isSealedWire(prep.body)) throw new Error('Expected a sealed invitation request');
+      await expectRequired(path, body);
+      await expectRequired(path, { ...prep.body, invite });
+    }
+    const protectedOptions = await seal(options, { invite });
+    const noIp = await post(options, protectedOptions.body, false);
+    expect(noIp.status).toBe(503);
+    expect(await noIp.json()).toMatchObject({ error: { code: 'auth.ip_unresolved' } });
+    const started = await post(options, protectedOptions.body);
+    expect(started.status).toBe(200);
+    expect(await started.json()).toMatchObject({
+      options: { challenge: expect.any(String), user: { name: 'invitee' } },
+    });
+  });
+});
+
 describe('rate-limit coverage (pre-launch review)', () => {
   test('unauthenticated passkey options routes fail closed (503) when the client IP is unresolvable', async () => {
     // TRUSTED_PROXY is set but no x-forwarded-for arrives (proxy misconfig) →
@@ -1224,7 +1306,6 @@ describe('rate-limit coverage (pre-launch review)', () => {
     for (const path of [
       '/api/v1/auth/passkey/authenticate/options',
       '/api/admin/auth/authenticate/options',
-      '/api/admin/auth/register/options',
       '/api/admin/auth/register-bootstrap/options',
     ]) {
       const res = await t.fetch(path, {

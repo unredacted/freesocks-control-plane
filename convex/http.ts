@@ -2780,7 +2780,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/register/options',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const body = await readJson<{ invite?: string }>(req);
     if (!body.invite) return errorJson('validation', 'invite required', 400);
     // Fail closed (mirrors account-login): no trustworthy IP → no throttle.
@@ -2807,7 +2807,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/register/verify',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const body = await readJson<{ invite?: string; response?: unknown; deviceLabel?: string }>(req);
     if (!body.invite || !body.response) {
       return errorJson('validation', 'invite and response required', 400);

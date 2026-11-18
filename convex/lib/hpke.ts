@@ -203,12 +203,14 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       return sealedRequired();
     }
     let bodyObj: Record<string, unknown>;
-    const wasSealed = isSealedWire(parsed);
-    if (wasSealed) {
+    const wire = isSealedWire(parsed) ? parsed : null;
+    if (wire) {
+      // A mandatory request envelope must not also carry cleartext application fields.
+      if (policy.required && Object.keys(wire).length !== 1) return sealedRequired();
       const opened = await ctx.runAction(internal.lib.hpkeCrypto.openRequest, {
         method,
         path,
-        wireBody: parsed,
+        wireBody: wire,
       });
       bodyObj = (opened.plaintext ?? {}) as Record<string, unknown>;
     } else {
@@ -228,11 +230,11 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       delete bodyObj[RESP_EPH_FIELD];
       // A sealed request with no response ephemeral would get its answer back
       // in plaintext: refused like the reveal-only routes are.
-      if (!respEphPubB64 && (hpkeRequired || (wasSealed && policy.requireSealWith))) {
+      if (!respEphPubB64 && (hpkeRequired || (wire && policy.requireSealWith))) {
         return sealedRequired();
       }
     }
-    handlerReq = proxyReq(req, bodyObj, raw, wasSealed);
+    handlerReq = proxyReq(req, bodyObj, raw, wire !== null);
   } else if (policy.response === 'reveal') {
     if (method === 'GET' || method === 'HEAD') {
       respEphPubB64 = req.headers.get('x-fs-resp-eph') ?? undefined;

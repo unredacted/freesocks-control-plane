@@ -8,6 +8,9 @@ import {
   credentialPublicKey,
   signedAssertion,
 } from '../tests/fixtures/passkeyAssertion';
+import { bytesToB64Url, kidFromPublicKey, routePolicy } from '../src/shared/crypto/envelope';
+import { serializePublicKey, serverKeyPairFromSeed } from '../src/shared/crypto/hpke';
+import { clientPrepareRequest } from '../src/shared/crypto/channel';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -461,7 +464,9 @@ describe('createInvite (multi-admin onboarding)', () => {
     expect(admins.map((a) => a.username)).toContain('alex');
     expect(invites).toHaveLength(1);
     // Only the hash is persisted — never the raw token.
-    expect(invites[0]!.tokenHash).toBe(await sha256Hex(res.inviteToken));
+    expect(invites[0]!.tokenHash).toBe(
+      await sha256Hex(`admin-invite-fragment-v1:${res.inviteToken}`),
+    );
     expect(invites[0]!.tokenHash).not.toBe(res.inviteToken);
   });
 
@@ -478,7 +483,7 @@ describe('createInvite (multi-admin onboarding)', () => {
 describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
   async function seedInvite(
     t: T,
-    opts: { token?: string; expired?: boolean; consumed?: boolean } = {},
+    opts: { token?: string; expired?: boolean; consumed?: boolean; legacy?: boolean } = {},
   ): Promise<{ adminUserId: Id<'adminUsers'>; token: string }> {
     const token = opts.token ?? 'a'.repeat(64);
     const adminUserId = await t.run((ctx) =>
@@ -489,7 +494,7 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
         updatedAt: Date.now(),
       }),
     );
-    const tokenHash = await sha256Hex(token);
+    const tokenHash = await sha256Hex(opts.legacy ? token : `admin-invite-fragment-v1:${token}`);
     await t.run((ctx) =>
       ctx.db.insert('adminInvites', {
         adminUserId,
@@ -523,6 +528,59 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
         .collect(),
     );
     expect(challenges).toHaveLength(1);
+  });
+
+  test('a sealed verification registers the credential and consumes the invite once', async () => {
+    const t = convexTest(schema, modules);
+    const { token, adminUserId } = await seedInvite(t);
+    const { options } = await t.action(internal.webauthn.registerInviteOptions, { invite: token });
+    const seed = new Uint8Array(32).fill(5);
+    vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(seed));
+    const { publicKey } = await serverKeyPairFromSeed(seed);
+    const path = '/api/admin/auth/register/verify';
+    const response = { id: 'invite-key', rawId: 'invite-key', type: 'public-key', response: {} };
+    const prepared = await clientPrepareRequest({
+      serverPub: publicKey,
+      serverKid: await kidFromPublicKey(await serializePublicKey(publicKey)),
+      method: 'POST',
+      path,
+      policy: routePolicy(path, 'POST')!,
+      bodyObj: { invite: token, response, deviceLabel: 'My key' },
+    });
+    vi.mocked(verifyRegistrationResponse).mockResolvedValueOnce({
+      verified: true,
+      registrationInfo: {
+        credential: { id: 'invite-key', publicKey: new Uint8Array([1, 2, 3]), counter: 0 },
+        aaguid: 'test-aaguid',
+      },
+    } as Awaited<ReturnType<typeof verifyRegistrationResponse>>);
+    const submit = () =>
+      t.fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(prepared.body),
+      });
+    const res = await submit();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, username: 'alex' });
+    expect(verifyRegistrationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ response, expectedChallenge: options.challenge }),
+    );
+    expect((await submit()).status).toBe(403);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toMatchObject([
+      { adminUserId, credentialId: 'invite-key', deviceLabel: 'My key' },
+    ]);
+  });
+
+  test('a still-live legacy query token cannot authorize either registration step', async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await seedInvite(t, { legacy: true });
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, { invite: token, response: {} }),
+    ).rejects.toThrow(/Invalid or expired invite/);
   });
 
   test('options: an expired invite is rejected', async () => {
