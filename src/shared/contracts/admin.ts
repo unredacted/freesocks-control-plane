@@ -767,7 +767,7 @@ export const AdminAlertsConfig = z.object({
 });
 export type AdminAlertsConfig = z.infer<typeof AdminAlertsConfig>;
 
-/** The PATCH body: a field left out keeps its stored value, '' clears it. */
+/** Omitted secrets persist within the same webhook origin. An empty string clears a field. */
 export const AdminAlertsPatch = z.object({
   enabled: z.boolean().optional(),
   url: z.string().optional(),

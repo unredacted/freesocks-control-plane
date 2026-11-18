@@ -3306,8 +3306,10 @@ token, an address, a hostname, a credential or a provider's free-text error; a l
 an IP address is dropped. Point alerts at an ntfy server you run, or at least a topic only you know.
 The webhook URL must be https and pass the infra SSRF check (`ALLOW_INTERNAL_BACKENDS=true` admits
 http in development); redirects are not followed. The topic and the access token (sent as
-`Bearer`) are write-only: the admin view shows whether each is set and the webhook's origin,
-nothing more.
+`Bearer`) are write-only. The admin view shows the webhook’s origin and whether each secret is set.
+Changing the scheme, host, or port clears each secret omitted from the update. Supply the topic and
+token for the new destination in the same save if it needs them. Edits within the same origin keep
+omitted secrets.
 
 To poll instead (or as well), read `GET /api/v1/admin/edges/attention` with a read-only API
 token (`admin:servers:read`); every item carries `kind`, `severity`, `code` and `action`.

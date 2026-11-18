@@ -8,7 +8,7 @@
  * SECRETS: the access token and the topic (an ntfy topic is a capability:
  * whoever knows it can read the alerts) are SERVER-SIDE ONLY. The admin view
  * (`alertsView`) carries booleans for them and the webhook's origin, never
- * the path, the topic or the token; a write that leaves a field out keeps it.
+ * the path, the topic or the token. Both secrets are scoped to the webhook origin.
  */
 import type { DatabaseReader } from '../_generated/server';
 import { checkInfraUrl } from './urlSafety';

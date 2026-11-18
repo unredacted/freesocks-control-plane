@@ -91,9 +91,9 @@ export const configWithSecret = internalQuery({
 });
 
 /**
- * Write the config. A field left out keeps its stored value; an empty string
- * clears it. A URL, topic or token that does not pass its sanitizer is refused
- * (never stored as something else). Enabling needs a URL. Audited by booleans.
+ * Write the config atomically. A new webhook origin starts with its own topic
+ * and token. At the same origin, omitted fields retain their stored values.
+ * Empty strings clear fields. Enabling needs a URL. Audited by booleans.
  */
 export const setConfig = internalMutation({
   args: {
@@ -113,8 +113,12 @@ export const setConfig = internalMutation({
       return s;
     };
     const url = pick(a.url, sanitizeAlertsUrl, 'url');
-    const topic = pick(a.topic, sanitizeAlertsTopic, 'topic');
-    const token = pick(a.token, sanitizeAlertsToken, 'token');
+    // An empty string overwrites the old secret in the same transaction as the
+    // URL change. Undefined preserves it for edits within the current origin.
+    const omittedSecret =
+      url !== undefined && urlOrigin(url) !== urlOrigin(cur.url) ? '' : undefined;
+    const topic = pick(a.topic, sanitizeAlertsTopic, 'topic') ?? omittedSecret;
+    const token = pick(a.token, sanitizeAlertsToken, 'token') ?? omittedSecret;
     const next: AlertsConfig = {
       enabled: a.enabled ?? cur.enabled,
       url: url ?? cur.url,

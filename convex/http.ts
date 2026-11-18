@@ -3769,8 +3769,8 @@ http.route({
 
 // --- admin: operator alerts (opt-in webhook, ntfy-compatible) -----------------
 // The GET carries no secret: booleans for the topic and the token, and only the
-// webhook's origin. The PATCH is sealed (it can carry the token); a field it
-// leaves out keeps its stored value. The test POST sends one notification.
+// webhook's origin. The sealed PATCH clears omitted secrets on an origin change.
+// The test POST sends one notification.
 
 http.route({
   path: '/api/v1/admin/alerts',

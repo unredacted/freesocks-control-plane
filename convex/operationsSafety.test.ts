@@ -477,6 +477,69 @@ describe('operator alerts', () => {
     expect(JSON.stringify(audit)).not.toMatch(/secret-topic|tk_secret|alerts\.example/);
   });
 
+  test('moving a webhook clears its stored credentials for test and scheduled delivery', async () => {
+    const t = convexTest(schema, modules);
+    await seedEdgeFixture(t);
+    const r = receiver();
+    const url = 'https://alerts.example.org/hook';
+    const other = 'https://notify.example.org/receive';
+    await t.mutation(internal.alerts.setConfig, {
+      enabled: true,
+      url,
+      token: 'first-token',
+      topic: 'first-topic',
+    });
+    await t.mutation(internal.alerts.setConfig, { url: other });
+    expect(await t.query(internal.alerts.view, {})).toMatchObject({
+      tokenSet: false,
+      topicSet: false,
+    });
+    expect(await t.action(internal.alerts.sendTest, {})).toEqual({ ok: true, error: null });
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1, messages: 1 });
+    expect(r.posts).toHaveLength(2);
+    for (const post of r.posts) {
+      expect(post.url).toBe(other);
+      expect(post.auth).toBeNull();
+      expect(post.body).not.toHaveProperty('topic');
+    }
+    // Returning to the old URL must not resurrect either cleared credential.
+    await t.mutation(internal.alerts.setConfig, { url });
+    await t.action(internal.alerts.sendTest, {});
+    expect(r.posts.at(-1)?.auth).toBeNull();
+    expect(r.posts.at(-1)?.body).not.toHaveProperty('topic');
+  });
+
+  test('same-origin edits retain credentials and a changed port accepts only the supplied replacements', async () => {
+    const t = convexTest(schema, modules);
+    const r = receiver();
+    await t.mutation(internal.alerts.setConfig, {
+      url: 'https://ALERTS.example.org:443/v1',
+      token: 'first-token',
+      topic: 'first-topic',
+    });
+    await t.mutation(internal.alerts.setConfig, { url: 'https://alerts.example.org/v2' });
+    await t.action(internal.alerts.sendTest, {});
+    expect(r.posts.at(-1)).toMatchObject({
+      auth: 'Bearer first-token',
+      body: { topic: 'first-topic' },
+    });
+
+    const newUrl = 'https://alerts.example.org:8443/receive';
+    await t.mutation(internal.alerts.setConfig, { url: newUrl, token: 'new-token' });
+    await t.action(internal.alerts.sendTest, {});
+    expect(r.posts.at(-1)).toMatchObject({ url: newUrl, auth: 'Bearer new-token' });
+    expect(r.posts.at(-1)?.body).not.toHaveProperty('topic');
+
+    const lastUrl = 'https://alerts.example.org/v3';
+    await t.mutation(internal.alerts.setConfig, { url: lastUrl, topic: 'new-topic' });
+    await t.action(internal.alerts.sendTest, {});
+    expect(r.posts.at(-1)).toMatchObject({
+      url: lastUrl,
+      auth: null,
+      body: { topic: 'new-topic' },
+    });
+  });
+
   test('a new critical item is sent once, with its node and a link; it resolves once gone; a failed post is retried', async () => {
     vi.stubEnv('WEBAUTHN_ORIGIN', 'https://admin.example.org');
     const t = convexTest(schema, modules);
