@@ -10,6 +10,7 @@
  * credential: never logged, never put in an error.
  */
 import { z } from 'zod';
+import { fetchBackendProbe } from '../urlSafety';
 import type { IssuedUser, SubscriptionContent, UpdateUserPatch, UserState } from './types';
 
 export interface OutlineServerConfig {
@@ -53,6 +54,7 @@ async function call<T>(
     body?: unknown;
     schema: z.ZodType<T>;
   },
+  request: typeof fetchBackendProbe = fetch,
 ): Promise<T> {
   // apiUrl already includes the secret path segment; append to its trailing slash.
   const base = cfg.apiUrl.endsWith('/') ? cfg.apiUrl : `${cfg.apiUrl}/`;
@@ -60,7 +62,7 @@ async function call<T>(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   try {
-    const res = await fetch(url, {
+    const res = await request(url, {
       method: args.method,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
@@ -170,12 +172,15 @@ export async function outlineIssue(
  * scrubs the secret apiUrl from errors.
  */
 const OutlineAccessKeyList = z.object({ accessKeys: z.array(z.unknown()) }).passthrough();
-export async function outlineHealth(cfg: OutlineServerConfig): Promise<{ keyCount: number }> {
-  const list = await call(cfg, {
-    method: 'GET',
-    path: '/access-keys',
-    schema: OutlineAccessKeyList,
-  });
+export async function outlineHealth(
+  cfg: OutlineServerConfig,
+  request: typeof fetchBackendProbe = fetch,
+): Promise<{ keyCount: number }> {
+  const list = await call(
+    cfg,
+    { method: 'GET', path: '/access-keys', schema: OutlineAccessKeyList },
+    request,
+  );
   return { keyCount: list.accessKeys.length };
 }
 
@@ -188,7 +193,7 @@ export async function outlineTestConnection(
   cfg: OutlineServerConfig,
 ): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> {
   try {
-    const { keyCount } = await outlineHealth(cfg);
+    const { keyCount } = await outlineHealth(cfg, fetchBackendProbe);
     return { ok: true, keyCount };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError')

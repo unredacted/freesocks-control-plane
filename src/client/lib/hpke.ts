@@ -408,11 +408,12 @@ export async function prepareOutbound(
   const routed = routePolicy(path, method);
   if (!routed) return undefined;
   const bodyObj = bodyStr ? safeParse(bodyStr) : undefined;
-  // A route sealed only for some fields goes reveal-only without them.
+  // Without an optional sensitive field, only the response policy still applies.
   const policy = outboundPolicy(
     routed,
     bodyObj && typeof bodyObj === 'object' ? (bodyObj as Record<string, unknown>) : undefined,
   );
+  if (policy.request === 'plain' && policy.response === 'plain') return undefined;
   const m = method.toUpperCase();
   // Seal target: for a request-seal route (login) prefer the current epoch key;
   // the reveal leg ignores serverPub/serverKid here (it seals the response to a

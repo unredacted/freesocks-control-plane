@@ -5,14 +5,15 @@
  *  - verifyAndParse: PayPal has no HMAC header; authenticity is an async API call
  *    (`/v1/notifications/verify-webhook-signature`) over the `paypal-*` request
  *    headers + the webhook id. PayPal also does NOT auto-capture a redirect order,
- *    so on `CHECKOUT.ORDER.APPROVED` we capture server-side here; success (or an
- *    already-captured order) maps to `paid`. `PAYMENT.CAPTURE.COMPLETED` also maps
- *    to `paid` (idempotent — the single-grant guard collapses the duplicate).
+ *    so on `CHECKOUT.ORDER.APPROVED` we capture server-side. Both approval and
+ *    capture webhooks require a completed, order-linked capture before granting.
  *
  * Pure HTTP via `fetch` (no PayPal SDK → stays in the V8 isolate). Errors never
  * capture the secret. Operationally PayPal is the freeze-prone rail — enable last
  * and sweep the balance often (see docs/billing.md).
  */
+import { z } from 'zod';
+import { fetchProcessorApi } from './apiFetch';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface PayPalConfig {
@@ -41,7 +42,7 @@ function timed(timeoutMs = 10000): { signal: AbortSignal; done: () => void } {
 async function accessToken(cfg: PayPalConfig): Promise<string> {
   const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(`${cfg.apiBase}/v1/oauth2/token`, {
+    const res = await fetchProcessorApi(`${cfg.apiBase}/v1/oauth2/token`, {
       method: 'POST',
       headers: {
         authorization: `Basic ${btoa(`${cfg.clientId}:${cfg.secret}`)}`,
@@ -67,7 +68,7 @@ export async function createCheckout(
   const token = await accessToken(cfg);
   const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(`${cfg.apiBase}/v2/checkout/orders`, {
+    const res = await fetchProcessorApi(`${cfg.apiBase}/v2/checkout/orders`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -103,26 +104,114 @@ export async function createCheckout(
   }
 }
 
-/** Capture an approved order. Treats an already-captured order as success (idempotent). */
-async function captureOrder(cfg: PayPalConfig, token: string, orderId: string): Promise<boolean> {
+// Checkout creates one CAPTURE purchase unit. Use the captured money, since the
+// order status and purchase-unit amount describe the checkout, not its settlement.
+const providerId = z.string().regex(/^[A-Za-z0-9_-]+$/);
+const captureSchema = z.object({
+  id: providerId,
+  status: z.string(),
+  custom_id: z.string().optional(),
+  amount: z
+    .object({
+      value: z.string().regex(/^\d+(?:\.\d{1,2})?$/),
+      currency_code: z.string().regex(/^[A-Z]{3}$/),
+    })
+    .optional(),
+});
+const orderSchema = z.object({
+  id: providerId,
+  purchase_units: z.tuple([
+    z.object({
+      custom_id: z.string().min(1),
+      payments: z.object({ captures: z.tuple([captureSchema]) }),
+    }),
+  ]),
+});
+
+function captureResult(capture: z.infer<typeof captureSchema>, orderRef: string) {
+  if (capture.custom_id !== undefined && capture.custom_id !== orderRef) return null;
+  let status: OrderStatus;
+  switch (capture.status) {
+    case 'COMPLETED':
+      status = 'paid';
+      break;
+    case 'PENDING':
+      status = 'confirming';
+      break;
+    case 'DENIED':
+    case 'DECLINED':
+    case 'FAILED':
+      status = 'failed';
+      break;
+    default:
+      return null;
+  }
+  const amountMinor = capture.amount ? Math.round(Number(capture.amount.value) * 100) : null;
+  if (amountMinor !== null && !Number.isSafeInteger(amountMinor)) return null;
+  if (status === 'paid' && !amountMinor) return null;
+  return {
+    orderRef,
+    processorRef: capture.id,
+    status,
+    amountMinor,
+    amountCurrency: capture.amount?.currency_code ?? null,
+  } as const;
+}
+
+function orderCapture(body: unknown, orderId: string, captureId?: string) {
+  const order = orderSchema.safeParse(body);
+  if (!order.success || order.data.id !== orderId) return null;
+  const [unit] = order.data.purchase_units;
+  const [capture] = unit.payments.captures;
+  if (captureId && capture.id !== captureId) return null;
+  return captureResult(capture, unit.custom_id);
+}
+
+async function readPayPalResource(cfg: PayPalConfig, token: string, path: string) {
   const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(
-      `${cfg.apiBase}/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`,
-      {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        signal,
-      },
-    );
-    if (res.ok) return true;
-    // 422 ORDER_ALREADY_CAPTURED (re-delivered APPROVED) is success for our purpose.
-    const body = await res.text().catch(() => '');
-    if (res.status === 422 && body.includes('ORDER_ALREADY_CAPTURED')) return true;
-    throw new PayPalApiError(`PayPal ${res.status} on capture`, res.status);
+    const res = await fetchProcessorApi(`${cfg.apiBase}/v2/${path}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal,
+    });
+    if (!res.ok) throw new PayPalApiError(`PayPal lookup returned HTTP ${res.status}`, res.status);
+    return (await res.json()) as Record<string, unknown>;
   } finally {
     done();
   }
+}
+
+async function captureOrder(cfg: PayPalConfig, token: string, orderId: string) {
+  const path = `checkout/orders/${encodeURIComponent(orderId)}`;
+  const { signal, done } = timed(cfg.timeoutMs);
+  try {
+    const res = await fetchProcessorApi(`${cfg.apiBase}/v2/${path}/capture`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        prefer: 'return=representation',
+        'paypal-request-id': orderId,
+      },
+      signal,
+    });
+    const body = await res.json().catch(() => null);
+    if (res.ok) {
+      const result = orderCapture(body, orderId);
+      if (result) return result;
+    } else if (
+      res.status !== 422 ||
+      !Array.isArray(body?.details) ||
+      !body.details.some(
+        (detail: { issue?: unknown } | null) => detail?.issue === 'ORDER_ALREADY_CAPTURED',
+      )
+    ) {
+      throw new PayPalApiError(`PayPal capture returned HTTP ${res.status}`, res.status);
+    }
+  } finally {
+    done();
+  }
+  return orderCapture(await readPayPalResource(cfg, token, path), orderId);
 }
 
 function customIdFromResource(resource: Record<string, unknown> | undefined): string | null {
@@ -185,19 +274,15 @@ async function customIdFromOrder(
   token: string,
   orderId: string,
 ): Promise<string | null> {
-  const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(`${cfg.apiBase}/v2/checkout/orders/${encodeURIComponent(orderId)}`, {
-      headers: { authorization: `Bearer ${token}` },
-      signal,
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as Record<string, unknown>;
-    return customIdFromResource(json);
+    const order = await readPayPalResource(
+      cfg,
+      token,
+      `checkout/orders/${encodeURIComponent(orderId)}`,
+    );
+    return order.id === orderId ? customIdFromResource(order) : null;
   } catch {
     return null;
-  } finally {
-    done();
   }
 }
 
@@ -222,20 +307,23 @@ export async function verifyAndParse(args: {
   const { signal, done } = timed(args.cfg.timeoutMs);
   let verification: string;
   try {
-    const res = await fetch(`${args.cfg.apiBase}/v1/notifications/verify-webhook-signature`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        auth_algo: h('paypal-auth-algo'),
-        cert_url: h('paypal-cert-url'),
-        transmission_id: h('paypal-transmission-id'),
-        transmission_sig: h('paypal-transmission-sig'),
-        transmission_time: h('paypal-transmission-time'),
-        webhook_id: args.cfg.webhookId,
-        webhook_event: event,
-      }),
-      signal,
-    });
+    const res = await fetchProcessorApi(
+      `${args.cfg.apiBase}/v1/notifications/verify-webhook-signature`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          auth_algo: h('paypal-auth-algo'),
+          cert_url: h('paypal-cert-url'),
+          transmission_id: h('paypal-transmission-id'),
+          transmission_sig: h('paypal-transmission-sig'),
+          transmission_time: h('paypal-transmission-time'),
+          webhook_id: args.cfg.webhookId,
+          webhook_event: event,
+        }),
+        signal,
+      },
+    );
     if (!res.ok) return { ok: false, reason: `verify API ${res.status}` };
     verification =
       ((await res.json()) as { verification_status?: string }).verification_status ?? '';
@@ -250,26 +338,57 @@ export async function verifyAndParse(args: {
   const processorRef = typeof resource?.id === 'string' ? resource.id : (event.id ?? '');
 
   let status: OrderStatus = 'pending';
-  if (eventType === 'CHECKOUT.ORDER.APPROVED') {
-    // PayPal doesn't auto-capture a redirect order — capture it now. A transient
-    // capture failure must NOT be swallowed into ok:true/status:'confirming': that
-    // 200-acks the webhook (marked processed), so PayPal never redelivers and the
-    // capture never happens — the buyer approved but is never charged. Instead
-    // fail the verify → ingest 400s → PayPal redelivers → captureOrder retries,
-    // idempotent via its 422 ORDER_ALREADY_CAPTURED guard. (Review #1.)
+  const approved = eventType === 'CHECKOUT.ORDER.APPROVED';
+  const completed = eventType === 'PAYMENT.CAPTURE.COMPLETED';
+  const pending = eventType === 'PAYMENT.CAPTURE.PENDING';
+  if (approved || completed || pending) {
     try {
-      await captureOrder(args.cfg, token, processorRef);
-    } catch (e) {
+      const id = providerId.parse(resource?.id);
+      let checkoutRef = orderIdFromResource(eventType, resource);
+      let result: ReturnType<typeof captureResult> = null;
+      if (approved) {
+        result = await captureOrder(args.cfg, token, id);
+      } else {
+        // Signed capture events may omit the order link, custom_id or money.
+        // Read back missing evidence and bind both provider IDs to the same capture.
+        const expectedStatus = completed ? 'COMPLETED' : 'PENDING';
+        // The verified event type supplies the state when PayPal omits its
+        // duplicate status field. An explicit disagreement requires a readback.
+        const capture = captureSchema.safeParse({ status: expectedStatus, ...resource });
+        if (checkoutRef && orderRef && capture.success && capture.data.status === expectedStatus) {
+          result = captureResult(capture.data, orderRef);
+        }
+        if (!result) {
+          if (!checkoutRef) {
+            const details = await readPayPalResource(args.cfg, token, `payments/captures/${id}`);
+            if (details.id === id) checkoutRef = orderIdFromResource(eventType, details);
+          }
+          const orderId = providerId.parse(checkoutRef);
+          const order = await readPayPalResource(args.cfg, token, `checkout/orders/${orderId}`);
+          result = orderCapture(order, orderId, id);
+          // A stale read must not acknowledge the only completion notification.
+          if (completed && result?.status !== 'paid')
+            return { ok: false, reason: 'PayPal completion is awaiting confirmation' };
+          if (pending && result) result = { ...result, status: 'confirming' };
+        }
+      }
+      if (!checkoutRef || !result || (orderRef && orderRef !== result.orderRef))
+        return { ok: false, reason: 'PayPal capture could not be reconciled with checkout' };
+      // A redelivery of the same approval can observe a later settlement.
+      const eventKey = `paypal:${event.id ?? id}`;
       return {
-        ok: false,
-        reason: `paypal capture failed: ${e instanceof Error ? e.message : 'unknown'}`,
+        ok: true,
+        ...result,
+        checkoutRef,
+        dedupeId: result.status === 'paid' ? eventKey : `${eventKey}:${result.status}`,
+        summary: { event_type: eventType, event_id: event.id ?? null, resource_id: id },
       };
+    } catch {
+      return { ok: false, reason: 'PayPal capture failed or could not be reconciled' };
     }
-    status = 'paid';
-  } else if (eventType === 'PAYMENT.CAPTURE.COMPLETED') {
-    status = 'paid';
   } else if (
     eventType === 'PAYMENT.CAPTURE.DENIED' ||
+    eventType === 'PAYMENT.CAPTURE.DECLINED' ||
     eventType === 'CHECKOUT.ORDER.DECLINED' ||
     // Refund/reversal class: never grants; when the order is ALREADY paid the
     // grant path audits it (billing.refund_seen) so the operator has a queue

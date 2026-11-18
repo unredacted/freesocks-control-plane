@@ -1170,6 +1170,9 @@ export default defineSchema({
     .index('by_action', ['action']),
 
   adminUsers: defineTable({
+    // Only this grant may enroll the first passkey. Older rows without a
+    // recorded grant require an operator to reissue the invitation.
+    pendingInviteId: v.optional(v.id('adminInvites')),
     username: v.string(),
     displayName: v.string(),
     isActive: v.boolean(),
@@ -1192,6 +1195,8 @@ export default defineSchema({
 
   webauthnRegistrationChallenges: defineTable({
     adminUserId: v.id('adminUsers'),
+    // null = bootstrap; older unbound challenges must restart at /options.
+    inviteId: v.optional(v.union(v.id('adminInvites'), v.null())),
     challenge: v.string(),
     expiresAt: v.number(),
     consumedAt: v.optional(v.number()),
@@ -5556,9 +5561,11 @@ export default defineSchema({
   // member-editable (a report sent through the VPN would otherwise carry the
   // exit node's geo); `detected*` is what the CDN edge claimed at submit time,
   // kept so edited values can be told apart from as-detected ones. Window scans
-  // + the retention sweep use the built-in by_creation_time index. Config +
+  // + the retention sweep use the audit-isolation index, ordered by creation time. Config +
   // sanitizers: convex/lib/issueTelemetry.ts.
   issueReports: defineTable({
+    // Absent on rows written while diagnostics had an identified audit counterpart.
+    auditIsolated: v.optional(v.literal(true)),
     kind: v.union(v.literal('switch'), v.literal('report')),
     reason: v.string(),
     // DEPRECATED (2026-09-15): the report dialog's free-text box was removed;
@@ -5595,7 +5602,9 @@ export default defineSchema({
     // 1 = this member's first eligible report for this origin inside the detector
     // window, else 0 (a deduplicated contribution, not a distinct-member count).
     detectorWeight: v.optional(v.number()),
-  }).index('by_relay', ['relaySlug']),
+  })
+    .index('by_audit_isolated', ['auditIsolated'])
+    .index('by_relay_and_audit_isolated', ['relaySlug', 'auditIsolated']),
 
   // Membership redemption codes (W4): admin-minted bearer codes a member redeems
   // to grant/extend a paid tier — no billing portal required. Codes are SECRETS:

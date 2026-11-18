@@ -116,7 +116,8 @@
 	# cross-origin-isolation pair. COOP/COEP live HERE, not site-wide, because
 	# the /cap dashboard is a third-party app that loads cross-origin assets
 	# (e.g. its logo) and must NOT run under COEP require-corp. `defer` so the
-	# set lands after the file_server/proxy response (replace, no duplicate).
+	# browser receives the site policy alongside any stricter upstream policy,
+	# including the sandbox on backend-provided subscription documents.
 	@notCap not path /cap/*
 	header @notCap {
 		# - script-src carries a PER-REQUEST nonce ({http.request.uuid}, the same
@@ -126,6 +127,9 @@
 		#   <iframe srcdoc> (which inherits this policy). 'self' still governs our
 		#   own (external) scripts; the nonce adds nothing an attacker can use
 		#   because it is unguessable and regenerated every response.
+		# - FCP_IMPORT_MAP_CSP authorizes the exact inline map emitted by Vite.
+		#   Resolve it in the running server so a Caddyfile reload uses the
+		#   hash loaded from the same image as the SPA.
 		# - 'unsafe-eval' is REQUIRED by that same instrumentation script: its
 		#   anti-emulation probes deliberately call eval()/new Function() (verified
 		#   in the pinned tiago2/cap image), each wrapped in catch -> return null,
@@ -138,7 +142,7 @@
 		#   and the captcha never completes.
 		# - font-src data: because Vite inlines small @fontsource subsets as
 		#   data: URIs in the bundled CSS (inline bytes, not a network origin).
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'nonce-{http.request.uuid}' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
+		+Content-Security-Policy "default-src 'self'; script-src 'self' 'nonce-{http.request.uuid}' {env.FCP_IMPORT_MAP_CSP} 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		defer

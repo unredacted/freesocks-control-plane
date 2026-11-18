@@ -42,6 +42,7 @@ import {
 import { parseCookies } from './cookies';
 import {
   RESP_EPH_FIELD,
+  hasBodyField,
   isSealedWire,
   routePolicy,
   type SealedWire,
@@ -196,13 +197,20 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     } catch {
       parsed = undefined;
     }
+    // Inspect the outer body even when it also contains a valid envelope. Only
+    // the authenticated plaintext returned by openRequest may carry these fields.
+    if (policy.requireSealWith && hasBodyField(policy.requireSealWith, parsed)) {
+      return sealedRequired();
+    }
     let bodyObj: Record<string, unknown>;
-    const wasSealed = isSealedWire(parsed);
-    if (wasSealed) {
+    const wire = isSealedWire(parsed) ? parsed : null;
+    if (wire) {
+      // A mandatory request envelope must not also carry cleartext application fields.
+      if (policy.required && Object.keys(wire).length !== 1) return sealedRequired();
       const opened = await ctx.runAction(internal.lib.hpkeCrypto.openRequest, {
         method,
         path,
-        wireBody: parsed,
+        wireBody: wire,
       });
       bodyObj = (opened.plaintext ?? {}) as Record<string, unknown>;
     } else {
@@ -212,7 +220,9 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       // response ephemeral; the handler refuses the sealed-only fields).
       const olderRevealShape =
         policy.plainWithReveal === true && typeof bodyObj[RESP_EPH_FIELD] === 'string';
-      if (hpkeRequired && !olderRevealShape) return sealedRequired();
+      // A request carrying none of the optional sealed fields can pass in
+      // either posture. A required response ephemeral is still checked below.
+      if (hpkeRequired && !policy.requireSealWith && !olderRevealShape) return sealedRequired();
     }
     if (policy.response === 'reveal') {
       const eph = bodyObj[RESP_EPH_FIELD];
@@ -220,9 +230,11 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       delete bodyObj[RESP_EPH_FIELD];
       // A sealed request with no response ephemeral would get its answer back
       // in plaintext: refused like the reveal-only routes are.
-      if (hpkeRequired && !respEphPubB64) return sealedRequired();
+      if (!respEphPubB64 && (hpkeRequired || (wire && policy.requireSealWith))) {
+        return sealedRequired();
+      }
     }
-    handlerReq = proxyReq(req, bodyObj, raw, wasSealed);
+    handlerReq = proxyReq(req, bodyObj, raw, wire !== null);
   } else if (policy.response === 'reveal') {
     if (method === 'GET' || method === 'HEAD') {
       respEphPubB64 = req.headers.get('x-fs-resp-eph') ?? undefined;

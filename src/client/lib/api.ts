@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { hasBodyField, routePolicy } from '../../shared/crypto/envelope';
 import type { ApiError } from '../../shared/contracts/common';
 import { augmentLoginBody, captureSessionToken, signedHeaders } from './pop';
 
@@ -58,10 +59,27 @@ async function request<S extends z.ZodTypeAny>(
 
   // CDN-blinding: seal the request body and/or set up to open a sealed response,
   // per the route policy. No-op (undefined) for non-sealed routes or when sealing
-  // isn't baked in (then everything stays plaintext, dual-mode).
+  // isn't baked in. Refuse fields that require sealing before signing or sending.
   const seal = HPKE_ENABLED
     ? await (await loadHpke()).prepareOutbound(path, method, outBodyStr)
     : undefined;
+
+  if (seal?.policy.request !== 'seal') {
+    const policy = routePolicy(path, method);
+    if (
+      (policy?.required && policy.request === 'seal') ||
+      (policy?.requireSealWith &&
+        outBodyStr &&
+        hasBodyField(policy.requireSealWith, JSON.parse(outBodyStr)))
+    ) {
+      throw new ApiCallError(400, {
+        error: {
+          code: 'hpke.sealed_required',
+          message: 'This action requires an HPKE-enabled web client.',
+        },
+      });
+    }
+  }
 
   const headers: Record<string, string> = {
     'content-type': 'application/json',
@@ -135,6 +153,14 @@ export const apiClient = {
 };
 
 export { ApiCallError };
+
+export function requiresMemberSignIn(error: unknown): boolean {
+  return (
+    error instanceof ApiCallError &&
+    error.status === 401 &&
+    error.payload.error.code === 'auth.reauthentication_required'
+  );
+}
 
 /** Up to six `path (problem)` entries of a failed response parse; no values. */
 export function responseShapeIssues(

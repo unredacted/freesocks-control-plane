@@ -2,37 +2,35 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import {
+  passkeyNonce,
+  passkeyExamples,
+  credentialPublicKey,
+  signedAssertion,
+} from '../tests/fixtures/passkeyAssertion';
+import { bytesToB64Url, kidFromPublicKey, routePolicy } from '../src/shared/crypto/envelope';
+import { serializePublicKey, serverKeyPairFromSeed } from '../src/shared/crypto/hpke';
+import { clientPrepareRequest } from '../src/shared/crypto/channel';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hmacSha256Hex, sha256Hex } from './lib/crypto';
-import { verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
+import { verifyRegistrationResponse } from '@simplewebauthn/server';
 
-// Mock ONLY the two cryptographic verifiers, so the post-verify happy-path
-// (counter bump, credential insert, session mint + signed cookie) is reachable in
-// convex-test without a real/virtual authenticator. generate*Options stay REAL
-// (the options tests rely on them). Every existing *Verify test bails BEFORE these
-// are reached (bad/expired challenge, unknown credential, bootstrap lock), so they
-// are unaffected. The full ceremony with a genuine authenticator is the e2e todo.
+// Keep the real assertion verifier for signed fixtures. Registration uses a mock.
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@simplewebauthn/server')>();
   return {
     ...actual,
     verifyRegistrationResponse: vi.fn(),
-    verifyAuthenticationResponse: vi.fn(),
+    verifyAuthenticationResponse: vi.fn(actual.verifyAuthenticationResponse),
   };
 });
 
 const modules = import.meta.glob('./**/*.*s');
 
-// These tests cover the GATING + SECURITY branches of the passkey ceremonies
-// (bootstrap lock, anti-enumeration, throttle, replay/challenge handling) which
-// are reachable without a real authenticator. The cryptographic happy-path
-// (verifyRegistrationResponse / verifyAuthenticationResponse succeeding on a
-// genuine attestation/assertion) needs a hardware/virtual authenticator and is
-// left to an end-to-end browser test (see the test.todo at the bottom).
-
 const IP_SALT = 'test-ip-salt';
+const binding = { popPublicKey: passkeyExamples.admin.pub, popAlg: passkeyExamples.admin.alg };
 
 beforeEach(() => {
   vi.stubEnv('WEBAUTHN_RP_ID', 'localhost');
@@ -60,7 +58,7 @@ async function seedAdminWithCredential(
     await ctx.db.insert('passkeyCredentials', {
       adminUserId: id,
       credentialId,
-      publicKey: 'cHVibGljLWtleQ==',
+      publicKey: credentialPublicKey,
       counter: 0,
     });
     return id;
@@ -173,6 +171,7 @@ describe('registerBootstrapVerify', () => {
       });
       await ctx.db.insert('webauthnRegistrationChallenges', {
         adminUserId: id,
+        inviteId: null,
         challenge: 'stored-challenge',
         expiresAt: Date.now() + 60_000,
       });
@@ -319,13 +318,7 @@ describe('bootstrapInsertCredential (serializable TOCTOU claim)', () => {
         credentialId: 'cred-second',
       }),
     ).rejects.toThrow(/already exists/i);
-    // The invite path (insertCredential) is unaffected — admins already exist there.
-    await t.mutation(internal.admins.insertCredential, {
-      adminUserId: adminId,
-      ...cred,
-      credentialId: 'cred-invite',
-    });
-    expect((await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).length).toBe(2);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toHaveLength(1);
   });
 });
 
@@ -334,6 +327,7 @@ describe('authenticateVerify', () => {
     const t = convexTest(schema, modules);
     await expect(
       t.action(internal.webauthn.authenticateVerify, {
+        ...binding,
         challengeId: 'does-not-exist',
         response: { id: 'cred-1', rawId: 'cred-1', response: {}, type: 'public-key' },
       }),
@@ -351,6 +345,7 @@ describe('authenticateVerify', () => {
     );
     await expect(
       t.action(internal.webauthn.authenticateVerify, {
+        ...binding,
         challengeId: 'ch-1',
         response: { id: 'unregistered-cred', rawId: 'x', response: {}, type: 'public-key' },
       }),
@@ -364,41 +359,76 @@ describe('authenticateVerify', () => {
     expect(row?.consumedAt).toBeTypeOf('number');
   });
 
-  test('happy path: a verified assertion bumps the counter and mints an admin session', async () => {
-    vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-signing-key');
+  test.each([
+    ['both fields', {}],
+    ['public key', { fsPopAlg: binding.popAlg }],
+    ['algorithm', { fsPopPub: binding.popPublicKey }],
+  ] as const)('rejects a verify request missing %s', async (_, fields) => {
     const t = convexTest(schema, modules);
-    const { adminId } = await seedAdminWithCredential(t, 'admin', 'cred-1');
-    await t.run((ctx) =>
-      ctx.db.insert('webauthnAuthChallenges', {
+    const res = await t.fetch('/api/admin/auth/authenticate/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
         challengeId: 'ch-auth',
-        challenge: 'stored-challenge',
-        expiresAt: Date.now() + 60_000,
+        response: signedAssertion('admin'),
+        ...fields,
       }),
-    );
-    vi.mocked(verifyAuthenticationResponse).mockResolvedValue({
-      verified: true,
-      authenticationInfo: { newCounter: 7 },
-    } as unknown as Awaited<ReturnType<typeof verifyAuthenticationResponse>>);
-
-    const res = await t.action(internal.webauthn.authenticateVerify, {
-      challengeId: 'ch-auth',
-      response: { id: 'cred-1', rawId: 'cred-1', response: {}, type: 'public-key' },
     });
-    expect(res.ok).toBe(true);
-    expect(res.username).toBe('admin');
-    expect(typeof res.signedCookieValue).toBe('string');
-    // The counter advanced to the verifier's value + an admin session row minted.
-    const cred = await t.run(async (ctx) =>
-      (await ctx.db.query('passkeyCredentials').collect()).find((c) => c.credentialId === 'cred-1'),
-    );
-    expect(cred?.counter).toBe(7);
-    const sessions = await t.run(async (ctx) =>
-      (await ctx.db.query('sessions').collect()).filter(
-        (s) => s.kind === 'admin' && s.adminUserId === adminId,
-      ),
-    );
-    expect(sessions).toHaveLength(1);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'validation' } });
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('sessions').collect())).toHaveLength(0);
   });
+
+  test.each(['original', 'changed key', 'changed algorithm', 'bare nonce'] as const)(
+    'checks the admin signing-key binding: %s',
+    async (input) => {
+      vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-signing-key');
+      const t = convexTest(schema, modules);
+      const { adminId } = await seedAdminWithCredential(t, 'admin', 'cred-1');
+      await t.run((ctx) =>
+        ctx.db.insert('webauthnAuthChallenges', {
+          challengeId: 'ch-auth',
+          // For the legacy case, the fixture signed the stored nonce directly.
+          challenge: input === 'bare nonce' ? passkeyExamples.admin.challenge : passkeyNonce,
+          expiresAt: Date.now() + 60_000,
+        }),
+      );
+      const result = t.action(internal.webauthn.authenticateVerify, {
+        challengeId: 'ch-auth',
+        response: signedAssertion('admin'),
+        popPublicKey:
+          input === 'changed key' ? passkeyExamples.admin.alternatePub : binding.popPublicKey,
+        popAlg: input === 'changed algorithm' ? 'EdDSA' : binding.popAlg,
+      });
+      if (input !== 'original') {
+        await expect(result).rejects.toThrow(
+          input === 'changed algorithm' ? /key or algorithm/i : /challenge/i,
+        );
+        expect(await t.run((ctx) => ctx.db.query('sessions').collect())).toHaveLength(0);
+        return;
+      }
+      const res = await result;
+      expect(res.ok).toBe(true);
+      expect(res.username).toBe('admin');
+      expect(typeof res.signedCookieValue).toBe('string');
+      // The counter advanced to the verifier's value + an admin session row minted.
+      const cred = await t.run(async (ctx) =>
+        (await ctx.db.query('passkeyCredentials').collect()).find(
+          (c) => c.credentialId === 'cred-1',
+        ),
+      );
+      expect(cred?.counter).toBe(7);
+      const sessions = await t.run(async (ctx) =>
+        (await ctx.db.query('sessions').collect()).filter(
+          (s) => s.kind === 'admin' && s.adminUserId === adminId,
+        ),
+      );
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({ ...binding, popSessionToken: res.popSessionToken });
+      expect(res.popSessionToken).toMatch(/^[0-9a-f]{32}$/);
+    },
+  );
 });
 
 describe('createInvite (multi-admin onboarding)', () => {
@@ -429,8 +459,38 @@ describe('createInvite (multi-admin onboarding)', () => {
     expect(admins.map((a) => a.username)).toContain('alex');
     expect(invites).toHaveLength(1);
     // Only the hash is persisted — never the raw token.
-    expect(invites[0]!.tokenHash).toBe(await sha256Hex(res.inviteToken));
+    expect(invites[0]!.tokenHash).toBe(
+      await sha256Hex(`admin-invite-fragment-v1:${res.inviteToken}`),
+    );
     expect(invites[0]!.tokenHash).not.toBe(res.inviteToken);
+  });
+
+  test('reissuing an invite retires the old link and requires fresh options', async () => {
+    const t = convexTest(schema, modules);
+    const createdByAdminId = await seedCreator(t);
+    const issue = (username: string) =>
+      t.action(internal.webauthn.createInvite, { username, createdByAdminId });
+    const old = await issue('alex');
+    const other = await issue('another');
+    await t.action(internal.webauthn.registerInviteOptions, { invite: old.inviteToken });
+    const current = await issue('alex');
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: old.inviteToken }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, { invite: old.inviteToken, response: {} }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, {
+        invite: current.inviteToken,
+        response: {},
+      }),
+    ).rejects.toThrow(/No valid challenge/);
+    for (const invite of [current.inviteToken, other.inviteToken]) {
+      expect(
+        (await t.action(internal.webauthn.registerInviteOptions, { invite })).options.challenge,
+      ).toBeTruthy();
+    }
   });
 
   test('rejects a username that already has a registered passkey', async () => {
@@ -446,8 +506,8 @@ describe('createInvite (multi-admin onboarding)', () => {
 describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
   async function seedInvite(
     t: T,
-    opts: { token?: string; expired?: boolean; consumed?: boolean } = {},
-  ): Promise<{ adminUserId: Id<'adminUsers'>; token: string }> {
+    opts: { token?: string; expired?: boolean; consumed?: boolean; legacy?: boolean } = {},
+  ): Promise<{ adminUserId: Id<'adminUsers'>; inviteId: Id<'adminInvites'>; token: string }> {
     const token = opts.token ?? 'a'.repeat(64);
     const adminUserId = await t.run((ctx) =>
       ctx.db.insert('adminUsers', {
@@ -457,8 +517,8 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
         updatedAt: Date.now(),
       }),
     );
-    const tokenHash = await sha256Hex(token);
-    await t.run((ctx) =>
+    const tokenHash = await sha256Hex(opts.legacy ? token : `admin-invite-fragment-v1:${token}`);
+    const inviteId = await t.run((ctx) =>
       ctx.db.insert('adminInvites', {
         adminUserId,
         tokenHash,
@@ -469,8 +529,127 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
         updatedAt: Date.now(),
       }),
     );
-    return { adminUserId, token };
+    await t.run((ctx) => ctx.db.patch(adminUserId, { pendingInviteId: inviteId }));
+    return { adminUserId, token, inviteId };
   }
+
+  const credential = { credentialId: 'fixture-key', publicKey: 'fixture-public-key', counter: 0 };
+
+  test('overlapping first-enrollment commits accept only the current invite once', async () => {
+    const t = convexTest(schema, modules);
+    const { adminUserId, inviteId: old } = await seedInvite(t);
+    const replacement = await t.action(internal.webauthn.createInvite, {
+      username: 'alex',
+      createdByAdminId: adminUserId,
+    });
+    const grant = await t.query(internal.admins.inviteByTokenHash, {
+      tokenHash: await sha256Hex(`admin-invite-fragment-v1:${replacement.inviteToken}`),
+    });
+    expect(grant).not.toBeNull();
+    const current = grant!.inviteId;
+    const claim = (inviteId: Id<'adminInvites'>, credentialId: string) =>
+      t.mutation(internal.admins.enrollWithInvite, {
+        inviteId,
+        credential: { ...credential, credentialId },
+      });
+    const [earlier, ...latest] = await Promise.allSettled([
+      claim(old, 'old'),
+      claim(current, 'current-a'),
+      claim(current, 'current-b'),
+    ]);
+    expect(earlier.status).toBe('rejected');
+    expect(latest.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toMatchObject([
+      { adminUserId, credentialId: expect.stringMatching(/^current-/) },
+    ]);
+    await expect(claim(old, 'after-enrollment')).rejects.toThrow(/Invalid or expired invite/);
+    expect((await t.run((ctx) => ctx.db.get(adminUserId)))?.pendingInviteId).toBeUndefined();
+    expect((await t.run((ctx) => ctx.db.get(current)))?.consumedAt).toEqual(expect.any(Number));
+    expect(await t.run((ctx) => ctx.db.query('auditLog').collect())).toMatchObject([
+      { action: 'admin.invite.created' },
+      { action: 'admin.invite.redeemed', actorId: adminUserId },
+    ]);
+  });
+
+  test('pre-upgrade links stay retired for a credential-less target until an operator reissues', async () => {
+    const t = convexTest(schema, modules);
+    const { token, inviteId, adminUserId } = await seedInvite(t);
+    // A prior deployment could leave an unconsumed sibling after enrollment
+    // and last-passkey revocation. There is no recorded grant in that database.
+    await t.run((ctx) => ctx.db.patch(adminUserId, { pendingInviteId: undefined }));
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, { inviteId, credential }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    expect(await t.query(internal.admins.listAdminsWithCounts, {})).toMatchObject([
+      { pendingInvite: false },
+    ]);
+    const fresh = await t.action(internal.webauthn.createInvite, {
+      username: 'alex',
+      createdByAdminId: adminUserId,
+    });
+    expect(await t.query(internal.admins.listAdminsWithCounts, {})).toMatchObject([
+      { pendingInvite: true },
+    ]);
+    const allowed = await t.query(internal.admins.inviteByTokenHash, {
+      tokenHash: await sha256Hex(`admin-invite-fragment-v1:${fresh.inviteToken}`),
+    });
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, { inviteId: allowed!.inviteId, credential }),
+    ).resolves.toEqual({ ok: true, username: 'alex' });
+  });
+
+  test('the final commit rechecks expiry and existing enrollment', async () => {
+    const t = convexTest(schema, modules);
+    const { inviteId, token, adminUserId } = await seedInvite(t);
+    await t.action(internal.webauthn.registerInviteOptions, { invite: token });
+    const claim = () => t.mutation(internal.admins.enrollWithInvite, { inviteId, credential });
+    await t.run((ctx) => ctx.db.patch(inviteId, { expiresAt: Date.now() - 1 }));
+    await expect(claim()).rejects.toThrow(/Invalid or expired invite/);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(inviteId, { expiresAt: Date.now() + 60_000 });
+      await ctx.db.insert('passkeyCredentials', {
+        ...credential,
+        adminUserId,
+        credentialId: 'existing',
+      });
+    });
+    await expect(claim()).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toHaveLength(1);
+  });
+
+  test('a credential collision rolls back redemption and the invite can be retried', async () => {
+    const t = convexTest(schema, modules);
+    const { inviteId } = await seedInvite(t);
+    await seedAdminWithCredential(t, 'another', credential.credentialId);
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, { inviteId, credential }),
+    ).rejects.toThrow(/collision/);
+    expect((await t.run((ctx) => ctx.db.get(inviteId)))?.consumedAt).toBeUndefined();
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, {
+        inviteId,
+        credential: { ...credential, credentialId: 'retry' },
+      }),
+    ).resolves.toEqual({ ok: true, username: 'alex' });
+  });
+
+  test('bootstrap cannot consume an invitation challenge for the same admin', async () => {
+    const t = convexTest(schema, modules);
+    const { adminUserId, token } = await seedInvite(t);
+    await t.action(internal.webauthn.registerInviteOptions, { invite: token });
+    await expect(
+      t.action(internal.webauthn.registerBootstrapVerify, {
+        adminId: adminUserId,
+        response: {},
+      }),
+    ).rejects.toThrow(/No valid challenge/);
+  });
 
   test('options: an invalid invite is rejected', async () => {
     const t = convexTest(schema, modules);
@@ -491,6 +670,59 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
         .collect(),
     );
     expect(challenges).toHaveLength(1);
+  });
+
+  test('a sealed verification registers the credential and consumes the invite once', async () => {
+    const t = convexTest(schema, modules);
+    const { token, adminUserId } = await seedInvite(t);
+    const { options } = await t.action(internal.webauthn.registerInviteOptions, { invite: token });
+    const seed = new Uint8Array(32).fill(5);
+    vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(seed));
+    const { publicKey } = await serverKeyPairFromSeed(seed);
+    const path = '/api/admin/auth/register/verify';
+    const response = { id: 'invite-key', rawId: 'invite-key', type: 'public-key', response: {} };
+    const prepared = await clientPrepareRequest({
+      serverPub: publicKey,
+      serverKid: await kidFromPublicKey(await serializePublicKey(publicKey)),
+      method: 'POST',
+      path,
+      policy: routePolicy(path, 'POST')!,
+      bodyObj: { invite: token, response, deviceLabel: 'My key' },
+    });
+    vi.mocked(verifyRegistrationResponse).mockResolvedValueOnce({
+      verified: true,
+      registrationInfo: {
+        credential: { id: 'invite-key', publicKey: new Uint8Array([1, 2, 3]), counter: 0 },
+        aaguid: 'test-aaguid',
+      },
+    } as Awaited<ReturnType<typeof verifyRegistrationResponse>>);
+    const submit = () =>
+      t.fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(prepared.body),
+      });
+    const res = await submit();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, username: 'alex' });
+    expect(verifyRegistrationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ response, expectedChallenge: options.challenge }),
+    );
+    expect((await submit()).status).toBe(403);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toMatchObject([
+      { adminUserId, credentialId: 'invite-key', deviceLabel: 'My key' },
+    ]);
+  });
+
+  test('a still-live legacy query token cannot authorize either registration step', async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await seedInvite(t, { legacy: true });
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, { invite: token, response: {} }),
+    ).rejects.toThrow(/Invalid or expired invite/);
   });
 
   test('options: an expired invite is rejected', async () => {

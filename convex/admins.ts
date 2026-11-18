@@ -6,10 +6,15 @@
  * they're race-safe (serializable), giving the replay/TOCTOU guarantees the old
  * Hono+D1 code relied on transactions for.
  */
-import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 
@@ -88,10 +93,16 @@ export const touchLogin = internalMutation({
 // --- registration challenges ---
 
 export const insertRegistrationChallenge = internalMutation({
-  args: { adminUserId: v.id('adminUsers'), challenge: v.string(), ttlMs: v.number() },
-  handler: async (ctx, { adminUserId, challenge, ttlMs }) => {
+  args: {
+    adminUserId: v.id('adminUsers'),
+    inviteId: v.union(v.id('adminInvites'), v.null()),
+    challenge: v.string(),
+    ttlMs: v.number(),
+  },
+  handler: async (ctx, { adminUserId, inviteId, challenge, ttlMs }) => {
     await ctx.db.insert('webauthnRegistrationChallenges', {
       adminUserId,
+      inviteId,
       challenge,
       expiresAt: Date.now() + ttlMs,
     });
@@ -105,8 +116,8 @@ export const insertRegistrationChallenge = internalMutation({
  * a legitimate retry just restarts the ceremony. Returns null if none valid.
  */
 export const consumeLatestRegistrationChallenge = internalMutation({
-  args: { adminUserId: v.id('adminUsers') },
-  handler: async (ctx, { adminUserId }) => {
+  args: { adminUserId: v.id('adminUsers'), inviteId: v.union(v.id('adminInvites'), v.null()) },
+  handler: async (ctx, { adminUserId, inviteId }) => {
     const now = Date.now();
     // Range-scan only the unexpired suffix (TTL is minutes, so this is a handful
     // of rows at most) instead of collecting the admin's full challenge history.
@@ -115,7 +126,7 @@ export const consumeLatestRegistrationChallenge = internalMutation({
       .withIndex('by_admin_expires', (q) => q.eq('adminUserId', adminUserId).gt('expiresAt', now))
       .collect();
     const row = rows
-      .filter((r) => !r.consumedAt)
+      .filter((r) => r.consumedAt === undefined && r.inviteId === inviteId)
       .sort((a, b) => b._creationTime - a._creationTime)[0];
     if (!row) return null;
     await ctx.db.patch(row._id, { consumedAt: now });
@@ -125,28 +136,14 @@ export const consumeLatestRegistrationChallenge = internalMutation({
 
 // --- credentials ---
 
-export const insertCredential = internalMutation({
-  args: {
-    adminUserId: v.id('adminUsers'),
-    credentialId: v.string(),
-    publicKey: v.string(),
-    counter: v.number(),
-    transports: v.optional(v.string()),
-    deviceLabel: v.optional(v.string()),
-    aaguid: v.optional(v.string()),
-  },
-  handler: async (ctx, a) => {
-    // Uniqueness read-check (no UNIQUE constraint in Convex): a credentialId
-    // dup would silently break the sign-in lookup's .unique().
-    const clash = await ctx.db
-      .query('passkeyCredentials')
-      .withIndex('by_credential_id', (q) => q.eq('credentialId', a.credentialId))
-      .unique();
-    if (clash) throw new Error('credential id collision');
-    await ctx.db.insert('passkeyCredentials', a);
-    return null;
-  },
-});
+const credentialFields = {
+  credentialId: v.string(),
+  publicKey: v.string(),
+  counter: v.number(),
+  transports: v.optional(v.string()),
+  deviceLabel: v.optional(v.string()),
+  aaguid: v.optional(v.string()),
+};
 
 /**
  * Bootstrap-only credential insert: atomically re-checks that NO credential
@@ -154,17 +151,11 @@ export const insertCredential = internalMutation({
  * the slow crypto verify FIRST (after its own pre-check), so two parties racing
  * the ceremony can both pass the earlier query-time check — but only one wins
  * this serializable claim; the loser gets auth.forbidden and must restart.
- * (Invite registration uses insertCredential: an admin already exists there.)
  */
 export const bootstrapInsertCredential = internalMutation({
   args: {
     adminUserId: v.id('adminUsers'),
-    credentialId: v.string(),
-    publicKey: v.string(),
-    counter: v.number(),
-    transports: v.optional(v.string()),
-    deviceLabel: v.optional(v.string()),
-    aaguid: v.optional(v.string()),
+    ...credentialFields,
   },
   handler: async (ctx, a) => {
     if ((await ctx.db.query('passkeyCredentials').take(1)).length > 0) {
@@ -173,6 +164,7 @@ export const bootstrapInsertCredential = internalMutation({
         message: 'Bootstrap closed: an admin already exists',
       });
     }
+    await ctx.db.patch(a.adminUserId, { pendingInviteId: undefined });
     await ctx.db.insert('passkeyCredentials', a);
     return null;
   },
@@ -271,17 +263,18 @@ export const listAdminsWithCounts = internalQuery({
         .query('passkeyCredentials')
         .withIndex('by_admin', (q) => q.eq('adminUserId', a._id))
         .collect();
-      const invites = await ctx.db
-        .query('adminInvites')
-        .withIndex('by_admin', (q) => q.eq('adminUserId', a._id))
-        .collect();
+      const invite = a.pendingInviteId ? await ctx.db.get(a.pendingInviteId) : null;
       out.push({
         id: a._id,
         username: a.username,
         displayName: a.displayName,
         isActive: a.isActive,
         passkeyCount: creds.length,
-        pendingInvite: invites.some((i) => !i.consumedAt && i.expiresAt > now),
+        pendingInvite:
+          creds.length === 0 &&
+          invite?.adminUserId === a._id &&
+          invite.consumedAt === undefined &&
+          invite.expiresAt > now,
         lastLoginAt: a.lastLoginAt ? new Date(a.lastLoginAt).toISOString() : null,
         createdAt: new Date(a._creationTime).toISOString(),
       });
@@ -396,6 +389,7 @@ export const revokeCredential = internalMutation({
           'Cannot revoke the last passkey that can sign in. Register another passkey (or admin) first.',
       });
     }
+    await ctx.db.patch(cred.adminUserId, { pendingInviteId: undefined });
     await ctx.db.delete(credentialId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -409,6 +403,22 @@ export const revokeCredential = internalMutation({
   },
 });
 
+function firstCredential(ctx: QueryCtx, adminUserId: Id<'adminUsers'>) {
+  return ctx.db
+    .query('passkeyCredentials')
+    .withIndex('by_admin', (q) => q.eq('adminUserId', adminUserId))
+    .first();
+}
+
+// The lookup and the final write both consult the administrator's current grant.
+async function pendingInviteTarget(ctx: QueryCtx, invite: Doc<'adminInvites'> | null) {
+  if (!invite || invite.consumedAt !== undefined || invite.expiresAt <= Date.now()) return null;
+  const admin = await ctx.db.get(invite.adminUserId);
+  if (!admin || admin.pendingInviteId !== invite._id || (await firstCredential(ctx, admin._id)))
+    return null;
+  return admin;
+}
+
 export const insertInvite = internalMutation({
   args: {
     adminUserId: v.id('adminUsers'),
@@ -416,8 +426,20 @@ export const insertInvite = internalMutation({
     tokenPrefix: v.string(),
     createdByAdminId: v.id('adminUsers'),
     ttlMs: v.number(),
+    requestId: v.optional(v.string()),
   },
-  handler: async (ctx, { adminUserId, tokenHash, tokenPrefix, createdByAdminId, ttlMs }) => {
+  handler: async (
+    ctx,
+    { adminUserId, tokenHash, tokenPrefix, createdByAdminId, ttlMs, requestId },
+  ) => {
+    const admin = await ctx.db.get(adminUserId);
+    if (!admin) throw new ConvexError({ code: 'validation', message: 'Invite target missing' });
+    if (await firstCredential(ctx, adminUserId)) {
+      throw new ConvexError({
+        code: 'validation',
+        message: 'That username already has a registered admin',
+      });
+    }
     // Uniqueness read-check (the codebase convention): cryptographically
     // unreachable, but the `.unique()` reader throws on any dup.
     const clash = await ctx.db
@@ -425,15 +447,25 @@ export const insertInvite = internalMutation({
       .withIndex('by_token_hash', (q) => q.eq('tokenHash', tokenHash))
       .unique();
     if (clash) throw new Error('admin invite token collision');
-    await ctx.db.insert('adminInvites', {
+    const now = Date.now();
+    const expiresAtMs = now + ttlMs;
+    const pendingInviteId = await ctx.db.insert('adminInvites', {
       adminUserId,
       tokenHash,
       tokenPrefix,
       createdByAdminId,
-      expiresAt: Date.now() + ttlMs,
-      updatedAt: Date.now(),
+      expiresAt: expiresAtMs,
+      updatedAt: now,
     });
-    return null;
+    await ctx.db.patch(adminUserId, { pendingInviteId, updatedAt: now });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: createdByAdminId,
+      action: 'admin.invite.created',
+      requestId,
+      payload: { username: admin.username },
+    });
+    return expiresAtMs;
   },
 });
 
@@ -445,23 +477,47 @@ export const inviteByTokenHash = internalQuery({
       .query('adminInvites')
       .withIndex('by_token_hash', (q) => q.eq('tokenHash', tokenHash))
       .unique();
-    if (!row || row.consumedAt || row.expiresAt <= Date.now()) return null;
-    return { inviteId: row._id, adminUserId: row.adminUserId };
+    const admin = await pendingInviteTarget(ctx, row);
+    if (!row || !admin) return null;
+    return {
+      inviteId: row._id,
+      adminUserId: admin._id,
+      username: admin.username,
+      displayName: admin.displayName,
+    };
   },
 });
 
-/**
- * Atomically mark an invite consumed (single-use gate). Returns {ok:false} if it
- * was already consumed (a race), so the caller can abort before inserting a
- * second credential.
- */
-export const consumeInvite = internalMutation({
-  args: { inviteId: v.id('adminInvites') },
-  handler: async (ctx, { inviteId }) => {
-    const row = await ctx.db.get(inviteId);
-    if (!row || row.consumedAt) return { ok: false as const };
-    await ctx.db.patch(inviteId, { consumedAt: Date.now(), updatedAt: Date.now() });
-    return { ok: true as const };
+/** Commit a verified attestation and retire all of this target's invitations
+ * in one transaction. A failed insert leaves the current invite available. */
+export const enrollWithInvite = internalMutation({
+  args: {
+    inviteId: v.id('adminInvites'),
+    credential: v.object(credentialFields),
+    requestId: v.optional(v.string()),
+  },
+  handler: async (ctx, { inviteId, credential, requestId }) => {
+    const invite = await ctx.db.get(inviteId);
+    const admin = await pendingInviteTarget(ctx, invite);
+    if (!admin)
+      throw new ConvexError({ code: 'auth.forbidden', message: 'Invalid or expired invite' });
+    const clash = await ctx.db
+      .query('passkeyCredentials')
+      .withIndex('by_credential_id', (q) => q.eq('credentialId', credential.credentialId))
+      .unique();
+    if (clash) throw new Error('credential id collision');
+    const now = Date.now();
+    await ctx.db.insert('passkeyCredentials', { ...credential, adminUserId: admin._id });
+    await ctx.db.patch(inviteId, { consumedAt: now, updatedAt: now });
+    await ctx.db.patch(admin._id, { pendingInviteId: undefined, updatedAt: now });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: admin._id,
+      action: 'admin.invite.redeemed',
+      requestId,
+      payload: { username: admin.username },
+    });
+    return { ok: true as const, username: admin.username };
   },
 });
 

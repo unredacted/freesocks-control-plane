@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { formatAccountId } from './lib/accountId';
+import { internalMutation } from './_generated/server';
+import { formatAccountId, hashAccountId } from './lib/accountId';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -83,6 +84,37 @@ describe('auth.accountLogin', () => {
       expect(sessions).toHaveLength(1);
       expect(sessions[0]!.kind).toBe('member');
     });
+  });
+
+  test('rotation rejects a pending login using the previously valid hash', async () => {
+    stubFetch(true);
+    const t = convexTest(schema, modules);
+    const { userId, accountId } = await seedUserWithAccount(t);
+    const accountIdHash = await hashAccountId(accountId);
+    expect((await t.query(internal.users.byAccountIdHash, { accountIdHash }))?._id).toBe(userId);
+
+    // Hold the pending request at the session-issuance boundary.
+    const pending = { accountIdHash, sid: 'pending-session' };
+    const rotated = await t.action(internal.auth.rotateAccountId, { userId });
+    expect(await t.mutation(internal.auth.completeAccountLogin, pending)).toBeNull();
+    expect(await t.query(internal.sessions.bySid, { sid: pending.sid })).toBeNull();
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query('auditLog')
+          .withIndex('by_action', (q) => q.eq('action', 'account.login.account_id'))
+          .first(),
+      ),
+    ).toBeNull();
+
+    const login = (number: string) =>
+      t.action(internal.auth.accountLogin, {
+        accountId: formatAccountId(number),
+        captchaToken: 'tok',
+        ip: '203.0.113.7',
+      });
+    expect(await login(accountId)).toEqual({ ok: false, reason: 'invalid' });
+    expect(await login(rotated.accountId)).toMatchObject({ ok: true, userId });
   });
 
   test('accepts the formatted (spaced) form of the number', async () => {
@@ -278,6 +310,38 @@ describe('auth.rotateAccountId', () => {
       const sids = (await ctx.db.query('sessions').collect()).map((s) => s.sid);
       expect(sids).toEqual(['s-current']);
     });
+  });
+
+  test('a revocation failure rolls back the account-number change', async () => {
+    const t = convexTest(schema, {
+      ...modules,
+      './sessions.ts': async () => ({
+        ...(await import('./sessions')),
+        deleteAllForUserExcept: internalMutation({
+          handler: async () => {
+            throw new Error('revocation failed');
+          },
+        }),
+      }),
+    });
+    const { userId, accountId } = await seedUserWithAccount(t);
+    await t.mutation(internal.sessions.create, {
+      userId,
+      kind: 'member',
+      sid: 'current',
+      ttlMs: 60_000,
+    });
+    await expect(t.action(internal.auth.rotateAccountId, { userId })).rejects.toThrow(
+      'revocation failed',
+    );
+    expect(
+      (
+        await t.query(internal.users.byAccountIdHash, {
+          accountIdHash: await hashAccountId(accountId),
+        })
+      )?._id,
+    ).toBe(userId);
+    expect(await t.query(internal.sessions.bySid, { sid: 'current' })).toMatchObject({ userId });
   });
 
   test('rotation with no keepSid revokes ALL sessions (token-authenticated caller)', async () => {

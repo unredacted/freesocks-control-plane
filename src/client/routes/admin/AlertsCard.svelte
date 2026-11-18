@@ -3,8 +3,8 @@
    * Operator alerts (Settings): an opt-in webhook that receives each alert
    * (new, still open after 12 h, resolved) as ntfy JSON. The
    * server never sends the stored topic or token back (only whether each is
-   * set) and shows only the webhook's origin, so the fields start empty: a
-   * blank field keeps what is stored, "Clear" removes it.
+   * set) and shows only the webhook's origin. Blank topic and token fields
+   * retain their values only within the same origin.
    */
   import {
     Card,
@@ -143,8 +143,9 @@
       </div>
     </div>
     <p class="text-xs text-muted-foreground">
-      A blank field keeps what is stored. The topic and the token are never shown again once saved.
-      To poll instead, read the attention list with a read-only token (see docs/edges.md).
+      Changing the webhook’s scheme, host, or port clears any topic or token you leave blank. For
+      other edits, blank fields keep their stored values. To poll instead, read the attention list
+      with a read-only token (see docs/edges.md).
     </p>
     {#if view}
       <p class="text-xs text-muted-foreground">

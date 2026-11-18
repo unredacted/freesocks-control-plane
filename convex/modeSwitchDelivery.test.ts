@@ -21,6 +21,15 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
+import { signValue } from './lib/cookies';
+import {
+  bytesToB64Url,
+  isSealedWire,
+  kidFromPublicKey,
+  routePolicy,
+} from '../src/shared/crypto/envelope';
+import { clientPrepareRequest, clientOpenResponse } from '../src/shared/crypto/channel';
+import { serverKeyPairFromSeed, serializePublicKey } from '../src/shared/crypto/hpke';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import { classifyClient } from './lib/edges/clientFamilies';
 import {
@@ -181,16 +190,37 @@ const PLACE_OF_SQUAD = Object.fromEntries(
  * after the panel has read the group (the fetch in flight across a switch).
  */
 function stubPanel(start: Place) {
+  let issuedPlace: Place | undefined;
   const panel = {
     place: start,
     down: false,
     fetches: 0,
+    failIssue: false,
     onFetch: null as null | (() => Promise<void>),
   };
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith('/api/users') && init?.method === 'POST') {
+        if (panel.failIssue) return new Response('unavailable', { status: 503 });
+        const body = JSON.parse(String(init.body)) as { activeInternalSquads: string[] };
+        issuedPlace = PLACE_OF_SQUAD[body.activeInternalSquads[0]];
+        return Response.json({
+          response: {
+            uuid: '550e8400-e29b-41d4-a716-446655440009',
+            shortUuid: 'short-private',
+            username: 'new-key',
+            status: 'ACTIVE',
+            trafficLimitBytes: null,
+            trafficLimitStrategy: 'MONTH',
+            userTraffic: { usedTrafficBytes: 0 },
+            expireAt: new Date(Date.now() + 86400000).toISOString(),
+            hwidDeviceLimit: null,
+            subscriptionUrl: 'https://panel.example/sub/short-private',
+          },
+        });
+      }
       if (url.includes('/api/users') && init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body)) as { activeInternalSquads?: string[] };
         const squad = body.activeInternalSquads?.[0];
@@ -216,7 +246,10 @@ function stubPanel(start: Place) {
       if (panel.down) return new Response('unavailable', { status: 503 });
       panel.fetches += 1;
       const ua = new Headers(init?.headers).get('user-agent') ?? '';
-      const body = panelBody(panel.place, ua);
+      const body = panelBody(
+        url.includes('short-private') && issuedPlace ? issuedPlace : panel.place,
+        ua,
+      );
       const hook = panel.onFetch;
       if (hook) {
         panel.onFetch = null;
@@ -407,6 +440,124 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+describe('entering Privacy with a fresh key', () => {
+  test('server and location moves cannot use a stale private preference to move a public key', async () => {
+    const panel = stubPanel('ws');
+    const { t, userId, subId } = await seed('ws', { mirror: true });
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: MODE.p }));
+    for (const result of [
+      await t.action(internal.account.switchServer, { userId, reason: 'blocked' }),
+      await t.action(internal.account.moveToCountryExit, { userId }),
+    ])
+      expect(result).toMatchObject({ ok: false, code: 'mode.unavailable', status: 409 });
+    expect(panel.place).toBe('ws');
+    expect(await row(t, subId)).toMatchObject({
+      state: 'active',
+      subToken: 'tok_one',
+      backendPlacement: SQUAD.ws,
+    });
+  });
+
+  test('failed issuance leaves the Freedom subscription and its links usable', async () => {
+    const panel = stubPanel('ws');
+    panel.failIssue = true;
+    const { t, subId, userId } = await seed('ws', { mirror: true });
+    await expect(
+      t.action(internal.account.switchMode, { userId, target: MODE.p }),
+    ).rejects.toThrow();
+    expect(await t.query(internal.subscriptions.resolveCurrentOrActive, { userId })).toMatchObject({
+      _id: subId,
+      subToken: 'tok_one',
+      state: 'active',
+    });
+    await expectServed(t, 'ws', 'p', CLIENTS.slice(0, 1));
+  });
+
+  test('a backend switch into a private destination also retires existing links', async () => {
+    stubPanel('ws');
+    const { t, subId, userId } = await seed('ws', { mirror: true });
+    await t.run(async (ctx) => {
+      const user = (await ctx.db.get(userId))!;
+      const tier = (await ctx.db.get(user.tierId))!;
+      const { _id, _creationTime, ...values } = tier;
+      const fromTier = await ctx.db.insert('tiers', {
+        ...values,
+        slug: 'free-outline',
+        backend: 'outline',
+      });
+      await ctx.db.patch(userId, { tierId: fromTier, connectionModeId: MODE.p });
+      await ctx.db.patch(subId, { backend: 'outline' });
+    });
+    const result = await t.action(internal.account.switchBackend, { userId, target: 'remnawave' });
+    expect(result).toMatchObject({ ok: true });
+    expect((await get(t, CLIENTS[0])).status).toBe(404);
+    const current = await t.query(internal.subscriptions.resolveCurrentOrActive, { userId });
+    expect(current).toMatchObject({
+      backend: 'remnawave',
+      subscriptionMirrors: [],
+      backendPlacement: SQUAD.p,
+    });
+  });
+  test.each(['remnawave', 'outline'] as const)(
+    'retires links from a %s source and serves the owner over HPKE',
+    async (sourceBackend) => {
+      const panel = stubPanel('ws');
+      const { t, subId, userId } = await seed('ws', { mirror: true });
+      if (sourceBackend === 'outline')
+        await t.run((ctx) => ctx.db.patch(subId, { backend: sourceBackend }));
+      // The preference-only signup route must not retarget a live key.
+      expect(await t.mutation(internal.account.setInitialMode, { userId, modeId: MODE.p })).toBe(
+        'active',
+      );
+      const result = await t.action(internal.account.switchMode, { userId, target: MODE.p });
+      expect(result).toMatchObject({ ok: true, previousUrlRetired: true });
+      expect(panel.place).toBe('ws'); // even a previously exposed native URL still points to the old placement
+      expect((await get(t, CLIENTS[0])).status).toBe(404);
+      const old = await row(t, subId);
+      expect(old?.subToken).toBeUndefined();
+      expect(old?.subscriptionMirrors).toHaveLength(1);
+      const current = await t.query(internal.subscriptions.resolveCurrentOrActive, { userId });
+      expect(current?._id).not.toBe(subId);
+      expect(current?.subToken).toMatch(/^[a-f0-9]{32}$/);
+      expect(current?.subscriptionMirrors).toEqual([]);
+
+      const secret = new Uint8Array(32).fill(7);
+      vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(secret));
+      vi.stubEnv('FS_HPKE_REQUIRED', 'true');
+      vi.stubEnv('SESSION_SIGNING_KEY', 'owner-session-key');
+      const sid = 'privacy-switch-owner';
+      await t.mutation(internal.sessions.create, { kind: 'member', userId, sid, ttlMs: 3600000 });
+      const { publicKey } = await serverKeyPairFromSeed(secret);
+      const kid = await kidFromPublicKey(await serializePublicKey(publicKey));
+      const path = '/api/v1/subscription/content';
+      const prep = await clientPrepareRequest({
+        serverPub: publicKey,
+        serverKid: kid,
+        method: 'GET',
+        path,
+        policy: routePolicy(path, 'GET')!,
+      });
+      const response = await t.fetch(path, {
+        headers: {
+          cookie: `fs_session=${await signValue(sid, 'owner-session-key')}`,
+          'x-fs-resp-eph': prep.respEphPubB64!,
+        },
+      });
+      expect(response.status).toBe(200);
+      const wire = await response.json();
+      expect(isSealedWire(wire)).toBe(true);
+      const opened = await clientOpenResponse({
+        serverKid: kid,
+        method: 'GET',
+        path,
+        respEphPriv: prep.respEphPriv!,
+        wire,
+      });
+      expect(opened).toMatchObject({ content: expect.stringContaining(P_ADDRESS) });
+    },
+  );
+});
+
 describe('a key that switches mode in place', () => {
   test('L7 fronts to an L4 edge: every client family gets the new mode at once, nothing of the old', async () => {
     const panel = stubPanel('ws');
@@ -448,11 +599,15 @@ describe('a key that switches mode in place', () => {
     expect((await row(t, subId))!.lastRender?.listenerKeys).toEqual(['w']);
   });
 
-  test('to a direct privacy mode: the node itself, no front and no edge', async () => {
+  test('explicitly keeping existing links serves the new direct configuration in place', async () => {
     stubPanel('ws');
     const { t, subId, userId } = await seed('ws');
     await expectServed(t, 'ws', 'p', CLIENTS.slice(0, 4));
-    const res = await t.action(internal.account.switchMode, { userId, target: MODE.p });
+    const res = await t.action(internal.account.switchMode, {
+      userId,
+      target: MODE.p,
+      keepUnsealedUrls: true,
+    });
     expect(res).toMatchObject({ ok: true, oldSubscriptionDeletedAt: null });
     await expectServed(t, 'p', 'ws');
     const after = (await row(t, subId))!;

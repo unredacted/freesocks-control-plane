@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { z } from 'zod';
+  import { apiClient } from '../../lib/api';
+  import { readAdminInvite } from '../../lib/adminInvite';
   import { startRegistration } from '@simplewebauthn/browser';
   import {
     Card,
@@ -13,11 +17,23 @@
 
   /**
    * Invite landing page (multi-admin onboarding). Opened from the one-time link
-   * an existing admin shares (/admin/register?invite=<token>). The invite token
+   * an existing admin shares (/admin/register#invite=<token>). The invite token
    * is the authorization - the visitor has no session yet. On success the new
    * admin registers a discoverable passkey and can then sign in usernameless.
    */
-  let inviteToken = $derived(router.searchParams.get('invite') ?? '');
+  let inviteToken = $state('');
+  onMount(() => {
+    const { token, cleanPath } = readAdminInvite(window.location.href);
+    router.navigate(cleanPath, { replace: true, scroll: false });
+    inviteToken = token;
+    // A second invite opened in the same tab needs a fresh registration ceremony.
+    const newLink = () => {
+      if (new URLSearchParams(window.location.hash.slice(1)).has('invite'))
+        window.location.reload();
+    };
+    window.addEventListener('hashchange', newLink);
+    return () => window.removeEventListener('hashchange', newLink);
+  });
   let deviceLabel = $state('');
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -25,22 +41,19 @@
   let registeredUsername = $state('');
 
   async function register() {
+    if (busy || !inviteToken) return;
     busy = true;
     error = null;
     try {
-      const optsRes = await fetch('/api/admin/auth/register/options', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ invite: inviteToken }),
-      });
-      if (!optsRes.ok) {
-        const body = (await optsRes.json().catch(() => ({}))) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? `Could not start registration (${optsRes.status})`);
-      }
-      const { options } = (await optsRes.json()) as {
-        options: Parameters<typeof startRegistration>[0]['optionsJSON'];
-      };
+      const { options } = await apiClient.post(
+        '/api/admin/auth/register/options',
+        { invite: inviteToken },
+        z.object({
+          options: z.custom<Parameters<typeof startRegistration>[0]['optionsJSON']>(
+            (value) => typeof value === 'object' && value !== null && 'challenge' in value,
+          ),
+        }),
+      );
 
       let reg: Awaited<ReturnType<typeof startRegistration>>;
       try {
@@ -55,26 +68,14 @@
         );
       }
 
-      const verifyRes = await fetch('/api/admin/auth/register/verify', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          invite: inviteToken,
-          response: reg,
-          deviceLabel: deviceLabel.trim() || 'unnamed',
-        }),
-      });
-      if (!verifyRes.ok) {
-        const body = (await verifyRes.json().catch(() => ({}))) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? `Registration failed (${verifyRes.status})`);
-      }
-      const out = (await verifyRes.json()) as { username?: string };
-      registeredUsername = out.username ?? '';
+      const out = await apiClient.post(
+        '/api/admin/auth/register/verify',
+        { invite: inviteToken, response: reg, deviceLabel: deviceLabel.trim() || 'unnamed' },
+        z.object({ ok: z.literal(true), username: z.string() }),
+      );
+      inviteToken = '';
+      registeredUsername = out.username;
       done = true;
-      // Strip the (now-consumed) invite token from the URL, matching the
-      // ?ref=/?order= strip-after-use pattern elsewhere.
-      router.navigate('/admin/register', { replace: true });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {

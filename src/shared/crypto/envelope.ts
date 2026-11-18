@@ -263,19 +263,26 @@ export interface RoutePolicy {
    * with such a field, which only a current backend asks for, is sealed.
    */
   sealOnlyWith?: readonly string[];
+  /** These optional fields require a sealed request at both ends, even during rollout.
+   * Without them, the request may be plaintext and the response keeps its own policy. */
+  requireSealWith?: readonly string[];
+}
+
+export function hasBodyField(fields: readonly string[], body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  return fields.some((field) => (body as Record<string, unknown>)[field] != null);
 }
 
 /**
- * The policy a client request actually goes out under: a `sealOnlyWith` route
- * whose body carries none of those fields goes reveal-only.
+ * Without a conditional field, send a plaintext request and retain the route's response policy.
  */
 export function outboundPolicy(
   policy: RoutePolicy,
   body: Record<string, unknown> | undefined,
 ): RoutePolicy {
-  if (!policy.sealOnlyWith) return policy;
-  const sensitive = policy.sealOnlyWith.some((f) => body?.[f] !== undefined && body?.[f] !== null);
-  return sensitive ? policy : { request: 'plain', response: policy.response };
+  const fields = policy.requireSealWith ?? policy.sealOnlyWith;
+  if (!fields || hasBodyField(fields, body)) return policy;
+  return { request: 'plain', response: policy.response };
 }
 
 const SEAL_REQ: RoutePolicy = { request: 'seal', response: 'plain' };
@@ -327,7 +334,8 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/account/regenerate': sealWhenCountry('region'),
   'POST /api/v1/account/switch-backend': REVEAL,
   'POST /api/v1/account/switch-mode': REVEAL,
-  'POST /api/v1/account/switch-server': REVEAL,
+  'POST /api/v1/account/switch-server': { ...SEAL_BOTH, requireSealWith: ['telemetry'] },
+  'POST /api/v1/account/report-issue': { ...SEAL_REQ, requireSealWith: ['telemetry'] },
   'POST /api/v1/account/account-id/rotate': REVEAL,
   // The raw proxy config (server addresses, UUIDs, the Reality material) for the
   // privacy copy path — the whole point of that route is to never cross the CDN
@@ -351,7 +359,10 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // Admin secret reveals (server returns a fresh secret once).
   'POST /api/v1/admin/tokens': REVEAL,
   'POST /api/v1/admin/membership-codes': REVEAL,
-  'POST /api/v1/admin/admins/invite': REVEAL,
+  // A reveal-only client builds a query link. Mint only for clients using the sealed flow.
+  'POST /api/v1/admin/admins/invite': SEAL_BOTH_REQUIRED,
+  'POST /api/admin/auth/register/options': { ...SEAL_REQ, required: true },
+  'POST /api/admin/auth/register/verify': { ...SEAL_REQ, required: true },
   // Admin credential uploads (admin sends infra secrets). Dual-mode server keeps
   // plaintext `fsv1_`-token / Ansible callers working.
   'POST /api/v1/admin/backend-servers': SEAL_REQ,

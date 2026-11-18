@@ -54,7 +54,8 @@ import {
 import { normalizeSupportId } from './lib/supportId';
 import { checkInfraUrl } from './lib/urlSafety';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
-import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import { remnawaveApiUrl } from './lib/backends/remnawave';
+import { PROVIDERS, type BackendConfig, type RemnawaveServerConfig } from './lib/backends/registry';
 import { removalBlocker } from './serverAdmin';
 import {
   billingConfigWrites,
@@ -1329,27 +1330,59 @@ function checkLocationCoords(a: { locationLat?: number | null; locationLng?: num
   return { touched: true, locationLat: lat, locationLng: lng };
 }
 
+function checkBackendUrl(raw: string, label: string): void {
+  const res = checkInfraUrl(raw);
+  if (!res.ok) throw new ConvexError({ code: 'validation', message: `${label} ${res.reason}` });
+}
+
+function canReusePanelToken(storedUrl: string, requestedUrl: string): boolean {
+  if (requestedUrl === storedUrl) return true;
+  if (requestedUrl !== storedUrl.trim()) return false;
+  // The editor trims URLs. On legacy mounts a trailing space before the
+  // provider appends its slash can select a different directory.
+  try {
+    return remnawaveApiUrl(storedUrl, './') === remnawaveApiUrl(requestedUrl, './');
+  } catch {
+    // A padded bare origin can parse as a URL even though appending '/' made
+    // the old base unusable. Allow its previously supported normalized form.
+    return checkInfraUrl(storedUrl).ok && new URL(storedUrl).href === new URL(requestedUrl).href;
+  }
+}
+
+/** A stored panel token belongs to the full base URL, including its mount path. */
+function resolveRemnawaveConfig(
+  input: Pick<BackendServerConfigArgs, 'baseUrl' | 'apiToken'>,
+  stored?: RemnawaveServerConfig,
+): RemnawaveServerConfig {
+  const requested = input.baseUrl;
+  const baseUrl = !requested || requested === stored?.baseUrl ? stored?.baseUrl : requested.trim();
+  const suppliedToken = input.apiToken?.trim();
+  const apiToken = suppliedToken || stored?.apiToken;
+  if (!baseUrl || !apiToken?.trim()) {
+    throw new ConvexError({
+      code: 'validation',
+      message: 'A base URL and an API token are required',
+    });
+  }
+  if (requested) checkBackendUrl(baseUrl, 'The base URL');
+  if (stored && !suppliedToken && !canReusePanelToken(stored.baseUrl, baseUrl)) {
+    throw new ConvexError({
+      code: 'validation',
+      message: 'An API token is required when changing the base URL',
+    });
+  }
+  return { type: 'remnawave', baseUrl, apiToken };
+}
+
 /**
  * Build a fresh backend-server config from create/upsert args (validates the
  * required fields per backend). Shared by createBackendServer +
  * upsertBackendServerBySlug's create path. (Review P3: was inlined twice.)
  */
 function buildBackendServerConfig(a: BackendServerConfigArgs): BackendServerConfig {
-  // URL shape + SSRF denylist check (the zod contract requires .url(); v.string()
-  // accepts anything — and a registered baseUrl/apiUrl is a durable outbound-
-  // request primitive, see lib/urlSafety.ts).
-  const checkUrl = (raw: string, label: string): void => {
-    const res = checkInfraUrl(raw);
-    if (!res.ok) throw new ConvexError({ code: 'validation', message: `${label} ${res.reason}` });
-  };
-  if (a.backend === 'remnawave') {
-    if (!a.baseUrl || !a.apiToken)
-      throw new Error('A Remnawave instance needs a base URL and an API token');
-    checkUrl(a.baseUrl, 'The base URL');
-    return { type: 'remnawave', baseUrl: a.baseUrl, apiToken: a.apiToken };
-  }
+  if (a.backend === 'remnawave') return resolveRemnawaveConfig(a);
   if (!a.apiUrl) throw new Error('An Outline instance needs an apiUrl');
-  checkUrl(a.apiUrl, 'The apiUrl');
+  checkBackendUrl(a.apiUrl, 'The apiUrl');
   return {
     type: 'outline',
     apiUrl: a.apiUrl,
@@ -1361,7 +1394,7 @@ function buildBackendServerConfig(a: BackendServerConfigArgs): BackendServerConf
 
 /**
  * Merge a config patch into an existing backend-server config, KEEPING the stored
- * secret when the incoming one is blank/absent (edits never wipe the credential).
+ * secret when the incoming one is blank and the panel URL stays the same.
  * The backend TYPE is immutable. Shared by updateBackendServer +
  * upsertBackendServerBySlug's update path. (Review P3: was inlined twice.)
  */
@@ -1369,24 +1402,13 @@ function mergeBackendServerConfig(
   existing: BackendServerConfig,
   patch: Omit<BackendServerConfigArgs, 'backend'>,
 ): BackendServerConfig {
-  // Replaced URLs get the SAME validation as create (Review D-#10): the merge
-  // path previously accepted any string, bypassing the shape + SSRF checks.
-  const checkUrl = (raw: string, label: string): void => {
-    const res = checkInfraUrl(raw);
-    if (!res.ok) throw new ConvexError({ code: 'validation', message: `${label} ${res.reason}` });
-  };
   if (existing.type === 'remnawave') {
-    const cfg = { ...existing };
-    if (patch.baseUrl !== undefined && patch.baseUrl !== '') {
-      checkUrl(patch.baseUrl, 'The base URL');
-      cfg.baseUrl = patch.baseUrl;
-    }
-    if (patch.apiToken !== undefined && patch.apiToken !== '') cfg.apiToken = patch.apiToken;
-    return cfg;
+    if (!patch.baseUrl && !patch.apiToken?.trim()) return existing;
+    return resolveRemnawaveConfig(patch, existing);
   }
   const cfg = { ...existing };
   if (patch.apiUrl !== undefined && patch.apiUrl !== '') {
-    checkUrl(patch.apiUrl, 'The apiUrl');
+    checkBackendUrl(patch.apiUrl, 'The apiUrl');
     cfg.apiUrl = patch.apiUrl;
   }
   if (patch.websocketEnabled !== undefined) cfg.websocketEnabled = patch.websocketEnabled;
@@ -1504,7 +1526,6 @@ export const updateBackendServer = internalMutation({
       fields.locationLng = coords.locationLng;
     }
 
-    // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
     fields.config = mergeBackendServerConfig(existing.config, patch);
     await ctx.db.patch(id, fields);
     // The node's position orders steered members' addresses (latency ordering).
@@ -1759,15 +1780,15 @@ export const testBackendConnection = internalAction({
     }
     let config: BackendConfig;
     if (a.backend === 'remnawave') {
-      const rw = stored?.type === 'remnawave' ? stored : null;
-      const baseUrl = a.baseUrl?.trim() || rw?.baseUrl;
-      const apiToken = a.apiToken?.trim() || rw?.apiToken;
-      if (!baseUrl || !apiToken)
-        return { ok: false, error: 'A base URL and an API token are required' };
-      if (!a.apiToken?.trim() && rw && baseUrl.trim() !== rw.baseUrl.trim()) {
-        return { ok: false, error: 'An API token is required when changing the base URL' };
+      try {
+        config = resolveRemnawaveConfig(
+          { baseUrl: a.baseUrl?.trim() ? a.baseUrl : undefined, apiToken: a.apiToken },
+          stored?.type === 'remnawave' ? stored : undefined,
+        );
+      } catch (err) {
+        if (err instanceof ConvexError) return { ok: false, error: err.data.message };
+        throw err;
       }
-      config = { type: 'remnawave', baseUrl, apiToken };
     } else {
       const ol = stored?.type === 'outline' ? stored : null;
       const apiUrl = a.apiUrl?.trim() || ol?.apiUrl;
@@ -1986,7 +2007,7 @@ export const setBillingConfig = internalMutation({
   handler: async (ctx, { patch, actorAdminId }) => {
     let writes: Array<{ key: string; value: string }>;
     try {
-      writes = [...billingConfigWrites(patch), ...billingSecretWrites(patch)];
+      writes = [...billingConfigWrites(patch), ...(await billingSecretWrites(ctx.db, patch))];
     } catch (e) {
       throw new ConvexError({
         code: 'validation',

@@ -19,12 +19,13 @@
  * signing happens here (the action has the signing key + Web Crypto); the HTTP
  * layer only decides the `Secure` flag from the environment.
  */
-import { internalAction } from './_generated/server';
+import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { hashAccountId, isValidAccountId, normalizeAccountId } from './lib/accountId';
 import { hmacSha256Hex, randomHex } from './lib/crypto';
+import { writeAuditLog } from './lib/audit';
 import { signValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 
@@ -119,48 +120,15 @@ export const accountLogin = internalAction({
 
     if (!validFormat || !prefixRl.allowed) return failInvalid();
 
-    // 4. Single indexed lookup; the query returns null for unknown or deleted
-    //    owners (no oracle distinction). A lapsed member and an INACTIVE free user
-    //    ARE returned — both are handled (downgraded / reactivated) just below.
-    const user = await ctx.runQuery(internal.users.byAccountIdHash, { accountIdHash: hash });
-    if (!user) return failInvalid();
-
-    // 4b. A returning lapsed member (admitted above) is auto-downgraded to the free
-    //     tier so they regain a working key at free limits; the account view then
-    //     prompts an upgrade. No-op for active/grace/already-free members. (Review #1.)
-    //     The flag lets the client show a one-time "membership expired" banner (#4).
-    let lapsedDowngrade = false;
-    if (user.status === 'disabled' && user.disabledReason === 'membership_lapsed') {
-      await ctx.runMutation(internal.lifecycle.downgradeLapsedToFree, { userId: user._id });
-      lapsedDowngrade = true;
-    }
-
-    // 4c. A returning INACTIVE free user (idle-swept — key reclaimed, row retained)
-    //     is reactivated: refreshFreeWindow flips them back to active + restarts the
-    //     idle clock, so their next regenerate issues a fresh key. (WS2.)
-    if (user.status === 'inactive') {
-      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId: user._id });
-    }
-
-    // 5. Mint a member session + signed cookie. When PoP-bound, also mint the
-    //    public per-session token (returned in the response body + signed into
-    //    every PoP message to bind it to this session).
     const sid = randomHex(32);
     const popSessionToken = popPublicKey ? randomHex(16) : undefined;
-    await ctx.runMutation(internal.sessions.create, {
+    const login = await ctx.runMutation(internal.auth.completeAccountLogin, {
+      accountIdHash: hash,
       sid,
-      kind: 'member',
-      userId: user._id,
-      ttlMs: MEMBER_TTL_MS,
       ...(popPublicKey ? { popPublicKey, popAlg, popSessionToken } : {}),
     });
-    await ctx.runMutation(internal.audit.record, {
-      actorType: 'member',
-      actorId: user._id,
-      action: 'account.login.account_id',
-      targetType: 'user',
-      targetId: user._id,
-    });
+    if (!login) return failInvalid();
+
     const signingKey = process.env.SESSION_SIGNING_KEY;
     if (!signingKey) throw new Error('SESSION_SIGNING_KEY must be set');
     const signedCookieValue = await signValue(sid, signingKey);
@@ -168,10 +136,56 @@ export const accountLogin = internalAction({
       ok: true,
       signedCookieValue,
       maxAgeSec: MEMBER_TTL_MS / 1000,
-      userId: user._id,
+      userId: login.userId,
       popSessionToken,
-      lapsedDowngrade,
+      lapsedDowngrade: login.lapsedDowngrade,
     };
+  },
+});
+
+/** Read the current credential and issue the session in one transaction. A
+ * concurrent rotation must either revoke this session or invalidate the lookup. */
+export const completeAccountLogin = internalMutation({
+  args: {
+    accountIdHash: v.string(),
+    sid: v.string(),
+    popPublicKey: v.optional(v.string()),
+    popAlg: v.optional(v.string()),
+    popSessionToken: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    { accountIdHash, sid, ...binding },
+  ): Promise<{
+    userId: Id<'users'>;
+    lapsedDowngrade: boolean;
+  } | null> => {
+    const user = await ctx.runQuery(internal.users.byAccountIdHash, { accountIdHash });
+    if (!user) return null;
+
+    const userId = user._id;
+    const lapsedDowngrade =
+      user.status === 'disabled' && user.disabledReason === 'membership_lapsed';
+    if (lapsedDowngrade) {
+      await ctx.runMutation(internal.lifecycle.downgradeLapsedToFree, { userId });
+    } else if (user.status === 'inactive') {
+      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+    }
+    await ctx.runMutation(internal.sessions.create, {
+      sid,
+      kind: 'member',
+      userId,
+      ttlMs: MEMBER_TTL_MS,
+      ...binding,
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'member',
+      actorId: userId,
+      action: 'account.login.account_id',
+      targetType: 'user',
+      targetId: userId,
+    });
+    return { userId, lapsedDowngrade };
   },
 });
 
@@ -189,11 +203,11 @@ export const rotateAccountId = internalAction({
     keepSid: v.optional(v.string()),
   },
   handler: async (ctx, { userId, requestId, keepSid }): Promise<{ accountId: string }> => {
-    const minted = await ctx.runAction(internal.accountId.mintForUser, { userId, rotate: true });
-    // The old number stops working immediately — and so must every session it
-    // minted. Revoking only the credential would leave a captured-session holder
-    // authenticated for up to the 30-day TTL, defeating the rotation.
-    await ctx.runMutation(internal.sessions.deleteAllForUserExcept, { userId, keepSid });
+    const minted = await ctx.runAction(internal.accountId.mintForUser, {
+      userId,
+      rotate: true,
+      keepSid,
+    });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
       actorId: userId,

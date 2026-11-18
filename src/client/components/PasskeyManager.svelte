@@ -7,7 +7,7 @@
   import KeyRound from '@lucide/svelte/icons/key-round';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
-  import { apiClient } from '../lib/api';
+  import { apiClient, requiresMemberSignIn } from '../lib/api';
   import { queryClient } from '../lib/query-client';
   import { passkeysQuery, queryKeys } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
@@ -106,7 +106,11 @@
     </div>
 
     {#if showList}
-      {#if passkeys.data && passkeys.data.passkeys.length > 0}
+      {#if requiresMemberSignIn(passkeys.error)}
+        <a href="/login?reauth=security" class="link-brand text-foreground"
+          >{t('login.credentialManagement')}</a
+        >
+      {:else if passkeys.data && passkeys.data.passkeys.length > 0}
         <ul class="divide-y divide-border/60 rounded-md border border-border">
           {#each passkeys.data.passkeys as pk (pk.id)}
             <li class="flex items-center justify-between gap-3 px-3 py-2">

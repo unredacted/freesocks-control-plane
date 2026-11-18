@@ -289,6 +289,7 @@ describe('every writer sends the whole set', () => {
     const into = await t.action(internal.account.switchMode, {
       userId,
       target: 'privacy-hysteria',
+      keepUnsealedUrls: true,
     });
     expect(into).toMatchObject({ ok: true });
     expect(patches(f).at(-1)!.activeInternalSquads).toEqual([SQ_HY, SQ_REALITY]);
@@ -302,6 +303,7 @@ describe('every writer sends the whole set', () => {
     const away = await t.action(internal.account.switchMode, {
       userId,
       target: 'privacy-reality',
+      keepUnsealedUrls: true,
     });
     expect(away).toMatchObject({ ok: true });
     expect(patches(f).at(-1)!.activeInternalSquads).toEqual([SQ_REALITY]);

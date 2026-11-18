@@ -37,7 +37,7 @@ import { resolveUpdateIntervalHours } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { isAnswer, storedCountry } from './lib/memberCountry';
 import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from './memberCountry';
-import { memberFamilyOf } from './lib/memberFamily';
+import { memberFamilyOf, modesOfPlacement } from './lib/memberFamily';
 import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { memberLaneOfUser } from './edgeLanes';
 import { noteExposures } from './edgeTrust';
@@ -58,6 +58,15 @@ const mirror = v.object({
       stub: v.optional(v.boolean()),
     }),
   ),
+});
+
+/** Ambiguous or unrecorded source placements cannot prove a same-mode move. */
+export const placementIsSolelyInMode = internalQuery({
+  args: { placement: v.string(), modeId: v.string() },
+  handler: async (ctx, { placement, modeId }) => {
+    const modes = await modesOfPlacement(ctx.db, placement);
+    return modes.length === 1 && modes[0] === modeId;
+  },
 });
 
 /** Unique-index lookup by the backend's primary user id. */
@@ -1266,8 +1275,18 @@ export const markSubscriptionDeleted = internalMutation({
 
 /** Point a user at their current subscription. */
 export const setCurrentSubscription = internalMutation({
-  args: { userId: v.id('users'), subscriptionId: v.id('subscriptions') },
-  handler: async (ctx, { userId, subscriptionId }) => {
+  args: {
+    userId: v.id('users'),
+    subscriptionId: v.id('subscriptions'),
+    retireSubTokenFromId: v.optional(v.id('subscriptions')),
+  },
+  handler: async (ctx, { userId, subscriptionId, retireSubTokenFromId }) => {
+    if (retireSubTokenFromId) {
+      const old = await ctx.db.get(retireSubTokenFromId);
+      if (old?.userId !== userId || old._id === subscriptionId)
+        throw new Error('Invalid source for private subscription switch');
+      await ctx.db.patch(old._id, { subToken: undefined, updatedAt: Date.now() });
+    }
     await ctx.db.patch(userId, { currentSubscriptionId: subscriptionId, updatedAt: Date.now() });
     return null;
   },

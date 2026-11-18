@@ -1,5 +1,5 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/svelte-query';
-import { ApiCallError } from './api';
+import { ApiCallError, requiresMemberSignIn } from './api';
 import { clearSessionKey } from './pop';
 
 /**
@@ -78,6 +78,12 @@ export const queryClient = new QueryClient({
   }),
   mutationCache: new MutationCache({
     onError: (error, _vars, _ctx, mutation) => {
+      // Only a member-initiated credential change should navigate away. A
+      // background passkey list refresh offers a sign-in link in the manager.
+      if (requiresMemberSignIn(error) && typeof window !== 'undefined') {
+        window.location.assign('/login?reauth=security');
+        return;
+      }
       if (!(error instanceof ApiCallError) || error.status !== 401) return;
       // Mutations don't have a query-key, but they sit on admin pages whose
       // queries do. Use the page path as the discriminator instead.

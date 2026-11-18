@@ -7,7 +7,7 @@
  * PRIVACY INVARIANTS (see docs/privacy.md):
  * - Telemetry rows (`issueReports`) are UNLINKED: no userId, no subscriptionId,
  *   and never an IP. They answer "what is failing, where, on which networks" —
- *   not "who". The per-user audit log keeps carrying the reason alone.
+ *   not "who". Recording a diagnostic must never emit a corresponding member audit.
  * - The member SEES and can EDIT every value before it is sent (the CDN's view
  *   is wrong by construction when they report from inside the VPN), and the
  *   whole block is skippable with one checkbox.

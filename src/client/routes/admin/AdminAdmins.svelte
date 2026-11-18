@@ -8,6 +8,7 @@
   import AdminLayout from './AdminLayout.svelte';
   import AdminListState from './AdminListState.svelte';
   import { z } from 'zod';
+  import { adminInviteUrl } from '../../lib/adminInvite';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage, firstIssueMessage } from '../../lib/errors';
   import { formatDate } from '../../lib/i18n/format';
@@ -39,7 +40,7 @@
     mutationFn: (body: CreateInviteRequest) =>
       apiClient.post('/api/v1/admin/admins/invite', body, CreateInviteResponse),
     onSuccess: (res) => {
-      const url = `${window.location.origin}/admin/register?invite=${res.inviteToken}`;
+      const url = adminInviteUrl(window.location.origin, res.inviteToken);
       revealed = { url, username: res.username, expiresAtMs: res.expiresAtMs };
       acknowledged = false;
       username = '';

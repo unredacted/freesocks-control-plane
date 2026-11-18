@@ -41,6 +41,40 @@ afterAll(() => {
 });
 
 describe('prepareOutbound on the member routes sealed in 2026-09', () => {
+  test.each(['report-issue', 'switch-server'])(
+    'seals each optional diagnostic field on %s',
+    async (operation) => {
+      const path = '/api/v1/account/' + operation;
+      const reasonOnly = { reason: 'slow', confirm: true };
+      for (const telemetry of [{ country: 'CA' }, { city: 'Example City' }, { asn: 'AS64512' }]) {
+        const body = { ...reasonOnly, telemetry };
+        const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify(body));
+        const wire = JSON.parse(out!.body!);
+        expect(Object.keys(wire)).toEqual(['fsSealed']);
+        expect(isSealedWire(wire)).toBe(true);
+        const opened = await serverOpenRequest({
+          serverPriv: kp.privateKey,
+          serverKid: kid,
+          method: 'POST',
+          path,
+          wireBody: wire,
+        });
+        expect(opened).toEqual(
+          operation === 'switch-server' ? { ...body, fsRespEph: expect.any(String) } : body,
+        );
+      }
+      const declined = await hpke.prepareOutbound(path, 'POST', JSON.stringify(reasonOnly));
+      if (operation === 'switch-server') {
+        expect(JSON.parse(declined!.body!)).toEqual({
+          ...reasonOnly,
+          fsRespEph: expect.any(String),
+        });
+      } else {
+        expect(declined).toBeUndefined();
+      }
+    },
+  );
+
   test('GET /api/v1/subscription/content: reveal ephemeral rides the x-fs-resp-eph header, and the sealed response opens', async () => {
     const path = '/api/v1/subscription/content';
     const out = await hpke.prepareOutbound(path, 'GET', undefined);

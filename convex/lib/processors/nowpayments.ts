@@ -9,7 +9,8 @@
  * compared against the `x-nowpayments-sig` header.
  */
 import { z } from 'zod';
-import { hmacSha512Hex, timingSafeEqual } from '../crypto';
+import { readBoundedBody } from '../readBoundedBody';
+import { fetchProcessorApi } from './apiFetch';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface NowPaymentsConfig {
@@ -63,13 +64,24 @@ export function mapStatus(s: string): OrderStatus {
   }
 }
 
+// The Convex V8 runtime supports raw JSON primitives. The TypeScript lib used
+// by this project does not yet declare these two standard JSON methods.
+const numericJson = JSON as JSON & {
+  rawJSON(text: string): object;
+  isRawJSON(value: unknown): boolean;
+};
+
 /** Recursively sort object keys (arrays keep order) — matches NOWPayments' ksort-then-encode. */
-function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
+function sortKeysDeep(value: unknown, depth = 0): unknown {
+  if (depth > 32 || (typeof value === 'number' && !Number.isFinite(value))) {
+    throw new Error('unsupported IPN value');
+  }
+  if (Array.isArray(value)) return value.map((item) => sortKeysDeep(item, depth + 1));
   if (value && typeof value === 'object') {
+    if (numericJson.isRawJSON(value)) return value;
     const src = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(src).sort()) out[k] = sortKeysDeep(src[k]);
+    const out: Record<string, unknown> = Object.create(null);
+    for (const k of Object.keys(src).sort()) out[k] = sortKeysDeep(src[k], depth + 1);
     return out;
   }
   return value;
@@ -84,7 +96,7 @@ export async function createCheckout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(url, {
+    const res = await fetchProcessorApi(url, {
       method: 'POST',
       headers: {
         'x-api-key': cfg.apiKey,
@@ -143,58 +155,67 @@ function phpEscapeJson(json: string): string {
     .replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
-/**
- * PHP-faithful serializer for the (key-sorted) IPN structure. Beyond the slash/
- * unicode escaping above, PHP's json_encode renders float-typed WHOLE numbers
- * as `N.0` where JSON.stringify renders `N` — and JSON.parse erases which leaf
- * was which type. `floatLeaves` holds the DFS indices of integer-valued number
- * leaves to render as floats (see candidatePayloads). (Review C-F4.)
- */
-function phpSerialize(value: unknown, floatLeaves: Set<number>, counter: { i: number }): string {
-  if (value === null) return 'null';
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (typeof value === 'number') {
-    if (Number.isInteger(value)) {
-      const idx = counter.i++;
-      return floatLeaves.has(idx) ? `${value}.0` : String(value);
-    }
-    return String(value);
-  }
-  if (typeof value === 'string') return phpEscapeJson(JSON.stringify(value));
-  if (Array.isArray(value)) {
-    return `[${value.map((v) => phpSerialize(v, floatLeaves, counter)).join(',')}]`;
-  }
-  const entries = Object.entries(value as Record<string, unknown>).map(
-    ([k, v]) => `${phpEscapeJson(JSON.stringify(k))}:${phpSerialize(v, floatLeaves, counter)}`,
-  );
-  return `{${entries.join(',')}}`;
-}
+export const MAX_IPN_BYTES = 64 * 1024;
 
-/**
- * Every canonical form the IPN HMAC is checked against: the JSON.stringify
- * form, the PHP-escaped form, and — when the payload has ≤8 integer-valued
- * number leaves — every PHP-escaped `.0`-suffix combination over those leaves
- * (PHP emits floats as `N.0`; JSON.parse erases the type, so all combos are
- * tried). Multi-accept stays safe: an attacker still needs a valid HMAC over
- * one deterministic canonicalization of the exact received body.
- */
-function candidatePayloads(sorted: unknown): string[] {
+const amountFields = new Set([
+  'price_amount',
+  'pay_amount',
+  'actually_paid',
+  'actually_paid_at_fiat',
+  'outcome_amount',
+]);
+
+/** At most three encodings, each at most MAX_IPN_BYTES. Only build the next on mismatch. */
+function* signaturePayloads(sorted: Record<string, unknown>, rawBody: string) {
+  const encoder = new TextEncoder();
   const canonical = JSON.stringify(sorted);
-  const out = new Set<string>([canonical, phpEscapeJson(canonical)]);
-  let leaves = 0;
-  (function count(v: unknown) {
-    if (typeof v === 'number' && Number.isInteger(v)) leaves++;
-    else if (Array.isArray(v)) v.forEach(count);
-    else if (v !== null && typeof v === 'object') Object.values(v).forEach(count);
-  })(sorted);
-  if (leaves > 0 && leaves <= 8) {
-    for (let mask = 1; mask < 1 << leaves; mask++) {
-      const floatLeaves = new Set<number>();
-      for (let b = 0; b < leaves; b++) if (mask & (1 << b)) floatLeaves.add(b);
-      out.add(phpSerialize(sorted, floatLeaves, { i: 0 }));
-    }
+  if (canonical.length > MAX_IPN_BYTES) return;
+  const plain = encoder.encode(canonical);
+  if (plain.byteLength > MAX_IPN_BYTES) return;
+  yield plain;
+
+  // PHP's escaped form is ASCII. Size it before expanding any string.
+  let phpBytes = canonical.length;
+  for (let i = 0; i < canonical.length; i++) {
+    const code = canonical.charCodeAt(i);
+    if (code === 47) phpBytes++;
+    else if (code >= 127) phpBytes += 5;
+    if (phpBytes > MAX_IPN_BYTES) return;
   }
-  return [...out];
+  if (phpBytes !== canonical.length) yield encoder.encode(phpEscapeJson(canonical));
+
+  // When the wire retains whole-number decimals, preserve their exact positions.
+  // The first parse already enforced the depth limit before using a reviver.
+  let floats = 0;
+  let monetary: unknown;
+  if (rawBody.includes('.0')) {
+    const typed = JSON.parse(rawBody, (_key, value, context?: { source?: string }) => {
+      if (
+        typeof value === 'number' &&
+        Number.isSafeInteger(value) &&
+        /^-?\d+\.0+$/.test(context?.source ?? '')
+      ) {
+        floats++;
+        return numericJson.rawJSON(`${value}.0`);
+      }
+      return value;
+    });
+    if (floats) monetary = sortKeysDeep(typed);
+  }
+  if (!floats) {
+    // Some callbacks have already lost the decimal spelling on the wire.
+    const amounts = { ...sorted };
+    for (const key of amountFields) {
+      if (Number.isSafeInteger(amounts[key])) {
+        amounts[key] = numericJson.rawJSON(`${amounts[key]}.0`);
+        floats++;
+      }
+    }
+    monetary = amounts;
+  }
+  if (floats && phpBytes + 2 * floats <= MAX_IPN_BYTES) {
+    yield encoder.encode(phpEscapeJson(JSON.stringify(monetary)));
+  }
 }
 
 /**
@@ -208,17 +229,21 @@ async function fetchPayment(
   cfg: NowPaymentsConfig,
   paymentId: string,
 ): Promise<Record<string, unknown> | null> {
-  if (!/^\d{1,20}$/.test(paymentId)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(new URL(`/v1/payment/${paymentId}`, cfg.apiUrl).toString(), {
-      headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
-      signal: controller.signal,
-    });
+    const res = await fetchProcessorApi(
+      new URL(`/v1/payment/${paymentId}`, cfg.apiUrl).toString(),
+      {
+        headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
+        signal: controller.signal,
+      },
+    );
     if (!res.ok) return null;
-    const body: unknown = await res.json().catch(() => null);
-    if (!body || typeof body !== 'object') return null;
+    const text = await readBoundedBody(res, MAX_IPN_BYTES);
+    if (!text) return null;
+    const body: unknown = JSON.parse(text);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
     const rec = body as Record<string, unknown>;
     // Must actually be the payment we asked about, with a status to map.
     if (String(rec.payment_id ?? '') !== paymentId) return null;
@@ -231,55 +256,58 @@ async function fetchPayment(
   }
 }
 
-/**
- * Verify an IPN's authenticity and parse it. The signature is HMAC-SHA512 of the
- * key-sorted JSON body (the EXACT bytes we received, re-serialized in sorted-key
- * order) using the IPN secret — checked against every PHP-canonical candidate
- * (see candidatePayloads: slash/unicode escaping + whole-number float forms).
- *
- * HMAC-mismatch fallback (when `cfg` is supplied): the canonicalization is a
- * reconstruction of NOWPayments' serializer and CANNOT cover every number
- * rendering (exponent forms, float-typed zeros, >8 whole-number leaves — the
- * combo search caps out), so a mismatched IPN carrying a payment_id is
- * re-verified by POSTBACK: fetch that payment straight from the NOWPayments
- * API and build the result from the AUTHORITATIVE response, ignoring the IPN
- * body entirely. Safe by construction — a forged IPN can only point us at a
- * real payment whose real state we then process (the order-bound cross-checks
- * + exactly-once claim still gate the grant).
- *
- * On success, the order is looked up by `order_id` (our opaque ref). The
- * persisted summary is REDACTED (NOWPayments IPNs carry no payer PII, but we
- * allowlist fields defensively).
- */
+/** Verify the sorted JSON or PHP forms, then optionally consult the authoritative payment record. */
 export async function verifyAndParse(args: {
   rawBody: string;
   signature: string | null;
   ipnSecret: string;
-  /** API credentials for the postback fallback; omit to disable it. */
-  cfg?: NowPaymentsConfig;
+  postback?: { cfg: NowPaymentsConfig; reserve: () => Promise<void> };
 }): Promise<VerifyResult> {
-  if (!args.signature) return { ok: false, reason: 'missing x-nowpayments-sig' };
-  let payload: unknown;
+  const sig = args.signature;
+  if (!sig || sig.length !== 128 || !/^[0-9a-f]+$/i.test(sig)) {
+    return { ok: false, reason: 'invalid x-nowpayments-sig' };
+  }
+  const encoder = new TextEncoder();
+  if (args.rawBody.length > MAX_IPN_BYTES || encoder.encode(args.rawBody).length > MAX_IPN_BYTES) {
+    return { ok: false, reason: 'IPN payload too large' };
+  }
+
+  let p: Record<string, unknown>;
+  let sorted: Record<string, unknown>;
   try {
-    payload = JSON.parse(args.rawBody);
+    p = JSON.parse(args.rawBody);
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      return { ok: false, reason: 'IPN payload is not an object' };
+    }
+    sorted = sortKeysDeep(p) as Record<string, unknown>;
   } catch {
-    return { ok: false, reason: 'invalid JSON body' };
+    return { ok: false, reason: 'invalid IPN payload' };
   }
-  if (!payload || typeof payload !== 'object') {
-    return { ok: false, reason: 'IPN payload is not an object' };
-  }
-  const sig = args.signature.trim();
+
+  const signature = Uint8Array.from(sig.match(/../g)!, (byte) => parseInt(byte, 16));
+  let key: CryptoKey | undefined;
   let matched = false;
-  for (const candidate of candidatePayloads(sortKeysDeep(payload))) {
-    if (timingSafeEqual(await hmacSha512Hex(args.ipnSecret, candidate), sig)) {
+  for (const candidate of signaturePayloads(sorted, args.rawBody)) {
+    key ??= await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(args.ipnSecret),
+      { name: 'HMAC', hash: 'SHA-512' },
+      false,
+      ['verify'],
+    );
+    if (await crypto.subtle.verify('HMAC', key, signature, candidate)) {
       matched = true;
       break;
     }
   }
-  let p = payload as Record<string, unknown>;
   if (!matched) {
-    const paymentId = p.payment_id != null ? String(p.payment_id) : '';
-    const viaApi = args.cfg && paymentId ? await fetchPayment(args.cfg, paymentId) : null;
+    const id = p.payment_id;
+    const paymentId = typeof id === 'string' || Number.isSafeInteger(id) ? String(id) : '';
+    if (!args.postback || !/^\d{1,20}$/.test(paymentId)) {
+      return { ok: false, reason: 'IPN signature mismatch' };
+    }
+    await args.postback.reserve();
+    const viaApi = await fetchPayment(args.postback.cfg, paymentId);
     if (!viaApi) return { ok: false, reason: 'IPN signature mismatch' };
     // Loud but secret-free: a recurring postback means the IPN secret is wrong
     // OR the canonicalization drifted — worth the operator's attention either way.
@@ -359,7 +387,7 @@ export async function testConnection(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(new URL('/v1/currencies', cfg.apiUrl).toString(), {
+    const res = await fetchProcessorApi(new URL('/v1/currencies', cfg.apiUrl).toString(), {
       headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
       signal: controller.signal,
     });

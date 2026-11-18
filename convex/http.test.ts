@@ -8,6 +8,7 @@
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { AccountResponse } from '../src/shared/contracts/account';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -16,7 +17,14 @@ import { hmacSha256Hex, hmacSha512Hex, sha256Hex } from './lib/crypto';
 import { resolveCountry } from './lib/http';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import { upsertSettingRow } from './appSettings';
-import { bytesToB64Url } from '../src/shared/crypto/envelope';
+import {
+  bytesToB64Url,
+  isSealedWire,
+  kidFromPublicKey,
+  routePolicy,
+} from '../src/shared/crypto/envelope';
+import { clientOpenResponse, clientPrepareRequest } from '../src/shared/crypto/channel';
+import { serverKeyPairFromSeed, serializePublicKey } from '../src/shared/crypto/hpke';
 import { refuseNetwork } from './lib/edges/testing/mockFetch';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -272,7 +280,7 @@ describe('route-level scope enforcement', () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedTierAndUser(t);
     const lacking = await insertToken(t, {
-      scopes: ['subscription:write'],
+      scopes: ['subscription:read'],
       subjectType: 'user',
       subjectUserId: userId,
     });
@@ -295,6 +303,69 @@ describe('route-level scope enforcement', () => {
     expect(view.user.status).toBe('active');
     expect(view.subscription).toBeNull();
   });
+
+  test.each(['remnawave', 'outline'] as const)(
+    'account credential scopes on a %s subscription',
+    async (backend) => {
+      vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+      vi.stubEnv('ENVIRONMENT', 'development');
+      const t = convexTest(schema, modules);
+      const { userId, tierId } = await seedTierAndUser(t);
+      const shortUuid = 'fixture-short-id';
+      const rawUrl =
+        backend === 'outline'
+          ? 'ss://fixture-key@example.invalid'
+          : 'https://panel.invalid/sub/fixture-backend-key';
+      const subToken = backend === 'outline' ? undefined : 'fixture-fronted-token';
+      const mirrorUrl = 'https://mirror.invalid/fixture-mirror-key';
+      await t.run(async (ctx) => {
+        await ctx.db.patch(tierId, { backend });
+        const subId = await ctx.db.insert('subscriptions', {
+          userId,
+          backend,
+          backendUserId: 'fixture-user',
+          backendShortId: shortUuid,
+          subscriptionUrl: rawUrl,
+          subToken,
+          subscriptionMirrors: [{ provider: 'fixture', publicUrl: mirrorUrl }],
+          state: 'active',
+          updatedAt: Date.now(),
+        });
+        await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      });
+
+      const tokenHeaders = async (scopes: string[]) => ({
+        authorization: `Bearer ${await insertToken(t, { scopes, subjectType: 'user', subjectUserId: userId })}`,
+      });
+      for (const scopes of [['account:read'], ['account:read', 'subscription:write']]) {
+        const res = await t.fetch('/api/v1/account', { headers: await tokenHeaders(scopes) });
+        expect(res.status).toBe(200);
+        const body = await res.text();
+        for (const secret of [rawUrl, shortUuid, subToken, mirrorUrl]) {
+          if (secret) expect(body).not.toContain(secret);
+        }
+        expect(AccountResponse.parse(JSON.parse(body))).toMatchObject({
+          user: { id: userId, status: 'active' },
+          subscription: { backend, url: '', shortUuid: '', subToken: null, mirrors: [] },
+        });
+      }
+
+      for (const headers of [
+        { cookie: await memberCookie(t, userId) },
+        await tokenHeaders(['account:read', 'subscription:read']),
+      ]) {
+        const res = await t.fetch('/api/v1/account', { headers });
+        expect(res.status).toBe(200);
+        expect(AccountResponse.parse(await res.json()).subscription).toMatchObject({
+          backend,
+          url: rawUrl,
+          shortUuid,
+          subToken: subToken ?? null,
+          mirrors: [{ provider: 'fixture', publicUrl: mirrorUrl }],
+        });
+      }
+    },
+  );
 
   test('an admin-disabled member loses API access immediately (cookie AND token)', async () => {
     const t = convexTest(schema, modules);
@@ -483,6 +554,87 @@ describe('route-level scope enforcement', () => {
     expect(pub.site?.socialXUrl).toBe('https://x.com/freesocks');
     expect(pub.site?.socialMastodonUrl).toBe('');
     expect(pub.site?.socialBlueskyUrl).toBe('https://bsky.app/profile/freesocks.example');
+  });
+});
+
+describe('member login credential management', () => {
+  const routes = [
+    ['POST', 'account-id/rotate'],
+    ['POST', 'passkey/register/options'],
+    ['POST', 'passkey/register/verify'],
+    ['GET', 'passkeys'],
+    ['POST', 'passkey/revoke'],
+  ] as const;
+
+  async function expectSignInRequired(
+    t: ReturnType<typeof convexTest>,
+    headers: Record<string, string>,
+  ) {
+    for (const [method, path] of routes) {
+      const res = await t.fetch(`/api/v1/account/${path}`, {
+        method,
+        headers: { ...headers, 'content-type': 'application/json' },
+        ...(method === 'POST' ? { body: '{}' } : {}),
+      });
+      expect(res.status, path).toBe(401);
+      expect(await res.json()).toMatchObject({ error: { code: 'auth.reauthentication_required' } });
+    }
+  }
+
+  test('delegated writers cannot manage login credentials, even with account:read', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    for (const scopes of [['account:write'], ['account:write', 'account:read']]) {
+      const token = await insertToken(t, { scopes, subjectType: 'user', subjectUserId: userId });
+      await expectSignInRequired(t, { authorization: `Bearer ${token}` });
+    }
+    const user = await t.query(internal.users.get, { id: userId });
+    expect(user?.accountIdHash).toBeUndefined();
+    expect(
+      await t.run((ctx) => ctx.db.query('memberWebauthnRegistrationChallenges').collect()),
+    ).toEqual([]);
+  });
+
+  test('an older session keeps ordinary account access; a new owner session can rotate', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const token = await insertToken(t, {
+      scopes: ['account:read', 'account:write'],
+      subjectType: 'user',
+      subjectUserId: userId,
+    });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 6 * 60_000);
+    try {
+      expect((await t.fetch('/api/v1/account', { headers: { cookie } })).status).toBe(200);
+      await expectSignInRequired(t, { cookie });
+      await expectSignInRequired(t, { cookie, authorization: `Bearer ${token}` });
+      const fresh = await memberCookie(t, userId);
+      const res = await t.fetch('/api/v1/account/account-id/rotate', {
+        method: 'POST',
+        headers: { cookie: fresh, 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ accountId: expect.stringMatching(/^\d{32}$/) });
+      expect((await t.fetch('/api/v1/account', { headers: { cookie: fresh } })).status).toBe(200);
+      expect((await t.fetch('/api/v1/account', { headers: { cookie } })).status).toBe(401);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  test('a fresh cookie without required proof cannot fall back to a bearer', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const token = await insertToken(t, {
+      scopes: ['account:write', 'account:read'],
+      subjectType: 'user',
+      subjectUserId: userId,
+    });
+    vi.stubEnv('POP_REQUIRED', 'true');
+    await expectSignInRequired(t, { cookie, authorization: `Bearer ${token}` });
   });
 });
 
@@ -780,6 +932,31 @@ describe('nowpayments webhook route', () => {
     expect(json.error.code).toBe('webhook.rejected');
   });
 
+  test('an exhausted shared postback budget returns 429 while signed IPNs still pass', async () => {
+    vi.stubEnv('NOWPAYMENTS_IPN_SECRET', 'ipn');
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'test');
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('rateLimits', {
+        bucket: 'billing:nowpayments:postback',
+        count: 30,
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    const lookup = vi.fn();
+    vi.stubGlobal('fetch', lookup);
+    const payload = { payment_id: 123, payment_status: 'waiting' };
+    const send = (signature: string) =>
+      t.fetch('/api/webhooks/nowpayments', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'x-nowpayments-sig': signature },
+      });
+    expect((await send('0'.repeat(128))).status).toBe(429);
+    expect((await send(await signIpn(payload, 'ipn'))).status).toBe(200);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
   test('a valid finished IPN extends the bound member’s membership', async () => {
     vi.stubEnv('NOWPAYMENTS_IPN_SECRET', 'ipn');
     const t = convexTest(schema, modules);
@@ -825,7 +1002,7 @@ describe('nowpayments webhook route', () => {
     const res = await t.fetch('/api/webhooks/nowpayments', {
       method: 'POST',
       headers: { 'x-nowpayments-sig': 'x' },
-      body: JSON.stringify({ pad: 'x'.repeat(70 * 1024) }),
+      body: JSON.stringify({ pad: 'é'.repeat(33 * 1024) }),
     });
     expect(res.status).toBe(413);
   });
@@ -1086,9 +1263,8 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
     // The full upsert body carries name/slug/isActive/priority — none declared by
     // testBackendConnection. The route must forward ONLY the connection fields;
     // otherwise Convex's strict arg validator throws and this 500s (the exact
-    // trap the Ansible role hit reusing its upsert body). apiUrl points at a
-    // refused port so the provider returns a clean {ok:false}, never a throw;
-    // the refusal is stubbed, so the test never dials even the loopback.
+    // trap the Ansible role hit reusing its upsert body). The stub refuses a
+    // permitted panel URL so this check also exercises provider dispatch.
     const net = refuseNetwork();
     const res = await t.fetch('/api/v1/admin/backend-servers/test-connection', {
       method: 'POST',
@@ -1099,7 +1275,7 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
         slug: 'srv',
         isActive: true,
         priority: 0,
-        apiUrl: 'https://127.0.0.1:1/proxy/secret',
+        apiUrl: 'https://panel.example/proxy/secret',
         websocketEnabled: false,
       }),
     });
@@ -1107,7 +1283,9 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(false); // unreachable origin → clean verdict, not a validation throw
     // …after dialing the forwarded apiUrl.
-    expect(net.calls.some((c) => c.url.startsWith('https://127.0.0.1:1/proxy/secret/'))).toBe(true);
+    expect(net.calls.some((c) => c.url.startsWith('https://panel.example/proxy/secret/'))).toBe(
+      true,
+    );
   });
 });
 
@@ -1216,6 +1394,81 @@ describe('referral routes', () => {
   });
 });
 
+describe('admin invitation transport', () => {
+  test('mint and both registration steps require HPKE even in dual mode', async () => {
+    const seed = new Uint8Array(32).fill(5);
+    vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(seed));
+    vi.stubEnv('FS_HPKE_REQUIRED', 'false');
+    vi.stubEnv('FS_HPKE_ADMIN_REQUIRED', 'false');
+    vi.stubEnv('WEBAUTHN_RP_ID', 'localhost');
+    vi.stubEnv('WEBAUTHN_ORIGIN', 'http://localhost');
+    const t = convexTest(schema, modules);
+    const cookie = await adminCookie(t);
+    const { publicKey } = await serverKeyPairFromSeed(seed);
+    const kid = await kidFromPublicKey(await serializePublicKey(publicKey));
+    const mint = '/api/v1/admin/admins/invite';
+    const options = '/api/admin/auth/register/options';
+    const verify = '/api/admin/auth/register/verify';
+    const seal = (path: string, bodyObj: unknown) =>
+      clientPrepareRequest({
+        serverPub: publicKey,
+        serverKid: kid,
+        method: 'POST',
+        path,
+        policy: routePolicy(path, 'POST')!,
+        bodyObj,
+      });
+    const post = (path: string, body: unknown, ip = true) =>
+      t.fetch(path, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(path === mint ? { cookie } : {}),
+          ...(ip ? { 'x-forwarded-for': '192.0.2.1' } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    const expectRequired = async (path: string, body: unknown) => {
+      const res = await post(path, body);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+    };
+    const subject = { username: 'invitee' };
+    const request = await seal(mint, subject);
+    // The former admin console asked for an encrypted reply but produced a query link.
+    await expectRequired(mint, { ...subject, fsRespEph: request.respEphPubB64 });
+    expect(await t.run((ctx) => ctx.db.query('adminInvites').collect())).toHaveLength(0);
+    const res = await post(mint, request.body);
+    expect(res.status).toBe(200);
+    const minted = await res.json();
+    expect(isSealedWire(minted)).toBe(true);
+    const { inviteToken: invite } = (await clientOpenResponse({
+      serverKid: kid,
+      method: 'POST',
+      path: mint,
+      respEphPriv: request.respEphPriv!,
+      wire: minted,
+    })) as { inviteToken: string };
+    expect(invite).toMatch(/^[a-f0-9]{64}$/);
+    for (const path of [options, verify]) {
+      const body = { invite, ...(path === verify ? { response: {} } : {}) };
+      const prep = await seal(path, body);
+      if (!isSealedWire(prep.body)) throw new Error('Expected a sealed invitation request');
+      await expectRequired(path, body);
+      await expectRequired(path, { ...prep.body, invite });
+    }
+    const protectedOptions = await seal(options, { invite });
+    const noIp = await post(options, protectedOptions.body, false);
+    expect(noIp.status).toBe(503);
+    expect(await noIp.json()).toMatchObject({ error: { code: 'auth.ip_unresolved' } });
+    const started = await post(options, protectedOptions.body);
+    expect(started.status).toBe(200);
+    expect(await started.json()).toMatchObject({
+      options: { challenge: expect.any(String), user: { name: 'invitee' } },
+    });
+  });
+});
+
 describe('rate-limit coverage (pre-launch review)', () => {
   test('unauthenticated passkey options routes fail closed (503) when the client IP is unresolvable', async () => {
     // TRUSTED_PROXY is set but no x-forwarded-for arrives (proxy misconfig) →
@@ -1224,7 +1477,6 @@ describe('rate-limit coverage (pre-launch review)', () => {
     for (const path of [
       '/api/v1/auth/passkey/authenticate/options',
       '/api/admin/auth/authenticate/options',
-      '/api/admin/auth/register/options',
       '/api/admin/auth/register-bootstrap/options',
     ]) {
       const res = await t.fetch(path, {

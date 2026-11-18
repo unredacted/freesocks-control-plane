@@ -96,6 +96,17 @@ async function insertPendingOrder(
   );
 }
 
+async function insertPayPalOrder(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<'users'>,
+  tierId: Id<'tiers'>,
+  opaqueRef: string,
+) {
+  const id = await insertPendingOrder(t, userId, tierId, opaqueRef);
+  await t.run((ctx) => ctx.db.patch(id, { processor: 'paypal', processorRef: 'PP-ORDER-1' }));
+  return id;
+}
+
 /** Sign an IPN body the way nowpayments.verifyAndParse expects (sorted-key JSON, HMAC-SHA512). */
 async function signIpn(payload: Record<string, unknown>): Promise<string> {
   // Flat payloads: JSON.stringify with a sorted key array == sortKeysDeep + stringify.
@@ -123,7 +134,7 @@ describe('hmacSha512Hex', () => {
 describe('billing.createCheckout', () => {
   beforeEach(() => {
     vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
-    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api-sandbox.nowpayments.io');
     vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
   });
   afterEach(() => {
@@ -1106,14 +1117,14 @@ describe('billing.ingestEvent (PayPal)', () => {
     vi.stubEnv('PAYPAL_CLIENT_ID', 'pp-client');
     vi.stubEnv('PAYPAL_SECRET', 'pp-secret');
     vi.stubEnv('PAYPAL_WEBHOOK_ID', 'wh-id');
-    vi.stubEnv('PAYPAL_API_BASE', 'https://api-m.sandbox.paypal.example');
+    vi.stubEnv('PAYPAL_API_BASE', 'https://api-m.sandbox.paypal.com');
   });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
-  function stubPayPal(verification = 'SUCCESS') {
+  function stubPayPal(verification = 'SUCCESS', captureReply?: () => Response) {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string | URL) => {
@@ -1126,7 +1137,7 @@ describe('billing.ingestEvent (PayPal)', () => {
         if (u.includes('/v1/oauth2/token')) return ok({ access_token: 'tok' });
         if (u.includes('/verify-webhook-signature'))
           return ok({ verification_status: verification });
-        if (u.includes('/capture')) return ok({ status: 'COMPLETED' });
+        if (u.endsWith('/capture') && captureReply) return captureReply();
         return new Response('{}', { status: 404 });
       }),
     );
@@ -1143,12 +1154,18 @@ describe('billing.ingestEvent (PayPal)', () => {
   test('a verified PAYMENT.CAPTURE.COMPLETED extends membership', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-paypal');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-paypal');
     stubPayPal('SUCCESS');
     const rawBody = JSON.stringify({
       id: 'WH-1',
       event_type: 'PAYMENT.CAPTURE.COMPLETED',
-      resource: { id: 'CAP-1', custom_id: 'ref-paypal' },
+      resource: {
+        id: 'CAP-1',
+        custom_id: 'ref-paypal',
+        status: 'COMPLETED',
+        amount: { value: '14.00', currency_code: 'USD' },
+        supplementary_data: { related_ids: { order_id: 'PP-ORDER-1' } },
+      },
     });
     const res = await t.action(internal.billing.ingestEvent, {
       processor: 'paypal',
@@ -1163,10 +1180,106 @@ describe('billing.ingestEvent (PayPal)', () => {
     });
   });
 
+  test.each(['DECLINED', 'COMPLETED'] as const)(
+    'pending gift followed by %s',
+    async (finalStatus) => {
+      const t = convexTest(schema, modules);
+      const { userId, memberTierId, freeTierId } = await seedTiersAndUser(t);
+      const ref = 'ref-gift-paypal';
+      const orderId = await insertPayPalOrder(t, userId, memberTierId, ref);
+      await t.run((ctx) => ctx.db.patch(orderId, { kind: 'gift', quantity: 2 }));
+      const capture = {
+        id: 'CAP-1',
+        status: 'PENDING',
+        amount: { value: '14.00', currency_code: 'USD' },
+      };
+      stubPayPal('SUCCESS', () =>
+        Response.json({
+          id: 'PP-ORDER-1',
+          purchase_units: [{ custom_id: ref, payments: { captures: [capture] } }],
+        }),
+      );
+      const deliver = (id: string, event_type: string, resource: object) =>
+        t.action(internal.billing.ingestEvent, {
+          processor: 'paypal',
+          headers: ppHeaders,
+          rawBody: JSON.stringify({ id, event_type, resource }),
+        });
+      const approve = () =>
+        deliver('WH-APPROVE', 'CHECKOUT.ORDER.APPROVED', {
+          id: 'PP-ORDER-1',
+          purchase_units: [{ custom_id: ref }],
+        });
+      const state = () =>
+        t.run(async (ctx) => ({
+          order: await ctx.db.get(orderId),
+          codes: await ctx.db.query('redemptionCodes').collect(),
+          user: await ctx.db.get(userId),
+        }));
+      await approve();
+      expect((await approve()).duplicate).toBe(true);
+      let snapshot = await state();
+      expect(snapshot.order?.status).toBe('confirming');
+      expect(snapshot.codes).toHaveLength(0);
+      expect(snapshot.order?.giftReveal).toBeUndefined();
+      expect(snapshot.user?.tierId).toBe(freeTierId);
+
+      capture.status = finalStatus;
+      if (finalStatus === 'COMPLETED') await approve(); // same approval ID sees settlement
+      const type =
+        finalStatus === 'COMPLETED' ? 'PAYMENT.CAPTURE.COMPLETED' : 'PAYMENT.CAPTURE.DENIED';
+      const terminal = () =>
+        deliver('WH-FINAL', type, {
+          ...capture,
+          custom_id: ref,
+          supplementary_data: { related_ids: { order_id: 'PP-ORDER-1' } },
+        });
+      await terminal();
+      expect((await terminal()).duplicate).toBe(true);
+      snapshot = await state();
+      expect(snapshot.order?.status).toBe(finalStatus === 'COMPLETED' ? 'paid' : 'failed');
+      expect(snapshot.codes).toHaveLength(finalStatus === 'COMPLETED' ? 2 : 0);
+      expect(snapshot.order?.giftReveal ?? []).toHaveLength(snapshot.codes.length);
+      expect(snapshot.user?.tierId).toBe(freeTierId);
+    },
+  );
+
+  test.each([
+    ['PP-OTHER', '14.00', 'USD'],
+    ['PP-ORDER-1', '13.99', 'USD'],
+    ['PP-ORDER-1', '14.00', 'EUR'],
+  ])(
+    'checks captured order and money before granting (%s %s %s)',
+    async (orderId, value, currency_code) => {
+      const t = convexTest(schema, modules);
+      const { userId, freeTierId, memberTierId } = await seedTiersAndUser(t);
+      const id = await insertPayPalOrder(t, userId, memberTierId, 'ref-check');
+      stubPayPal();
+      const result = await t.action(internal.billing.ingestEvent, {
+        processor: 'paypal',
+        headers: ppHeaders,
+        rawBody: JSON.stringify({
+          id: 'WH-check',
+          event_type: 'PAYMENT.CAPTURE.COMPLETED',
+          resource: {
+            id: 'CAP-check',
+            custom_id: 'ref-check',
+            status: 'COMPLETED',
+            amount: { value, currency_code },
+            supplementary_data: { related_ids: { order_id: orderId } },
+          },
+        }),
+      });
+      expect(result.applied).toBe(false);
+      expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe('pending');
+      expect((await t.run((ctx) => ctx.db.get(userId)))?.tierId).toBe(freeTierId);
+    },
+  );
+
   test('a FAILURE verification is rejected', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-paypal-fail');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-paypal-fail');
     stubPayPal('FAILURE');
     const rawBody = JSON.stringify({
       id: 'WH-2',
@@ -1325,12 +1438,15 @@ describe('billing.applyEvent grant cross-checks', () => {
   test('a refund-class event for an already-paid order audits billing.refund_seen', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-refund');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-refund');
     await t.mutation(internal.billing.applyEvent, {
       processor: 'paypal',
       orderRef: 'ref-refund',
       status: 'paid',
       processorRef: 'cap_1',
+      checkoutRef: 'PP-ORDER-1',
+      amountMinor: 1400,
+      amountCurrency: 'USD',
     });
     const res = await t.mutation(internal.billing.applyEvent, {
       processor: 'paypal',
@@ -1565,7 +1681,7 @@ describe('billing.applyEvent grant cross-checks', () => {
   test("PayPal's normal two-event flow does NOT false-positive overpayment (Review C-F1)", async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-pp');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-pp');
     // Event 1: CHECKOUT.ORDER.APPROVED → captured server-side → paid, storing
     // the ORDER id as the order's processorRef.
     await t.mutation(internal.billing.applyEvent, {
@@ -1574,6 +1690,8 @@ describe('billing.applyEvent grant cross-checks', () => {
       status: 'paid',
       processorRef: 'PP-ORDER-1',
       checkoutRef: 'PP-ORDER-1',
+      amountMinor: 1400,
+      amountCurrency: 'USD',
     });
     // Event 2: PAYMENT.CAPTURE.COMPLETED — distinct resource (capture id) but
     // the SAME payment (checkoutRef = the linked order id). Not an overpayment.
@@ -1741,7 +1859,7 @@ describe('billing.getOrderStatus scoping', () => {
 describe('billing gift codes', () => {
   beforeEach(() => {
     vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
-    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api-sandbox.nowpayments.io');
     vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
     vi.stubEnv('NOWPAYMENTS_IPN_SECRET', IPN_SECRET);
   });
@@ -1947,7 +2065,7 @@ describe('billing gift codes', () => {
 describe('billing donations', () => {
   beforeEach(() => {
     vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
-    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api-sandbox.nowpayments.io');
     vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
   });
   afterEach(() => {
@@ -2150,6 +2268,208 @@ describe('billing donations', () => {
   });
 });
 
+describe('processor credential destinations', () => {
+  const live = 'https://api.nowpayments.io';
+  const sandbox = 'https://api-sandbox.nowpayments.io';
+  const store = 'https://payments.example:8443/btcpay';
+  const other = 'https://payments.example:9443/btcpay';
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  const save = (t: ReturnType<typeof convexTest>, secrets: Record<string, unknown>) =>
+    t.mutation(internal.adminApi.setBillingConfig, { patch: { secrets } });
+  const resolve = (t: ReturnType<typeof convexTest>) =>
+    t.query(internal.billing.resolveSecrets, {});
+  const seed = (t: ReturnType<typeof convexTest>, rows: Record<string, string>) =>
+    t.run(async (ctx) => {
+      for (const [key, value] of Object.entries(rows)) {
+        await ctx.db.insert('appSettings', {
+          key,
+          value: JSON.stringify(value),
+          updatedAt: Date.now(),
+        });
+      }
+    });
+
+  test.each([
+    ['nowpayments', 'apiUrl', 'https://api.nowpayments.io.example', { apiKey: 'sample-key' }],
+    ['nowpayments', 'apiUrl', 'https://api.nowpayments.io:8443', { apiKey: 'sample-key' }],
+    [
+      'paypal',
+      'apiBase',
+      'https://api-m.paypal.com/custom',
+      { clientId: 'sample-id', secret: 'sample-secret' },
+    ],
+    [
+      'paypal',
+      'apiBase',
+      'https://user@api-m.paypal.com',
+      { clientId: 'sample-id', secret: 'sample-secret' },
+    ],
+    ['btcpay', 'apiUrl', 'http://payments.example', { apiKey: 'sample-key' }],
+  ] as const)(
+    'rejects invalid %s endpoints during configuration (%s %s)',
+    async (rail, field, base, credentials) => {
+      const t = convexTest(schema, modules);
+      await expect(save(t, { [rail]: { ...credentials, [field]: base } })).rejects.toThrow(
+        /invalid.*endpoint/i,
+      );
+      expect(await t.run((ctx) => ctx.db.query('appSettings').collect())).toHaveLength(0);
+    },
+  );
+
+  test('invalid hosted legacy settings disable outbound probes without exposing environment credentials', async () => {
+    const t = convexTest(schema, modules);
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'example-env-key');
+    vi.stubEnv('PAYPAL_CLIENT_ID', 'example-env-id');
+    vi.stubEnv('PAYPAL_SECRET', 'example-env-secret');
+    await seed(t, {
+      'billing.nowpayments.apiUrl': 'https://invalid.example',
+      'billing.paypal.apiBase': 'https://invalid.example',
+      'billing.secret.paypal.secret': 'legacy-example-secret',
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    for (const processor of ['nowpayments', 'paypal'] as const) {
+      expect((await t.action(internal.billing.testProcessorConnection, { processor })).ok).toBe(
+        false,
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('hosted settings require fresh credentials on a switch and preserve a blank same-base save', async () => {
+    const t = convexTest(schema, modules);
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'example-live-env');
+    vi.stubEnv('NOWPAYMENTS_API_URL', live);
+    expect((await resolve(t)).nowpayments.apiKey).toBe('example-live-env');
+    await expect(save(t, { nowpayments: { apiUrl: sandbox } })).rejects.toThrow(/credentials/);
+    const status = await save(t, { nowpayments: { apiUrl: sandbox, apiKey: 'example-sandbox' } });
+    expect(status.secretStatus.nowpayments.apiKey).toBe(true);
+    expect(JSON.stringify(status)).not.toContain('example-sandbox');
+    await save(t, { nowpayments: { apiUrl: sandbox + '/', apiKey: ' ' } });
+    expect((await resolve(t)).nowpayments).toMatchObject({
+      apiUrl: sandbox,
+      apiKey: 'example-sandbox',
+    });
+    await expect(
+      save(t, { paypal: { apiBase: 'https://api-m.sandbox.paypal.com', secret: 'partial' } }),
+    ).rejects.toThrow(/credentials/);
+    await save(t, {
+      paypal: {
+        apiBase: 'https://api-m.sandbox.paypal.com',
+        clientId: 'sandbox-id',
+        secret: 'sandbox-secret',
+      },
+    });
+    expect((await resolve(t)).paypal).toMatchObject({
+      clientId: 'sandbox-id',
+      secret: 'sandbox-secret',
+    });
+  });
+
+  test('a saved sandbox URL cannot use a live environment credential', async () => {
+    const t = convexTest(schema, modules);
+    vi.stubEnv('NOWPAYMENTS_API_URL', live);
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'live-key');
+    await seed(t, { 'billing.nowpayments.apiUrl': sandbox });
+    expect((await resolve(t)).nowpayments.apiKey).toBe('');
+  });
+
+  test('legacy hosted credentials need an independent endpoint match, including the PayPal webhook ID', async () => {
+    const t = convexTest(schema, modules);
+    const ppLive = 'https://api-m.paypal.com',
+      ppSandbox = 'https://api-m.sandbox.paypal.com';
+    vi.stubEnv('PAYPAL_API_BASE', ppLive);
+    vi.stubEnv('NOWPAYMENTS_API_URL', live);
+    await seed(t, {
+      'billing.nowpayments.apiUrl': sandbox,
+      'billing.secret.nowpayments.apiKey': 'legacy-np',
+      'billing.paypal.apiBase': ppSandbox,
+      'billing.secret.paypal.clientId': 'legacy-id',
+      'billing.secret.paypal.secret': 'legacy-secret',
+      'billing.secret.paypal.webhookId': 'legacy-webhook',
+    });
+    let cfg = await resolve(t);
+    expect(cfg.nowpayments.apiKey).toBe('');
+    expect(cfg.paypal).toMatchObject({ clientId: '', secret: '', webhookId: '' });
+    vi.stubEnv('PAYPAL_API_BASE', ppSandbox);
+    vi.stubEnv('NOWPAYMENTS_API_URL', sandbox);
+    cfg = await resolve(t);
+    expect(cfg.nowpayments.apiKey).toBe('legacy-np');
+    expect(cfg.paypal).toMatchObject({
+      clientId: 'legacy-id',
+      secret: 'legacy-secret',
+      webhookId: 'legacy-webhook',
+    });
+    vi.stubEnv('PAYPAL_WEBHOOK_ID', 'prior-env-id');
+    await save(t, { paypal: { apiBase: ppLive, clientId: 'live-id', secret: 'live-secret' } });
+    expect((await resolve(t)).paypal.webhookId).toBe('');
+    await save(t, { paypal: { apiBase: ppLive, webhookId: 'live-webhook' } });
+    expect((await resolve(t)).paypal).toMatchObject({
+      clientId: 'live-id',
+      secret: 'live-secret',
+      webhookId: 'live-webhook',
+    });
+  });
+
+  test('a BTCPay environment key stays at its exact HTTPS base; fresh DB credentials move atomically', async () => {
+    const t = convexTest(schema, modules);
+    vi.stubEnv('BTCPAY_API_URL', store + '/');
+    vi.stubEnv('BTCPAY_API_KEY', 'example-original');
+    expect((await resolve(t)).btcpay).toMatchObject({ apiUrl: store, apiKey: 'example-original' });
+    for (const apiUrl of [other, store + '/second']) {
+      await expect(save(t, { btcpay: { apiUrl, apiKey: '  ' } })).rejects.toThrow(/credentials/);
+    }
+    expect((await resolve(t)).btcpay.apiKey).toBe('example-original');
+    const out = await save(t, {
+      btcpay: { apiUrl: other, apiKey: 'example-replacement', storeId: 'example-store' },
+    });
+    expect(out.secretStatus.btcpay.apiKey).toBe(true);
+    expect(JSON.stringify(out)).not.toContain('example-replacement');
+    await expect(save(t, { btcpay: { apiKey: 'example-rotation' } })).rejects.toThrow(
+      /intended btcpay/i,
+    );
+    await save(t, { btcpay: { apiUrl: other + '/', apiKey: '' } });
+    expect((await resolve(t)).btcpay).toMatchObject({
+      apiUrl: other,
+      apiKey: 'example-replacement',
+    });
+  });
+
+  test('legacy BTCPay credentials require an independent matching destination or explicit re-entry', async () => {
+    const t = convexTest(schema, modules);
+    vi.stubEnv('BTCPAY_API_URL', other);
+    vi.stubEnv('BTCPAY_API_KEY', 'example-env');
+    await seed(t, {
+      'billing.btcpay.apiUrl': store,
+      'billing.secret.btcpay.apiKey': 'example-legacy',
+      'billing.secret.btcpay.webhookSecret': 'example-webhook',
+    });
+    expect((await resolve(t)).btcpay).toMatchObject({ apiKey: '', webhookSecret: '' });
+    vi.stubEnv('BTCPAY_API_URL', store);
+    expect((await resolve(t)).btcpay.apiKey).toBe('example-legacy');
+    vi.stubEnv('BTCPAY_API_URL', other);
+    await save(t, { btcpay: { apiUrl: store, apiKey: 'example-confirmed' } });
+    expect((await resolve(t)).btcpay).toMatchObject({
+      apiKey: 'example-confirmed',
+      webhookSecret: 'example-webhook',
+    });
+    // An old writer or restored URL row cannot redirect the newly bound key.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'billing.btcpay.apiUrl'))
+        .unique();
+      await ctx.db.patch(row!._id, { value: JSON.stringify(other) });
+    });
+    expect((await resolve(t)).btcpay.apiKey).toBe('');
+  });
+});
+
 describe('billing.testProcessorConnection (live credential probe)', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -2158,9 +2478,10 @@ describe('billing.testProcessorConnection (live credential probe)', () => {
 
   test('ok on a 200 from the processor; status-only error on failure; never the key', async () => {
     vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-live-key');
-    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api-sandbox.nowpayments.io');
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const headers = (init?.headers ?? {}) as Record<string, string>;
+      expect(init?.redirect).toBe('error');
       expect(headers['x-api-key']).toBe('np-live-key'); // stored secret is used…
       return new Response('{}', { status: 200 });
     });
@@ -2175,7 +2496,7 @@ describe('billing.testProcessorConnection (live credential probe)', () => {
 
   test('a 401 surfaces as a status-only error', async () => {
     vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-bad-key');
-    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api-sandbox.nowpayments.io');
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('nope', { status: 401 })),
@@ -2205,7 +2526,7 @@ describe('billing.testProcessorConnection (live credential probe)', () => {
   test('paypal probe validates via the OAuth token fetch', async () => {
     vi.stubEnv('PAYPAL_CLIENT_ID', 'cid');
     vi.stubEnv('PAYPAL_SECRET', 'sec');
-    vi.stubEnv('PAYPAL_API_BASE', 'https://api-m.sandbox.example');
+    vi.stubEnv('PAYPAL_API_BASE', 'https://api-m.sandbox.paypal.com');
     const fetchMock = vi.fn(async (input: string | URL) => {
       expect(String(input)).toContain('/v1/oauth2/token');
       return new Response(JSON.stringify({ access_token: 'tok' }), {
@@ -2224,7 +2545,7 @@ describe('billing.testProcessorConnection (live credential probe)', () => {
 describe('anonymous donations', () => {
   beforeEach(() => {
     vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
-    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api-sandbox.nowpayments.io');
     vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
   });
   afterEach(() => {

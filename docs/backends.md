@@ -137,8 +137,12 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   name members see (`subscription.siteName`, the name their selector group carries; unset =
   `FreeSocks`) and the member's connection mode (`FreeSocks · Freedom XHTTP`; the name alone on a
   backend without modes, `docs/edges.md` § "Names in apps"), in the `base64:<utf-8 base64>` form
-  the backend used, so apps show the deployment's name, never the backend product's. `getAccountView` returns the raw backend URL + the opaque
-  `subToken` (both in the sealed reveal-leg); the SPA builds the fronted `<origin>/api/v1/sub/<token>`
+  the backend used, so apps show the deployment's name, never the backend product's.
+  The account response includes subscription credentials for the owner's session or a member
+  token with both `account:read` and `subscription:read`. A token with account access alone receives
+  subscription metadata with empty `url` and `shortUuid` strings, a null `subToken`, and an empty
+  `mirrors` array. Delivery policy can also withhold the raw URL and short ID for authorized readers.
+  The SPA builds the fronted `<origin>/api/v1/sub/<token>`
   URL client-side (`subscriptionDisplayUrl` in `src/client/lib/utils.ts`), so no deployment-origin env
   is needed and every UI surface fronts uniformly. Privacy members still copy via the sealed
   `/api/v1/subscription/content`. See `docs/threat-model-cdn-blinding.md`.
@@ -163,12 +167,21 @@ connection secret:
 - `outline`: `{ apiUrl, websocketEnabled, websocketDomain?, prometheusUrl? }` (the `apiUrl` embeds a
   secret path segment)
 
-Admins add/edit/remove instances + run a pre-save test-connection in the CMS (Servers -> Backends);
-the secret is **never returned** to the SPA (responses mask it: `apiUrlMasked` for Outline,
-`apiTokenSet: boolean` for Remnawave). On edit, the secret field is blank and only re-submitted to
-rotate it — **Test connection** still works with the field blank: the request carries the instance
-`id` and `testBackendConnection` merges the **stored** credentials server-side (typed fields
-override stored ones), so secrets never round-trip to the client.
+Admins add/edit/remove instances and run a pre-save connection test in the CMS (Servers → Backends).
+The SPA receives `apiUrlMasked` for Outline and `apiTokenSet` for Remnawave. On edit, the secret
+field starts blank. **Test connection** uses the instance `id` to look up the saved credentials
+server-side. For Remnawave, leaving the token blank keeps it at the same base URL. To change
+the URL, including its mount path, supply the token for that destination. Saving an edit and
+using the by-slug API enforce the same rule.
+
+Connection tests check both pasted and saved endpoints against the registration URL policy.
+Private backend networks are supported. Use the final API URL, including its mount path,
+because a redirect returns a failed test. For local development, `ALLOW_INTERNAL_BACKENDS=true`
+also permits loopback endpoints.
+
+For previously configured panels, compare saved URLs with the operator's inventory. If an earlier
+edit may have sent a token to an unintended destination, revoke it on the original panel and save
+a replacement for the intended URL.
 
 **Pool scoring**: `pickCandidatesForIssue` prefers instances health-checked within ~30 min (else
 falls back to all active), then scores `latency_weight * lastHealthRttMs + key_count_weight *

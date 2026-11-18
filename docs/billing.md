@@ -310,13 +310,17 @@ section, both gated on donations being enabled and non-empty history.
    agrees with FCP; FCP decides from the amounts either way, so marking a short
    payment `finished` in their dashboard does not by itself grant it.
    **HMAC-mismatch postback fallback:** the verifier's canonicalization is a
-   reconstruction of NOWPayments' serializer (PHP escaping, `N.0` float combos)
-   and cannot cover every number rendering, so a mismatched IPN that carries a
-   `payment_id` is re-verified by fetching that payment straight from
-   `GET /v1/payment/{id}` (api key) and building the event from the
+   reconstruction of NOWPayments' serializer. It checks up to three encodings
+   of at most 64 KiB each. It tries sorted JSON, then PHP escaping, then the PHP
+   form that preserves whole-number decimals. If the body omits those decimal
+   spellings, the third form uses whole monetary amounts. A well-formed mismatched
+   signature and a numeric `payment_id` allow the verifier to fetch the payment from
+   `GET /v1/payment/{id}` (API key) and build the event from the
    AUTHORITATIVE response — the IPN body is discarded. A postback logs a
    `[billing] nowpayments IPN HMAC mismatch … verified via API postback`
-   warning; if you see it recur, check the IPN secret first.
+   warning; if you see it recur, check the IPN secret first. When the wire
+   omits which of several amounts had a decimal, some signatures can only be
+   resolved by postback. Without an API key, those callbacks are rejected.
 5. **Sandbox:** `api-sandbox.nowpayments.io` + the IPN simulator lets you drive a
    payment to `finished` without real funds.
 6. **Per-coin minimums (a PRICING constraint).** NOWPayments enforces a minimum
@@ -506,11 +510,19 @@ header (timestamp + `v1` HMAC-SHA256 over `${t}.${body}`). Event
 subscriptions in v1). No Stripe SDK — plain `fetch` keeps the code in the V8
 isolate.
 
+## Changing a processor API endpoint
+
+In Admin → Billing, supply the API key when changing the NOWPayments or BTCPay endpoint. For PayPal, supply both the client ID and secret. Enter the webhook ID for the new environment to enable PayPal checkout and webhook processing. A save with blank credential fields preserves the keys at the same endpoint. NOWPayments and PayPal accept their documented HTTPS production and sandbox API origins. BTCPay accepts a self-hosted HTTPS base, including its port and mount path. Configure the final API address directly, since credential-bearing requests reject redirects.
+
+Environment credentials are available only at their configured endpoint. On upgrade, older database credentials work when the selected endpoint matches the deployment's independently configured API base. The hosted services default to production. For an existing sandbox or self-hosted configuration, set the corresponding deployment API URL to the known correct base, or re-enter the credentials alongside that base in Admin → Billing. Until then, operations that require those credentials are unavailable.
+
 ## PayPal setup (Phase 3)
 
 Orders API v2 via redirect. Env: `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`,
 `PAYPAL_WEBHOOK_ID`, `PAYPAL_API_BASE` (sandbox vs live). Webhook authenticity is
 verified via PayPal's `POST /v1/notifications/verify-webhook-signature`.
+Approval starts capture. Membership and gift codes are released only after a completed capture matches the stored PayPal order, amount, and currency. Pending captures keep the checkout in `confirming`. An ambiguous or already-captured response triggers an order lookup. If the lookup cannot establish the capture state, the webhook remains retryable.
+
 **Operational risk:** PayPal has a documented history of freezing
 VPN/circumvention-adjacent merchants with 180-day holds — enable it last, sweep
 the balance frequently, and treat the account as expendable.
@@ -530,7 +542,7 @@ the balance frequently, and treat the account as expendable.
 - `webhook.nowpayments.ip` — 120/min per IP (one payment fires several IPNs).
 - `webhook.btcpay.ip` — 120/min per IP (several invoice events per payment).
 
-Both are admin-tunable in Admin → Rate limits (no deploy).
+These policies are admin-tunable in Admin → Rate limits. NOWPayments fallback lookups also have a fixed, deployment-wide limit of 30 per minute. An exhausted lookup budget returns HTTP 429 so the provider can retry. Directly authenticated IPNs can still settle.
 
 ## Tests
 

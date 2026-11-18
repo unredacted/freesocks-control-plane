@@ -325,6 +325,10 @@ export function resolveCountry(req: Request): string | null {
   return cc;
 }
 
+// Session creation follows account creation, account-number login or passkey login.
+// Ordinary requests and valid PoP signatures do not renew this window.
+const CREDENTIAL_MANAGEMENT_WINDOW_MS = 5 * 60_000;
+
 export interface MemberAuth {
   userId: Id<'users'>;
   source: 'cookie' | 'token';
@@ -341,6 +345,7 @@ export interface MemberAuth {
  * call resolves to null (unauthenticated). Cookie sessions are the full-privilege
  * member and bypass the scope gate by design. Routes that don't pass a scope
  * accept any valid user token (used for minimal identity reads like /me).
+ * Credential management requests a recent session and skips bearer resolution.
  *
  * Member W3-8a: the resolved member's STATUS is re-checked on every request
  * (the same admission set as users.byAccountIdHash), so an admin disable or a
@@ -352,7 +357,7 @@ export interface MemberAuth {
 export async function resolveMember(
   ctx: ActionCtx,
   req: Request,
-  required?: string,
+  required?: string | { recentSession: true },
 ): Promise<MemberAuth | null> {
   let member: MemberAuth | null = null;
   const raw = parseCookies(req.headers.get('cookie'))[MEMBER_COOKIE];
@@ -362,6 +367,11 @@ export async function resolveMember(
     if (sid) {
       const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
       if (sess && sess.kind === 'member' && sess.userId) {
+        if (
+          typeof required === 'object' &&
+          sess._creationTime <= Date.now() - CREDENTIAL_MANAGEMENT_WINDOW_MS
+        )
+          return null;
         if (
           await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg)
         ) {
@@ -373,6 +383,7 @@ export async function resolveMember(
     }
   }
   if (!member) {
+    if (typeof required === 'object') return null;
     const bearer = bearerToken(req);
     if (bearer) {
       const tok = await ctx.runAction(internal.apiTokens.resolveToken, { plaintext: bearer });

@@ -3,9 +3,8 @@
  * the zod request contract, the HTTP validator, and the SPA's picker, so the
  * three can't drift.
  *
- * Deliberately not free text: the choice is written to the audit log, which is
- * limited to curated scalars (nothing a user typed ever lands there), and a fixed
- * set is what makes "which nodes are people leaving, and why" aggregatable.
+ * A fixed set lets operators count which nodes members leave and why. Only
+ * in-place switches contribute diagnostics.
  *
  * Zod-free on purpose — the Convex backend imports this and validates with its
  * own `v.*` validators (same pattern as ./backendIds.ts).

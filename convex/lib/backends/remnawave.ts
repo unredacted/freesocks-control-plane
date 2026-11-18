@@ -17,6 +17,7 @@
  * sees the bare id. See docs/backends.md "Remnawave API contract".
  */
 import { z } from 'zod';
+import { fetchBackendProbe } from '../urlSafety';
 import type {
   BackendDevice,
   FleetStats,
@@ -239,7 +240,7 @@ function unwrap(json: unknown): unknown {
  * (the leading slash replaces the whole path), silently breaking backends hosted
  * under a subpath. (Review D-#11.)
  */
-function joinUrl(baseUrl: string, path: string): string {
+export function remnawaveApiUrl(baseUrl: string, path: string): string {
   const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
   return new URL(path.replace(/^\/+/, ''), base).toString();
 }
@@ -262,7 +263,7 @@ async function call<T>(
     timeoutMs?: number;
   },
 ): Promise<T> {
-  const url = joinUrl(cfg.baseUrl, args.path);
+  const url = remnawaveApiUrl(cfg.baseUrl, args.path);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.timeoutMs ?? cfg.timeoutMs ?? 8000);
   try {
@@ -562,7 +563,7 @@ function pinnedSubscriptionUrl(cfg: RemnawaveConfig, url: string, shortUuid: str
   } catch {
     /* malformed — fall through */
   }
-  return joinUrl(cfg.baseUrl, `/api/sub/${shortUuid}`);
+  return remnawaveApiUrl(cfg.baseUrl, `/api/sub/${shortUuid}`);
 }
 
 export async function remnawaveIssueUser(
@@ -1493,7 +1494,7 @@ export async function remnawaveFetchSubscription(
   // to the backend origin (rows stored before the pinning fix, Review D-#4).
   const url = subscriptionUrl
     ? pinnedSubscriptionUrl(cfg, subscriptionUrl, backendShortId)
-    : joinUrl(cfg.baseUrl, `/api/sub/${backendShortId}`);
+    : remnawaveApiUrl(cfg.baseUrl, `/api/sub/${backendShortId}`);
   const headers: Record<string, string> = {};
   const ua = normalizeSubscriptionUserAgent(userAgent);
   if (ua) headers['user-agent'] = ua;
@@ -1545,13 +1546,14 @@ const HEALTH_PROBE_USERNAME = 'fcp-health-probe-absent';
  */
 export async function remnawaveHealth(
   cfg: RemnawaveConfig,
+  request: typeof fetchBackendProbe = fetch,
 ): Promise<{ keyCount: number | null; rttMs: number }> {
-  const url = joinUrl(cfg.baseUrl, `/api/users/by-username/${HEALTH_PROBE_USERNAME}`);
+  const url = remnawaveApiUrl(cfg.baseUrl, `/api/users/by-username/${HEALTH_PROBE_USERNAME}`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   const started = Date.now();
   try {
-    const res = await fetch(url, {
+    const res = await request(url, {
       headers: { authorization: `Bearer ${cfg.apiToken}`, accept: 'application/json' },
       signal: controller.signal,
     });
@@ -1571,7 +1573,7 @@ export async function remnawaveTestConnection(
   cfg: RemnawaveConfig,
 ): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> {
   try {
-    const { keyCount } = await remnawaveHealth(cfg);
+    const { keyCount } = await remnawaveHealth(cfg, fetchBackendProbe);
     return { ok: true, keyCount: keyCount ?? 0 };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError')

@@ -21,17 +21,18 @@
  * would need egress policy outside the app.
  */
 
-/** Lowercased, bracket-stripped hostname → true when it must not be fetched. */
+import { canonicalIp } from './edges/ip';
+
+/** Compare IPs by address and DNS names without the optional root dot. */
 function isDeniedHost(hostname: string): boolean {
-  let h = hostname.toLowerCase();
-  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  const h = canonicalIp(hostname) ?? hostname.toLowerCase().replace(/\.$/, '');
 
   // Hostname denylist (exact or suffix): localhost + cloud metadata names.
   if (h === 'localhost' || h.endsWith('.localhost')) return true;
   if (h === 'metadata.google.internal' || h === 'metadata') return true;
 
   // IPv6: loopback, unspecified, link-local.
-  if (h === '::1' || h === '::' || h === '0:0:0:0:0:0:0:1' || h === '0:0:0:0:0:0:0:0') return true;
+  if (h === '::1' || h === '::') return true;
   if (h.includes(':')) {
     // fe80::/10 → first hextet 0xfe80..0xfebf.
     const first = parseInt(h.split(':')[0] || '0', 16);
@@ -81,4 +82,13 @@ export function checkInfraUrl(raw: string): UrlSafetyResult {
     };
   }
   return { ok: true };
+}
+
+/** Pre-save connection tests use the same destination policy as registration.
+ * Check the final request URL, including for credentials from an existing row.
+ * Return redirects to the provider so it can report the HTTP status. */
+export function fetchBackendProbe(url: string, init: RequestInit): Promise<Response> {
+  const destination = checkInfraUrl(url);
+  if (!destination.ok) throw new Error(destination.reason);
+  return fetch(url, { ...init, redirect: 'manual' });
 }

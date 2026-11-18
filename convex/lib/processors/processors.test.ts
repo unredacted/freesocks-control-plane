@@ -284,22 +284,51 @@ const PP_HEADERS = {
   'paypal-transmission-time': '2026-01-01T00:00:00Z',
 };
 
-/** Route PayPal's multi-call flow (token → verify → capture / create-order). */
-function ppFetch(opts: { verification?: string; capture?: 'ok' | 'already' | 'fail' } = {}) {
+function ppOrder(status = 'COMPLETED') {
+  return {
+    id: 'PP-1',
+    purchase_units: [
+      {
+        custom_id: 'order-nested',
+        payments: {
+          captures: [
+            {
+              id: 'CAP-1',
+              status,
+              amount: { value: '14.00', currency_code: 'USD' },
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+function ppFetch(
+  opts: {
+    verification?: string;
+    capture?: 'ok' | 'already' | 'fail' | 'unrelated-error';
+    response?: unknown;
+    lookup?: unknown;
+  } = {},
+) {
   return vi.fn(async (url: string | URL) => {
     const u = String(url);
-    if (u.includes('/v1/oauth2/token')) return res({ access_token: 'tok' });
-    if (u.includes('/verify-webhook-signature'))
+    if (u.endsWith('/v1/oauth2/token')) return res({ access_token: 'tok' });
+    if (u.endsWith('/verify-webhook-signature'))
       return res({ verification_status: opts.verification ?? 'SUCCESS' });
-    if (u.includes('/capture')) {
+    if (u.endsWith('/capture')) {
       if (opts.capture === 'fail') return res({}, { ok: false, status: 500 });
       if (opts.capture === 'already')
-        return res('{"details":[{"issue":"ORDER_ALREADY_CAPTURED"}]}', { ok: false, status: 422 });
-      return res({ status: 'COMPLETED' });
+        return res({ details: [{ issue: 'ORDER_ALREADY_CAPTURED' }] }, { ok: false, status: 422 });
+      if (opts.capture === 'unrelated-error')
+        return res({ message: 'ORDER_ALREADY_CAPTURED' }, { ok: false, status: 422 });
+      return res(opts.response ?? ppOrder());
     }
-    if (u.includes('/v2/checkout/orders'))
-      return res({ id: 'PP-1', links: [{ rel: 'approve', href: 'https://pp/approve' }] });
-    return res({});
+    if (u.endsWith('/v2/checkout/orders/PP-1')) return res(opts.lookup ?? ppOrder());
+    if (u.endsWith('/v2/payments/captures/CAP-1'))
+      return res({ id: 'CAP-1', supplementary_data: { related_ids: { order_id: 'PP-1' } } });
+    return res({}, { ok: false, status: 404 });
   });
 }
 
@@ -334,7 +363,13 @@ describe('paypal.verifyAndParse', () => {
       rawBody: JSON.stringify({
         id: 'evt_pc',
         event_type: 'PAYMENT.CAPTURE.COMPLETED',
-        resource: { id: 'CAP-1', custom_id: 'order-xyz' },
+        resource: {
+          id: 'CAP-1',
+          custom_id: 'order-xyz',
+          status: 'COMPLETED',
+          amount: { value: '14.00', currency_code: 'USD' },
+          supplementary_data: { related_ids: { order_id: 'PP-1' } },
+        },
       }),
       headers: PP_HEADERS,
       cfg: PP_CFG,
@@ -386,12 +421,109 @@ describe('paypal.verifyAndParse', () => {
       rawBody: JSON.stringify({
         id: 'evt_dup',
         event_type: 'CHECKOUT.ORDER.APPROVED',
-        resource: { id: 'PP-3', purchase_units: [{ custom_id: 'o' }] },
+        resource: { id: 'PP-1', purchase_units: [{ custom_id: 'order-nested' }] },
       }),
       headers: PP_HEADERS,
       cfg: PP_CFG,
     });
     expect(r.ok && r.status).toBe('paid');
+  });
+
+  test.each([
+    ['pending capture', { response: ppOrder('PENDING') }, 'confirming'],
+    ['duplicate pending capture', { capture: 'already', lookup: ppOrder('PENDING') }, 'confirming'],
+    ['duplicate declined capture', { capture: 'already', lookup: ppOrder('DECLINED') }, 'failed'],
+    ['minimal success followed by completed readback', { response: { id: 'PP-1' } }, 'paid'],
+    [
+      'no capture in readback',
+      { response: {}, lookup: { id: 'PP-1', status: 'COMPLETED' } },
+      false,
+    ],
+    [
+      'another order in readback',
+      { capture: 'already', lookup: { ...ppOrder(), id: 'PP-other' } },
+      false,
+    ],
+    ['unstructured 422', { capture: 'unrelated-error' }, false],
+  ] as const)('%s', async (_label, opts, expected) => {
+    vi.stubGlobal('fetch', ppFetch(opts));
+    const result = await paypal.verifyAndParse({
+      rawBody: JSON.stringify({
+        id: 'evt',
+        event_type: 'CHECKOUT.ORDER.APPROVED',
+        resource: { id: 'PP-1', purchase_units: [{ custom_id: 'order-nested' }] },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    });
+    expect(result.ok && result.status).toBe(expected);
+    if (result.ok)
+      expect(result).toMatchObject({
+        processorRef: 'CAP-1',
+        checkoutRef: 'PP-1',
+        amountMinor: 1400,
+        amountCurrency: 'USD',
+      });
+  });
+
+  test.each([
+    ['CAP-1', 'paid'],
+    ['CAP-OTHER', false],
+  ] as const)(
+    'reconciles an incomplete completed webhook only for its own capture (%s)',
+    async (id, expected) => {
+      vi.stubGlobal('fetch', ppFetch());
+      const result = await paypal.verifyAndParse({
+        rawBody: JSON.stringify({
+          id: 'evt',
+          event_type: 'PAYMENT.CAPTURE.COMPLETED',
+          resource: { id },
+        }),
+        headers: PP_HEADERS,
+        cfg: PP_CFG,
+      });
+      expect(result.ok && result.status).toBe(expected);
+    },
+  );
+
+  test('an incomplete completion stays retryable until the linked capture settles', async () => {
+    const args = {
+      rawBody: JSON.stringify({
+        id: 'evt-late',
+        event_type: 'PAYMENT.CAPTURE.COMPLETED',
+        resource: { id: 'CAP-1', supplementary_data: { related_ids: { order_id: 'PP-1' } } },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    };
+    vi.stubGlobal('fetch', ppFetch({ lookup: ppOrder('PENDING') }));
+    expect((await paypal.verifyAndParse(args)).ok).toBe(false);
+    vi.stubGlobal('fetch', ppFetch({ lookup: ppOrder('COMPLETED') }));
+    expect(await paypal.verifyAndParse(args)).toMatchObject({
+      ok: true,
+      status: 'paid',
+      processorRef: 'CAP-1',
+    });
+  });
+
+  test('a pending webhook recovers its missing custom_id from its order', async () => {
+    const args = {
+      rawBody: JSON.stringify({
+        id: 'evt-pend',
+        event_type: 'PAYMENT.CAPTURE.PENDING',
+        resource: { id: 'CAP-1', supplementary_data: { related_ids: { order_id: 'PP-1' } } },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    };
+    vi.stubGlobal('fetch', ppFetch({ lookup: {} }));
+    expect((await paypal.verifyAndParse(args)).ok).toBe(false);
+    vi.stubGlobal('fetch', ppFetch({ lookup: ppOrder('PENDING') }));
+    expect(await paypal.verifyAndParse(args)).toMatchObject({
+      ok: true,
+      status: 'confirming',
+      orderRef: 'order-nested',
+    });
   });
 
   test('a denied capture maps to failed', async () => {
@@ -1168,7 +1300,21 @@ describe('nowpayments.verifyAndParse signature canonicalization', () => {
     if (r.ok) expect(r.status).toBe('paid');
   });
 
-  test('the float-combo search stays fail-closed for a WRONG signature', async () => {
+  test('preserves mixed whole-number decimals, nested fields and literal strings without postback', async () => {
+    const wire =
+      '{"price_amount":15.0,"payment_status":"waiting","other":[2.0,2,"2.0"],"actually_paid":0}';
+    const canonical =
+      '{"actually_paid":0,"other":[2.0,2,"2.0"],"payment_status":"waiting","price_amount":15.0}';
+    const signature = await hmacSha512Hex(SECRET, canonical);
+    const result = await nowpayments.verifyAndParse({
+      rawBody: wire,
+      signature,
+      ipnSecret: SECRET,
+    });
+    expect(result).toMatchObject({ ok: true, status: 'pending' });
+  });
+
+  test('the monetary float form stays fail-closed for a wrong signature', async () => {
     const ipn = { order_id: 'o1', payment_status: 'finished', price_amount: 15 };
     const raw = JSON.stringify(ipn);
     const sig = await hmacSha512Hex(SECRET, '{"order_id":"o2"}');
@@ -1177,9 +1323,77 @@ describe('nowpayments.verifyAndParse signature canonicalization', () => {
   });
 });
 
+describe('nowpayments IPN authentication budget', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const ipn = {
+    order_id: 'shop/receipt',
+    payment_id: 123,
+    payment_status: 'waiting',
+    price_amount: 15,
+    invoice_id: 42,
+    items: [1, 2, 3, 4, 5, 6],
+  };
+  const rawBody = JSON.stringify(ipn);
+  const ipnSecret = 'budget-test';
+  const signature = '0'.repeat(128);
+
+  test('a rejected payment uses one key and at most three bounded messages', async () => {
+    const imported = vi.spyOn(crypto.subtle, 'importKey');
+    const checked = vi.spyOn(crypto.subtle, 'verify');
+    expect((await nowpayments.verifyAndParse({ rawBody, ipnSecret, signature })).ok).toBe(false);
+    expect(imported).toHaveBeenCalledTimes(1);
+    expect(checked).toHaveBeenCalledTimes(3);
+    const sizes = checked.mock.calls.map(([, , , data]) => data.byteLength);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(64 * 1024);
+    expect(sizes.reduce((total, size) => total + size, 0)).toBeLessThanOrEqual(3 * 64 * 1024);
+  });
+
+  test('a plain signature stops after its first verification', async () => {
+    const sig = await hmacSha512Hex(ipnSecret, JSON.stringify(ipn, Object.keys(ipn).sort()));
+    const checked = vi.spyOn(crypto.subtle, 'verify');
+    expect((await nowpayments.verifyAndParse({ rawBody, ipnSecret, signature: sig })).ok).toBe(
+      true,
+    );
+    expect(checked).toHaveBeenCalledTimes(1);
+  });
+
+  test('skips escaping when its serialized form would exceed the byte budget', async () => {
+    const checked = vi.spyOn(crypto.subtle, 'verify');
+    const body = JSON.stringify({ note: 'é'.repeat(12_000), price_amount: 15 });
+    expect((await nowpayments.verifyAndParse({ rawBody: body, ipnSecret, signature })).ok).toBe(
+      false,
+    );
+    expect(checked).toHaveBeenCalledTimes(1);
+  });
+
+  test('malformed signatures, invalid JSON shapes and oversized input use no crypto or postback', async () => {
+    const imported = vi.spyOn(crypto.subtle, 'importKey');
+    const reserve = vi.fn(async () => {});
+    const postback = { cfg: { apiKey: 'test', apiUrl: 'https://example.invalid' }, reserve };
+    for (const [sig, body] of [
+      ['z'.repeat(128), rawBody],
+      ['abcd', rawBody],
+      [signature, '[]'],
+      [signature, JSON.stringify({ note: 'é'.repeat(33_000), payment_id: 123 })],
+    ]) {
+      const result = await nowpayments.verifyAndParse({
+        rawBody: body!,
+        signature: sig!,
+        ipnSecret,
+        postback,
+      });
+      expect(result.ok).toBe(false);
+    }
+    expect(imported).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+  });
+});
+
 describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
   const SECRET = 'ipn-secret';
   const cfg = { apiUrl: 'https://api.nowpayments.test', apiKey: 'np-key' };
+  const postback = { cfg, reserve: async () => {} };
   // An IPN whose signature we can't reproduce (a canonicalization corner or a
   // wrong IPN secret) — carries a payment_id pointer.
   const ipnBody = JSON.stringify({ payment_id: 4567, payment_status: 'finished', order_id: 'oX' });
@@ -1204,14 +1418,14 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
       const url = String(input);
       expect(url).toBe('https://api.nowpayments.test/v1/payment/4567');
       expect((init?.headers as Record<string, string>)['x-api-key']).toBe('np-key');
-      return res(apiPayment());
+      return Response.json(apiPayment());
     });
     vi.stubGlobal('fetch', fetchMock);
     const r = await nowpayments.verifyAndParse({
       rawBody: ipnBody,
       signature: badSig,
       ipnSecret: SECRET,
-      cfg,
+      postback,
     });
     expect(r).toMatchObject({
       ok: true,
@@ -1227,13 +1441,13 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
   test('the underpayment check applies to the API record too', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => res(apiPayment({ actually_paid: 0.0004 }))),
+      vi.fn(async () => Response.json(apiPayment({ actually_paid: 0.0004 }))),
     );
     const r = await nowpayments.verifyAndParse({
       rawBody: ipnBody,
       signature: badSig,
       ipnSecret: SECRET,
-      cfg,
+      postback,
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -1252,7 +1466,7 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
       rawBody: ipnBody,
       signature: badSig,
       ipnSecret: SECRET,
-      cfg,
+      postback,
     });
     expect(r.ok).toBe(false);
   });
@@ -1260,18 +1474,38 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
   test('rejects when the API returns a DIFFERENT payment than asked for', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => res(apiPayment({ payment_id: 1111 }))),
+      vi.fn(async () => Response.json(apiPayment({ payment_id: 1111 }))),
     );
     const r = await nowpayments.verifyAndParse({
       rawBody: ipnBody,
       signature: badSig,
       ipnSecret: SECRET,
-      cfg,
+      postback,
     });
     expect(r.ok).toBe(false);
   });
 
-  test('no cfg → the old fail-closed behavior (no network call)', async () => {
+  test('an oversized provider response cannot authorize an event', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(apiPayment()), { headers: { 'content-length': '65537' } }),
+      ),
+    );
+    expect(
+      (
+        await nowpayments.verifyAndParse({
+          rawBody: ipnBody,
+          signature: badSig,
+          ipnSecret: SECRET,
+          postback,
+        })
+      ).ok,
+    ).toBe(false);
+  });
+
+  test('no postback → the old fail-closed behavior (no network call)', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     const r = await nowpayments.verifyAndParse({
@@ -1290,7 +1524,7 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
       rawBody: JSON.stringify({ payment_id: '../v1/payout', payment_status: 'finished' }),
       signature: badSig,
       ipnSecret: SECRET,
-      cfg,
+      postback,
     });
     expect(r.ok).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();

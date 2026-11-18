@@ -15,7 +15,7 @@
  * to break Convex's inference cycle (same convention as lifecycle.ts).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { ActionCtx, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
@@ -129,6 +129,7 @@ async function createCheckoutForProcessor(
 
 /** Verify + parse a processor webhook. Throws billing.not_configured if its secret is unset. */
 async function verifyForProcessor(
+  ctx: ActionCtx,
   processor: ProcessorId,
   rawBody: string,
   signature: string | null,
@@ -151,10 +152,19 @@ async function verifyForProcessor(
         // can't reproduce (the canonicalization is a reconstruction of their
         // serializer and has corners) — the payment is re-verified straight
         // from the NOWPayments API instead of lost as a stuck-pending order.
-        cfg: secrets.nowpayments.apiKey
+        postback: secrets.nowpayments.apiKey
           ? {
-              apiUrl: secrets.nowpayments.apiUrl,
-              apiKey: secrets.nowpayments.apiKey,
+              cfg: { apiUrl: secrets.nowpayments.apiUrl, apiKey: secrets.nowpayments.apiKey },
+              reserve: async () => {
+                const limit = await ctx.runMutation(internal.rateLimits.checkAndIncrement, {
+                  bucket: 'billing:nowpayments:postback',
+                  max: 30,
+                  windowMs: 60_000,
+                });
+                if (!limit.allowed) {
+                  throw new ConvexError({ code: 'billing.postback_rate_limited' });
+                }
+              },
             }
           : undefined,
       });
@@ -889,11 +899,9 @@ export const applyEvent = internalMutation({
             expectedMinor: order.amountCents,
             reportedMinor: a.amountMinor ?? null,
             reportedCurrency: a.amountCurrency ?? null,
-            refMatched: !(
-              a.checkoutRef &&
-              order.processorRef &&
-              a.checkoutRef !== order.processorRef
-            ),
+            refMatched:
+              reason !== 'ref_mismatch' &&
+              !(a.checkoutRef && order.processorRef && a.checkoutRef !== order.processorRef),
           },
         });
         return { applied: false, granted: false };
@@ -902,6 +910,14 @@ export const applyEvent = internalMutation({
       // that decision is final, so a later payment event (a top-up, a status
       // flipped by hand on the processor) is refused and audited, never granted.
       if (order.dismissedAt != null) return refuse('dismissed');
+      if (a.processor === 'paypal' || order.processor === 'paypal') {
+        if (a.processor !== order.processor || !a.checkoutRef || !order.processorRef) {
+          return refuse('ref_mismatch');
+        }
+        if (a.amountMinor == null || !a.amountCurrency || a.amountMinor < order.amountCents) {
+          return refuse('amount_mismatch');
+        }
+      }
       if (a.checkoutRef && order.processorRef && a.checkoutRef !== order.processorRef) {
         return refuse('ref_mismatch');
       }
@@ -1181,6 +1197,7 @@ export const ingestEvent = internalAction({
   handler: async (ctx, a): Promise<{ ok: true; duplicate?: boolean; applied: boolean }> => {
     const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
     const verified = await verifyForProcessor(
+      ctx,
       a.processor,
       a.rawBody,
       a.signature ?? null,

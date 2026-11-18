@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { startAuthentication } from '@simplewebauthn/browser';
+  import { authenticateWithSessionKey, type PasskeyOptions } from '../../lib/passkeyAuthentication';
   import {
     Card,
     CardHeader,
@@ -10,8 +10,7 @@
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
   import { router } from '../../stores/router.svelte';
-  import { ensureSessionKey, setSessionToken } from '../../lib/pop';
-  import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../../../shared/crypto/pop';
+  import { setSessionToken } from '../../lib/pop';
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -40,13 +39,13 @@
         throw new Error(body.error?.message ?? `Failed to start sign-in (${optsRes.status})`);
       }
       const optsBody = (await optsRes.json()) as {
-        options: Parameters<typeof startAuthentication>[0]['optionsJSON'];
+        options: PasskeyOptions;
         challengeId: string;
       };
 
-      let assertion: Awaited<ReturnType<typeof startAuthentication>>;
+      let signed: Awaited<ReturnType<typeof authenticateWithSessionKey>>;
       try {
-        assertion = await startAuthentication({ optionsJSON: optsBody.options });
+        signed = await authenticateWithSessionKey('admin', optsBody.options);
       } catch (err) {
         const name = err instanceof Error ? err.name : '';
         if (name === 'NotAllowedError' || name === 'AbortError') {
@@ -66,18 +65,13 @@
         );
       }
 
-      // PoP (Phase 2): mint/ensure the admin signing key and bind it to this
-      // session by posting its public point + algorithm with the assertion. Admin
-      // then inherits PoP via the shared apiClient seam on every later request.
-      const popKey = await ensureSessionKey('admin');
       const verifyRes = await fetch('/api/admin/auth/authenticate/verify', {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           challengeId: optsBody.challengeId,
-          response: assertion,
-          ...(popKey ? { [POP_PUBKEY_FIELD]: popKey.pub, [POP_ALG_FIELD]: popKey.alg } : {}),
+          ...signed,
         }),
       });
       if (!verifyRes.ok) {

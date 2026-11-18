@@ -13,6 +13,7 @@
   import type { PickerFamily, PickerMode } from '../lib/connectionModeGroups';
   import {
     SwitchModeResponse,
+    requiresPrivateDelivery,
     type MemberCurrentMode,
   } from '../../shared/contracts/connectionModes';
 
@@ -99,18 +100,24 @@
     return humanizeSlug(id);
   }
 
-  // The pending TARGET's delivery style (drives the confirm dialog's
-  // raw-config bullet). Targets are always catalog modes.
+  // The switch dialog and server use the same rule for protected destinations.
   let pendingDeliveryStyle = $derived(
     modes.find((m) => m.id === pendingModeId)?.deliveryStyle ?? 'url',
   );
 
+  const privateTarget = $derived(
+    requiresPrivateDelivery(
+      pendingDeliveryStyle,
+      modes.find((mode) => mode.id === pendingModeId)?.family,
+    ),
+  );
+
   const switchMode = createMutation(() => ({
-    mutationFn: () => {
+    mutationFn: (keepUnsealedUrls: boolean) => {
       if (!pendingModeId) throw new Error('No mode selected');
       return apiClient.post(
         '/api/v1/account/switch-mode',
-        { modeId: pendingModeId, confirm: true },
+        { modeId: pendingModeId, confirm: true, keepUnsealedUrls },
         SwitchModeResponse,
       );
     },
@@ -128,10 +135,10 @@
       // prominent block is the ONLY thing shown, so it must not stay stale.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
       liveMessage = t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) });
-      // Both switch paths keep the same fronted URL now (the re-issue carries
-      // the subToken forward), so there is no re-import case to announce.
       toast.success(t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) }), {
-        description: t('delivery.switchSuccessBody'),
+        description: result.previousUrlRetired
+          ? t('delivery.privateSwitchSuccess')
+          : t('delivery.switchSuccessBody'),
       });
     },
     onError: (err) => {
@@ -179,13 +186,13 @@
   <SwitchModeModal
     bind:open={switchModeOpen}
     targetLabel={modeLabel(pendingModeId)}
-    targetDeliveryStyle={pendingDeliveryStyle}
+    {privateTarget}
     {deviceCount}
     onCancel={() => {
       switchModeOpen = false;
       pendingModeId = null;
     }}
-    onConfirm={() => switchMode.mutate()}
+    onConfirm={(keepUnsealedUrls) => switchMode.mutate(keepUnsealedUrls)}
     busy={switchMode.isPending}
   />
 {/if}

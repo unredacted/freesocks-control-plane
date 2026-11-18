@@ -43,6 +43,13 @@ jobs:
       # adds hangs the job whenever the runner's Ubuntu mirror stalls.
       - run: bunx playwright install firefox
       - run: bunx playwright install --force chrome
+      - name: Check lazy module integrity in the production web image
+        run: |
+          docker build -f docker/web.Dockerfile -t fcp-sri-web:test .
+          docker run --detach --rm --name fcp-sri-web -e CADDY_SCHEME=http -e SITE_ADDRESS=:80 -p 127.0.0.1:18341:80 fcp-sri-web:test
+          trap 'docker stop fcp-sri-web' EXIT
+          curl --fail --retry 15 --retry-all-errors --retry-delay 1 --silent --output /dev/null http://127.0.0.1:18341/
+          bunx playwright test --config tests/sri/playwright.config.ts
       - run: bun run test:integration:cap
       - uses: actions/upload-artifact@v7
         if: failure()
@@ -165,3 +172,7 @@ jobs:
           fi
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" "$image" \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --add-host backend:127.0.0.1 --tmpfs /tmp --tmpfs /config --tmpfs /data --tmpfs /srv/dist \
+            -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -v "$PWD/tests/caddy-subscription-csp.sh:/check.sh:ro" "$image" sh /check.sh

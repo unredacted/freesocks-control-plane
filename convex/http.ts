@@ -9,6 +9,8 @@
  * = the fs_admin_session cookie OR an fsv1_ admin-scoped token. No OIDC.
  */
 import { httpRouter } from 'convex/server';
+import { readBoundedBody } from './lib/readBoundedBody';
+import { MAX_IPN_BYTES } from './lib/processors/nowpayments';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
@@ -371,6 +373,9 @@ const NOT_MODIFIED_HEADERS = [
   'etag',
   'cache-control',
   'vary',
+  // Caddy adds the site policy to this response too. Repeat the document
+  // sandbox so revalidation keeps both policies on the cached subscription.
+  'content-security-policy',
   'subscription-userinfo',
   'profile-title',
   'profile-update-interval',
@@ -1000,17 +1005,18 @@ http.route({
     if (!body.challengeId || !body.response) {
       return errorJson('validation', 'challengeId and response required', 400);
     }
-    // PoP (Phase 2): the client folds its session public key in so the new session
-    // is bound to it (mirrors account-login + the admin verify).
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
     const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
+    if (typeof popRaw !== 'string' || typeof popAlgRaw !== 'string') {
+      return errorJson('validation', 'Session signing key and algorithm required', 400);
+    }
     try {
       const out = await ctx.runAction(internal.memberWebauthn.authenticateVerify, {
         challengeId: body.challengeId,
         response: body.response,
         requestId: newRequestId(),
-        popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
-        popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
+        popPublicKey: popRaw,
+        popAlg: popAlgRaw,
       });
       const cookie = buildSetCookie(MEMBER_COOKIE, out.signedCookieValue, {
         maxAge: out.maxAgeSec,
@@ -1065,7 +1071,11 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
+    const view = await ctx.runAction(internal.account.getAccountView, {
+      userId: member.userId,
+      includeSubscriptionCredentials:
+        member.source === 'cookie' || hasScope(member.scopes, 'subscription:read'),
+    });
     if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"
     // picker AND drives the mode suggestion. Inside the sealed body; never
@@ -1864,10 +1874,14 @@ http.route({
         ? errorJson('validation', 'This connection mode is not available yet.', 400)
         : errorJson('validation', 'unknown connection mode', 400);
     }
-    await ctx.runMutation(internal.users.setConnectionMode, {
+    const result = await ctx.runMutation(internal.account.setInitialMode, {
       userId: member.userId,
       modeId: verdict.modeId,
     });
+    if (result === 'issuing')
+      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
+    if (result === 'active')
+      return errorJson('validation', 'Use the mode switch for an existing key.', 409);
     return json({ ok: true, modeId: verdict.modeId });
   }),
 });
@@ -1881,7 +1895,9 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ modeId?: string; confirm?: boolean }>(req);
+    const body = await readJson<{ modeId?: string; confirm?: boolean; keepUnsealedUrls?: boolean }>(
+      req,
+    );
     // Cheap shape check only — account.switchMode validates against the live
     // catalog and is the single authority (a second DB read here buys nothing).
     if (typeof body.modeId !== 'string' || !body.modeId || body.modeId.length > 64) {
@@ -1893,6 +1909,7 @@ http.route({
       const result = await ctx.runAction(internal.account.switchMode, {
         userId: member.userId,
         target,
+        keepUnsealedUrls: body.keepUnsealedUrls === true,
         requestId,
       });
       return sagaResult(result);
@@ -1910,8 +1927,7 @@ http.route({
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ reason?: string; confirm?: boolean; telemetry?: unknown }>(req);
-    // A closed set: the reason is audited, and the audit log never stores
-    // user-authored text.
+    // A closed set keeps the diagnostic reason suitable for aggregation.
     if (!isSwitchServerReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
@@ -1974,7 +1990,7 @@ http.route({
 http.route({
   path: '/api/v1/account/report-issue',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
@@ -2041,6 +2057,15 @@ http.route({
   handler: guard(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    // A cached client that submits plaintext must not offer to collect details.
+    // This capability hint controls the form only. The POST routes enforce sealing.
+    if (new URL(req.url).searchParams.get('submission') !== 'hpke') {
+      return json({
+        enabled: false,
+        fields: { country: false, city: false, asn: false },
+        detected: { country: null, city: null, asn: null },
+      });
+    }
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const detected = detectedFromHeaders(diagCfg, req);
     return json({
@@ -2055,12 +2080,20 @@ http.route({
   }),
 });
 
+function recentMemberSessionRequired(): Response {
+  return errorJson(
+    'auth.reauthentication_required',
+    'Sign in again to manage account credentials.',
+    401,
+  );
+}
+
 http.route({
   path: '/api/v1/account/account-id/rotate',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.rotate',
       subject: member.userId,
@@ -2148,15 +2181,15 @@ http.route({
 // creation options (a single-use, origin-bound challenge), an attestation (the
 // credential's PUBLIC key), and credential ids + labels — nothing a passive CDN
 // can replay or use. Listed in convex/sealedRoutePolicy.test.ts. Enrolling a
-// passkey is authorized by the existing session (no invite token needed, unlike
+// passkey requires a recently created member session (no invite token needed, unlike
 // admin onboarding). The account number stays valid, so revoke has no
 // last-credential guard.
 http.route({
   path: '/api/v1/account/passkey/register/options',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     try {
       const out = await ctx.runAction(internal.memberWebauthn.registerOptions, {
         userId: member.userId,
@@ -2173,8 +2206,8 @@ http.route({
   path: '/api/v1/account/passkey/register/verify',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const body = await readJson<{ response?: unknown; deviceLabel?: string }>(req);
     if (!body.response) return errorJson('validation', 'response required', 400);
     try {
@@ -2195,8 +2228,8 @@ http.route({
   path: '/api/v1/account/passkeys',
   method: 'GET',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:read');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const passkeys = await ctx.runQuery(internal.memberPasskeys.listCredentials, {
       userId: member.userId,
     });
@@ -2208,8 +2241,8 @@ http.route({
   path: '/api/v1/account/passkey/revoke',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const member = await resolveMember(ctx, req, { recentSession: true });
+    if (!member) return recentMemberSessionRequired();
     const body = await readJson<{ id?: string }>(req);
     if (typeof body.id !== 'string' || !body.id) return errorJson('validation', 'id required', 400);
     const result = await ctx.runMutation(internal.memberPasskeys.revokeCredential, {
@@ -2718,13 +2751,16 @@ http.route({
     }
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
     const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
+    if (typeof popRaw !== 'string' || typeof popAlgRaw !== 'string') {
+      return errorJson('validation', 'Session signing key and algorithm required', 400);
+    }
     try {
       const out = await ctx.runAction(internal.webauthn.authenticateVerify, {
         challengeId: body.challengeId,
         response: body.response,
         requestId: newRequestId(),
-        popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
-        popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
+        popPublicKey: popRaw,
+        popAlg: popAlgRaw,
       });
       const cookie = buildSetCookie(ADMIN_COOKIE, out.signedCookieValue, {
         maxAge: out.maxAgeSec,
@@ -2767,7 +2803,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/register/options',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const body = await readJson<{ invite?: string }>(req);
     if (!body.invite) return errorJson('validation', 'invite required', 400);
     // Fail closed (mirrors account-login): no trustworthy IP → no throttle.
@@ -2794,7 +2830,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/register/verify',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const body = await readJson<{ invite?: string; response?: unknown; deviceLabel?: string }>(req);
     if (!body.invite || !body.response) {
       return errorJson('validation', 'invite and response required', 400);
@@ -2916,8 +2952,11 @@ function processorWebhook(opts: {
       });
       if (!rl.allowed) return errorJson('rate_limit.exceeded', 'Too many requests', 429);
     }
-    const rawBody = await req.text();
-    if (rawBody.length > 64 * 1024) {
+    const rawBody =
+      opts.processor === 'nowpayments'
+        ? await readBoundedBody(req, MAX_IPN_BYTES)
+        : await req.text();
+    if (rawBody === null || rawBody.length > 64 * 1024) {
       return errorJson('webhook.too_large', 'Payload too large', 413);
     }
     let headers: Record<string, string> | undefined;
@@ -2942,6 +2981,12 @@ function processorWebhook(opts: {
         (err.data as { code?: string }).code === 'billing.not_configured'
       ) {
         return notConfigured();
+      }
+      if (
+        err instanceof ConvexError &&
+        (err.data as { code?: string }).code === 'billing.postback_rate_limited'
+      ) {
+        return errorJson('rate_limit.exceeded', 'Too many payment lookups', 429);
       }
       return errorJson('webhook.rejected', 'Webhook rejected (invalid signature or payload)', 400);
     }
@@ -3731,8 +3776,8 @@ http.route({
 
 // --- admin: operator alerts (opt-in webhook, ntfy-compatible) -----------------
 // The GET carries no secret: booleans for the topic and the token, and only the
-// webhook's origin. The PATCH is sealed (it can carry the token); a field it
-// leaves out keeps its stored value. The test POST sends one notification.
+// webhook's origin. The sealed PATCH clears omitted secrets on an origin change.
+// The test POST sends one notification.
 
 http.route({
   path: '/api/v1/admin/alerts',
