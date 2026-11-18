@@ -11,11 +11,11 @@
  * A user-cancelled browser prompt (NotAllowedError/AbortError) is normalized to a
  * typed PasskeyCancelledError so callers can stay quiet on cancel.
  */
-import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
+import { startRegistration } from '@simplewebauthn/browser';
 import { z } from 'zod';
 import { apiClient, ApiCallError } from './api';
-import { ensureSessionKey, setSessionToken } from './pop';
-import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../../shared/crypto/pop';
+import { setSessionToken } from './pop';
+import { authenticateWithSessionKey, type PasskeyOptions } from './passkeyAuthentication';
 
 /** True when this browser can do WebAuthn at all (no support → hide the option). */
 export function passkeysSupported(): boolean {
@@ -90,29 +90,25 @@ export async function signInWithPasskey(): Promise<{ lapsedDowngrade: boolean }>
     });
   }
   const optsBody = (await optsRes.json()) as {
-    options: Parameters<typeof startAuthentication>[0]['optionsJSON'];
+    options: PasskeyOptions;
     challengeId: string;
   };
 
-  let assertion: Awaited<ReturnType<typeof startAuthentication>>;
+  let signed: Awaited<ReturnType<typeof authenticateWithSessionKey>>;
   try {
-    assertion = await startAuthentication({ optionsJSON: optsBody.options });
+    signed = await authenticateWithSessionKey('member', optsBody.options);
   } catch (err) {
     if (isCancel(err)) throw new PasskeyCancelledError();
     throw err;
   }
 
-  // Bind a fresh member PoP key to the new session (posted in-body, like
-  // account-login) so a captured cookie alone is insufficient afterward.
-  const popKey = await ensureSessionKey('member');
   const verifyRes = await fetch('/api/v1/auth/passkey/authenticate/verify', {
     method: 'POST',
     credentials: 'include',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       challengeId: optsBody.challengeId,
-      response: assertion,
-      ...(popKey ? { [POP_PUBKEY_FIELD]: popKey.pub, [POP_ALG_FIELD]: popKey.alg } : {}),
+      ...signed,
     }),
   });
   if (!verifyRes.ok) {

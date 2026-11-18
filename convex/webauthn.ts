@@ -28,6 +28,7 @@ import type {
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import { hmacSha256Hex, randomHex, sha256Hex, timingSafeEqual } from './lib/crypto';
+import { passkeyChallenge } from '../src/shared/crypto/pop';
 import { signValue } from './lib/cookies';
 
 const ADMIN_TTL_MS = 12 * 3_600_000; // 12 hours, matches the old fs_admin_session.
@@ -228,9 +229,9 @@ export const authenticateVerify = internalAction({
     requestId: v.optional(v.string()),
     // PoP (Phase 2): the admin client's session public key. Admin inherits PoP
     // via the shared verify path once bound here.
-    popPublicKey: v.optional(v.string()),
+    popPublicKey: v.string(),
     /** The PoP algorithm ('EdDSA' | 'ES256') for popPublicKey; stored on the session. */
-    popAlg: v.optional(v.string()),
+    popAlg: v.string(),
   },
   handler: async (
     ctx,
@@ -240,7 +241,7 @@ export const authenticateVerify = internalAction({
     username: string;
     signedCookieValue: string;
     maxAgeSec: number;
-    popSessionToken?: string;
+    popSessionToken: string;
   }> => {
     const consumed = await ctx.runMutation(internal.admins.consumeAuthChallenge, { challengeId });
     if (!consumed)
@@ -255,7 +256,7 @@ export const authenticateVerify = internalAction({
     const { rpId, origins } = webauthnConfig();
     const verification = await verifyAuthenticationResponse({
       response: resp,
-      expectedChallenge: consumed.challenge,
+      expectedChallenge: await passkeyChallenge('admin', consumed.challenge, popPublicKey, popAlg),
       expectedOrigin: origins.length === 1 ? origins[0]! : origins,
       expectedRPID: rpId,
       credential: {
@@ -284,13 +285,15 @@ export const authenticateVerify = internalAction({
     await ctx.runMutation(internal.admins.touchLogin, { adminUserId });
 
     const sid = randomHex(32);
-    const popSessionToken = popPublicKey ? randomHex(16) : undefined;
+    const popSessionToken = randomHex(16);
     await ctx.runMutation(internal.sessions.create, {
       sid,
       kind: 'admin',
       adminUserId,
       ttlMs: ADMIN_TTL_MS,
-      ...(popPublicKey ? { popPublicKey, popAlg, popSessionToken } : {}),
+      popPublicKey,
+      popAlg,
+      popSessionToken,
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'admin',

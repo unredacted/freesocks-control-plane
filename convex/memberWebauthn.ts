@@ -37,6 +37,7 @@ import type {
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import { hmacSha256Hex, randomHex } from './lib/crypto';
+import { passkeyChallenge } from '../src/shared/crypto/pop';
 import { signValue } from './lib/cookies';
 
 // 30 days, matches auth.MEMBER_TTL_MS + the fs_session cookie (kept local, like
@@ -205,8 +206,8 @@ export const authenticateVerify = internalAction({
     response: v.any(),
     requestId: v.optional(v.string()),
     // PoP (Phase 2): the client's session public key, bound to the new session.
-    popPublicKey: v.optional(v.string()),
-    popAlg: v.optional(v.string()),
+    popPublicKey: v.string(),
+    popAlg: v.string(),
   },
   handler: async (
     ctx,
@@ -215,7 +216,7 @@ export const authenticateVerify = internalAction({
     ok: true;
     signedCookieValue: string;
     maxAgeSec: number;
-    popSessionToken?: string;
+    popSessionToken: string;
     lapsedDowngrade?: boolean;
   }> => {
     const consumed = await ctx.runMutation(internal.memberPasskeys.consumeAuthChallenge, {
@@ -234,7 +235,7 @@ export const authenticateVerify = internalAction({
     const { rpId, origins } = memberWebauthnConfig();
     const verification = await verifyAuthenticationResponse({
       response: resp,
-      expectedChallenge: consumed.challenge,
+      expectedChallenge: await passkeyChallenge('member', consumed.challenge, popPublicKey, popAlg),
       expectedOrigin: origins.length === 1 ? origins[0]! : origins,
       expectedRPID: rpId,
       credential: {
@@ -268,13 +269,15 @@ export const authenticateVerify = internalAction({
     }
 
     const sid = randomHex(32);
-    const popSessionToken = popPublicKey ? randomHex(16) : undefined;
+    const popSessionToken = randomHex(16);
     await ctx.runMutation(internal.sessions.create, {
       sid,
       kind: 'member',
       userId,
       ttlMs: MEMBER_TTL_MS,
-      ...(popPublicKey ? { popPublicKey, popAlg, popSessionToken } : {}),
+      popPublicKey,
+      popAlg,
+      popSessionToken,
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',

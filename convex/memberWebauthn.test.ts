@@ -2,27 +2,31 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import {
+  passkeyNonce,
+  passkeyExamples,
+  credentialPublicKey,
+  signedAssertion,
+} from '../tests/fixtures/passkeyAssertion';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hmacSha256Hex } from './lib/crypto';
 import { verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
 
-// Mock ONLY the two cryptographic verifiers (mirrors webauthn.test.ts), so the
-// post-verify happy path (counter bump, credential insert, member session mint) is
-// reachable without a real authenticator. generate*Options stay REAL. The full
-// ceremony with a genuine authenticator is an e2e todo.
+// Use the real assertion verifier for signed fixtures and stub it for account-state tests.
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@simplewebauthn/server')>();
   return {
     ...actual,
     verifyRegistrationResponse: vi.fn(),
-    verifyAuthenticationResponse: vi.fn(),
+    verifyAuthenticationResponse: vi.fn(actual.verifyAuthenticationResponse),
   };
 });
 
 const modules = import.meta.glob('./**/*.*s');
 const IP_SALT = 'test-ip-salt';
+const binding = { popPublicKey: passkeyExamples.member.pub, popAlg: passkeyExamples.member.alg };
 
 beforeEach(() => {
   vi.stubEnv('WEBAUTHN_RP_ID', 'localhost');
@@ -66,7 +70,7 @@ async function seedMember(
       await ctx.db.insert('memberPasskeyCredentials', {
         userId,
         credentialId: opts.credentialId,
-        publicKey: 'cHVibGljLWtleQ==',
+        publicKey: credentialPublicKey,
         counter: 0,
         deviceLabel: 'Test device',
       });
@@ -200,6 +204,7 @@ describe('authenticateVerify', () => {
     const t = convexTest(schema, modules);
     await expect(
       t.action(internal.memberWebauthn.authenticateVerify, {
+        ...binding,
         challengeId: 'nope',
         response: { id: 'cred-1', rawId: 'x', response: {}, type: 'public-key' },
       }),
@@ -232,6 +237,7 @@ describe('authenticateVerify', () => {
     // looks in memberPasskeyCredentials, so the admin credential is "unknown".
     await expect(
       t.action(internal.memberWebauthn.authenticateVerify, {
+        ...binding,
         challengeId: 'ch-x',
         response: { id: 'admin-cred', rawId: 'x', response: {}, type: 'public-key' },
       }),
@@ -245,38 +251,71 @@ describe('authenticateVerify', () => {
     expect(row?.consumedAt).toBeTypeOf('number');
   });
 
-  test('happy path: a verified assertion bumps the counter and mints a MEMBER session', async () => {
+  test.each([
+    ['both fields', {}],
+    ['public key', { fsPopAlg: binding.popAlg }],
+    ['algorithm', { fsPopPub: binding.popPublicKey }],
+  ] as const)('rejects a verify request missing %s', async (_, fields) => {
     const t = convexTest(schema, modules);
-    const { userId } = await seedMember(t, { status: 'active', credentialId: 'cred-1' });
-    await t.run((ctx) =>
-      ctx.db.insert('memberWebauthnAuthChallenges', {
+    const res = await t.fetch('/api/v1/auth/passkey/authenticate/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
         challengeId: 'ch-auth',
-        challenge: 'stored-challenge',
-        expiresAt: Date.now() + 60_000,
+        response: signedAssertion('member'),
+        ...fields,
       }),
-    );
-    vi.mocked(verifyAuthenticationResponse).mockResolvedValue({
-      verified: true,
-      authenticationInfo: { newCounter: 5 },
-    } as unknown as Awaited<ReturnType<typeof verifyAuthenticationResponse>>);
-
-    const res = await t.action(internal.memberWebauthn.authenticateVerify, {
-      challengeId: 'ch-auth',
-      response: { id: 'cred-1', rawId: 'cred-1', response: {}, type: 'public-key' },
     });
-    expect(res.ok).toBe(true);
-    expect(typeof res.signedCookieValue).toBe('string');
-    const { cred, sessions } = await t.run(async (ctx) => ({
-      cred: (await ctx.db.query('memberPasskeyCredentials').collect()).find(
-        (c) => c.credentialId === 'cred-1',
-      ),
-      sessions: (await ctx.db.query('sessions').collect()).filter(
-        (s) => s.kind === 'member' && s.userId === userId,
-      ),
-    }));
-    expect(cred?.counter).toBe(5);
-    expect(sessions).toHaveLength(1);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'validation' } });
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('sessions').collect())).toHaveLength(0);
   });
+
+  test.each(['original', 'changed key', 'changed algorithm', 'bare nonce'] as const)(
+    'checks the member signing-key binding: %s',
+    async (input) => {
+      const t = convexTest(schema, modules);
+      const { userId } = await seedMember(t, { status: 'active', credentialId: 'cred-1' });
+      await t.run((ctx) =>
+        ctx.db.insert('memberWebauthnAuthChallenges', {
+          challengeId: 'ch-auth',
+          // For the legacy case, the fixture signed the stored nonce directly.
+          challenge: input === 'bare nonce' ? passkeyExamples.member.challenge : passkeyNonce,
+          expiresAt: Date.now() + 60_000,
+        }),
+      );
+      const result = t.action(internal.memberWebauthn.authenticateVerify, {
+        challengeId: 'ch-auth',
+        response: signedAssertion('member'),
+        popPublicKey:
+          input === 'changed key' ? passkeyExamples.member.alternatePub : binding.popPublicKey,
+        popAlg: input === 'changed algorithm' ? 'ES256' : binding.popAlg,
+      });
+      if (input !== 'original') {
+        await expect(result).rejects.toThrow(
+          input === 'changed algorithm' ? /key or algorithm/i : /challenge/i,
+        );
+        expect(await t.run((ctx) => ctx.db.query('sessions').collect())).toHaveLength(0);
+        return;
+      }
+      const res = await result;
+      expect(res.ok).toBe(true);
+      expect(typeof res.signedCookieValue).toBe('string');
+      const { cred, sessions } = await t.run(async (ctx) => ({
+        cred: (await ctx.db.query('memberPasskeyCredentials').collect()).find(
+          (c) => c.credentialId === 'cred-1',
+        ),
+        sessions: (await ctx.db.query('sessions').collect()).filter(
+          (s) => s.kind === 'member' && s.userId === userId,
+        ),
+      }));
+      expect(cred?.counter).toBe(7);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({ ...binding, popSessionToken: res.popSessionToken });
+      expect(res.popSessionToken).toMatch(/^[0-9a-f]{32}$/);
+    },
+  );
 
   test('rejects a deleted / non-lapsed-disabled account even with a valid assertion', async () => {
     const t = convexTest(schema, modules);
@@ -288,12 +327,13 @@ describe('authenticateVerify', () => {
         expiresAt: Date.now() + 60_000,
       }),
     );
-    vi.mocked(verifyAuthenticationResponse).mockResolvedValue({
+    vi.mocked(verifyAuthenticationResponse).mockResolvedValueOnce({
       verified: true,
       authenticationInfo: { newCounter: 1 },
     } as unknown as Awaited<ReturnType<typeof verifyAuthenticationResponse>>);
     await expect(
       t.action(internal.memberWebauthn.authenticateVerify, {
+        ...binding,
         challengeId: 'ch-del',
         response: { id: 'cred-del', rawId: 'x', response: {}, type: 'public-key' },
       }),

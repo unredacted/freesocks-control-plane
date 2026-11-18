@@ -2,37 +2,32 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import {
+  passkeyNonce,
+  passkeyExamples,
+  credentialPublicKey,
+  signedAssertion,
+} from '../tests/fixtures/passkeyAssertion';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hmacSha256Hex, sha256Hex } from './lib/crypto';
-import { verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
+import { verifyRegistrationResponse } from '@simplewebauthn/server';
 
-// Mock ONLY the two cryptographic verifiers, so the post-verify happy-path
-// (counter bump, credential insert, session mint + signed cookie) is reachable in
-// convex-test without a real/virtual authenticator. generate*Options stay REAL
-// (the options tests rely on them). Every existing *Verify test bails BEFORE these
-// are reached (bad/expired challenge, unknown credential, bootstrap lock), so they
-// are unaffected. The full ceremony with a genuine authenticator is the e2e todo.
+// Keep the real assertion verifier for signed fixtures. Registration uses a mock.
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@simplewebauthn/server')>();
   return {
     ...actual,
     verifyRegistrationResponse: vi.fn(),
-    verifyAuthenticationResponse: vi.fn(),
+    verifyAuthenticationResponse: vi.fn(actual.verifyAuthenticationResponse),
   };
 });
 
 const modules = import.meta.glob('./**/*.*s');
 
-// These tests cover the GATING + SECURITY branches of the passkey ceremonies
-// (bootstrap lock, anti-enumeration, throttle, replay/challenge handling) which
-// are reachable without a real authenticator. The cryptographic happy-path
-// (verifyRegistrationResponse / verifyAuthenticationResponse succeeding on a
-// genuine attestation/assertion) needs a hardware/virtual authenticator and is
-// left to an end-to-end browser test (see the test.todo at the bottom).
-
 const IP_SALT = 'test-ip-salt';
+const binding = { popPublicKey: passkeyExamples.admin.pub, popAlg: passkeyExamples.admin.alg };
 
 beforeEach(() => {
   vi.stubEnv('WEBAUTHN_RP_ID', 'localhost');
@@ -60,7 +55,7 @@ async function seedAdminWithCredential(
     await ctx.db.insert('passkeyCredentials', {
       adminUserId: id,
       credentialId,
-      publicKey: 'cHVibGljLWtleQ==',
+      publicKey: credentialPublicKey,
       counter: 0,
     });
     return id;
@@ -334,6 +329,7 @@ describe('authenticateVerify', () => {
     const t = convexTest(schema, modules);
     await expect(
       t.action(internal.webauthn.authenticateVerify, {
+        ...binding,
         challengeId: 'does-not-exist',
         response: { id: 'cred-1', rawId: 'cred-1', response: {}, type: 'public-key' },
       }),
@@ -351,6 +347,7 @@ describe('authenticateVerify', () => {
     );
     await expect(
       t.action(internal.webauthn.authenticateVerify, {
+        ...binding,
         challengeId: 'ch-1',
         response: { id: 'unregistered-cred', rawId: 'x', response: {}, type: 'public-key' },
       }),
@@ -364,41 +361,76 @@ describe('authenticateVerify', () => {
     expect(row?.consumedAt).toBeTypeOf('number');
   });
 
-  test('happy path: a verified assertion bumps the counter and mints an admin session', async () => {
-    vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-signing-key');
+  test.each([
+    ['both fields', {}],
+    ['public key', { fsPopAlg: binding.popAlg }],
+    ['algorithm', { fsPopPub: binding.popPublicKey }],
+  ] as const)('rejects a verify request missing %s', async (_, fields) => {
     const t = convexTest(schema, modules);
-    const { adminId } = await seedAdminWithCredential(t, 'admin', 'cred-1');
-    await t.run((ctx) =>
-      ctx.db.insert('webauthnAuthChallenges', {
+    const res = await t.fetch('/api/admin/auth/authenticate/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
         challengeId: 'ch-auth',
-        challenge: 'stored-challenge',
-        expiresAt: Date.now() + 60_000,
+        response: signedAssertion('admin'),
+        ...fields,
       }),
-    );
-    vi.mocked(verifyAuthenticationResponse).mockResolvedValue({
-      verified: true,
-      authenticationInfo: { newCounter: 7 },
-    } as unknown as Awaited<ReturnType<typeof verifyAuthenticationResponse>>);
-
-    const res = await t.action(internal.webauthn.authenticateVerify, {
-      challengeId: 'ch-auth',
-      response: { id: 'cred-1', rawId: 'cred-1', response: {}, type: 'public-key' },
     });
-    expect(res.ok).toBe(true);
-    expect(res.username).toBe('admin');
-    expect(typeof res.signedCookieValue).toBe('string');
-    // The counter advanced to the verifier's value + an admin session row minted.
-    const cred = await t.run(async (ctx) =>
-      (await ctx.db.query('passkeyCredentials').collect()).find((c) => c.credentialId === 'cred-1'),
-    );
-    expect(cred?.counter).toBe(7);
-    const sessions = await t.run(async (ctx) =>
-      (await ctx.db.query('sessions').collect()).filter(
-        (s) => s.kind === 'admin' && s.adminUserId === adminId,
-      ),
-    );
-    expect(sessions).toHaveLength(1);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'validation' } });
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('sessions').collect())).toHaveLength(0);
   });
+
+  test.each(['original', 'changed key', 'changed algorithm', 'bare nonce'] as const)(
+    'checks the admin signing-key binding: %s',
+    async (input) => {
+      vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-signing-key');
+      const t = convexTest(schema, modules);
+      const { adminId } = await seedAdminWithCredential(t, 'admin', 'cred-1');
+      await t.run((ctx) =>
+        ctx.db.insert('webauthnAuthChallenges', {
+          challengeId: 'ch-auth',
+          // For the legacy case, the fixture signed the stored nonce directly.
+          challenge: input === 'bare nonce' ? passkeyExamples.admin.challenge : passkeyNonce,
+          expiresAt: Date.now() + 60_000,
+        }),
+      );
+      const result = t.action(internal.webauthn.authenticateVerify, {
+        challengeId: 'ch-auth',
+        response: signedAssertion('admin'),
+        popPublicKey:
+          input === 'changed key' ? passkeyExamples.admin.alternatePub : binding.popPublicKey,
+        popAlg: input === 'changed algorithm' ? 'EdDSA' : binding.popAlg,
+      });
+      if (input !== 'original') {
+        await expect(result).rejects.toThrow(
+          input === 'changed algorithm' ? /key or algorithm/i : /challenge/i,
+        );
+        expect(await t.run((ctx) => ctx.db.query('sessions').collect())).toHaveLength(0);
+        return;
+      }
+      const res = await result;
+      expect(res.ok).toBe(true);
+      expect(res.username).toBe('admin');
+      expect(typeof res.signedCookieValue).toBe('string');
+      // The counter advanced to the verifier's value + an admin session row minted.
+      const cred = await t.run(async (ctx) =>
+        (await ctx.db.query('passkeyCredentials').collect()).find(
+          (c) => c.credentialId === 'cred-1',
+        ),
+      );
+      expect(cred?.counter).toBe(7);
+      const sessions = await t.run(async (ctx) =>
+        (await ctx.db.query('sessions').collect()).filter(
+          (s) => s.kind === 'admin' && s.adminUserId === adminId,
+        ),
+      );
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({ ...binding, popSessionToken: res.popSessionToken });
+      expect(res.popSessionToken).toMatch(/^[0-9a-f]{32}$/);
+    },
+  );
 });
 
 describe('createInvite (multi-admin onboarding)', () => {

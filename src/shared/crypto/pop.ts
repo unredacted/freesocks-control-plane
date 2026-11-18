@@ -39,7 +39,7 @@
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { p256 } from '@noble/curves/nist.js';
-import { bytesToB64Url, canonicalQuery, normalizePath, sha256 } from './envelope';
+import { b64UrlToBytes, bytesToB64Url, canonicalQuery, normalizePath, sha256 } from './envelope';
 
 export const POP_PREFIX = 'FCP-PoP';
 /**
@@ -137,6 +137,28 @@ export function buildPopMessage(p: PopMessageParts): Uint8Array {
     p.nonceB64,
   ];
   return new TextEncoder().encode(lines.join('\n'));
+}
+
+/**
+ * The authenticator signs this challenge in clientDataJSON. The browser uses its
+ * local worker key; the server uses the consumed nonce and the key it will store.
+ * A fixed JSON tuple gives both sides identical, domain-separated UTF-8 bytes.
+ */
+export async function passkeyChallenge(
+  realm: 'member' | 'admin',
+  nonce: string,
+  pub: string,
+  alg: string,
+): Promise<string> {
+  if (!((alg === POP_ALG_ED && pub.length === 43) || (alg === POP_ALG && pub.length === 87))) {
+    throw new Error('Invalid passkey session key or algorithm');
+  }
+  const raw = b64UrlToBytes(pub);
+  if (bytesToB64Url(raw) !== pub || (alg === POP_ALG && raw[0] !== 4)) {
+    throw new Error('Invalid passkey session public key');
+  }
+  const tuple = ['FCP-Passkey-PoP-v1', realm, nonce, alg, pub];
+  return digestB64Url(new TextEncoder().encode(JSON.stringify(tuple)));
 }
 
 /** base64url SHA-256 of the given bytes (the request bodyHash). */

@@ -1000,17 +1000,18 @@ http.route({
     if (!body.challengeId || !body.response) {
       return errorJson('validation', 'challengeId and response required', 400);
     }
-    // PoP (Phase 2): the client folds its session public key in so the new session
-    // is bound to it (mirrors account-login + the admin verify).
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
     const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
+    if (typeof popRaw !== 'string' || typeof popAlgRaw !== 'string') {
+      return errorJson('validation', 'Session signing key and algorithm required', 400);
+    }
     try {
       const out = await ctx.runAction(internal.memberWebauthn.authenticateVerify, {
         challengeId: body.challengeId,
         response: body.response,
         requestId: newRequestId(),
-        popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
-        popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
+        popPublicKey: popRaw,
+        popAlg: popAlgRaw,
       });
       const cookie = buildSetCookie(MEMBER_COOKIE, out.signedCookieValue, {
         maxAge: out.maxAgeSec,
@@ -2718,13 +2719,16 @@ http.route({
     }
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
     const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
+    if (typeof popRaw !== 'string' || typeof popAlgRaw !== 'string') {
+      return errorJson('validation', 'Session signing key and algorithm required', 400);
+    }
     try {
       const out = await ctx.runAction(internal.webauthn.authenticateVerify, {
         challengeId: body.challengeId,
         response: body.response,
         requestId: newRequestId(),
-        popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
-        popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
+        popPublicKey: popRaw,
+        popAlg: popAlgRaw,
       });
       const cookie = buildSetCookie(ADMIN_COOKIE, out.signedCookieValue, {
         maxAge: out.maxAgeSec,
