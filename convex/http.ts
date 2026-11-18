@@ -9,6 +9,8 @@
  * = the fs_admin_session cookie OR an fsv1_ admin-scoped token. No OIDC.
  */
 import { httpRouter } from 'convex/server';
+import { readBoundedBody } from './lib/readBoundedBody';
+import { MAX_IPN_BYTES } from './lib/processors/nowpayments';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
@@ -2943,8 +2945,11 @@ function processorWebhook(opts: {
       });
       if (!rl.allowed) return errorJson('rate_limit.exceeded', 'Too many requests', 429);
     }
-    const rawBody = await req.text();
-    if (rawBody.length > 64 * 1024) {
+    const rawBody =
+      opts.processor === 'nowpayments'
+        ? await readBoundedBody(req, MAX_IPN_BYTES)
+        : await req.text();
+    if (rawBody === null || rawBody.length > 64 * 1024) {
       return errorJson('webhook.too_large', 'Payload too large', 413);
     }
     let headers: Record<string, string> | undefined;
@@ -2969,6 +2974,12 @@ function processorWebhook(opts: {
         (err.data as { code?: string }).code === 'billing.not_configured'
       ) {
         return notConfigured();
+      }
+      if (
+        err instanceof ConvexError &&
+        (err.data as { code?: string }).code === 'billing.postback_rate_limited'
+      ) {
+        return errorJson('rate_limit.exceeded', 'Too many payment lookups', 429);
       }
       return errorJson('webhook.rejected', 'Webhook rejected (invalid signature or payload)', 400);
     }

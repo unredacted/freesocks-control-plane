@@ -310,13 +310,17 @@ section, both gated on donations being enabled and non-empty history.
    agrees with FCP; FCP decides from the amounts either way, so marking a short
    payment `finished` in their dashboard does not by itself grant it.
    **HMAC-mismatch postback fallback:** the verifier's canonicalization is a
-   reconstruction of NOWPayments' serializer (PHP escaping, `N.0` float combos)
-   and cannot cover every number rendering, so a mismatched IPN that carries a
-   `payment_id` is re-verified by fetching that payment straight from
-   `GET /v1/payment/{id}` (api key) and building the event from the
+   reconstruction of NOWPayments' serializer. It checks up to three encodings
+   of at most 64 KiB each. It tries sorted JSON, then PHP escaping, then the PHP
+   form that preserves whole-number decimals. If the body omits those decimal
+   spellings, the third form uses whole monetary amounts. A well-formed mismatched
+   signature and a numeric `payment_id` allow the verifier to fetch the payment from
+   `GET /v1/payment/{id}` (API key) and build the event from the
    AUTHORITATIVE response — the IPN body is discarded. A postback logs a
    `[billing] nowpayments IPN HMAC mismatch … verified via API postback`
-   warning; if you see it recur, check the IPN secret first.
+   warning; if you see it recur, check the IPN secret first. When the wire
+   omits which of several amounts had a decimal, some signatures can only be
+   resolved by postback. Without an API key, those callbacks are rejected.
 5. **Sandbox:** `api-sandbox.nowpayments.io` + the IPN simulator lets you drive a
    payment to `finished` without real funds.
 6. **Per-coin minimums (a PRICING constraint).** NOWPayments enforces a minimum
@@ -536,7 +540,7 @@ the balance frequently, and treat the account as expendable.
 - `webhook.nowpayments.ip` — 120/min per IP (one payment fires several IPNs).
 - `webhook.btcpay.ip` — 120/min per IP (several invoice events per payment).
 
-Both are admin-tunable in Admin → Rate limits (no deploy).
+These policies are admin-tunable in Admin → Rate limits. NOWPayments fallback lookups also have a fixed, deployment-wide limit of 30 per minute. An exhausted lookup budget returns HTTP 429 so the provider can retry. Directly authenticated IPNs can still settle.
 
 ## Tests
 

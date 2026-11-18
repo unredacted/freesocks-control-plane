@@ -932,6 +932,31 @@ describe('nowpayments webhook route', () => {
     expect(json.error.code).toBe('webhook.rejected');
   });
 
+  test('an exhausted shared postback budget returns 429 while signed IPNs still pass', async () => {
+    vi.stubEnv('NOWPAYMENTS_IPN_SECRET', 'ipn');
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'test');
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('rateLimits', {
+        bucket: 'billing:nowpayments:postback',
+        count: 30,
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    const lookup = vi.fn();
+    vi.stubGlobal('fetch', lookup);
+    const payload = { payment_id: 123, payment_status: 'waiting' };
+    const send = (signature: string) =>
+      t.fetch('/api/webhooks/nowpayments', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'x-nowpayments-sig': signature },
+      });
+    expect((await send('0'.repeat(128))).status).toBe(429);
+    expect((await send(await signIpn(payload, 'ipn'))).status).toBe(200);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
   test('a valid finished IPN extends the bound member’s membership', async () => {
     vi.stubEnv('NOWPAYMENTS_IPN_SECRET', 'ipn');
     const t = convexTest(schema, modules);
@@ -977,7 +1002,7 @@ describe('nowpayments webhook route', () => {
     const res = await t.fetch('/api/webhooks/nowpayments', {
       method: 'POST',
       headers: { 'x-nowpayments-sig': 'x' },
-      body: JSON.stringify({ pad: 'x'.repeat(70 * 1024) }),
+      body: JSON.stringify({ pad: 'é'.repeat(33 * 1024) }),
     });
     expect(res.status).toBe(413);
   });
