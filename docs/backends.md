@@ -137,8 +137,12 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   name members see (`subscription.siteName`, the name their selector group carries; unset =
   `FreeSocks`) and the member's connection mode (`FreeSocks · Freedom XHTTP`; the name alone on a
   backend without modes, `docs/edges.md` § "Names in apps"), in the `base64:<utf-8 base64>` form
-  the backend used, so apps show the deployment's name, never the backend product's. `getAccountView` returns the raw backend URL + the opaque
-  `subToken` (both in the sealed reveal-leg); the SPA builds the fronted `<origin>/api/v1/sub/<token>`
+  the backend used, so apps show the deployment's name, never the backend product's.
+  The account response includes subscription credentials for the owner's session or a member
+  token with both `account:read` and `subscription:read`. A token with account access alone receives
+  subscription metadata with empty `url` and `shortUuid` strings, a null `subToken`, and an empty
+  `mirrors` array. Delivery policy can also withhold the raw URL and short ID for authorized readers.
+  The SPA builds the fronted `<origin>/api/v1/sub/<token>`
   URL client-side (`subscriptionDisplayUrl` in `src/client/lib/utils.ts`), so no deployment-origin env
   is needed and every UI surface fronts uniformly. Privacy members still copy via the sealed
   `/api/v1/subscription/content`. See `docs/threat-model-cdn-blinding.md`.

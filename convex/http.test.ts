@@ -8,6 +8,7 @@
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { AccountResponse } from '../src/shared/contracts/account';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -279,7 +280,7 @@ describe('route-level scope enforcement', () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedTierAndUser(t);
     const lacking = await insertToken(t, {
-      scopes: ['subscription:write'],
+      scopes: ['subscription:read'],
       subjectType: 'user',
       subjectUserId: userId,
     });
@@ -302,6 +303,69 @@ describe('route-level scope enforcement', () => {
     expect(view.user.status).toBe('active');
     expect(view.subscription).toBeNull();
   });
+
+  test.each(['remnawave', 'outline'] as const)(
+    'account credential scopes on a %s subscription',
+    async (backend) => {
+      vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+      vi.stubEnv('ENVIRONMENT', 'development');
+      const t = convexTest(schema, modules);
+      const { userId, tierId } = await seedTierAndUser(t);
+      const shortUuid = 'fixture-short-id';
+      const rawUrl =
+        backend === 'outline'
+          ? 'ss://fixture-key@example.invalid'
+          : 'https://panel.invalid/sub/fixture-backend-key';
+      const subToken = backend === 'outline' ? undefined : 'fixture-fronted-token';
+      const mirrorUrl = 'https://mirror.invalid/fixture-mirror-key';
+      await t.run(async (ctx) => {
+        await ctx.db.patch(tierId, { backend });
+        const subId = await ctx.db.insert('subscriptions', {
+          userId,
+          backend,
+          backendUserId: 'fixture-user',
+          backendShortId: shortUuid,
+          subscriptionUrl: rawUrl,
+          subToken,
+          subscriptionMirrors: [{ provider: 'fixture', publicUrl: mirrorUrl }],
+          state: 'active',
+          updatedAt: Date.now(),
+        });
+        await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      });
+
+      const tokenHeaders = async (scopes: string[]) => ({
+        authorization: `Bearer ${await insertToken(t, { scopes, subjectType: 'user', subjectUserId: userId })}`,
+      });
+      for (const scopes of [['account:read'], ['account:read', 'subscription:write']]) {
+        const res = await t.fetch('/api/v1/account', { headers: await tokenHeaders(scopes) });
+        expect(res.status).toBe(200);
+        const body = await res.text();
+        for (const secret of [rawUrl, shortUuid, subToken, mirrorUrl]) {
+          if (secret) expect(body).not.toContain(secret);
+        }
+        expect(AccountResponse.parse(JSON.parse(body))).toMatchObject({
+          user: { id: userId, status: 'active' },
+          subscription: { backend, url: '', shortUuid: '', subToken: null, mirrors: [] },
+        });
+      }
+
+      for (const headers of [
+        { cookie: await memberCookie(t, userId) },
+        await tokenHeaders(['account:read', 'subscription:read']),
+      ]) {
+        const res = await t.fetch('/api/v1/account', { headers });
+        expect(res.status).toBe(200);
+        expect(AccountResponse.parse(await res.json()).subscription).toMatchObject({
+          backend,
+          url: rawUrl,
+          shortUuid,
+          subToken: subToken ?? null,
+          mirrors: [{ provider: 'fixture', publicUrl: mirrorUrl }],
+        });
+      }
+    },
+  );
 
   test('an admin-disabled member loses API access immediately (cookie AND token)', async () => {
     const t = convexTest(schema, modules);

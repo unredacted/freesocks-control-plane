@@ -1127,10 +1127,26 @@ describe('getAccountView subscription URL', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  test('exposes the raw backend url + the opaque subToken (SPA builds the fronted URL)', async () => {
+  test('defaults to subscription metadata when the caller omits the credential grant', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedSub(t);
     const view = await t.action(internal.account.getAccountView, { userId });
+    expect(view?.subscription).toMatchObject({
+      backend: 'remnawave',
+      url: '',
+      shortUuid: '',
+      subToken: null,
+      mirrors: [],
+    });
+  });
+
+  test('exposes the raw backend url + the opaque subToken (SPA builds the fronted URL)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedSub(t);
+    const view = await t.action(internal.account.getAccountView, {
+      userId,
+      includeSubscriptionCredentials: true,
+    });
     // The server returns the RAW backend URL; the SPA fronts it from subToken +
     // its own origin (subscriptionDisplayUrl), so there's no PUBLIC_BASE_URL dep.
     expect(view?.subscription?.url).toBe('https://panel.internal/sub/short-1');
@@ -1140,7 +1156,10 @@ describe('getAccountView subscription URL', () => {
   test('subToken is null for a legacy subscription issued before the token existed', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedSub(t, { subToken: undefined });
-    const view = await t.action(internal.account.getAccountView, { userId });
+    const view = await t.action(internal.account.getAccountView, {
+      userId,
+      includeSubscriptionCredentials: true,
+    });
     expect(view?.subscription?.subToken).toBeNull();
   });
 
@@ -1159,7 +1178,11 @@ describe('getAccountView subscription URL', () => {
         updatedAt: Date.now(),
       });
     });
-    const urlOf = async () => (await t.action(internal.account.getAccountView, { userId }))!;
+    const urlOf = async () =>
+      (await t.action(internal.account.getAccountView, {
+        userId,
+        includeSubscriptionCredentials: true,
+      }))!;
     // Not pinned yet: the key may land on the bound node.
     let view = await urlOf();
     expect(view.subscription).toMatchObject({ url: '', shortUuid: '', subToken: 'tok_abc' });

@@ -456,8 +456,11 @@ interface AccountView {
 }
 
 export const getAccountView = internalAction({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }): Promise<AccountView | null> => {
+  args: { userId: v.id('users'), includeSubscriptionCredentials: v.optional(v.boolean()) },
+  handler: async (
+    ctx,
+    { userId, includeSubscriptionCredentials = false },
+  ): Promise<AccountView | null> => {
     const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) return null;
     const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
@@ -553,19 +556,20 @@ export const getAccountView = internalAction({
       const appNoticeHint = notice
         ? { family: notice.family, at: new Date(notice.at).toISOString() }
         : null;
-      const withheld = edgeRequired || (await rawUrlWithheld(ctx, sub._id));
+      const withheld =
+        !includeSubscriptionCredentials || edgeRequired || (await rawUrlWithheld(ctx, sub._id));
       subscription = {
         // The raw backend URL (fallback) + the opaque token; the SPA builds the
         // FCP-fronted URL from the token + its own origin, so there's no
         // deployment-origin env dependency and every UI surface fronts uniformly.
         url: withheld ? '' : sub.subscriptionUrl,
         edgeRequired,
-        subToken: sub.subToken ?? null,
+        subToken: includeSubscriptionCredentials ? (sub.subToken ?? null) : null,
         shortUuid: withheld ? '' : sub.backendShortId,
         // Don't advertise a mirror whose last refresh failed (Review #2): it's kept
         // in the DB so the cap holds + the next refresh retries it, but the member
         // shouldn't be handed a URL we couldn't refresh.
-        mirrors: sub.subscriptionMirrors
+        mirrors: (includeSubscriptionCredentials ? sub.subscriptionMirrors : [])
           .filter((m) => m.status !== 'failed')
           .map((m) => ({
             provider: m.provider,

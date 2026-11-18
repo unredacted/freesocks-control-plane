@@ -69,6 +69,8 @@ export const AccountResponse = z.object({
   }),
   subscription: z
     .object({
+      // Account-only bearers receive subscription metadata with url and shortUuid
+      // set to '', subToken set to null, and mirrors set to [].
       // The RAW backend subscription URL (fallback). The SPA prefers the
       // FCP-fronted URL it builds from `subToken` + its own origin (see
       // subscriptionDisplayUrl); `url` is only used for legacy subs with no token.

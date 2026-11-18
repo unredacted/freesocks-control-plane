@@ -1066,7 +1066,11 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
+    const view = await ctx.runAction(internal.account.getAccountView, {
+      userId: member.userId,
+      includeSubscriptionCredentials:
+        member.source === 'cookie' || hasScope(member.scopes, 'subscription:read'),
+    });
     if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"
     // picker AND drives the mode suggestion. Inside the sealed body; never
