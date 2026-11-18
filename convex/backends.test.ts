@@ -874,6 +874,122 @@ describe('remnawaveUpdateUser contract safety', () => {
   });
 });
 
+describe('saved Remnawave panel credentials', () => {
+  test('preserves the actual mount path of a legacy URL with trailing whitespace', async () => {
+    const t = convexTest(schema, modules);
+    const id = await seedServer(t);
+    const baseUrl = 'https://panel.test.example/tenant ';
+    await t.run((ctx) =>
+      ctx.db.patch(id, {
+        config: { type: 'remnawave', baseUrl, apiToken: 'tkn' },
+      }),
+    );
+    const fetch = vi.fn(async (_url: string) => new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetch);
+    const backend = 'remnawave' as const;
+    for (const input of [{}, { baseUrl }, { baseUrl: '   ' }]) {
+      expect(
+        (await t.action(internal.adminApi.testBackendConnection, { id, backend, ...input })).ok,
+      ).toBe(true);
+      expect(fetch).toHaveBeenLastCalledWith(
+        'https://panel.test.example/tenant%20/api/users/by-username/fcp-health-probe-absent',
+        expect.anything(),
+      );
+    }
+
+    fetch.mockClear();
+    const changed = baseUrl.trim();
+    expect(
+      (await t.action(internal.adminApi.testBackendConnection, { id, backend, baseUrl: changed }))
+        .ok,
+    ).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(
+      t.mutation(internal.adminApi.updateBackendServer, { id, baseUrl: changed }),
+    ).rejects.toThrow(/changing the base URL/);
+    await expect(
+      t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+        backend,
+        slug: 'test-rw',
+        baseUrl: changed,
+      }),
+    ).rejects.toThrow(/changing the base URL/);
+    expect((await t.run((ctx) => ctx.db.get(id)))?.config).toMatchObject({
+      baseUrl,
+      apiToken: 'tkn',
+    });
+  });
+
+  test.each(['create', 'upsert'] as const)(
+    '%s needs an explicit token for a new panel',
+    async (method) => {
+      const t = convexTest(schema, modules);
+      const create =
+        method === 'create'
+          ? internal.adminApi.createBackendServer
+          : internal.adminApi.upsertBackendServerBySlug;
+      for (const apiToken of [undefined, '   ']) {
+        await expect(
+          t.mutation(create, {
+            backend: 'remnawave',
+            name: 'Panel',
+            slug: 'panel',
+            baseUrl: 'https://panel.example',
+            apiToken,
+          }),
+        ).rejects.toThrow(/base URL and an API token are required/);
+      }
+      expect(await t.run((ctx) => ctx.db.query('backendServers').collect())).toHaveLength(0);
+    },
+  );
+
+  test.each(['update', 'upsert'] as const)(
+    '%s keeps health checks bound to the saved panel and token',
+    async (method) => {
+      const t = convexTest(schema, modules);
+      const id = await seedServer(t);
+      const original = 'https://panel.test.example';
+      const replacement = 'https://new-panel.test.example';
+      const edit = (baseUrl: string, apiToken?: string) =>
+        method === 'update'
+          ? t.mutation(internal.adminApi.updateBackendServer, { id, baseUrl, apiToken })
+          : t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+              slug: 'test-rw',
+              backend: 'remnawave',
+              baseUrl,
+              apiToken,
+            });
+
+      // A failed probe ends this cron pass before the optional fleet telemetry requests.
+      const fetch = vi.fn(
+        async (_url: string, _init?: RequestInit) => new Response(null, { status: 503 }),
+      );
+      vi.stubGlobal('fetch', fetch);
+      const expectHealthProbe = async (baseUrl: string, apiToken: string) => {
+        fetch.mockClear();
+        await t.action(internal.backendServers.healthcheck, {});
+        expect(fetch).toHaveBeenCalledTimes(1);
+        const [url, init] = fetch.mock.calls[0]!;
+        expect(url).toBe(baseUrl + '/api/users/by-username/fcp-health-probe-absent');
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer ' + apiToken);
+      };
+
+      await expect(edit('   ')).rejects.toThrow();
+      await edit(original, ''); // unchanged URL, existing token
+      for (const url of [replacement, original + ':8443', original + '/other-panel']) {
+        for (const token of [undefined, '', '   ']) {
+          await expect(edit(url, token)).rejects.toThrow(
+            /token is required when changing the base URL/,
+          );
+        }
+      }
+      await expectHealthProbe(original, 'tkn');
+      await edit(replacement, 'new-token');
+      await expectHealthProbe(replacement, 'new-token');
+    },
+  );
+});
+
 describe('testBackendConnection stored-credential fallback', () => {
   test('with id + blank secrets, the probe runs against the STORED config', async () => {
     const t = convexTest(schema, modules);
@@ -940,7 +1056,10 @@ describe('testBackendConnection stored-credential fallback', () => {
     expect(headers.authorization).toBe('Bearer tkn');
   });
 
-  test('does not send a stored token to an overridden URL', async () => {
+  test.each([
+    { baseUrl: 'https://other.test.example' },
+    { baseUrl: 'https://panel.test.example/other-panel', apiToken: '   ' },
+  ])('refuses a changed URL without an explicit token before fetching', async (overrides) => {
     const t = convexTest(schema, modules);
     const serverId = await seedServer(t);
     const spy = vi.fn();
@@ -948,7 +1067,7 @@ describe('testBackendConnection stored-credential fallback', () => {
     const res = await t.action(internal.adminApi.testBackendConnection, {
       backend: 'remnawave',
       id: serverId,
-      baseUrl: 'https://attacker.example',
+      ...overrides,
     });
     expect(res).toEqual({
       ok: false,

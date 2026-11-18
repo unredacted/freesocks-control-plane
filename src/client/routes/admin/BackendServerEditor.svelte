@@ -355,12 +355,12 @@
             id="srv-token"
             bind:value={apiToken}
             type="password"
-            placeholder={isEdit && init.apiTokenSet ? 'set (leave blank to keep)' : 'Bearer token'}
+            placeholder={isEdit && init.apiTokenSet ? 'Token already set' : 'Bearer token'}
             autocomplete="off"
           />
           <p class="text-xs text-muted-foreground/80 mt-1">
             Stored server-side, never shown again.{isEdit
-              ? ' Leave blank to keep the existing token.'
+              ? ' Enter the token for the new base URL when changing it. Otherwise, leave blank to keep the existing token.'
               : ''}
           </p>
         </div>
