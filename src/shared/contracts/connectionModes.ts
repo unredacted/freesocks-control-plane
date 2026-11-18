@@ -60,9 +60,17 @@ export const MemberCurrentMode = z.object({
 });
 export type MemberCurrentMode = z.infer<typeof MemberCurrentMode>;
 
-/** Response of POST /api/v1/account/switch-mode (replaces the inline zod that
- *  lived in ConnectionModeSwitcher). */
+/** These modes deliver configuration through the sealed account by default. */
+export function requiresPrivateDelivery(
+  style: string | undefined,
+  family: string | null | undefined,
+): boolean {
+  return style === 'rawConfig' || family === 'privacy';
+}
+
+/** Response from the member's connection-mode switch. */
 export const SwitchModeResponse = z.object({
+  previousUrlRetired: z.boolean().optional(),
   subscriptionUrl: z.string(),
   shortUuid: z.string(),
   mode: z.object({ id: z.string(), label: z.string().nullable() }),

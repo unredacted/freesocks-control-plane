@@ -5,34 +5,31 @@
 
   /**
    * Confirmation dialog for `/api/v1/account/switch-mode` (the connection-mode /
-   * transport choice). Switching now moves the member's EXISTING key to the new
-   * mode's servers in place (same subscription URL/token), so it's a light,
-   * non-destructive confirm - not the re-issue-and-tombstone that regenerate /
-   * switch-backend warrant. Purely presentational - the mutation lives in the
-   * ConnectionModeSwitcher.
+   * transport choice). Private destinations require a separate opt-in to
+   * preserve unsealed subscription links.
    */
   interface Props {
     open: boolean;
     /** Human label of the mode being switched TO (localized title). */
     targetLabel: string;
-    /** Delivery style of the TARGET mode: the raw-config bullet only applies
-     *  when the destination actually delivers a raw config. */
-    targetDeliveryStyle?: 'url' | 'rawConfig';
+    privateTarget: boolean;
     deviceCount: number;
     onCancel: () => void;
-    onConfirm: () => void;
+    onConfirm: (keepUnsealedUrls: boolean) => void;
     busy: boolean;
   }
 
   let {
     open = $bindable(),
     targetLabel,
-    targetDeliveryStyle = 'url',
+    privateTarget,
     deviceCount,
     onCancel,
     onConfirm,
     busy,
   }: Props = $props();
+
+  let keepUnsealedUrls = $state(false);
 
   function onOpenChange(next: boolean) {
     // Don't allow Escape / outside-click while the switch is in flight: a
@@ -48,22 +45,32 @@
     <Dialog.Header>
       <Dialog.Title>{t('delivery.confirmTitle', { label: targetLabel })}</Dialog.Title>
       <Dialog.Description>
-        {t('delivery.confirmBody', { label: targetLabel })}
+        {privateTarget
+          ? t('delivery.privateSwitchBody')
+          : t('delivery.confirmBody', { label: targetLabel })}
       </Dialog.Description>
     </Dialog.Header>
-    <ul class="text-sm space-y-1 list-disc ps-5">
-      <li>{t('delivery.confirmPoint1', { label: targetLabel })}</li>
-      <li>{t('delivery.confirmPoint2')}</li>
-      {#if targetDeliveryStyle === 'rawConfig'}
-        <li>{t('delivery.confirmPoint3')}</li>
-      {/if}
-      {#if deviceCount > 0}
-        <li>{t('delivery.confirmPointDevices', { count: deviceCount })}</li>
-      {/if}
-    </ul>
+    {#if privateTarget}
+      <label class="flex items-start gap-2 text-sm">
+        <input type="checkbox" bind:checked={keepUnsealedUrls} disabled={busy} />
+        {t('delivery.keepUnsealedUrls')}
+      </label>
+    {:else}
+      <ul class="text-sm space-y-1 list-disc ps-5">
+        <li>{t('delivery.confirmPoint1', { label: targetLabel })}</li>
+        <li>{t('delivery.confirmPoint2')}</li>
+        {#if deviceCount > 0}
+          <li>{t('delivery.confirmPointDevices', { count: deviceCount })}</li>
+        {/if}
+      </ul>
+    {/if}
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
-      <Button onclick={onConfirm} disabled={busy} variant="default">
+      <Button
+        onclick={() => onConfirm(privateTarget && keepUnsealedUrls)}
+        disabled={busy}
+        variant="default"
+      >
         {busy ? t('delivery.working') : t('delivery.confirm')}
       </Button>
     </Dialog.Footer>

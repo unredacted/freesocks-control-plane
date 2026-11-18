@@ -148,6 +148,21 @@ describe('account.regenerate saga', () => {
 });
 
 describe('account issuance lock (P1-3)', () => {
+  test('the signup choice cannot change while the first key is being issued', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUser(t, await seedTier(t));
+    const choose = (modeId: string) =>
+      t.mutation(internal.account.setInitialMode, { userId, modeId });
+    expect(await choose('freedom-ws')).toBe('saved');
+    const lock = await t.mutation(internal.account.acquireIssuanceLock, { userId });
+    expect(await choose('privacy-reality')).toBe('issuing');
+    expect((await t.query(internal.users.get, { id: userId }))?.connectionModeId).toBe(
+      'freedom-ws',
+    );
+    await t.mutation(internal.account.releaseIssuanceLock, { userId, token: lock.token! });
+    expect(await choose('privacy-reality')).toBe('saved');
+  });
+
   test('only one holder at a time; release frees it', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
@@ -739,7 +754,11 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
+    const res = await t.action(internal.account.switchMode, {
+      userId,
+      target: 'privacy-reality',
+      keepUnsealedUrls: true,
+    });
     // Same key returned; nothing tombstoned.
     expect(res).toMatchObject({
       ok: true,
@@ -864,7 +883,11 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
+    const res = await t.action(internal.account.switchMode, {
+      userId,
+      target: 'privacy-reality',
+      keepUnsealedUrls: true,
+    });
     // In place: same key/URL, nothing tombstoned, no create POST.
     expect(res).toMatchObject({
       ok: true,
@@ -959,7 +982,11 @@ describe('account.switchMode saga', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
+    const res = await t.action(internal.account.switchMode, {
+      userId,
+      target: 'privacy-reality',
+      keepUnsealedUrls: true,
+    });
     expect(res).toMatchObject({ ok: true, mode: { id: 'privacy-reality' } });
     // A re-issue DID happen (grace window on the old key)…
     expect((res as { oldSubscriptionDeletedAt: string | null }).oldSubscriptionDeletedAt).not.toBe(

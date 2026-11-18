@@ -21,6 +21,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
+import { requiresPrivateDelivery } from '../src/shared/contracts/connectionModes';
 import { boundedUsername } from './lib/backends/username';
 import { issueNewSubscription } from './lib/issuance';
 import {
@@ -297,6 +298,27 @@ function parseLock(value: string): { exp: number; token: string | null } {
   return { exp: 0, token: null };
 }
 
+/** The signup preference may be written only before first-key issuance starts.
+ * Reading the same lock as the issuance saga and checking for an active row in
+ * this transaction rules out a change between placement selection and issuance. */
+export const setInitialMode = internalMutation({
+  args: { userId: v.id('users'), modeId: v.string() },
+  handler: async (ctx, { userId, modeId }): Promise<'saved' | 'issuing' | 'active'> => {
+    const lock = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', `issue-lock:${userId}`))
+      .unique();
+    if (lock && parseLock(lock.value).exp > Date.now()) return 'issuing';
+    const active = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+      .first();
+    if (active) return 'active';
+    await ctx.db.patch(userId, { connectionModeId: modeId, updatedAt: Date.now() });
+    return 'saved';
+  },
+});
+
 export const acquireIssuanceLock = internalMutation({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }): Promise<{ acquired: boolean; token?: string }> => {
@@ -365,6 +387,33 @@ async function isEffectiveModeBlocked(
   const gate = await ctx.runQuery(internal.connectionModes.effectiveGate, { backend, modeId });
   return gate.blocked;
 }
+
+/** A saved preference can predate the live key, or its catalog default may
+ * have changed. A server/location move can preserve public links into a
+ * private mode only if the key already belongs to that mode. */
+async function canMoveWithExistingUrls(
+  ctx: ActionCtx,
+  backend: Backend,
+  modeId: string | null,
+  placement: string | undefined,
+): Promise<boolean> {
+  const mode = await ctx.runQuery(internal.connectionModes.memberMode, { backend, modeId });
+  if (!mode || !requiresPrivateDelivery(mode.deliveryStyle, mode.family?.id)) return true;
+  return (
+    !!placement &&
+    (await ctx.runQuery(internal.subscriptions.placementIsSolelyInMode, {
+      placement,
+      modeId: mode.id,
+    }))
+  );
+}
+
+const PRIVATE_MOVE_REQUIRES_NEW_KEY = {
+  ok: false,
+  code: 'mode.unavailable',
+  status: 409,
+  message: 'Regenerate your subscription before moving this key to a private placement.',
+} as const;
 
 interface AccountView {
   user: {
@@ -965,6 +1014,14 @@ export const switchBackend = internalAction({
       user.preferredLocation ?? null,
       userId,
     );
+    const destination = await ctx.runQuery(internal.connectionModes.memberMode, {
+      backend: peerTier.backend,
+      modeId: user.connectionModeId ?? null,
+    });
+    const privateDestination = requiresPrivateDelivery(
+      destination?.deliveryStyle,
+      destination?.family?.id,
+    );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
@@ -987,9 +1044,8 @@ export const switchBackend = internalAction({
         extraPlacements: issueTarget.extraPlacements,
       },
       pinServerId: issueTarget.serverId,
-      // A backend switch is not a rotation: carry the fronted-URL token so the
-      // member's saved link keeps working, now serving the new backend's config.
-      carrySubTokenFromId: oldSub?._id,
+      carrySubTokenFromId: privateDestination ? undefined : oldSub?._id,
+      retireSubTokenFromId: privateDestination ? oldSub?._id : undefined,
     });
 
     // P1-6: tombstone the OLD subscription BEFORE flipping the tier. issueNew
@@ -1050,29 +1106,29 @@ type SwitchModeResult =
       subscriptionUrl: string;
       shortUuid: string;
       mode: { id: string; label: string | null };
+      previousUrlRetired?: boolean;
       oldSubscriptionDeletedAt: string | null;
     }
   | { ok: false; code: string; message: string; status: number };
 
 /**
  * Switch the member's connection mode (transport) WITHIN the same backend.
- * PREFERS an IN-PLACE update: a member who already holds a live Remnawave key just
- * has that key's mode group re-pointed (PATCH /api/users → activeInternalSquads), so the
- * SAME subscription row/URL/token, traffic counter, and devices survive the switch
- * — no user churn and no 24h "old key" window. Falls back to the re-issue saga
- * (mint new key into the mode's least-loaded node → tombstone the old with 24h
- * grace → audit) only when there's no in-place-updatable key: the first key, a
- * cross-backend / non-Remnawave sub, or a PATCH that failed. A mode's
- * `deliveryStyle` is a client-render concern keyed off the recorded mode, so no
- * re-issue is needed to change how the key is delivered.
+ * URL-preserving switches prefer an in-place placement update and can fall
+ * back to a reissue. By default a private destination gets a separate backend
+ * identity so previously disclosed native, fronted and mirror URLs can never
+ * serve its configuration. A member may explicitly retain unsealed links.
  */
 export const switchMode = internalAction({
   args: {
     userId: v.id('users'),
     target: v.string(),
+    keepUnsealedUrls: v.optional(v.boolean()),
     requestId: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, target, requestId }): Promise<SwitchModeResult> => {
+  handler: async (
+    ctx,
+    { userId, target, keepUnsealedUrls, requestId },
+  ): Promise<SwitchModeResult> => {
     const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
     const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
@@ -1124,12 +1180,17 @@ export const switchMode = internalAction({
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
 
+    const retireUrls =
+      !!oldSub &&
+      requiresPrivateDelivery(chosen.deliveryStyle, chosen.family) &&
+      keepUnsealedUrls !== true;
+
     // A placement-less backend (no placement capability) has nothing to move:
     // the switch is a PREFERENCE update, not a key operation. Record it and
     // leave the working subscription untouched — the old behavior fell through
     // to the re-issue saga and tombstoned a live key for zero functional
     // change. (A member with no key yet still falls through to the issue path.)
-    if (oldSub && !capabilitiesOf(tier.backend).placement) {
+    if (oldSub && !retireUrls && !capabilitiesOf(tier.backend).placement) {
       await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
       await ctx.runMutation(internal.audit.record, {
         actorType: 'member',
@@ -1149,10 +1210,9 @@ export const switchMode = internalAction({
     }
 
     // Re-issue path (the historical behavior): mint a NEW key into the mode's
-    // placement and tombstone the old one with 24h grace. Used only when there is
-    // no in-place-updatable current key — the first key, a cross-backend /
-    // non-Remnawave sub, or an in-place PATCH that failed (e.g. the backend user was
-    // manually deleted).
+    // placement and tombstone the old one with 24h grace. A private switch
+    // without URL retention always uses this path, as do first issuance and
+    // switches where the current backend key cannot be updated in place.
     const reissue = async (): Promise<SwitchModeResult> => {
       const issueTarget = await resolveIssueTarget(
         ctx,
@@ -1181,10 +1241,8 @@ export const switchMode = internalAction({
           extraPlacements: issueTarget.extraPlacements,
         },
         pinServerId: issueTarget.serverId,
-        // A mode switch is not a rotation: carry the fronted-URL token so the
-        // member's saved link is byte-identical even on the re-issue path —
-        // their app's next refresh serves the new mode's config from it.
-        carrySubTokenFromId: oldSub?._id,
+        carrySubTokenFromId: retireUrls ? undefined : oldSub?._id,
+        retireSubTokenFromId: retireUrls ? oldSub?._id : undefined,
       });
       // Tombstone the OLD key before recording the choice (issueNew already
       // repointed currentSubscriptionId), same 24h grace as regenerate/switch.
@@ -1218,11 +1276,14 @@ export const switchMode = internalAction({
       return {
         ok: true,
         ...(await memberFacing(ctx, issued.subscriptionId, issued)),
+        previousUrlRetired: retireUrls,
         mode: { id: chosen.id, label: chosen.label },
         oldSubscriptionDeletedAt:
           oldDeletedAt !== null ? new Date(oldDeletedAt).toISOString() : null,
       };
     };
+
+    if (retireUrls) return reissue();
 
     // In-place switch (the common case): a member who already has a live Remnawave
     // key just moves it to the new mode's mode group via PATCH /api/users. The SAME
@@ -1440,7 +1501,11 @@ export const switchServer = internalAction({
     // inside the current mode group and cannot change the transport.
     const modeBlocked =
       canPlaceBackend && (await isEffectiveModeBlocked(ctx, tier.backend, modeId));
-    const canPlace = canPlaceBackend && !modeBlocked;
+    const privateMoveBlocked =
+      canPlaceBackend &&
+      !modeBlocked &&
+      !(await canMoveWithExistingUrls(ctx, tier.backend, modeId, oldSub.backendPlacement));
+    const canPlace = canPlaceBackend && !modeBlocked && !privateMoveBlocked;
     // The backend this key actually lives on. Resolved once: the in-place lever
     // pins to it, and the cross-backend probe compares against it to tell a real
     // relocation from a same-backend shuffle.
@@ -1728,6 +1793,8 @@ export const switchServer = internalAction({
       return reissue(crossPanel);
     }
 
+    if (privateMoveBlocked) return PRIVATE_MOVE_REQUIRES_NEW_KEY;
+
     // The pin was the only lever left and it wasn't available: if placement moves
     // were the thing we withheld, say WHY, so the member is pointed at picking an
     // available mode rather than at a retry that will keep failing.
@@ -1779,9 +1846,11 @@ export const moveToCountryExit = internalAction({
     };
     if (!oldSub || oldSub.backend !== tier.backend || !capabilitiesOf(tier.backend).placement)
       return nothing;
+    const modeId = user.connectionModeId ?? null;
+    if (!(await canMoveWithExistingUrls(ctx, tier.backend, modeId, oldSub.backendPlacement)))
+      return PRIVATE_MOVE_REQUIRES_NEW_KEY;
     const offer = await ctx.runQuery(internal.countryExits.memberExit, { userId });
     if (!offer) return nothing;
-    const modeId = user.connectionModeId ?? null;
     if (await isEffectiveModeBlocked(ctx, tier.backend, modeId)) {
       return {
         ok: false,

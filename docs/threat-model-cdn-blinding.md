@@ -320,11 +320,13 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   subscription URL (in place of the backend backend URL) so the proxy app fetches config from us — this
   hides the backend origin and gives us a cache/control point, but it also means the config transits
   the FCP edge in plaintext for that unauthenticated fetch (a dumb proxy client can't do the reveal
-  leg — the same inherent limit as the content-fetch gap above). It does NOT regress the account-plane
-  protection, and it does NOT touch the **privacy** delivery path: privacy members never receive this
-  URL (the client hides it) and copy their Reality config via the SEALED `/api/v1/subscription/content`
-  path, so their config never crosses an unsealed edge. The token is an unguessable per-subscription
-  capability that rotates on every regenerate/switch, and a short server-side TTL cache
+  leg). Members can copy Privacy configurations through the sealed `/api/v1/subscription/content`
+  route. By default, switching to Privacy issues a fresh backend key and immediately retires the
+  old FCP token. Old native URLs and mirrors stay attached to the old key for its normal grace
+  period. They cannot fetch the new configuration. A member who explicitly keeps existing links
+  during the mode switch allows those links and their holders to fetch the new configuration.
+  Members can also reveal a new subscription link later through the warned account flow.
+  The fronted token is an unguessable per-subscription capability, and a short server-side TTL cache
   (`subscriptions.subCache`, keyed by User-Agent) fronts the backend. The account reveal-leg carries
   the RAW backend URL + the opaque `subToken` (both HPKE-sealed); the SPA builds the fronted
   `<origin>/api/v1/sub/<token>` URL client-side from its own origin (`subscriptionDisplayUrl`), so the

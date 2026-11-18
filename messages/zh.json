@@ -586,6 +586,9 @@
     "addHint": "将这些服务器条目手动粘贴到你的代理应用中。"
   },
   "delivery": {
+    "privateSwitchBody": "默认情况下，旧链接无法获取新配置。切换后，请从账户中复制新配置到每台设备。",
+    "keepUnsealedUrls": "保留现有链接和镜像。任何持有链接的人或见过该链接的服务都可以在不登录的情况下获取我的新配置。",
+    "privateSwitchSuccess": "请从账户中复制新配置到每台设备。旧订阅链接无法获取新配置。",
     "recommended": "推荐",
     "unavailable": "暂无",
     "confirmTitle": "切换到“ {label} \"？",

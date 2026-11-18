@@ -48,6 +48,8 @@ export async function issueNewSubscription(
     // saga failure the compensation hands the token BACK to this row.
     // regenerate omits it — URL rotation is that action's purpose.
     carrySubTokenFromId?: Id<'subscriptions'>;
+    // Private switch: revoke the old fronted token only when the fresh key is current.
+    retireSubTokenFromId?: Id<'subscriptions'>;
     // regenerate: carry only the member's answer to "where are you connecting
     // from?" from this row (convex/memberCountry.ts).
     carryCountryFromId?: Id<'subscriptions'>;
@@ -91,6 +93,7 @@ export async function issueNewSubscription(
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,
       subscriptionId,
+      retireSubTokenFromId: input.retireSubTokenFromId,
     });
     // Only now that the saga has committed: a carry brings the member's mirror
     // metadata onto this row, but not the S3 object, which still holds the OLD

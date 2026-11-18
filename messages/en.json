@@ -246,7 +246,7 @@
     "regenSuccessBody": "Re-import it on each of your devices. The old URL works for 24 more hours.",
     "regenFailedTitle": "Could not create a new key",
     "switchSuccessTitle": "Switched to {tier}",
-    "switchSuccessBody": "Same subscription URL - your apps pick up the new configuration on their next refresh.",
+    "switchSuccessBody": "Check your account for the connection details for your new server type.",
     "switchFailedTitle": "Could not switch server type",
     "refreshWelcome": "Welcome to {tier}",
     "refreshNoneTitle": "No active membership found yet",
@@ -418,9 +418,9 @@
   },
   "switch": {
     "title": "Switch to {to}?",
-    "body": "Your current {from} subscription is replaced with a new {to} one. Your subscription URL stays the same, so there is nothing to re-import.",
+    "body": "Your current {from} subscription is replaced with a new {to} one.",
     "point1": "A new key is issued on the {to} backend",
-    "point2": "Your subscription URL stays the same - apps pick up the new configuration on their next refresh",
+    "point2": "When switching into Privacy Mode, copy the new configuration from your account. Other backend switches keep your subscription link.",
     "point3": "The old key keeps working for 24 hours while your apps refresh",
     "confirm": "Switch to {to}",
     "working": "Switching…"
@@ -853,6 +853,9 @@
     "automaticMirrorWarn": "Automatic doesn't apply to mirror links. They won't be set up for any country."
   },
   "delivery": {
+    "privateSwitchBody": "By default, your old links cannot fetch the new configuration. Copy it from your account to each device after switching.",
+    "keepUnsealedUrls": "Keep my existing links and mirrors. Anyone with a link, including a service that saw it, can then fetch my new configuration without signing in.",
+    "privateSwitchSuccess": "Copy the new configuration from your account to each device. Your previous subscription links cannot fetch it.",
     "title": "Connection mode",
     "subtitle": "Pick what fits where you are. Saved on this device only - change it anytime.",
     "subtitleServer": "Switching moves your key to the matching servers. Your link stays the same.",

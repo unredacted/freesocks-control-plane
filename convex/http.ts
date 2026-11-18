@@ -1874,10 +1874,14 @@ http.route({
         ? errorJson('validation', 'This connection mode is not available yet.', 400)
         : errorJson('validation', 'unknown connection mode', 400);
     }
-    await ctx.runMutation(internal.users.setConnectionMode, {
+    const result = await ctx.runMutation(internal.account.setInitialMode, {
       userId: member.userId,
       modeId: verdict.modeId,
     });
+    if (result === 'issuing')
+      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
+    if (result === 'active')
+      return errorJson('validation', 'Use the mode switch for an existing key.', 409);
     return json({ ok: true, modeId: verdict.modeId });
   }),
 });
@@ -1891,7 +1895,9 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ modeId?: string; confirm?: boolean }>(req);
+    const body = await readJson<{ modeId?: string; confirm?: boolean; keepUnsealedUrls?: boolean }>(
+      req,
+    );
     // Cheap shape check only — account.switchMode validates against the live
     // catalog and is the single authority (a second DB read here buys nothing).
     if (typeof body.modeId !== 'string' || !body.modeId || body.modeId.length > 64) {
@@ -1903,6 +1909,7 @@ http.route({
       const result = await ctx.runAction(internal.account.switchMode, {
         userId: member.userId,
         target,
+        keepUnsealedUrls: body.keepUnsealedUrls === true,
         requestId,
       });
       return sagaResult(result);
