@@ -96,6 +96,17 @@ async function insertPendingOrder(
   );
 }
 
+async function insertPayPalOrder(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<'users'>,
+  tierId: Id<'tiers'>,
+  opaqueRef: string,
+) {
+  const id = await insertPendingOrder(t, userId, tierId, opaqueRef);
+  await t.run((ctx) => ctx.db.patch(id, { processor: 'paypal', processorRef: 'PP-ORDER-1' }));
+  return id;
+}
+
 /** Sign an IPN body the way nowpayments.verifyAndParse expects (sorted-key JSON, HMAC-SHA512). */
 async function signIpn(payload: Record<string, unknown>): Promise<string> {
   // Flat payloads: JSON.stringify with a sorted key array == sortKeysDeep + stringify.
@@ -1113,7 +1124,7 @@ describe('billing.ingestEvent (PayPal)', () => {
     vi.unstubAllGlobals();
   });
 
-  function stubPayPal(verification = 'SUCCESS') {
+  function stubPayPal(verification = 'SUCCESS', captureReply?: () => Response) {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string | URL) => {
@@ -1126,7 +1137,7 @@ describe('billing.ingestEvent (PayPal)', () => {
         if (u.includes('/v1/oauth2/token')) return ok({ access_token: 'tok' });
         if (u.includes('/verify-webhook-signature'))
           return ok({ verification_status: verification });
-        if (u.includes('/capture')) return ok({ status: 'COMPLETED' });
+        if (u.endsWith('/capture') && captureReply) return captureReply();
         return new Response('{}', { status: 404 });
       }),
     );
@@ -1143,12 +1154,18 @@ describe('billing.ingestEvent (PayPal)', () => {
   test('a verified PAYMENT.CAPTURE.COMPLETED extends membership', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-paypal');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-paypal');
     stubPayPal('SUCCESS');
     const rawBody = JSON.stringify({
       id: 'WH-1',
       event_type: 'PAYMENT.CAPTURE.COMPLETED',
-      resource: { id: 'CAP-1', custom_id: 'ref-paypal' },
+      resource: {
+        id: 'CAP-1',
+        custom_id: 'ref-paypal',
+        status: 'COMPLETED',
+        amount: { value: '14.00', currency_code: 'USD' },
+        supplementary_data: { related_ids: { order_id: 'PP-ORDER-1' } },
+      },
     });
     const res = await t.action(internal.billing.ingestEvent, {
       processor: 'paypal',
@@ -1163,10 +1180,106 @@ describe('billing.ingestEvent (PayPal)', () => {
     });
   });
 
+  test.each(['DECLINED', 'COMPLETED'] as const)(
+    'pending gift followed by %s',
+    async (finalStatus) => {
+      const t = convexTest(schema, modules);
+      const { userId, memberTierId, freeTierId } = await seedTiersAndUser(t);
+      const ref = 'ref-gift-paypal';
+      const orderId = await insertPayPalOrder(t, userId, memberTierId, ref);
+      await t.run((ctx) => ctx.db.patch(orderId, { kind: 'gift', quantity: 2 }));
+      const capture = {
+        id: 'CAP-1',
+        status: 'PENDING',
+        amount: { value: '14.00', currency_code: 'USD' },
+      };
+      stubPayPal('SUCCESS', () =>
+        Response.json({
+          id: 'PP-ORDER-1',
+          purchase_units: [{ custom_id: ref, payments: { captures: [capture] } }],
+        }),
+      );
+      const deliver = (id: string, event_type: string, resource: object) =>
+        t.action(internal.billing.ingestEvent, {
+          processor: 'paypal',
+          headers: ppHeaders,
+          rawBody: JSON.stringify({ id, event_type, resource }),
+        });
+      const approve = () =>
+        deliver('WH-APPROVE', 'CHECKOUT.ORDER.APPROVED', {
+          id: 'PP-ORDER-1',
+          purchase_units: [{ custom_id: ref }],
+        });
+      const state = () =>
+        t.run(async (ctx) => ({
+          order: await ctx.db.get(orderId),
+          codes: await ctx.db.query('redemptionCodes').collect(),
+          user: await ctx.db.get(userId),
+        }));
+      await approve();
+      expect((await approve()).duplicate).toBe(true);
+      let snapshot = await state();
+      expect(snapshot.order?.status).toBe('confirming');
+      expect(snapshot.codes).toHaveLength(0);
+      expect(snapshot.order?.giftReveal).toBeUndefined();
+      expect(snapshot.user?.tierId).toBe(freeTierId);
+
+      capture.status = finalStatus;
+      if (finalStatus === 'COMPLETED') await approve(); // same approval ID sees settlement
+      const type =
+        finalStatus === 'COMPLETED' ? 'PAYMENT.CAPTURE.COMPLETED' : 'PAYMENT.CAPTURE.DENIED';
+      const terminal = () =>
+        deliver('WH-FINAL', type, {
+          ...capture,
+          custom_id: ref,
+          supplementary_data: { related_ids: { order_id: 'PP-ORDER-1' } },
+        });
+      await terminal();
+      expect((await terminal()).duplicate).toBe(true);
+      snapshot = await state();
+      expect(snapshot.order?.status).toBe(finalStatus === 'COMPLETED' ? 'paid' : 'failed');
+      expect(snapshot.codes).toHaveLength(finalStatus === 'COMPLETED' ? 2 : 0);
+      expect(snapshot.order?.giftReveal ?? []).toHaveLength(snapshot.codes.length);
+      expect(snapshot.user?.tierId).toBe(freeTierId);
+    },
+  );
+
+  test.each([
+    ['PP-OTHER', '14.00', 'USD'],
+    ['PP-ORDER-1', '13.99', 'USD'],
+    ['PP-ORDER-1', '14.00', 'EUR'],
+  ])(
+    'checks captured order and money before granting (%s %s %s)',
+    async (orderId, value, currency_code) => {
+      const t = convexTest(schema, modules);
+      const { userId, freeTierId, memberTierId } = await seedTiersAndUser(t);
+      const id = await insertPayPalOrder(t, userId, memberTierId, 'ref-check');
+      stubPayPal();
+      const result = await t.action(internal.billing.ingestEvent, {
+        processor: 'paypal',
+        headers: ppHeaders,
+        rawBody: JSON.stringify({
+          id: 'WH-check',
+          event_type: 'PAYMENT.CAPTURE.COMPLETED',
+          resource: {
+            id: 'CAP-check',
+            custom_id: 'ref-check',
+            status: 'COMPLETED',
+            amount: { value, currency_code },
+            supplementary_data: { related_ids: { order_id: orderId } },
+          },
+        }),
+      });
+      expect(result.applied).toBe(false);
+      expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe('pending');
+      expect((await t.run((ctx) => ctx.db.get(userId)))?.tierId).toBe(freeTierId);
+    },
+  );
+
   test('a FAILURE verification is rejected', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-paypal-fail');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-paypal-fail');
     stubPayPal('FAILURE');
     const rawBody = JSON.stringify({
       id: 'WH-2',
@@ -1325,12 +1438,15 @@ describe('billing.applyEvent grant cross-checks', () => {
   test('a refund-class event for an already-paid order audits billing.refund_seen', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-refund');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-refund');
     await t.mutation(internal.billing.applyEvent, {
       processor: 'paypal',
       orderRef: 'ref-refund',
       status: 'paid',
       processorRef: 'cap_1',
+      checkoutRef: 'PP-ORDER-1',
+      amountMinor: 1400,
+      amountCurrency: 'USD',
     });
     const res = await t.mutation(internal.billing.applyEvent, {
       processor: 'paypal',
@@ -1565,7 +1681,7 @@ describe('billing.applyEvent grant cross-checks', () => {
   test("PayPal's normal two-event flow does NOT false-positive overpayment (Review C-F1)", async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
-    await insertPendingOrder(t, userId, memberTierId, 'ref-pp');
+    await insertPayPalOrder(t, userId, memberTierId, 'ref-pp');
     // Event 1: CHECKOUT.ORDER.APPROVED → captured server-side → paid, storing
     // the ORDER id as the order's processorRef.
     await t.mutation(internal.billing.applyEvent, {
@@ -1574,6 +1690,8 @@ describe('billing.applyEvent grant cross-checks', () => {
       status: 'paid',
       processorRef: 'PP-ORDER-1',
       checkoutRef: 'PP-ORDER-1',
+      amountMinor: 1400,
+      amountCurrency: 'USD',
     });
     // Event 2: PAYMENT.CAPTURE.COMPLETED — distinct resource (capture id) but
     // the SAME payment (checkoutRef = the linked order id). Not an overpayment.

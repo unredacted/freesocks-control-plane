@@ -899,11 +899,9 @@ export const applyEvent = internalMutation({
             expectedMinor: order.amountCents,
             reportedMinor: a.amountMinor ?? null,
             reportedCurrency: a.amountCurrency ?? null,
-            refMatched: !(
-              a.checkoutRef &&
-              order.processorRef &&
-              a.checkoutRef !== order.processorRef
-            ),
+            refMatched:
+              reason !== 'ref_mismatch' &&
+              !(a.checkoutRef && order.processorRef && a.checkoutRef !== order.processorRef),
           },
         });
         return { applied: false, granted: false };
@@ -912,6 +910,14 @@ export const applyEvent = internalMutation({
       // that decision is final, so a later payment event (a top-up, a status
       // flipped by hand on the processor) is refused and audited, never granted.
       if (order.dismissedAt != null) return refuse('dismissed');
+      if (a.processor === 'paypal' || order.processor === 'paypal') {
+        if (a.processor !== order.processor || !a.checkoutRef || !order.processorRef) {
+          return refuse('ref_mismatch');
+        }
+        if (a.amountMinor == null || !a.amountCurrency || a.amountMinor < order.amountCents) {
+          return refuse('amount_mismatch');
+        }
+      }
       if (a.checkoutRef && order.processorRef && a.checkoutRef !== order.processorRef) {
         return refuse('ref_mismatch');
       }

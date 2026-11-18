@@ -284,22 +284,51 @@ const PP_HEADERS = {
   'paypal-transmission-time': '2026-01-01T00:00:00Z',
 };
 
-/** Route PayPal's multi-call flow (token → verify → capture / create-order). */
-function ppFetch(opts: { verification?: string; capture?: 'ok' | 'already' | 'fail' } = {}) {
+function ppOrder(status = 'COMPLETED') {
+  return {
+    id: 'PP-1',
+    purchase_units: [
+      {
+        custom_id: 'order-nested',
+        payments: {
+          captures: [
+            {
+              id: 'CAP-1',
+              status,
+              amount: { value: '14.00', currency_code: 'USD' },
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+function ppFetch(
+  opts: {
+    verification?: string;
+    capture?: 'ok' | 'already' | 'fail' | 'unrelated-error';
+    response?: unknown;
+    lookup?: unknown;
+  } = {},
+) {
   return vi.fn(async (url: string | URL) => {
     const u = String(url);
-    if (u.includes('/v1/oauth2/token')) return res({ access_token: 'tok' });
-    if (u.includes('/verify-webhook-signature'))
+    if (u.endsWith('/v1/oauth2/token')) return res({ access_token: 'tok' });
+    if (u.endsWith('/verify-webhook-signature'))
       return res({ verification_status: opts.verification ?? 'SUCCESS' });
-    if (u.includes('/capture')) {
+    if (u.endsWith('/capture')) {
       if (opts.capture === 'fail') return res({}, { ok: false, status: 500 });
       if (opts.capture === 'already')
-        return res('{"details":[{"issue":"ORDER_ALREADY_CAPTURED"}]}', { ok: false, status: 422 });
-      return res({ status: 'COMPLETED' });
+        return res({ details: [{ issue: 'ORDER_ALREADY_CAPTURED' }] }, { ok: false, status: 422 });
+      if (opts.capture === 'unrelated-error')
+        return res({ message: 'ORDER_ALREADY_CAPTURED' }, { ok: false, status: 422 });
+      return res(opts.response ?? ppOrder());
     }
-    if (u.includes('/v2/checkout/orders'))
-      return res({ id: 'PP-1', links: [{ rel: 'approve', href: 'https://pp/approve' }] });
-    return res({});
+    if (u.endsWith('/v2/checkout/orders/PP-1')) return res(opts.lookup ?? ppOrder());
+    if (u.endsWith('/v2/payments/captures/CAP-1'))
+      return res({ id: 'CAP-1', supplementary_data: { related_ids: { order_id: 'PP-1' } } });
+    return res({}, { ok: false, status: 404 });
   });
 }
 
@@ -334,7 +363,13 @@ describe('paypal.verifyAndParse', () => {
       rawBody: JSON.stringify({
         id: 'evt_pc',
         event_type: 'PAYMENT.CAPTURE.COMPLETED',
-        resource: { id: 'CAP-1', custom_id: 'order-xyz' },
+        resource: {
+          id: 'CAP-1',
+          custom_id: 'order-xyz',
+          status: 'COMPLETED',
+          amount: { value: '14.00', currency_code: 'USD' },
+          supplementary_data: { related_ids: { order_id: 'PP-1' } },
+        },
       }),
       headers: PP_HEADERS,
       cfg: PP_CFG,
@@ -386,12 +421,109 @@ describe('paypal.verifyAndParse', () => {
       rawBody: JSON.stringify({
         id: 'evt_dup',
         event_type: 'CHECKOUT.ORDER.APPROVED',
-        resource: { id: 'PP-3', purchase_units: [{ custom_id: 'o' }] },
+        resource: { id: 'PP-1', purchase_units: [{ custom_id: 'order-nested' }] },
       }),
       headers: PP_HEADERS,
       cfg: PP_CFG,
     });
     expect(r.ok && r.status).toBe('paid');
+  });
+
+  test.each([
+    ['pending capture', { response: ppOrder('PENDING') }, 'confirming'],
+    ['duplicate pending capture', { capture: 'already', lookup: ppOrder('PENDING') }, 'confirming'],
+    ['duplicate declined capture', { capture: 'already', lookup: ppOrder('DECLINED') }, 'failed'],
+    ['minimal success followed by completed readback', { response: { id: 'PP-1' } }, 'paid'],
+    [
+      'no capture in readback',
+      { response: {}, lookup: { id: 'PP-1', status: 'COMPLETED' } },
+      false,
+    ],
+    [
+      'another order in readback',
+      { capture: 'already', lookup: { ...ppOrder(), id: 'PP-other' } },
+      false,
+    ],
+    ['unstructured 422', { capture: 'unrelated-error' }, false],
+  ] as const)('%s', async (_label, opts, expected) => {
+    vi.stubGlobal('fetch', ppFetch(opts));
+    const result = await paypal.verifyAndParse({
+      rawBody: JSON.stringify({
+        id: 'evt',
+        event_type: 'CHECKOUT.ORDER.APPROVED',
+        resource: { id: 'PP-1', purchase_units: [{ custom_id: 'order-nested' }] },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    });
+    expect(result.ok && result.status).toBe(expected);
+    if (result.ok)
+      expect(result).toMatchObject({
+        processorRef: 'CAP-1',
+        checkoutRef: 'PP-1',
+        amountMinor: 1400,
+        amountCurrency: 'USD',
+      });
+  });
+
+  test.each([
+    ['CAP-1', 'paid'],
+    ['CAP-OTHER', false],
+  ] as const)(
+    'reconciles an incomplete completed webhook only for its own capture (%s)',
+    async (id, expected) => {
+      vi.stubGlobal('fetch', ppFetch());
+      const result = await paypal.verifyAndParse({
+        rawBody: JSON.stringify({
+          id: 'evt',
+          event_type: 'PAYMENT.CAPTURE.COMPLETED',
+          resource: { id },
+        }),
+        headers: PP_HEADERS,
+        cfg: PP_CFG,
+      });
+      expect(result.ok && result.status).toBe(expected);
+    },
+  );
+
+  test('an incomplete completion stays retryable until the linked capture settles', async () => {
+    const args = {
+      rawBody: JSON.stringify({
+        id: 'evt-late',
+        event_type: 'PAYMENT.CAPTURE.COMPLETED',
+        resource: { id: 'CAP-1', supplementary_data: { related_ids: { order_id: 'PP-1' } } },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    };
+    vi.stubGlobal('fetch', ppFetch({ lookup: ppOrder('PENDING') }));
+    expect((await paypal.verifyAndParse(args)).ok).toBe(false);
+    vi.stubGlobal('fetch', ppFetch({ lookup: ppOrder('COMPLETED') }));
+    expect(await paypal.verifyAndParse(args)).toMatchObject({
+      ok: true,
+      status: 'paid',
+      processorRef: 'CAP-1',
+    });
+  });
+
+  test('a pending webhook recovers its missing custom_id from its order', async () => {
+    const args = {
+      rawBody: JSON.stringify({
+        id: 'evt-pend',
+        event_type: 'PAYMENT.CAPTURE.PENDING',
+        resource: { id: 'CAP-1', supplementary_data: { related_ids: { order_id: 'PP-1' } } },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    };
+    vi.stubGlobal('fetch', ppFetch({ lookup: {} }));
+    expect((await paypal.verifyAndParse(args)).ok).toBe(false);
+    vi.stubGlobal('fetch', ppFetch({ lookup: ppOrder('PENDING') }));
+    expect(await paypal.verifyAndParse(args)).toMatchObject({
+      ok: true,
+      status: 'confirming',
+      orderRef: 'order-nested',
+    });
   });
 
   test('a denied capture maps to failed', async () => {

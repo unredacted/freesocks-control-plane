@@ -521,6 +521,8 @@ Environment credentials are available only at their configured endpoint. On upgr
 Orders API v2 via redirect. Env: `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`,
 `PAYPAL_WEBHOOK_ID`, `PAYPAL_API_BASE` (sandbox vs live). Webhook authenticity is
 verified via PayPal's `POST /v1/notifications/verify-webhook-signature`.
+Approval starts capture. Membership and gift codes are released only after a completed capture matches the stored PayPal order, amount, and currency. Pending captures keep the checkout in `confirming`. An ambiguous or already-captured response triggers an order lookup. If the lookup cannot establish the capture state, the webhook remains retryable.
+
 **Operational risk:** PayPal has a documented history of freezing
 VPN/circumvention-adjacent merchants with 180-day holds — enable it last, sweep
 the balance frequently, and treat the account as expendable.
