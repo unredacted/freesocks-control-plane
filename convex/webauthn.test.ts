@@ -171,6 +171,7 @@ describe('registerBootstrapVerify', () => {
       });
       await ctx.db.insert('webauthnRegistrationChallenges', {
         adminUserId: id,
+        inviteId: null,
         challenge: 'stored-challenge',
         expiresAt: Date.now() + 60_000,
       });
@@ -317,13 +318,7 @@ describe('bootstrapInsertCredential (serializable TOCTOU claim)', () => {
         credentialId: 'cred-second',
       }),
     ).rejects.toThrow(/already exists/i);
-    // The invite path (insertCredential) is unaffected — admins already exist there.
-    await t.mutation(internal.admins.insertCredential, {
-      adminUserId: adminId,
-      ...cred,
-      credentialId: 'cred-invite',
-    });
-    expect((await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).length).toBe(2);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toHaveLength(1);
   });
 });
 
@@ -470,6 +465,34 @@ describe('createInvite (multi-admin onboarding)', () => {
     expect(invites[0]!.tokenHash).not.toBe(res.inviteToken);
   });
 
+  test('reissuing an invite retires the old link and requires fresh options', async () => {
+    const t = convexTest(schema, modules);
+    const createdByAdminId = await seedCreator(t);
+    const issue = (username: string) =>
+      t.action(internal.webauthn.createInvite, { username, createdByAdminId });
+    const old = await issue('alex');
+    const other = await issue('another');
+    await t.action(internal.webauthn.registerInviteOptions, { invite: old.inviteToken });
+    const current = await issue('alex');
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: old.inviteToken }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, { invite: old.inviteToken, response: {} }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, {
+        invite: current.inviteToken,
+        response: {},
+      }),
+    ).rejects.toThrow(/No valid challenge/);
+    for (const invite of [current.inviteToken, other.inviteToken]) {
+      expect(
+        (await t.action(internal.webauthn.registerInviteOptions, { invite })).options.challenge,
+      ).toBeTruthy();
+    }
+  });
+
   test('rejects a username that already has a registered passkey', async () => {
     const t = convexTest(schema, modules);
     const creator = await seedCreator(t);
@@ -484,7 +507,7 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
   async function seedInvite(
     t: T,
     opts: { token?: string; expired?: boolean; consumed?: boolean; legacy?: boolean } = {},
-  ): Promise<{ adminUserId: Id<'adminUsers'>; token: string }> {
+  ): Promise<{ adminUserId: Id<'adminUsers'>; inviteId: Id<'adminInvites'>; token: string }> {
     const token = opts.token ?? 'a'.repeat(64);
     const adminUserId = await t.run((ctx) =>
       ctx.db.insert('adminUsers', {
@@ -495,7 +518,7 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
       }),
     );
     const tokenHash = await sha256Hex(opts.legacy ? token : `admin-invite-fragment-v1:${token}`);
-    await t.run((ctx) =>
+    const inviteId = await t.run((ctx) =>
       ctx.db.insert('adminInvites', {
         adminUserId,
         tokenHash,
@@ -506,8 +529,127 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
         updatedAt: Date.now(),
       }),
     );
-    return { adminUserId, token };
+    await t.run((ctx) => ctx.db.patch(adminUserId, { pendingInviteId: inviteId }));
+    return { adminUserId, token, inviteId };
   }
+
+  const credential = { credentialId: 'fixture-key', publicKey: 'fixture-public-key', counter: 0 };
+
+  test('overlapping first-enrollment commits accept only the current invite once', async () => {
+    const t = convexTest(schema, modules);
+    const { adminUserId, inviteId: old } = await seedInvite(t);
+    const replacement = await t.action(internal.webauthn.createInvite, {
+      username: 'alex',
+      createdByAdminId: adminUserId,
+    });
+    const grant = await t.query(internal.admins.inviteByTokenHash, {
+      tokenHash: await sha256Hex(`admin-invite-fragment-v1:${replacement.inviteToken}`),
+    });
+    expect(grant).not.toBeNull();
+    const current = grant!.inviteId;
+    const claim = (inviteId: Id<'adminInvites'>, credentialId: string) =>
+      t.mutation(internal.admins.enrollWithInvite, {
+        inviteId,
+        credential: { ...credential, credentialId },
+      });
+    const [earlier, ...latest] = await Promise.allSettled([
+      claim(old, 'old'),
+      claim(current, 'current-a'),
+      claim(current, 'current-b'),
+    ]);
+    expect(earlier.status).toBe('rejected');
+    expect(latest.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toMatchObject([
+      { adminUserId, credentialId: expect.stringMatching(/^current-/) },
+    ]);
+    await expect(claim(old, 'after-enrollment')).rejects.toThrow(/Invalid or expired invite/);
+    expect((await t.run((ctx) => ctx.db.get(adminUserId)))?.pendingInviteId).toBeUndefined();
+    expect((await t.run((ctx) => ctx.db.get(current)))?.consumedAt).toEqual(expect.any(Number));
+    expect(await t.run((ctx) => ctx.db.query('auditLog').collect())).toMatchObject([
+      { action: 'admin.invite.created' },
+      { action: 'admin.invite.redeemed', actorId: adminUserId },
+    ]);
+  });
+
+  test('pre-upgrade links stay retired for a credential-less target until an operator reissues', async () => {
+    const t = convexTest(schema, modules);
+    const { token, inviteId, adminUserId } = await seedInvite(t);
+    // A prior deployment could leave an unconsumed sibling after enrollment
+    // and last-passkey revocation. There is no recorded grant in that database.
+    await t.run((ctx) => ctx.db.patch(adminUserId, { pendingInviteId: undefined }));
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, { inviteId, credential }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    expect(await t.query(internal.admins.listAdminsWithCounts, {})).toMatchObject([
+      { pendingInvite: false },
+    ]);
+    const fresh = await t.action(internal.webauthn.createInvite, {
+      username: 'alex',
+      createdByAdminId: adminUserId,
+    });
+    expect(await t.query(internal.admins.listAdminsWithCounts, {})).toMatchObject([
+      { pendingInvite: true },
+    ]);
+    const allowed = await t.query(internal.admins.inviteByTokenHash, {
+      tokenHash: await sha256Hex(`admin-invite-fragment-v1:${fresh.inviteToken}`),
+    });
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, { inviteId: allowed!.inviteId, credential }),
+    ).resolves.toEqual({ ok: true, username: 'alex' });
+  });
+
+  test('the final commit rechecks expiry and existing enrollment', async () => {
+    const t = convexTest(schema, modules);
+    const { inviteId, token, adminUserId } = await seedInvite(t);
+    await t.action(internal.webauthn.registerInviteOptions, { invite: token });
+    const claim = () => t.mutation(internal.admins.enrollWithInvite, { inviteId, credential });
+    await t.run((ctx) => ctx.db.patch(inviteId, { expiresAt: Date.now() - 1 }));
+    await expect(claim()).rejects.toThrow(/Invalid or expired invite/);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(inviteId, { expiresAt: Date.now() + 60_000 });
+      await ctx.db.insert('passkeyCredentials', {
+        ...credential,
+        adminUserId,
+        credentialId: 'existing',
+      });
+    });
+    await expect(claim()).rejects.toThrow(/Invalid or expired invite/);
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+    expect(await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).toHaveLength(1);
+  });
+
+  test('a credential collision rolls back redemption and the invite can be retried', async () => {
+    const t = convexTest(schema, modules);
+    const { inviteId } = await seedInvite(t);
+    await seedAdminWithCredential(t, 'another', credential.credentialId);
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, { inviteId, credential }),
+    ).rejects.toThrow(/collision/);
+    expect((await t.run((ctx) => ctx.db.get(inviteId)))?.consumedAt).toBeUndefined();
+    await expect(
+      t.mutation(internal.admins.enrollWithInvite, {
+        inviteId,
+        credential: { ...credential, credentialId: 'retry' },
+      }),
+    ).resolves.toEqual({ ok: true, username: 'alex' });
+  });
+
+  test('bootstrap cannot consume an invitation challenge for the same admin', async () => {
+    const t = convexTest(schema, modules);
+    const { adminUserId, token } = await seedInvite(t);
+    await t.action(internal.webauthn.registerInviteOptions, { invite: token });
+    await expect(
+      t.action(internal.webauthn.registerBootstrapVerify, {
+        adminId: adminUserId,
+        response: {},
+      }),
+    ).rejects.toThrow(/No valid challenge/);
+  });
 
   test('options: an invalid invite is rejected', async () => {
     const t = convexTest(schema, modules);

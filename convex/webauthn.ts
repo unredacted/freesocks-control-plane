@@ -92,6 +92,7 @@ export const registerBootstrapOptions = internalAction({
     });
     await ctx.runMutation(internal.admins.insertRegistrationChallenge, {
       adminUserId: adminId,
+      inviteId: null,
       challenge: options.challenge,
       ttlMs: 5 * 60_000,
     });
@@ -116,6 +117,7 @@ export const registerBootstrapVerify = internalAction({
     }
     const consumed = await ctx.runMutation(internal.admins.consumeLatestRegistrationChallenge, {
       adminUserId: adminId,
+      inviteId: null,
     });
     if (!consumed) throw new ConvexError({ code: 'validation', message: 'No valid challenge' });
 
@@ -342,18 +344,6 @@ export const createInvite = internalAction({
     const name = username.trim();
     if (!name) throw new ConvexError({ code: 'validation', message: 'username required' });
 
-    const existing = await ctx.runQuery(internal.admins.byUsername, { username: name });
-    if (existing) {
-      const creds = await ctx.runQuery(internal.admins.credentialIdsByAdmin, {
-        adminUserId: existing._id,
-      });
-      if (creds.length > 0) {
-        throw new ConvexError({
-          code: 'validation',
-          message: 'That username already has a registered admin',
-        });
-      }
-    }
     const adminUserId = await ctx.runMutation(internal.admins.upsertByUsername, {
       username: name,
       displayName: displayName?.trim() || name,
@@ -361,21 +351,15 @@ export const createInvite = internalAction({
 
     const token = randomHex(32); // 256-bit, single-use; only the hash is stored.
     const tokenHash = await inviteHash(token);
-    await ctx.runMutation(internal.admins.insertInvite, {
+    const expiresAtMs = await ctx.runMutation(internal.admins.insertInvite, {
       adminUserId,
       tokenHash,
       tokenPrefix: token.slice(0, 8),
       createdByAdminId,
       ttlMs: INVITE_TTL_MS,
-    });
-    await ctx.runMutation(internal.audit.record, {
-      actorType: 'admin',
-      actorId: createdByAdminId,
-      action: 'admin.invite.created',
       requestId,
-      payload: { username: name },
     });
-    return { inviteToken: token, username: name, expiresAtMs: Date.now() + INVITE_TTL_MS };
+    return { inviteToken: token, username: name, expiresAtMs };
   },
 });
 
@@ -407,25 +391,20 @@ export const registerInviteOptions = internalAction({
     });
     if (!found)
       throw new ConvexError({ code: 'auth.forbidden', message: 'Invalid or expired invite' });
-    const admin = await ctx.runQuery(internal.admins.getById, { adminUserId: found.adminUserId });
-    if (!admin) throw new ConvexError({ code: 'validation', message: 'Invite target missing' });
-
-    const existingCreds = await ctx.runQuery(internal.admins.credentialIdsByAdmin, {
-      adminUserId: found.adminUserId,
-    });
     const { rpId, rpName } = webauthnConfig();
     const options = await generateRegistrationOptions({
       rpName,
       rpID: rpId,
       userID: new TextEncoder().encode(found.adminUserId),
-      userName: admin.username,
-      userDisplayName: admin.displayName,
+      userName: found.username,
+      userDisplayName: found.displayName,
       attestationType: 'none',
       authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
-      excludeCredentials: existingCreds.map((id: string) => ({ id })),
+      excludeCredentials: [],
     });
     await ctx.runMutation(internal.admins.insertRegistrationChallenge, {
       adminUserId: found.adminUserId,
+      inviteId: found.inviteId,
       challenge: options.challenge,
       ttlMs: 5 * 60_000,
     });
@@ -437,8 +416,7 @@ export const registerInviteOptions = internalAction({
  * Invite-gated registration verify. Order matters for single-use semantics
  * without burning the invite on a benign failure: verify the attestation FIRST
  * (a crypto failure leaves the invite usable for a retry via /options), THEN
- * atomically consume the invite (the race gate), and only then insert the
- * credential — so two concurrent verifies can never both register.
+ * recheck eligibility, consume the invite and insert the credential together.
  */
 export const registerInviteVerify = internalAction({
   args: {
@@ -459,7 +437,7 @@ export const registerInviteVerify = internalAction({
 
     const consumedChallenge = await ctx.runMutation(
       internal.admins.consumeLatestRegistrationChallenge,
-      { adminUserId: found.adminUserId },
+      { adminUserId: found.adminUserId, inviteId: found.inviteId },
     );
     if (!consumedChallenge)
       throw new ConvexError({ code: 'validation', message: 'No valid challenge' });
@@ -475,32 +453,18 @@ export const registerInviteVerify = internalAction({
       throw new ConvexError({ code: 'validation', message: 'Verification failed' });
     }
 
-    // Single-use gate AFTER a valid attestation but BEFORE inserting: the race
-    // loser aborts here without leaving a second credential.
-    const consumed = await ctx.runMutation(internal.admins.consumeInvite, {
-      inviteId: found.inviteId,
-    });
-    if (!consumed.ok)
-      throw new ConvexError({ code: 'auth.forbidden', message: 'Invite already used' });
-
     const cred = verification.registrationInfo.credential;
-    await ctx.runMutation(internal.admins.insertCredential, {
-      adminUserId: found.adminUserId,
-      credentialId: cred.id,
-      publicKey: Buffer.from(cred.publicKey).toString('base64'),
-      counter: cred.counter,
-      transports: JSON.stringify(cred.transports ?? []),
-      deviceLabel: deviceLabel ?? 'unnamed',
-      aaguid: verification.registrationInfo.aaguid,
-    });
-    const admin = await ctx.runQuery(internal.admins.getById, { adminUserId: found.adminUserId });
-    await ctx.runMutation(internal.audit.record, {
-      actorType: 'admin',
-      actorId: found.adminUserId,
-      action: 'admin.invite.redeemed',
+    return ctx.runMutation(internal.admins.enrollWithInvite, {
+      inviteId: found.inviteId,
       requestId,
-      payload: { username: admin?.username },
+      credential: {
+        credentialId: cred.id,
+        publicKey: Buffer.from(cred.publicKey).toString('base64'),
+        counter: cred.counter,
+        transports: JSON.stringify(cred.transports ?? []),
+        deviceLabel: deviceLabel ?? 'unnamed',
+        aaguid: verification.registrationInfo.aaguid,
+      },
     });
-    return { ok: true as const, username: admin?.username ?? '' };
   },
 });

@@ -1170,6 +1170,9 @@ export default defineSchema({
     .index('by_action', ['action']),
 
   adminUsers: defineTable({
+    // Only this grant may enroll the first passkey. Older rows without a
+    // recorded grant require an operator to reissue the invitation.
+    pendingInviteId: v.optional(v.id('adminInvites')),
     username: v.string(),
     displayName: v.string(),
     isActive: v.boolean(),
@@ -1192,6 +1195,8 @@ export default defineSchema({
 
   webauthnRegistrationChallenges: defineTable({
     adminUserId: v.id('adminUsers'),
+    // null = bootstrap; older unbound challenges must restart at /options.
+    inviteId: v.optional(v.union(v.id('adminInvites'), v.null())),
     challenge: v.string(),
     expiresAt: v.number(),
     consumedAt: v.optional(v.number()),

@@ -80,11 +80,17 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
 - **Admin invitations.** Minting requires HPKE on both legs. The sharing link carries
   its one-time token in the URL fragment. The registration page removes it from the
   address bar on load and encrypts both enrollment requests to the origin. Inviting
-  and invited admins need a client built with the server key pinned. Reissue pending
-  invitations after upgrading since tokens from earlier query links may have been logged.
-  If rolling back the origin, block invite minting and redemption until 24 hours have
-  elapsed since the last legacy invite was issued. Older code can otherwise accept a
-  still-live legacy token, even after a fresh link was issued.
+  and invited admins need a client built with the server key pinned.
+  Reissue pending invitations after upgrading. Earlier releases could leave unused
+  links after enrollment or revocation, so only invitations explicitly issued under
+  the new policy can enroll a passkey. Each reissue replaces that administrator's
+  previous link. Start registration from the replacement link to obtain a new challenge.
+  Before rollback, pause invitation issuance and redemption and allow 24 hours from
+  the last issuance for outstanding links to expire. Keep the optional fields
+  `adminUsers.pendingInviteId` and `webauthnRegistrationChallenges.inviteId` in the
+  rollback schema while any records contain them. Expiry alone does not remove these
+  fields. Keep invitation issuance and redemption paused until the enrollment checks
+  are restored.
 - **The policy table decides, not the wrapper.** `SEALED_ROUTES` / `SEALED_PREFIXES` in
   `src/shared/crypto/envelope.ts` is the single source of truth for both the SPA seam and the
   server's `sealed()` wrapper; a wrapped `httpAction` with no entry passes plaintext straight
