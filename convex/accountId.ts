@@ -15,8 +15,12 @@ import { accountIdPrefix, generateAccountId, hashAccountId } from './lib/account
  * plaintext. Retries once on the astronomically rare hash collision.
  */
 export const mintForUser = internalAction({
-  args: { userId: v.id('users'), rotate: v.optional(v.boolean()) },
-  handler: async (ctx, { userId, rotate }): Promise<{ accountId: string }> => {
+  args: {
+    userId: v.id('users'),
+    rotate: v.optional(v.boolean()),
+    keepSid: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, rotate, keepSid }): Promise<{ accountId: string }> => {
     let lastErr: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       const plaintext = generateAccountId();
@@ -27,6 +31,7 @@ export const mintForUser = internalAction({
           hash,
           prefix: accountIdPrefix(plaintext),
           rotate: rotate ?? false,
+          keepSid,
         });
         return { accountId: plaintext };
       } catch (err) {
@@ -37,20 +42,30 @@ export const mintForUser = internalAction({
   },
 });
 
-/** Persist hash+prefix on the user, enforcing hash uniqueness. Throws on collision. */
+/** Replace the credential and revoke prior sessions in the same transaction. */
 export const setAccountId = internalMutation({
-  args: { userId: v.id('users'), hash: v.string(), prefix: v.string(), rotate: v.boolean() },
-  handler: async (ctx, { userId, hash, prefix, rotate }) => {
+  args: {
+    userId: v.id('users'),
+    hash: v.string(),
+    prefix: v.string(),
+    rotate: v.boolean(),
+    keepSid: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, hash, prefix, rotate, keepSid }): Promise<null> => {
     const existing = await ctx.db
       .query('users')
       .withIndex('by_account_id_hash', (q) => q.eq('accountIdHash', hash))
       .unique();
-    if (existing && existing._id !== userId) throw new Error('account-id hash collision');
+    if (existing && (rotate || existing._id !== userId))
+      throw new Error('account-id hash collision');
     await ctx.db.patch(userId, {
       accountIdHash: hash,
       accountIdPrefix: prefix,
       updatedAt: Date.now(),
     });
+    if (rotate) {
+      await ctx.runMutation(internal.sessions.deleteAllForUserExcept, { userId, keepSid });
+    }
     return null;
   },
 });
