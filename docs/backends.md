@@ -174,6 +174,11 @@ server-side. For Remnawave, leaving the token blank keeps it at the same base UR
 the URL, including its mount path, supply the token for that destination. Saving an edit and
 using the by-slug API enforce the same rule.
 
+Connection tests check both pasted and saved endpoints against the registration URL policy.
+Private backend networks are supported. Use the final API URL, including its mount path,
+because a redirect returns a failed test. For local development, `ALLOW_INTERNAL_BACKENDS=true`
+also permits loopback endpoints.
+
 For previously configured panels, compare saved URLs with the operator's inventory. If an earlier
 edit may have sent a token to an unintended destination, revoke it on the original panel and save
 a replacement for the intended URL.

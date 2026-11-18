@@ -11,7 +11,7 @@
  * bootstrap script exports them). Excluded from the fast offline suite; run via
  * `bun run test:integration:remnawave`.
  */
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   remnawaveBulkUpdateTrafficLimit,
   remnawaveDeleteUser,
@@ -47,7 +47,12 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real backend (i
   // Unique per run; Remnawave usernames are [a-zA-Z0-9_-], 3-36 chars.
   const username = `fcp_it_${Date.now()}`;
 
-  test('drives the full user lifecycle against the live API', async () => {
+  test('drives the full user lifecycle against the live API', async ({ onTestFinished }) => {
+    // The disposable panel is published on the test runner's loopback interface.
+    vi.stubEnv('ALLOW_INTERNAL_BACKENDS', 'true');
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
     // 0) Reachability + auth (the health probe path + Bearer).
     const conn = await remnawaveTestConnection(cfg);
     expect(conn.ok).toBe(true);

@@ -1238,9 +1238,8 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
     // The full upsert body carries name/slug/isActive/priority — none declared by
     // testBackendConnection. The route must forward ONLY the connection fields;
     // otherwise Convex's strict arg validator throws and this 500s (the exact
-    // trap the Ansible role hit reusing its upsert body). apiUrl points at a
-    // refused port so the provider returns a clean {ok:false}, never a throw;
-    // the refusal is stubbed, so the test never dials even the loopback.
+    // trap the Ansible role hit reusing its upsert body). The stub refuses a
+    // permitted panel URL so this check also exercises provider dispatch.
     const net = refuseNetwork();
     const res = await t.fetch('/api/v1/admin/backend-servers/test-connection', {
       method: 'POST',
@@ -1251,7 +1250,7 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
         slug: 'srv',
         isActive: true,
         priority: 0,
-        apiUrl: 'https://127.0.0.1:1/proxy/secret',
+        apiUrl: 'https://panel.example/proxy/secret',
         websocketEnabled: false,
       }),
     });
@@ -1259,7 +1258,9 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(false); // unreachable origin → clean verdict, not a validation throw
     // …after dialing the forwarded apiUrl.
-    expect(net.calls.some((c) => c.url.startsWith('https://127.0.0.1:1/proxy/secret/'))).toBe(true);
+    expect(net.calls.some((c) => c.url.startsWith('https://panel.example/proxy/secret/'))).toBe(
+      true,
+    );
   });
 });
 

@@ -990,6 +990,69 @@ describe('saved Remnawave panel credentials', () => {
   );
 });
 
+describe.each(['outline', 'remnawave'] as const)('%s connection-test destination', (backend) => {
+  function config(url: string) {
+    return backend === 'outline'
+      ? { type: 'outline' as const, apiUrl: url, websocketEnabled: false }
+      : { type: 'remnawave' as const, baseUrl: url, apiToken: 'fixture-token' };
+  }
+
+  test('checks both supplied and stored destinations before sending a request', async () => {
+    vi.stubEnv('ALLOW_INTERNAL_BACKENDS', 'false');
+    const t = convexTest(schema, modules);
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    for (const url of ['http://localhost./fixture', 'http://[::ffff:127.0.0.1]/fixture']) {
+      const { type, ...fields } = config(url);
+      expect(
+        (await t.action(internal.adminApi.testBackendConnection, { backend: type, ...fields })).ok,
+      ).toBe(false);
+    }
+
+    // Existing rows may have been saved under a different operator policy.
+    const id = await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend,
+        config: config('http://localhost/fixture'),
+        name: 'Fixture',
+        slug: 'fixture',
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const probe = () => t.action(internal.adminApi.testBackendConnection, { backend, id });
+    expect((await probe()).ok).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+
+    vi.stubEnv('ALLOW_INTERNAL_BACKENDS', 'true');
+    fetch.mockResolvedValue(Response.json({ accessKeys: [] }));
+    expect((await probe()).ok).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('contacts a permitted private panel directly and reports its redirect as a failed test', async () => {
+    vi.stubEnv('ALLOW_INTERNAL_BACKENDS', 'false');
+    const t = convexTest(schema, modules);
+    const { type, ...fields } = config('https://10.1.2.3/panel');
+    const probe = () =>
+      t.action(internal.adminApi.testBackendConnection, { backend: type, ...fields });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ accessKeys: [{}, {}] }))
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: '/moved' } }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await probe()).toEqual({ ok: true, keyCount: backend === 'outline' ? 2 : 0 });
+    expect(await probe()).toMatchObject({ ok: false, error: expect.stringContaining('302') });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (const [url, options] of fetch.mock.calls) {
+      expect(url).toMatch(/^https:\/\/10\.1\.2\.3\/panel\//);
+      expect(options.redirect).toBe('manual');
+    }
+  });
+});
+
 describe('testBackendConnection stored-credential fallback', () => {
   test('with id + blank secrets, the probe runs against the STORED config', async () => {
     const t = convexTest(schema, modules);
