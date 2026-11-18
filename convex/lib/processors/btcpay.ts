@@ -15,6 +15,7 @@
  */
 import { z } from 'zod';
 import { hmacSha256Hex, timingSafeEqual } from '../crypto';
+import { fetchProcessorApi } from './apiFetch';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface BtcpayConfig {
@@ -109,7 +110,7 @@ export async function createCheckout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(`${base}${path}`, {
+    const res = await fetchProcessorApi(`${base}${path}`, {
       method: 'POST',
       headers: {
         authorization: `token ${cfg.apiKey}`,
@@ -186,7 +187,7 @@ async function invoiceDetail(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(`${base}${path}`, {
+    const res = await fetchProcessorApi(`${base}${path}`, {
       headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
       signal: controller.signal,
     });
@@ -235,7 +236,7 @@ async function invoicePaidRatio(cfg: BtcpayConfig, invoiceId: string): Promise<n
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(`${base}${path}`, {
+    const res = await fetchProcessorApi(`${base}${path}`, {
       headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
       signal: controller.signal,
     });
@@ -402,7 +403,7 @@ export async function testConnection(
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
     // (1) Read: URL + key + store id + canviewinvoices.
-    const readRes = await fetch(`${base}${invoices}?take=1`, {
+    const readRes = await fetchProcessorApi(`${base}${invoices}?take=1`, {
       headers,
       signal: controller.signal,
     });
@@ -430,7 +431,7 @@ export async function testConnection(
 
     // (2) Create permission, without creating an invoice. See the header comment
     // for why the body is intentionally unbindable and why only 403 fails.
-    const createRes = await fetch(`${base}${invoices}`, {
+    const createRes = await fetchProcessorApi(`${base}${invoices}`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
       body: JSON.stringify({ amount: 'not-a-number', currency: 'USD' }),

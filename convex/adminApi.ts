@@ -1986,7 +1986,7 @@ export const setBillingConfig = internalMutation({
   handler: async (ctx, { patch, actorAdminId }) => {
     let writes: Array<{ key: string; value: string }>;
     try {
-      writes = [...billingConfigWrites(patch), ...billingSecretWrites(patch)];
+      writes = [...billingConfigWrites(patch), ...(await billingSecretWrites(ctx.db, patch))];
     } catch (e) {
       throw new ConvexError({
         code: 'validation',

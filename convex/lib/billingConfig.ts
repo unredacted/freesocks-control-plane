@@ -536,8 +536,59 @@ export interface ProcessorSecrets {
   paypal: { clientId: string; secret: string; webhookId: string; apiBase: string };
 }
 
-const NOWPAYMENTS_DEFAULT_API = 'https://api.nowpayments.io';
-const PAYPAL_DEFAULT_API = 'https://api-m.paypal.com';
+const hostedBases = {
+  nowpayments: ['https://api.nowpayments.io', 'https://api-sandbox.nowpayments.io'],
+  paypal: ['https://api-m.paypal.com', 'https://api-m.sandbox.paypal.com'],
+} as const;
+
+type ApiRail = keyof typeof hostedBases | 'btcpay';
+const baseEnv: Record<ApiRail, string> = {
+  nowpayments: 'NOWPAYMENTS_API_URL',
+  paypal: 'PAYPAL_API_BASE',
+  btcpay: 'BTCPAY_API_URL',
+};
+
+// Return exactly the base the HTTP adapter will use. Self-hosted installations
+// may have a port or mount path, both of which are part of the key's binding.
+function apiBase(rail: ApiRail, raw: string): string {
+  if (!raw) return '';
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return '';
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+    return '';
+  if (rail === 'btcpay') return url.origin + url.pathname.replace(/\/+$/, '');
+  return url.pathname === '/' && hostedBases[rail].some((base) => base === url.origin)
+    ? url.origin
+    : '';
+}
+
+function apiEndpoints(rail: ApiRail, saved: unknown) {
+  const env = apiBase(
+    rail,
+    dbOrEnv(undefined, baseEnv[rail], rail === 'btcpay' ? '' : hostedBases[rail][0]),
+  );
+  const configured = asStr(saved).trim();
+  return { base: configured ? apiBase(rail, configured) : env, env };
+}
+
+function apiCredential(
+  saved: unknown,
+  endpoint: ReturnType<typeof apiEndpoints>,
+  envName: string,
+): string {
+  if (!endpoint.base) return '';
+  if (saved && typeof saved === 'object') {
+    const bound = saved as { base?: unknown; value?: unknown };
+    return bound.base === endpoint.base ? asStr(bound.value).trim() : '';
+  }
+  // Legacy strings have no binding. Use them (and environment fallbacks)
+  // only when the independently configured deployment endpoint agrees.
+  return endpoint.base === endpoint.env ? dbOrEnv(saved, envName) : '';
+}
 
 /** Keys that hold credentials (`secret`) or non-secret processor config. */
 export const BILLING_SECRET_KEYS = {
@@ -600,19 +651,26 @@ export async function resolveProcessorSecrets(db: DatabaseReader): Promise<Proce
     readSetting(db, BILLING_SECRET_KEYS.pp_webhookId),
     readSetting(db, BILLING_SECRET_KEYS.pp_apiBase),
   ]);
+  const np = apiEndpoints('nowpayments', npUrl);
+  const bp = apiEndpoints('btcpay', bpUrl);
+  const pp = apiEndpoints('paypal', ppBase);
+  const btcpayKey = apiCredential(bpKey, bp, 'BTCPAY_API_KEY');
+  // A blocked key must not turn a configured settlement cross-check into a
+  // webhook-only grant. Leave genuinely webhook-only deployments as configured.
+  const btcpayKeyBlocked = !btcpayKey && Boolean(bpKey || process.env.BTCPAY_API_KEY?.trim());
   return {
     publicBaseUrl: dbOrEnv(pub, 'PUBLIC_BASE_URL'),
     nowpayments: {
-      apiKey: dbOrEnv(npKey, 'NOWPAYMENTS_API_KEY'),
+      apiKey: apiCredential(npKey, np, 'NOWPAYMENTS_API_KEY'),
       ipnSecret: dbOrEnv(npIpn, 'NOWPAYMENTS_IPN_SECRET'),
-      apiUrl: dbOrEnv(npUrl, 'NOWPAYMENTS_API_URL', NOWPAYMENTS_DEFAULT_API),
+      apiUrl: np.base,
     },
     // BTCPay is self-hosted: the API URL is the operator's own server, so there
     // is deliberately NO default (unset = rail not configured).
     btcpay: {
-      apiKey: dbOrEnv(bpKey, 'BTCPAY_API_KEY'),
-      webhookSecret: dbOrEnv(bpWh, 'BTCPAY_WEBHOOK_SECRET'),
-      apiUrl: dbOrEnv(bpUrl, 'BTCPAY_API_URL'),
+      apiKey: btcpayKey,
+      webhookSecret: btcpayKeyBlocked ? '' : dbOrEnv(bpWh, 'BTCPAY_WEBHOOK_SECRET'),
+      apiUrl: bp.base,
       storeId: dbOrEnv(bpStore, 'BTCPAY_STORE_ID'),
     },
     stripe: {
@@ -620,10 +678,10 @@ export async function resolveProcessorSecrets(db: DatabaseReader): Promise<Proce
       webhookSecret: dbOrEnv(stWh, 'STRIPE_WEBHOOK_SECRET'),
     },
     paypal: {
-      clientId: dbOrEnv(ppCid, 'PAYPAL_CLIENT_ID'),
-      secret: dbOrEnv(ppSec, 'PAYPAL_SECRET'),
-      webhookId: dbOrEnv(ppWh, 'PAYPAL_WEBHOOK_ID'),
-      apiBase: dbOrEnv(ppBase, 'PAYPAL_API_BASE', PAYPAL_DEFAULT_API),
+      clientId: apiCredential(ppCid, pp, 'PAYPAL_CLIENT_ID'),
+      secret: apiCredential(ppSec, pp, 'PAYPAL_SECRET'),
+      webhookId: apiCredential(ppWh, pp, 'PAYPAL_WEBHOOK_ID'),
+      apiBase: pp.base,
     },
   };
 }
@@ -667,7 +725,10 @@ export function processorSecretStatus(s: ProcessorSecrets): ProcessorSecretStatu
  * boxes must not wipe set credentials). Accepts `{ publicBaseUrl?, secrets?: {
  * nowpayments?, stripe?, paypal? } }`.
  */
-export function billingSecretWrites(patch: unknown): Array<{ key: string; value: string }> {
+export async function billingSecretWrites(
+  db: DatabaseReader,
+  patch: unknown,
+): Promise<Array<{ key: string; value: string }>> {
   if (!patch || typeof patch !== 'object') return [];
   const p = patch as Record<string, unknown>;
   const writes: Array<{ key: string; value: string }> = [];
@@ -675,26 +736,66 @@ export function billingSecretWrites(patch: unknown): Array<{ key: string; value:
     const s = asStr(raw).trim();
     if (s.length > 0) writes.push({ key, value: JSON.stringify(s) });
   };
+  // The read and paired writes occur in the same Convex mutation. A concurrent
+  // key rotation or destination change therefore retries against the current base.
+  const putApi = async (
+    rail: ApiRail,
+    urlKey: string,
+    rawUrl: unknown,
+    required: Array<[string, unknown]>,
+    optional: Array<[string, unknown]> = [],
+  ) => {
+    const requested = asStr(rawUrl).trim();
+    const supplied = [...required, ...optional].map(([key, raw]) => ({
+      key,
+      value: asStr(raw).trim(),
+    }));
+    if (!requested && supplied.every(({ value }) => !value)) return;
+    const { base: current, env } = apiEndpoints(rail, await readSetting(db, urlKey));
+    if (!requested && current !== env) {
+      throw new Error('Supply the intended ' + rail + ' API endpoint with its credentials');
+    }
+    const base = requested ? apiBase(rail, requested) : current;
+    if (!base) throw new Error('Invalid ' + rail + ' API endpoint');
+    const changed = base !== current;
+    if (changed && required.some(([, raw]) => !asStr(raw).trim())) {
+      throw new Error('Enter all ' + rail + ' API credentials when changing its endpoint');
+    }
+    if (requested) putStr(urlKey, base);
+    for (const { key, value } of supplied) {
+      // An omitted optional credential at a new destination stays unavailable
+      // until supplied, even if a previous database or environment value exists.
+      if (value || changed) writes.push({ key, value: JSON.stringify({ base, value }) });
+    }
+  };
   if ('publicBaseUrl' in p) putStr(BILLING_SECRET_KEYS.publicBaseUrl, p.publicBaseUrl);
   if (p.secrets && typeof p.secrets === 'object') {
     const s = p.secrets as Record<string, unknown>;
     const np = (s.nowpayments ?? {}) as Record<string, unknown>;
-    putStr(BILLING_SECRET_KEYS.np_apiKey, np.apiKey);
+    await putApi('nowpayments', BILLING_SECRET_KEYS.np_apiUrl, np.apiUrl, [
+      [BILLING_SECRET_KEYS.np_apiKey, np.apiKey],
+    ]);
     putStr(BILLING_SECRET_KEYS.np_ipnSecret, np.ipnSecret);
-    putStr(BILLING_SECRET_KEYS.np_apiUrl, np.apiUrl);
     const bp = (s.btcpay ?? {}) as Record<string, unknown>;
-    putStr(BILLING_SECRET_KEYS.bp_apiKey, bp.apiKey);
+    await putApi('btcpay', BILLING_SECRET_KEYS.bp_apiUrl, bp.apiUrl, [
+      [BILLING_SECRET_KEYS.bp_apiKey, bp.apiKey],
+    ]);
     putStr(BILLING_SECRET_KEYS.bp_webhookSecret, bp.webhookSecret);
-    putStr(BILLING_SECRET_KEYS.bp_apiUrl, bp.apiUrl);
     putStr(BILLING_SECRET_KEYS.bp_storeId, bp.storeId);
     const st = (s.stripe ?? {}) as Record<string, unknown>;
     putStr(BILLING_SECRET_KEYS.stripe_apiKey, st.apiKey);
     putStr(BILLING_SECRET_KEYS.stripe_webhookSecret, st.webhookSecret);
     const pp = (s.paypal ?? {}) as Record<string, unknown>;
-    putStr(BILLING_SECRET_KEYS.pp_clientId, pp.clientId);
-    putStr(BILLING_SECRET_KEYS.pp_secret, pp.secret);
-    putStr(BILLING_SECRET_KEYS.pp_webhookId, pp.webhookId);
-    putStr(BILLING_SECRET_KEYS.pp_apiBase, pp.apiBase);
+    await putApi(
+      'paypal',
+      BILLING_SECRET_KEYS.pp_apiBase,
+      pp.apiBase,
+      [
+        [BILLING_SECRET_KEYS.pp_clientId, pp.clientId],
+        [BILLING_SECRET_KEYS.pp_secret, pp.secret],
+      ],
+      [[BILLING_SECRET_KEYS.pp_webhookId, pp.webhookId]],
+    );
   }
   return writes;
 }

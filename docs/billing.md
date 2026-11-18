@@ -506,6 +506,12 @@ header (timestamp + `v1` HMAC-SHA256 over `${t}.${body}`). Event
 subscriptions in v1). No Stripe SDK — plain `fetch` keeps the code in the V8
 isolate.
 
+## Changing a processor API endpoint
+
+In Admin → Billing, supply the API key when changing the NOWPayments or BTCPay endpoint. For PayPal, supply both the client ID and secret. Enter the webhook ID for the new environment to enable PayPal checkout and webhook processing. A save with blank credential fields preserves the keys at the same endpoint. NOWPayments and PayPal accept their documented HTTPS production and sandbox API origins. BTCPay accepts a self-hosted HTTPS base, including its port and mount path. Configure the final API address directly, since credential-bearing requests reject redirects.
+
+Environment credentials are available only at their configured endpoint. On upgrade, older database credentials work when the selected endpoint matches the deployment's independently configured API base. The hosted services default to production. For an existing sandbox or self-hosted configuration, set the corresponding deployment API URL to the known correct base, or re-enter the credentials alongside that base in Admin → Billing. Until then, operations that require those credentials are unavailable.
+
 ## PayPal setup (Phase 3)
 
 Orders API v2 via redirect. Env: `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`,

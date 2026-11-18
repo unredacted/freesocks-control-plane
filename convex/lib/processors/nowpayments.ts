@@ -10,6 +10,7 @@
  */
 import { z } from 'zod';
 import { hmacSha512Hex, timingSafeEqual } from '../crypto';
+import { fetchProcessorApi } from './apiFetch';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface NowPaymentsConfig {
@@ -84,7 +85,7 @@ export async function createCheckout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(url, {
+    const res = await fetchProcessorApi(url, {
       method: 'POST',
       headers: {
         'x-api-key': cfg.apiKey,
@@ -212,10 +213,13 @@ async function fetchPayment(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(new URL(`/v1/payment/${paymentId}`, cfg.apiUrl).toString(), {
-      headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
-      signal: controller.signal,
-    });
+    const res = await fetchProcessorApi(
+      new URL(`/v1/payment/${paymentId}`, cfg.apiUrl).toString(),
+      {
+        headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
+        signal: controller.signal,
+      },
+    );
     if (!res.ok) return null;
     const body: unknown = await res.json().catch(() => null);
     if (!body || typeof body !== 'object') return null;
@@ -359,7 +363,7 @@ export async function testConnection(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(new URL('/v1/currencies', cfg.apiUrl).toString(), {
+    const res = await fetchProcessorApi(new URL('/v1/currencies', cfg.apiUrl).toString(), {
       headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
       signal: controller.signal,
     });

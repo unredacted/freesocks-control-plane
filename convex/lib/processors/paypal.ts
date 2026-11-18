@@ -13,6 +13,7 @@
  * capture the secret. Operationally PayPal is the freeze-prone rail — enable last
  * and sweep the balance often (see docs/billing.md).
  */
+import { fetchProcessorApi } from './apiFetch';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface PayPalConfig {
@@ -41,7 +42,7 @@ function timed(timeoutMs = 10000): { signal: AbortSignal; done: () => void } {
 async function accessToken(cfg: PayPalConfig): Promise<string> {
   const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(`${cfg.apiBase}/v1/oauth2/token`, {
+    const res = await fetchProcessorApi(`${cfg.apiBase}/v1/oauth2/token`, {
       method: 'POST',
       headers: {
         authorization: `Basic ${btoa(`${cfg.clientId}:${cfg.secret}`)}`,
@@ -67,7 +68,7 @@ export async function createCheckout(
   const token = await accessToken(cfg);
   const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(`${cfg.apiBase}/v2/checkout/orders`, {
+    const res = await fetchProcessorApi(`${cfg.apiBase}/v2/checkout/orders`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -107,7 +108,7 @@ export async function createCheckout(
 async function captureOrder(cfg: PayPalConfig, token: string, orderId: string): Promise<boolean> {
   const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(
+    const res = await fetchProcessorApi(
       `${cfg.apiBase}/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`,
       {
         method: 'POST',
@@ -187,10 +188,13 @@ async function customIdFromOrder(
 ): Promise<string | null> {
   const { signal, done } = timed(cfg.timeoutMs);
   try {
-    const res = await fetch(`${cfg.apiBase}/v2/checkout/orders/${encodeURIComponent(orderId)}`, {
-      headers: { authorization: `Bearer ${token}` },
-      signal,
-    });
+    const res = await fetchProcessorApi(
+      `${cfg.apiBase}/v2/checkout/orders/${encodeURIComponent(orderId)}`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+        signal,
+      },
+    );
     if (!res.ok) return null;
     const json = (await res.json()) as Record<string, unknown>;
     return customIdFromResource(json);
@@ -222,20 +226,23 @@ export async function verifyAndParse(args: {
   const { signal, done } = timed(args.cfg.timeoutMs);
   let verification: string;
   try {
-    const res = await fetch(`${args.cfg.apiBase}/v1/notifications/verify-webhook-signature`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        auth_algo: h('paypal-auth-algo'),
-        cert_url: h('paypal-cert-url'),
-        transmission_id: h('paypal-transmission-id'),
-        transmission_sig: h('paypal-transmission-sig'),
-        transmission_time: h('paypal-transmission-time'),
-        webhook_id: args.cfg.webhookId,
-        webhook_event: event,
-      }),
-      signal,
-    });
+    const res = await fetchProcessorApi(
+      `${args.cfg.apiBase}/v1/notifications/verify-webhook-signature`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          auth_algo: h('paypal-auth-algo'),
+          cert_url: h('paypal-cert-url'),
+          transmission_id: h('paypal-transmission-id'),
+          transmission_sig: h('paypal-transmission-sig'),
+          transmission_time: h('paypal-transmission-time'),
+          webhook_id: args.cfg.webhookId,
+          webhook_event: event,
+        }),
+        signal,
+      },
+    );
     if (!res.ok) return { ok: false, reason: `verify API ${res.status}` };
     verification =
       ((await res.json()) as { verification_status?: string }).verification_status ?? '';
