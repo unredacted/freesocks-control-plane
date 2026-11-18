@@ -1443,41 +1443,19 @@ export const switchServer = internalAction({
     const ownPanelId = canPlaceBackend ? await resolveOwnPanel(ctx, oldSub, tier.backend) : null;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
 
-    const audit = async (payload: {
-      inPlace: boolean;
-      movedPlacement: boolean;
-      movedNodePin: boolean;
-      fromNode: string | null;
-      subscriptionId: Id<'subscriptions'>;
-    }) => {
-      await ctx.runMutation(internal.audit.record, {
-        actorType: 'member',
-        actorId: userId,
-        action: 'subscription.switch_server',
-        targetType: 'subscription',
-        targetId: payload.subscriptionId,
-        // The member's reason + WHAT moved. Never a placement/mode group uuid.
-        payload: {
-          reason,
-          inPlace: payload.inPlace,
-          movedPlacement: payload.movedPlacement,
-          movedNodePin: payload.movedNodePin,
-          fromNode: payload.fromNode,
-        },
-        requestId,
-      });
-      // Telemetry row for Admin → Telemetry: unlinked (no user/sub), so it
-      // rides the same choke point as the audit but stores only the what/where.
-      // Reason-only rows still count (declined telemetry = null geo fields).
+    // An in-place move can contribute diagnostics because it emits no identified
+    // audit. Reissues below have their own operational and recovery audit trail.
+    const recordInPlaceDiagnostics = async (fromNode: string | null) => {
       const server = oldSub.backendServerId
         ? await ctx.runQuery(internal.backendServers.getById, { id: oldSub.backendServerId })
         : null;
       await ctx.runMutation(internal.issueReports.record, {
+        auditIsolated: true,
         kind: 'switch',
         reason,
         backend: oldSub.backend,
-        locationCode: server?.location ?? payload.fromNode,
-        nodeLabel: payload.fromNode,
+        locationCode: server?.location ?? fromNode,
+        nodeLabel: fromNode,
         connectionModeId: modeId,
         country: telemetry?.country ?? null,
         city: telemetry?.city ?? null,
@@ -1585,12 +1563,18 @@ export const switchServer = internalAction({
       if (tier.isDefaultFree) {
         await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
       }
-      await audit({
-        inPlace: false,
-        movedPlacement: target.placement !== (oldSub.backendPlacement ?? null),
-        movedNodePin: true,
-        fromNode: oldSub.pinnedNode ?? null,
-        subscriptionId: issued.subscriptionId,
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'member',
+        actorId: userId,
+        action: 'subscription.switch_server',
+        targetType: 'subscription',
+        targetId: issued.subscriptionId,
+        payload: {
+          inPlace: false,
+          movedPlacement: target.placement !== (oldSub.backendPlacement ?? null),
+          movedNodePin: true,
+        },
+        requestId,
       });
       return {
         ok: true,
@@ -1656,13 +1640,7 @@ export const switchServer = internalAction({
           subscriptionId: oldSub._id,
           rotatePin: true,
         });
-        await audit({
-          inPlace: true,
-          movedPlacement: true,
-          movedNodePin: leftNode !== null,
-          fromNode: leftNode,
-          subscriptionId: oldSub._id,
-        });
+        await recordInPlaceDiagnostics(leftNode);
         return {
           ok: true,
           ...(await memberFacing(ctx, oldSub._id, oldSub)),
@@ -1712,13 +1690,7 @@ export const switchServer = internalAction({
         })
       : null;
     if (leftNode !== null) {
-      await audit({
-        inPlace: true,
-        movedPlacement: false,
-        movedNodePin: true,
-        fromNode: leftNode,
-        subscriptionId: oldSub._id,
-      });
+      await recordInPlaceDiagnostics(leftNode);
       return {
         ok: true,
         ...(await memberFacing(ctx, oldSub._id, oldSub)),

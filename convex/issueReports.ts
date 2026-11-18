@@ -5,6 +5,7 @@
  * schema note on `issueReports` and docs/privacy.md.
  */
 import { attributeReport } from './sniReports';
+import { internal } from './_generated/api';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { v } from 'convex/values';
@@ -27,6 +28,7 @@ import {
 } from './edgeAttribution';
 
 const DAY_MS = 86_400_000;
+const SWEEP_PAGE = 500;
 
 // The most rows one summary computation will read (current + previous window
 // combined). Far above realistic volume; if a deployment ever hits it the
@@ -44,6 +46,9 @@ const telemetryFields = {
  *  deployment records nothing even if a caller forgets to gate. */
 export const record = internalMutation({
   args: {
+    // Older switch actions wrote an identified audit before calling record.
+    // Accept in-flight calls from those actions without retaining their diagnostics.
+    auditIsolated: v.optional(v.literal(true)),
     kind: v.union(v.literal('switch'), v.literal('report')),
     reason: v.string(),
     backend: v.string(),
@@ -56,10 +61,12 @@ export const record = internalMutation({
     detectedAsn: v.optional(v.union(v.number(), v.null())),
   },
   handler: async (ctx, a): Promise<void> => {
+    if (!a.auditIsolated) return;
     const cfg = await resolveDiagnosticsConfig(ctx.db);
     if (!cfg.enabled) return;
     const opt = <T>(x: T | null | undefined): T | undefined => (x === null ? undefined : x);
     await ctx.db.insert('issueReports', {
+      auditIsolated: true,
       kind: a.kind,
       reason: a.reason,
       backend: a.backend,
@@ -78,9 +85,8 @@ export const record = internalMutation({
 
 /**
  * The report-issue flow: resolve the member's live key server-side (backend +
- * location + mode are NEVER client-claimed), insert the telemetry row, and
- * audit the reason against the user — the per-user record stays reason-only,
- * exactly like switch-server. Reporting changes nothing about the key.
+ * location + mode are NEVER client-claimed) and insert the diagnostic row.
+ * A member audit here would identify the reporter by timestamp alone.
  */
 export const reportIssue = internalMutation({
   args: {
@@ -136,6 +142,7 @@ export const reportIssue = internalMutation({
     if (cfg.enabled) {
       const opt = <T>(x: T | null | undefined): T | undefined => (x === null ? undefined : x);
       await ctx.db.insert('issueReports', {
+        auditIsolated: true,
         kind: 'report',
         reason: a.reason,
         backend: sub?.backend ?? 'none',
@@ -161,15 +168,6 @@ export const reportIssue = internalMutation({
           : {}),
       });
     }
-    await writeAuditLog(ctx, {
-      actorType: 'member',
-      actorId: a.userId,
-      action: 'subscription.issue_reported',
-      targetType: sub ? 'subscription' : 'user',
-      targetId: sub ? sub._id : a.userId,
-      payload: { reason: a.reason, backend: sub?.backend ?? 'none' },
-      requestId: a.requestId,
-    });
     return { ok: true };
   },
 });
@@ -329,7 +327,9 @@ export const summary = internalQuery({
     const { since, until, spanMs: w, prevSince } = resolveRange(a);
     const rows = await ctx.db
       .query('issueReports')
-      .withIndex('by_creation_time', (q) => q.gte('_creationTime', prevSince))
+      .withIndex('by_audit_isolated', (q) =>
+        q.eq('auditIsolated', true).gte('_creationTime', prevSince),
+      )
       .order('desc')
       .take(SUMMARY_SCAN_CAP);
     const current = rows.filter((r) => r._creationTime >= since && r._creationTime < until);
@@ -384,13 +384,14 @@ export const summary = internalQuery({
   },
 });
 
-/** Recent raw rows (they are unlinked, so listing them is safe), newest first. */
+/** Newest first. Historical rows can be paired with identified audit entries. */
 export const recent = internalQuery({
   args: { cursor: v.optional(v.string()), limit: v.optional(v.number()) },
   handler: async (ctx, { cursor, limit }) => {
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
     const res = await ctx.db
       .query('issueReports')
+      .withIndex('by_audit_isolated', (q) => q.eq('auditIsolated', true))
       .order('desc')
       .paginate({ cursor: cursor ?? null, numItems: pageSize });
     return {
@@ -423,18 +424,35 @@ export const recent = internalQuery({
   },
 });
 
-/** Daily retention sweep: bounded delete of rows past `retentionDays`. */
+/** Remove legacy report/audit pairs and expire current diagnostics at the configured age. */
 export const sweep = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ deleted: number }> => {
+  handler: async (ctx): Promise<{ deleted: number; deletedReportAudits: number }> => {
     await recordHeartbeat(ctx, 'issue-telemetry-retention');
     const cfg = await resolveDiagnosticsConfig(ctx.db);
     const cutoff = Date.now() - cfg.retentionDays * DAY_MS;
+    const legacy = await ctx.db
+      .query('issueReports')
+      .withIndex('by_audit_isolated', (q) => q.eq('auditIsolated', undefined))
+      .take(SWEEP_PAGE);
+    for (const row of legacy) await ctx.db.delete(row._id);
+    // Even when the raw report has expired, its old audit timestamp can match
+    // the update to a server-name report counter. Preserve other audit actions.
+    const reportAudits = await ctx.db
+      .query('auditLog')
+      .withIndex('by_action', (q) => q.eq('action', 'subscription.issue_reported'))
+      .take(SWEEP_PAGE);
+    for (const row of reportAudits) await ctx.db.delete(row._id);
+    if (legacy.length === SWEEP_PAGE || reportAudits.length === SWEEP_PAGE) {
+      await ctx.scheduler.runAfter(0, internal.issueReports.sweep, {});
+    }
     const stale = await ctx.db
       .query('issueReports')
-      .withIndex('by_creation_time', (q) => q.lt('_creationTime', cutoff))
-      .take(500);
+      .withIndex('by_audit_isolated', (q) =>
+        q.eq('auditIsolated', true).lt('_creationTime', cutoff),
+      )
+      .take(SWEEP_PAGE);
     for (const row of stale) await ctx.db.delete(row._id);
-    return { deleted: stale.length };
+    return { deleted: legacy.length + stale.length, deletedReportAudits: reportAudits.length };
   },
 });

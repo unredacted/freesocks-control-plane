@@ -639,12 +639,25 @@ one-click decline). What it does and does not do:
   write goes over a channel they pick rather than into the telemetry table.
   Rows written before the change may still carry a `detail` value until the
   retention sweep deletes them; nothing writes the field any more.
-- **Unlinked by design:** telemetry rows (`issueReports` table) carry no
-  userId, no subscriptionId, and no IP. They answer "what is failing, where,
-  on which networks" — never "who". The per-user audit log records only the
-  bounded reason enum, exactly as before. City-level geo exists **nowhere else
-  in the system** (the analytics origin deliberately never reads `cf-ipcity`);
-  here it exists only with the member's consent and the operator's opt-in.
+- **Audit separation.** A standalone report or an in-place server switch can
+  contribute a diagnostic event. Neither writes a corresponding member audit
+  entry. A switch that issues a replacement key has operational and recovery
+  audits. This path skips diagnostic collection. Its switch audit records the
+  member, subscription and outcome.
+  Diagnostics contain no member ID, subscription ID, request ID or IP address.
+  The events describe infrastructure and any network details the member shared.
+- **Existing deployments.** Earlier versions wrote both datasets for the same
+  event. After upgrading, recent events, summaries and the edge detector only
+  read rows written under the new policy. The daily retention sweep deletes
+  pre-upgrade diagnostics and obsolete `subscription.issue_reported` audit
+  entries in batches, regardless of age. An old report audit can also identify
+  the member behind an update to a server-name report counter. Operational
+  switch and recovery audits retain their normal retention period.
+  Run `bunx convex run issueReports:sweep '{}'` against the upgraded deployment
+  to start cleanup immediately. Restrict direct access to the legacy records
+  until cleanup completes, and to pre-upgrade backups and exports for their
+  retention period. Preserve the new collection policy and schema if rolling
+  back other changes.
 - **Operator gates (`diagnostics.*`, Admin → Telemetry):** a master switch,
   a per-field allowlist (country / city / ASN), and `cloudflareEnabled` —
   geo headers are read only when the operator affirms Cloudflare is in front

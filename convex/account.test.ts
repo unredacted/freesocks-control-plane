@@ -1641,9 +1641,10 @@ describe('account.switchServer', () => {
     t: ReturnType<typeof convexTest>,
     userId: Id<'users'>,
     reason: SwitchServerReason,
+    telemetry?: { country: string; city: string; asn: number },
   ) {
     const offered = await t.query(internal.account.switchServerAvailable, { userId });
-    const res = await t.action(internal.account.switchServer, { userId, reason });
+    const res = await t.action(internal.account.switchServer, { userId, reason, telemetry });
     expect(offered).toBe(res.ok || res.code === 'backend.placement_unresolved');
     return res;
   }
@@ -1725,7 +1726,7 @@ describe('account.switchServer', () => {
     });
   });
 
-  test('records the reason and the node left, never the mode group uuid', async () => {
+  test('stores in-place switch diagnostics without a corresponding member audit', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -1742,22 +1743,28 @@ describe('account.switchServer', () => {
     await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
     vi.stubGlobal('fetch', panelStub());
 
-    await switchServer(t, userId, 'blocked');
+    await t.action(internal.account.switchServer, {
+      userId,
+      reason: 'blocked',
+      requestId: 'switch-request',
+      telemetry: { country: 'IR', city: 'Tehran', asn: 44244 },
+    });
 
     await t.run(async (ctx) => {
-      const audit = (await ctx.db.query('auditLog').collect()).find(
-        (r) => r.action === 'subscription.switch_server',
-      );
-      expect(audit).toBeTruthy();
-      expect(audit!.payload).toMatchObject({
+      expect(await ctx.db.query('auditLog').collect()).toEqual([]);
+      const rows = await ctx.db.query('issueReports').collect();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        kind: 'switch',
         reason: 'blocked',
-        inPlace: true,
-        movedPlacement: true,
-        movedNodePin: true,
-        fromNode: 'xray1',
+        nodeLabel: 'xray1',
+        country: 'IR',
+        city: 'Tehran',
+        asn: 44244,
       });
-      expect(JSON.stringify(audit!.payload)).not.toContain(SQUAD_A);
-      expect(JSON.stringify(audit!.payload)).not.toContain(SQUAD_B);
+      const sub = (await ctx.db.query('subscriptions').first())!;
+      for (const value of [userId, sub._id, 'switch-request', SQUAD_A, SQUAD_B])
+        expect(JSON.stringify(rows[0])).not.toContain(value);
     });
   });
 
@@ -1791,10 +1798,12 @@ describe('account.switchServer', () => {
       expect(sub.excludeNode).toBe('xray1');
       expect(sub.pinnedNode).toBeUndefined();
       expect(sub.backendPlacement).toBe(SQUAD_A); // unchanged
-      const audit = (await ctx.db.query('auditLog').collect()).find(
-        (r) => r.action === 'subscription.switch_server',
-      );
-      expect(audit!.payload).toMatchObject({ movedPlacement: false, movedNodePin: true });
+      expect(await ctx.db.query('auditLog').collect()).toEqual([]);
+      expect(await ctx.db.query('issueReports').first()).toMatchObject({
+        kind: 'switch',
+        reason: 'disconnects',
+        nodeLabel: 'xray1',
+      });
     });
   });
 
@@ -2001,7 +2010,11 @@ describe('account.switchServer', () => {
       ),
     );
 
-    const res = await switchServer(t, userId, 'blocked');
+    const res = await switchServer(t, userId, 'blocked', {
+      country: 'IR',
+      city: 'Tehran',
+      asn: 44244,
+    });
     expect(res).toMatchObject({ ok: true, inPlace: false });
     await t.run(async (ctx) => {
       const fresh = (await ctx.db.query('subscriptions').collect()).find(
@@ -2009,6 +2022,13 @@ describe('account.switchServer', () => {
       )!;
       expect(fresh.backendPlacement).toBe(SQUAD_B); // the other backend's mode group
       expect(fresh.backendServerId).toBe(otherPanel);
+      expect(await ctx.db.query('issueReports').collect()).toEqual([]);
+      const audit = await ctx.db
+        .query('auditLog')
+        .withIndex('by_action', (q) => q.eq('action', 'subscription.switch_server'))
+        .unique();
+      expect(audit).toMatchObject({ actorId: userId, targetId: fresh._id });
+      expect(audit?.payload).toEqual({ inPlace: false, movedPlacement: true, movedNodePin: true });
       expect(fresh.subToken).toBe('tok-abc'); // saved link still works
     });
   });
@@ -2058,6 +2078,7 @@ describe('account.switchServer', () => {
 
     await t.run(async (ctx) => {
       const subs = await ctx.db.query('subscriptions').collect();
+      expect(await ctx.db.query('issueReports').collect()).toEqual([]);
       expect(subs).toHaveLength(2); // new key + the tombstoned old one
       const fresh = subs.find((s) => s.state === 'active')!;
       const old = subs.find((s) => s._id !== fresh._id)!;

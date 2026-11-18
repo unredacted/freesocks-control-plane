@@ -106,9 +106,10 @@ export const reportPage = internalQuery({
       .query('issueReports')
       // Up to the END of the evaluation's millisecond (`_creationTime` is finer
       // than `now`): a report created during the drain is the next window's.
-      .withIndex('by_relay', (q) =>
+      .withIndex('by_relay_and_audit_isolated', (q) =>
         q
           .eq('relaySlug', relaySlug)
+          .eq('auditIsolated', true)
           .gte('_creationTime', since)
           .lt('_creationTime', until + 1),
       )

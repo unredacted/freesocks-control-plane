@@ -396,6 +396,7 @@ describe('origin attribution on member reports', () => {
     const s = await seed();
     const m = await member(s.t, s.tierId, s.serverId, 1);
     await handed(s.t, m.subId, s.relayId, s.edgeA, s.edgeB);
+    const auditBefore = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
     const r1 = await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'primary' });
     expect(r1.status).toBe(200);
     const r2 = await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'unsure' });
@@ -430,11 +431,7 @@ describe('origin attribution on member reports', () => {
     expect(rows2[0].relayEdgeId).toBeDefined();
     expect(rows2[1].relayEdgeId).toBeDefined();
     expect(rows2[0].relayEdgeId).not.toBe(rows2[1].relayEdgeId);
-    // The audit trail stays reason-only.
-    const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
-    const issue = audit.filter((a) => a.action === 'subscription.issue_reported');
-    expect(issue).toHaveLength(4);
-    expect(JSON.stringify(issue)).not.toContain('node-one');
+    expect(await s.t.run((ctx) => ctx.db.query('auditLog').collect())).toEqual(auditBefore);
   });
 
   test('a member never rendered gets NO edge attribution: nothing is recomputed from the pool', async () => {
@@ -569,6 +566,7 @@ describe('origin block detector', () => {
     await s.t.run(async (ctx) => {
       for (let i = 0; i < 5; i++) {
         await ctx.db.insert('issueReports', {
+          auditIsolated: true,
           kind: 'report',
           reason: 'cant-connect',
           backend: 'remnawave',
@@ -616,6 +614,7 @@ describe('origin block detector', () => {
       weight: 0 | 1,
     ) =>
       ctx.db.insert('issueReports', {
+        auditIsolated: true,
         kind: 'report',
         reason: 'cant-connect',
         backend: 'remnawave',
@@ -802,6 +801,7 @@ describe('origin block detector', () => {
     await t.run(async (ctx) => {
       for (let i = 0; i < n; i++) {
         await ctx.db.insert('issueReports', {
+          auditIsolated: true,
           kind: 'report',
           reason: 'cant-connect',
           backend: 'remnawave',
@@ -1135,6 +1135,7 @@ describe('origin block detector', () => {
       });
       for (let i = 0; i < 10; i++) {
         await ctx.db.insert('issueReports', {
+          auditIsolated: true,
           kind: 'report',
           reason: 'cant-connect',
           backend: 'remnawave',

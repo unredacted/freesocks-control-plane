@@ -8,9 +8,8 @@
 
   /**
    * "Report issue": tell the operator what is going wrong, without touching the
-   * key. The member must pick a reason from a fixed list (audited scalars only;
-   * also the aggregation buckets on Admin → Telemetry). There is deliberately
-   * NO free-text box: a member who needs to say more is pointed at the
+   * key. The member picks a reason from the categories shown on Admin → Telemetry.
+   * There is no free-text box: a member who needs to say more is pointed at the
    * operator's support email (`site.supportEmail`, admin-set; the line is
    * absent when none is configured). The optional consent block attaches
    * editable network context. When the key sits behind origin edges the member

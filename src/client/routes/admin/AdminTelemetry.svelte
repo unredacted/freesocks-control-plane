@@ -40,8 +40,7 @@
    * Admin → Telemetry: what members' switch-server moves and issue reports are
    * saying, aggregated (reasons, trending vs the previous window, and where /
    * which networks the problems cluster on), plus the `diagnostics.*` collection
-   * settings. Every row in the underlying table is UNLINKED — no user, no
-   * subscription, no IP — so the raw event list is safe to show.
+   * settings. Recent events and summaries cover standalone reports and in-place moves.
    */
   interface Props {
     /** Kept for the router's call site. Reachability probes moved to Admin -> Edges -> Probes. */
@@ -164,8 +163,7 @@
     <div>
       <h1 class="text-2xl font-display font-bold tracking-tight">Telemetry · User reports</h1>
       <p class="text-sm text-muted-foreground mt-1">
-        What members' server switches and issue reports are saying. Rows are unlinked by design: no
-        user, no subscription, never an IP.
+        Connection problems reported by members and server switches that kept the existing key.
       </p>
     </div>
 

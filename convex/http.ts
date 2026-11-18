@@ -1911,8 +1911,7 @@ http.route({
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ reason?: string; confirm?: boolean; telemetry?: unknown }>(req);
-    // A closed set: the reason is audited, and the audit log never stores
-    // user-authored text.
+    // A closed set keeps the diagnostic reason suitable for aggregation.
     if (!isSwitchServerReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
