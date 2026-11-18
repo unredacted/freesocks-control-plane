@@ -172,3 +172,7 @@ jobs:
           fi
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" "$image" \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --add-host backend:127.0.0.1 --tmpfs /tmp --tmpfs /config --tmpfs /data --tmpfs /srv/dist \
+            -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -v "$PWD/tests/caddy-subscription-csp.sh:/check.sh:ro" "$image" sh /check.sh

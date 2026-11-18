@@ -310,7 +310,8 @@ app.freesocks.org {
     # the PoP signing worker and Cap's proof-of-work solver worker;
     # 'wasm-unsafe-eval' lets Cap's WASM compile (served same-origin via /cap).
     header {
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+        # Add the site policy so proxied subscription documents keep their sandbox.
+        +Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
         # COOP/CORP isolate the context; COEP require-corp is now ENFORCEABLE
         # (every subresource is same-origin — the Turnstile iframe that blocked it
         # is gone). Permissions-Policy denies features the app never uses.

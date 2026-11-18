@@ -371,6 +371,9 @@ const NOT_MODIFIED_HEADERS = [
   'etag',
   'cache-control',
   'vary',
+  // Caddy adds the site policy to this response too. Repeat the document
+  // sandbox so revalidation keeps both policies on the cached subscription.
+  'content-security-policy',
   'subscription-userinfo',
   'profile-title',
   'profile-update-interval',

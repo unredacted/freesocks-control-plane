@@ -1248,6 +1248,7 @@ describe('GET /api/v1/sub/<token>: conditional requests', () => {
     expect(again.headers.get('etag')).toBe(tag);
     expect(again.headers.get('cache-control')).toBe('public, max-age=30');
     expect(again.headers.get('vary')).toBe('User-Agent');
+    expect(again.headers.get('content-security-policy')).toBe("sandbox; default-src 'none'");
     expect(again.headers.get('subscription-userinfo')).toBe(
       'upload=0; download=10; total=100; expire=0',
     );
