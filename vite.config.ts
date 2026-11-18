@@ -41,7 +41,6 @@ function sriPlugin(): Plugin {
     closeBundle() {
       const dist = path.resolve(__dirname, 'dist');
       const indexPath = path.join(dist, 'index.html');
-      if (!existsSync(indexPath)) return;
 
       // (1) Integrity for every emitted JS chunk → an import map + a sidecar
       // manifest. Covers the dynamic-import chunks that index.html never names.
@@ -75,11 +74,25 @@ function sriPlugin(): Plugin {
 
       // (3) Inject the import map BEFORE the first module script (an import map
       // must precede any module load). A single map; only the `integrity` key.
-      if (!html.includes('type="importmap"') && Object.keys(chunkIntegrity).length > 0) {
-        const tag = `<script type="importmap">${JSON.stringify({ integrity: chunkIntegrity })}</script>`;
-        html = html.replace(/(^[ \t]*)(<script type="module")/m, `$1${tag}\n$1$2`);
+      const moduleEntry = /(^[ \t]*)(<script type="module")/m;
+      if (
+        Object.keys(chunkIntegrity).length === 0 ||
+        html.includes('type="importmap"') ||
+        !moduleEntry.test(html)
+      ) {
+        throw new Error('Expected JS chunks and a module entry with no existing import map');
       }
+      const map = JSON.stringify({ integrity: chunkIntegrity });
+      html = html.replace(
+        moduleEntry,
+        (_, indent, entry) =>
+          `${indent}<script type="importmap">${map}</script>\n${indent}${entry}`,
+      );
       writeFileSync(indexPath, html);
+      // Keep the index byte-stable for the verifier. Caddy loads the matching
+      // CSP source from this build when the web container starts.
+      const digest = createHash('sha384').update(map).digest('base64');
+      writeFileSync(path.join(dist, 'sri-csp.env'), `FCP_IMPORT_MAP_CSP="'sha384-${digest}'"\n`);
     },
   };
 }
