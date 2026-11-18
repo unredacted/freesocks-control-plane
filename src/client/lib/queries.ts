@@ -328,7 +328,8 @@ export const adminCensoredCountriesQuery = () =>
 export const telemetryContextQuery = (enabled: () => boolean) =>
   createQuery(() => ({
     queryKey: queryKeys.telemetryContext,
-    queryFn: () => apiClient.get('/api/v1/account/telemetry-context', TelemetryContextResponse),
+    queryFn: () =>
+      apiClient.get('/api/v1/account/telemetry-context?submission=hpke', TelemetryContextResponse),
     staleTime: 60_000,
     enabled: enabled(),
   }));

@@ -9,6 +9,15 @@ import { __setEdgePlumbingForTests } from './lib/edgeConfig';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import {
+  bytesToB64Url,
+  isSealedWire,
+  kidFromPublicKey,
+  outboundPolicy,
+  routePolicy,
+} from '../src/shared/crypto/envelope';
+import { serializePublicKey, serverKeyPairFromSeed } from '../src/shared/crypto/hpke';
+import { clientOpenResponse, clientPrepareRequest } from '../src/shared/crypto/channel';
 import { signValue } from './lib/cookies';
 import { upsertSettingRow } from './appSettings';
 import { resolveEdgeAttribution } from './edgeAttribution';
@@ -154,6 +163,136 @@ async function report(
     body: JSON.stringify(body),
   });
 }
+
+describe('diagnostic submissions through the member routes', () => {
+  test('only clients advertising sealed submission are offered connection details', async () => {
+    const { t, tierId, serverId } = await seed();
+    const { cookie } = await member(t, tierId, serverId, 1);
+    const path = '/api/v1/account/telemetry-context';
+    expect(await (await t.fetch(path, { headers: { cookie } })).json()).toEqual({
+      enabled: false,
+      fields: { country: false, city: false, asn: false },
+      detected: { country: null, city: null, asn: null },
+    });
+    expect(
+      await (await t.fetch(path + '?submission=hpke', { headers: { cookie } })).json(),
+    ).toMatchObject({
+      enabled: true,
+      fields: { country: true, city: true, asn: true },
+    });
+  });
+
+  test.each(['false', 'true'])(
+    'protects both routes with FS_HPKE_REQUIRED=%s',
+    async (required) => {
+      vi.stubEnv('FS_HPKE_REQUIRED', required);
+      const sk = new Uint8Array(32).fill(9);
+      vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(sk));
+      const { publicKey } = await serverKeyPairFromSeed(sk);
+      const kid = await kidFromPublicKey(await serializePublicKey(publicKey));
+      const { t, tierId, serverId } = await seed();
+      const { cookie, subId } = await member(t, tierId, serverId, 1);
+      const placement = '11111111-2222-4333-8444-555555555555';
+      await t.run(async (ctx) => {
+        await ctx.db.patch(subId, { backendPlacement: placement });
+        await ctx.db.insert('remnawaveNodeStats', {
+          backendServerId: serverId,
+          placement,
+          usersOnline: 1,
+          online: true,
+          nodeCount: 2,
+          lastStatsAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        await upsertSettingRow(ctx, 'diagnostics.cloudflareEnabled', 'true');
+      });
+      const post = (path: string, body: unknown) =>
+        t.fetch(path, {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json', 'cf-ipcountry': 'DE' },
+          body: JSON.stringify(body),
+        });
+      const rows = () => t.run((ctx) => ctx.db.query('issueReports').collect());
+      for (const operation of ['report-issue', 'switch-server']) {
+        const path = '/api/v1/account/' + operation;
+        const policy = routePolicy(path, 'POST')!;
+        const prepare = (body: Record<string, unknown>) =>
+          clientPrepareRequest({
+            serverPub: publicKey,
+            serverKid: kid,
+            method: 'POST',
+            path,
+            policy: outboundPolicy(policy, body),
+            bodyObj: body,
+          });
+        const reason =
+          operation === 'switch-server'
+            ? { reason: 'slow', confirm: true }
+            : { reason: 'cant-connect' };
+        const declined = await prepare({ ...reason, telemetry: null });
+        const body = { ...reason, telemetry: { city: 'Example City' } };
+        const sealed = await prepare(body);
+        if (!isSealedWire(sealed.body)) throw new Error('Expected a sealed diagnostic request');
+        const before = (await rows()).length;
+        if (operation === 'switch-server') {
+          const withoutResponseKey = await clientPrepareRequest({
+            serverPub: publicKey,
+            serverKid: kid,
+            method: 'POST',
+            path,
+            policy: { request: 'seal', response: 'plain' },
+            bodyObj: body,
+          });
+          const refusal = await post(path, withoutResponseKey.body);
+          expect(refusal.status).toBe(400);
+          expect(await refusal.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+        }
+        for (const outer of [
+          body,
+          { ...reason, fsRespEph: declined.respEphPubB64, telemetry: { country: 'CA' } },
+          { ...sealed.body, telemetry: { asn: 'AS64512' } },
+        ]) {
+          const res = await post(path, outer);
+          expect(res.status).toBe(400);
+          expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+        }
+        expect(await rows()).toHaveLength(before);
+        const submit = async (prep: Awaited<ReturnType<typeof prepare>>) => {
+          const res = await post(path, prep.body);
+          const reply = await res.json();
+          expect(res.status, JSON.stringify(reply)).toBe(200);
+          if (operation === 'switch-server') {
+            expect(isSealedWire(reply)).toBe(true);
+            expect(
+              await clientOpenResponse({
+                serverKid: kid,
+                method: 'POST',
+                path,
+                respEphPriv: prep.respEphPriv!,
+                wire: reply,
+              }),
+            ).toMatchObject({ inPlace: true, subscriptionUrl: expect.any(String) });
+          } else {
+            expect(reply).toMatchObject({ ok: true });
+          }
+        };
+        await submit(declined);
+        const declinedRow = (await rows()).at(-1)!;
+        expect(declinedRow.city).toBeUndefined();
+        expect(declinedRow.detectedCountry).toBeUndefined();
+        if (operation === 'switch-server') {
+          // Restore the fixture's pin so the second switch can move it again.
+          await t.run((ctx) => ctx.db.patch(subId, { pinnedNode: 'node-one' }));
+        }
+        await submit(sealed);
+        expect((await rows()).at(-1)).toMatchObject({
+          city: 'Example City',
+          detectedCountry: 'DE',
+        });
+      }
+    },
+  );
+});
 
 /** Record what the renderer handed this subscriber (attribution reads ONLY this snapshot). */
 async function handed(

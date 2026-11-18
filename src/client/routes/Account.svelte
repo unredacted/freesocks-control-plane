@@ -184,14 +184,14 @@
 
   // Consent-block context (which fields + the CDN's editable prefill): fetched
   // only while one of the two dialogs that render it is open.
-  const telemetryContext = telemetryContextQuery(() => switchServerOpen || reportIssueOpen);
+  const collectDiagnostics = () => sealingEnabled() && (switchServerOpen || reportIssueOpen);
+  const telemetryContext = telemetryContextQuery(collectDiagnostics);
+  const consentContext = $derived(sealingEnabled() ? telemetryContext.data : undefined);
   // The member's own answer to "Where are you connecting from?": both consent
   // blocks prefill it, shown and editable like every value there (never the
   // guess, never "Somewhere else"; docs/privacy.md §7). The same query as the
   // ConnectionRegion card, so no second read while that card holds it.
-  const connectionRegion = connectionRegionQuery(
-    () => sealingEnabled() && (switchServerOpen || reportIssueOpen),
-  );
+  const connectionRegion = connectionRegionQuery(collectDiagnostics);
   const ownCountry = $derived(ownCountryOf(connectionRegion.data));
   // Which backend is the user about to switch TO when they confirm. Computed
   // at button-click time from `switchTargets` so the modal can render the
@@ -1580,7 +1580,7 @@
           null}
         deviceCount={data.subscription.devices.length}
         bind:reason={switchServerReason}
-        telemetryContext={telemetryContext.data}
+        telemetryContext={consentContext}
         {ownCountry}
         onCancel={() => {
           switchServerOpen = false;
@@ -1595,7 +1595,7 @@
         bind:connection={reportIssueConnection}
         bind:connectionEntry={reportIssueConnectionEntry}
         connections={nodeStatus.data?.node?.relay?.connections ?? []}
-        telemetryContext={telemetryContext.data}
+        telemetryContext={consentContext}
         {ownCountry}
         supportEmail={config.data?.site?.supportEmail}
         supportId={data.user.supportId}

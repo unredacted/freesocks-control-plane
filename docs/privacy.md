@@ -625,7 +625,12 @@ one-click decline). What it does and does not do:
   ASN, with the CDN edge's view of the request, which is the VPN exit's network
   (not the member's) whenever they report from inside the tunnel, so members
   are told to correct it. The stored row carries what was sent, still with no
-  link to the member.
+  link to the member. The web client encrypts the request to the origin with HPKE
+  before sending connection details on either route. A build without a server
+  encryption pin offers reason-only submissions. The origin rejects plaintext
+  details even during rollout and offers reason-only reporting to older clients.
+  Deploy the origin first. Reload existing account tabs before sharing details so
+  a cached form cannot submit them in plaintext.
   **No free text.** The report dialog has no "tell us what's happening" box
   (it was removed 2026-09-15; the server ignores a `detail` field if a stale
   client still sends one). A member who needs to say more is pointed at the

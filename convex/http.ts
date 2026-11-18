@@ -1975,7 +1975,7 @@ http.route({
 http.route({
   path: '/api/v1/account/report-issue',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
@@ -2042,6 +2042,15 @@ http.route({
   handler: guard(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    // A cached client that submits plaintext must not offer to collect details.
+    // This capability hint controls the form only. The POST routes enforce sealing.
+    if (new URL(req.url).searchParams.get('submission') !== 'hpke') {
+      return json({
+        enabled: false,
+        fields: { country: false, city: false, asn: false },
+        detected: { country: null, city: null, asn: null },
+      });
+    }
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const detected = detectedFromHeaders(diagCfg, req);
     return json({

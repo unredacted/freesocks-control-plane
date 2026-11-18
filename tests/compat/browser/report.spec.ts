@@ -1,4 +1,7 @@
 import { expect, test } from './fixtures';
+import { isSealedWire } from '../../../src/shared/crypto/envelope';
+import { serverOpenRequest } from '../../../src/shared/crypto/channel';
+import { reportKeys } from './reportKeys';
 
 for (const viewport of [
   { width: 1280, height: 720 },
@@ -7,7 +10,7 @@ for (const viewport of [
 ]) {
   test(`report can be submitted at ${viewport.width}×${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
-    let submitted: any;
+    let submitted: unknown;
     await page.route('**/api/v1/account/report-issue', async (route) => {
       submitted = route.request().postDataJSON();
       await route.fulfill({ json: { ok: true } });
@@ -32,8 +35,18 @@ for (const viewport of [
     expect(bounds!.height).toBeLessThanOrEqual(viewport.height);
     await send.click();
     await expect(page.getByRole('status')).toHaveText('Report sent');
-    expect(submitted).toMatchObject({ reason: 'other' });
-    expect(submitted).not.toHaveProperty('detail');
+    expect(Object.keys(submitted as object)).toEqual(['fsSealed']);
+    if (!isSealedWire(submitted)) throw new Error('Expected an encrypted report');
+    const { privateKey, kid } = await reportKeys();
+    expect(
+      await serverOpenRequest({
+        serverPriv: privateKey,
+        serverKid: kid,
+        method: 'POST',
+        path: '/api/v1/account/report-issue',
+        wireBody: submitted,
+      }),
+    ).toEqual({ reason: 'other', telemetry: { country: 'US', city: 'Chicago', asn: '64512' } });
     // Reopening starts clean: no reason preselected.
     await page.getByRole('button', { name: 'Open report' }).click();
     await expect(dialog.locator('input[value="other"]')).not.toBeChecked();
