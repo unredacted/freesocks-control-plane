@@ -2,7 +2,7 @@
 # seeds, all inside the compose stack (no host Bun, no manual admin-key copy).
 # It uses the convex CLI from the repo lockfile and reads the admin key from the
 # shared volume the `keygen` service writes. See docs/beta-deploy.md.
-FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d
+FROM oven/bun:1.4.5@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18
 WORKDIR /app
 
 COPY package.json bun.lock ./

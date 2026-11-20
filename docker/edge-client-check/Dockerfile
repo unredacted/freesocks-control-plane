@@ -13,7 +13,7 @@ FROM ghcr.io/sagernet/sing-box:v1.14.4@sha256:0788ffbddab2c68a99a2dd4780bbc50902
 FROM ghcr.io/xtls/xray-core:26.11.9@sha256:9812e382e229e9ed63fd179bf1a4e3fe244c12ff3ae4fd8128745d79c87575ab AS xray
 FROM docker.io/metacubex/mihomo:v1.19.34@sha256:4c2495d705f152897a58eac410350f243835fd01ce2fe44949a571faa824d532 AS mihomo
 
-FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS build
+FROM oven/bun:1.4.5@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18 AS build
 WORKDIR /src
 COPY src/shared/contracts/edgeCodes.ts src/shared/contracts/
 COPY convex/lib/edges/ip.ts convex/lib/edges/
@@ -21,7 +21,7 @@ COPY convex/lib/edges/clientCheck/protocol.ts convex/lib/edges/clientCheck/signi
 COPY docker/edge-client-check/server.ts docker/edge-client-check/
 RUN bun build docker/edge-client-check/server.ts --target=bun --outfile=/out/server.js
 
-FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d
+FROM oven/bun:1.4.5@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18
 COPY --from=singbox /usr/local/bin/sing-box /usr/local/bin/sing-box
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 COPY --from=mihomo /mihomo /usr/local/bin/mihomo
