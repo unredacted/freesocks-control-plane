@@ -225,7 +225,11 @@ jobs:
 
   latest:
     name: Latest upstream clients (discovery)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Not on a dispatch to a dependabot/* branch: dependabot-fixups.yml dispatches
+    # this workflow there to re-run the PR gate on its fixup commit.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/dependabot/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -255,7 +259,11 @@ jobs:
     # are uuids, 3.x ids are integers) for panels that have not upgraded yet.
     # Nothing on the PR gate boots a 2.x panel, so prove that path nightly.
     name: Provider contract vs a Remnawave 2.x panel
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Not on a dispatch to a dependabot/* branch: dependabot-fixups.yml dispatches
+    # this workflow there to re-run the PR gate on its fixup commit.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/dependabot/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

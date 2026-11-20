@@ -1,0 +1,255 @@
+# Dependabot fixups: the two follow-up edits a Dependabot PR can't make itself.
+#
+#  1. Bun. Dependabot moves the `oven/bun` base images in /docker, but the
+#     Docker updater never touches `packageManager` in package.json, and
+#     convex/deployPins.test.ts fails CI until the two agree (CI's setup-bun and
+#     the compat images read their Bun from that field). This sets
+#     `packageManager` to the Bun in docker/web.Dockerfile.
+#  2. Formatting. A prettier or prettier-plugin-* release can change how files
+#     are formatted, so `prettier --check` fails on a PR that changed no source
+#     (prettier-plugin-svelte 4.2.0 reformatted 100 .svelte files). This runs
+#     `prettier --write` with the bumped formatter.
+#
+# Before this workflow both were fixed by hand on every such PR, and a hand
+# commit on a `dependabot/*` branch is lost when Dependabot recreates the PR.
+# This runs again on every Dependabot push, so a recreated PR is fixed again.
+#
+# SECURITY. Two jobs, because the bumped code is untrusted:
+#  - `prepare` runs the bumped dependencies (bun install, prettier) and the
+#    actions Dependabot updates, with a read-only token. It only uploads a
+#    patch, and nothing it outputs is trusted by `apply`.
+#  - `apply` holds the write token. It has NO `uses:` steps (Dependabot moves
+#    action pins, and an action reaches github.token without being passed it)
+#    and runs only git, gh and the runner's own tools. It resolves the PR
+#    itself, pushes only to that PR's `dependabot/*` branch, sets
+#    packageManager itself, and takes the formatter's patch only when it
+#    changes nothing but whitespace in source/doc files (same characters once
+#    whitespace is removed, no new, deleted, renamed or binary files). A
+#    formatter change beyond that is left for a person, with a warning.
+#
+# CI ON THE FIXUP COMMIT: a push made with GITHUB_TOKEN starts no workflow run,
+# so `apply` dispatches (workflow_dispatch) every workflow that ran on
+# Dependabot's commit, plus any path-filtered PR workflow whose paths the
+# fixup touches. Those runs report on the new head commit.
+#
+# To run it by hand on an existing Dependabot PR: Actions -> Dependabot fixups
+# -> Run workflow, with the PR number.
+name: Dependabot fixups
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Number of the Dependabot PR to fix'
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  PR: ${{ github.event.pull_request.number || inputs.pr }}
+
+permissions: {}
+
+concurrency:
+  group: dependabot-fixups-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    # Dependabot's own pushes only. A human pushing to a dependabot branch
+    # (actor is the human) is left alone; they can dispatch this by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.actor == 'dependabot[bot]' &&
+       github.event.pull_request.user.login == 'dependabot[bot]' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+      sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - name: Resolve the PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # Generated files (Paraglide output, convex/_generated) are prettier-ignored.
+      - run: bun run format
+
+      - name: Collect the patch
+        id: diff
+        run: |
+          git diff --binary > "$RUNNER_TEMP/fixups.patch"
+          image=$(sed -nE 's/^FROM oven\/bun:([0-9]+\.[0-9]+\.[0-9]+)@.*/\1/p' docker/web.Dockerfile | head -n1)
+          declared=$(node -p 'require("./package.json").packageManager')
+          if [ -s "$RUNNER_TEMP/fixups.patch" ] || [ "$declared" != "bun@$image" ]; then
+            git diff --stat
+            echo "packageManager $declared, docker/web.Dockerfile Bun $image"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing to fix."
+          fi
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependabot-fixups
+          path: ${{ runner.temp }}/fixups.patch
+          retention-days: 3
+
+  apply:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the fixup commit to the dependabot/* branch
+      actions: write # download the patch, dispatch CI on the fixup commit
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREPARED_SHA: ${{ needs.prepare.outputs.sha }}
+    # No `uses:` in this job: see SECURITY above (deployPins.test.ts checks).
+    steps:
+      - name: Resolve the PR
+        run: |
+          read -r author branch sha repo < <(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json author,headRefName,headRefOid,headRepository,headRepositoryOwner \
+            --jq '"\(.author.login) \(.headRefName) \(.headRefOid) \(.headRepositoryOwner.login)/\(.headRepository.name)"')
+          # gh reports the Dependabot app as `app/dependabot`.
+          case "$author" in app/dependabot|dependabot\[bot\]) ;; *)
+            echo "::error::PR #$PR is by $author, not Dependabot"; exit 1 ;;
+          esac
+          case "$branch" in dependabot/*) ;; *)
+            echo "::error::PR #$PR's branch $branch is not a dependabot/* branch"; exit 1 ;;
+          esac
+          if [ "$repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::PR #$PR comes from $repo"; exit 1
+          fi
+          # A newer push to the branch gets its own run; don't race it.
+          if [ "$sha" != "$PREPARED_SHA" ]; then
+            echo "::notice::$branch moved past $PREPARED_SHA; the newer push is fixed by its own run."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          fi
+          { echo "BRANCH=$branch"; echo "SHA=$sha"; } >> "$GITHUB_ENV"
+
+      - name: Check out the branch
+        if: env.SKIP != 'true'
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git init -q work
+          cd work
+          git config http.https://github.com/.extraheader "AUTHORIZATION: basic $auth"
+          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          git fetch -q --depth=1 origin "refs/heads/$BRANCH"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SHA"
+
+      - name: Take the formatter's patch if it only moves whitespace
+        if: env.SKIP != 'true'
+        working-directory: work
+        run: |
+          if ! gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name dependabot-fixups --dir "$RUNNER_TEMP/fixups"; then
+            echo "::warning::could not download the formatter's patch; formatting not applied"
+            exit 0
+          fi
+          patch="$RUNNER_TEMP/fixups/fixups.patch"
+          [ -s "$patch" ] || { echo "No formatting changes."; exit 0; }
+          refuse() {
+            echo "::warning::the formatter's patch $1, so it was NOT applied; run the format script on this PR by hand and review the diff."
+            exit 0
+          }
+          if git apply --summary "$patch" | grep -qE '^ (create|delete) mode|^ rename |^ copy |^ mode change'; then
+            refuse "adds, deletes, renames or re-modes files"
+          fi
+          if git apply --numstat "$patch" | grep -qE '^-'; then refuse "changes a binary file"; fi
+          files=$(git apply --numstat "$patch" | cut -f3)
+          if grep -vqE '\.(svelte|ts|tsx|js|mjs|cjs|css|json|md|html)$' <<< "$files" ||
+             grep -qE '^\.github/' <<< "$files"; then
+            refuse "touches a file type outside source and docs (or .github/)"
+          fi
+          git apply "$patch"
+          while IFS= read -r f; do
+            if [ "$(git show "HEAD:$f" | tr -d '[:space:]' | sha256sum)" != \
+                 "$(tr -d '[:space:]' < "$f" | sha256sum)" ]; then
+              git checkout -q -- .
+              refuse "changes more than whitespace in $f"
+            fi
+          done <<< "$files"
+          git diff --stat | tail -n1
+
+      - name: Set packageManager to the Bun in docker/web.Dockerfile
+        if: env.SKIP != 'true'
+        working-directory: work
+        run: |
+          image=$(sed -nE 's/^FROM oven\/bun:([0-9]+\.[0-9]+\.[0-9]+)@.*/\1/p' docker/web.Dockerfile | head -n1)
+          if [ -z "$image" ]; then
+            echo "::error::no 'FROM oven/bun:<x.y.z>@sha256:…' in docker/web.Dockerfile"; exit 1
+          fi
+          sed -i -E "s/(\"packageManager\": \"bun@)[0-9]+\.[0-9]+\.[0-9]+\"/\1$image\"/" package.json
+          grep -q "\"packageManager\": \"bun@$image\"" package.json
+
+      - name: Commit and push
+        if: env.SKIP != 'true'
+        working-directory: work
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then echo "Nothing to commit."; exit 0; fi
+          if git diff --quiet -- package.json; then
+            msg="chore(deps): reformat with the bumped formatter"
+          elif [ "$(git diff --name-only | wc -l)" -eq 1 ]; then
+            msg="chore(deps): set packageManager to the oven/bun image"
+          else
+            msg="chore(deps): set packageManager to the oven/bun image and reformat"
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -a -m "$msg" -m "Made by .github/workflows/dependabot-fixups.yml."
+          git push -q origin "HEAD:refs/heads/$BRANCH"
+          echo "PUSHED=true" >> "$GITHUB_ENV"
+
+      - name: Run CI on the fixup commit
+        if: env.PUSHED == 'true'
+        working-directory: work
+        run: |
+          own=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          # Every workflow that ran on Dependabot's commit...
+          ids=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA&event=pull_request&per_page=100" \
+            --jq '.workflow_runs[].workflow_id')
+          # ...plus path-filtered PR workflows whose paths the fixup touches. In
+          # [[ == ]] `*` also matches `/`, so `**` globs match (a little broadly).
+          changed=$(git diff --name-only HEAD~1 HEAD)
+          for wf in .github/workflows/*.yml; do
+            hit=
+            while IFS= read -r pattern; do
+              [ -n "$pattern" ] || continue
+              while IFS= read -r f; do
+                # shellcheck disable=SC2053 # the pattern is meant to glob
+                if [[ $f == $pattern ]]; then hit=1; break 2; fi
+              done <<< "$changed"
+            done < <(yq '.on.pull_request.paths // [] | .[]' "$wf")
+            if [ -n "$hit" ]; then
+              ids+=$'\n'$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/${wf##*/}" --jq .id)
+            fi
+          done
+          sort -u <<< "$ids" | grep -vx "$own" | while read -r id; do
+            [ -n "$id" ] || continue
+            echo "dispatch workflow $id on $BRANCH"
+            gh workflow run "$id" --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" ||
+              echo "::warning::workflow $id has no workflow_dispatch trigger; it did not run on the fixup commit"
+          done
