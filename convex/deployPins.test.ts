@@ -328,11 +328,13 @@ describe('cross-file image pins', () => {
       apply,
       'the apply job (write token) must run git and gh only, never the bumped dependencies',
     ).not.toMatch(/setup-bun|\bbun (install|run|x)\b|\bbunx\b|\bnpm\b|\bnpx\b|node_modules/);
-    expect(apply, 'the apply job must refuse a patch that touches .github/').toContain(
-      '^\\.github/',
-    );
+    // Dependabot moves action pins, and an action reaches github.token unasked.
+    expect(apply, 'the apply job must have no `uses:` step').not.toMatch(/^\s*-?\s*uses:/m);
+    // The formatter's output is untrusted: only whitespace-only changes go in.
+    expect(apply).toContain("tr -d '[:space:]'");
+    expect(apply).toContain('^\\.github/');
     // It reads the Bun version off the same Dockerfile line the pin test above checks.
-    expect(prepare).toContain('docker/web.Dockerfile');
+    expect(apply).toContain('docker/web.Dockerfile');
     expect(webDockerfile).toMatch(/^FROM oven\/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}/m);
     // A GITHUB_TOKEN push starts no run; the fixups re-run CI by dispatching it.
     expect(ciWorkflow).toMatch(/^\s*workflow_dispatch:/m);
