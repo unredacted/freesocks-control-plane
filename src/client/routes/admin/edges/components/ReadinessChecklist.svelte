@@ -61,9 +61,9 @@
       {@const open = step.status === 'ready' || step.status === 'blocked'}
       <li class="px-3 py-2.5">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span class="text-muted-foreground w-5 text-xs tabular-nums" aria-hidden="true"
-            >{i + 1}</span
-          >
+          <span class="text-muted-foreground w-5 text-xs tabular-nums" aria-hidden="true">
+            {i + 1}
+          </span>
           <span class="min-w-0 flex-1 basis-40">
             <span class="text-sm font-medium">{SETUP_STEP_TITLES[step.id]}</span>
             {#if !compact}
@@ -111,8 +111,8 @@
               <span class="font-mono text-xs">{r.relaySlug}</span>
               {#if r.currentStep}
                 <span class="text-muted-foreground">
-                  stopped at {SETUP_STEP_TITLES[r.currentStep]}</span
-                >
+                  stopped at {SETUP_STEP_TITLES[r.currentStep]}
+                </span>
               {/if}
             </span>
             <Link

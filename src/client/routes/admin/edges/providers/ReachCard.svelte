@@ -87,8 +87,10 @@
         Its fronts write their hostnames into a DNS account's zone, and there is no DNS account yet.
         <Link
           href={edgesPaths.providers({ add: '1', provider: firstDnsProvider })}
-          class="text-primary underline underline-offset-4">Add a DNS account</Link
-        >.
+          class="text-primary underline underline-offset-4"
+        >
+          Add a DNS account
+        </Link>.
       </p>
     {/if}
     {#if catalog.isPending}

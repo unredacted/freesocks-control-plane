@@ -142,9 +142,9 @@
             </div>
             <div class="text-muted-foreground">
               Member mirrors:
-              <strong class="text-foreground tabular-nums"
-                >{p.mirrors}{p.mirrorsCapped ? '+' : ''}</strong
-              >
+              <strong class="text-foreground tabular-nums">
+                {p.mirrors}{p.mirrorsCapped ? '+' : ''}
+              </strong>
             </div>
             <div class="text-muted-foreground">
               Regions:
@@ -157,8 +157,10 @@
                 size="sm"
                 variant="outline"
                 disabled={p.removing}
-                onclick={() => (editing = p)}>Edit</Button
+                onclick={() => (editing = p)}
               >
+                Edit
+              </Button>
               <Button
                 size="sm"
                 variant="destructive"

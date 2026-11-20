@@ -168,9 +168,9 @@
           class="flex items-center gap-2.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
         >
           <CheckCircle class="size-4 shrink-0" />
-          <span
-            >No mirror has been out of sync for longer than {hours(summary.attentionAfterMs)}.</span
-          >
+          <span>
+            No mirror has been out of sync for longer than {hours(summary.attentionAfterMs)}.
+          </span>
         </div>
       {/if}
       {#if summary.pass.running}
@@ -208,9 +208,9 @@
                   <span class="text-xs px-2 py-0.5 rounded font-medium {st.tone}">{st.label}</span>
                   <span class="font-medium">{r.provider}</span>
                   {#if r.stub}
-                    <span class="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground"
-                      >unavailable stub</span
-                    >
+                    <span class="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                      unavailable stub
+                    </span>
                   {/if}
                 </div>
                 <Button

@@ -344,8 +344,9 @@
                     <td class="py-1.5 pe-4 font-medium">{e.reason}</td>
                     <td class="py-1.5 pe-4">{e.locationCode ?? '·'}</td>
                     <td class="py-1.5 pe-4">{e.connectionModeId ?? '·'}</td>
-                    <td class="py-1.5 pe-4 tabular-nums">{geoCell(e.country, e.detectedCountry)}</td
-                    >
+                    <td class="py-1.5 pe-4 tabular-nums">
+                      {geoCell(e.country, e.detectedCountry)}
+                    </td>
                     <td class="py-1.5 pe-4">{geoCell(e.city, e.detectedCity)}</td>
                     <td class="py-1.5 pe-4 tabular-nums">
                       {geoCell(
@@ -488,9 +489,9 @@
         </div>
         <div class="flex justify-end">
           {#if !seeded}
-            <span class="me-3 self-center text-xs text-muted-foreground"
-              >Loading current values…</span
-            >
+            <span class="me-3 self-center text-xs text-muted-foreground">
+              Loading current values…
+            </span>
           {/if}
           <Button onclick={() => save.mutate()} disabled={save.isPending || !seeded}>
             {save.isPending ? 'Saving…' : 'Save telemetry settings'}

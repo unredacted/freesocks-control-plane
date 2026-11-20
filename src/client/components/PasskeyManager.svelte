@@ -107,9 +107,9 @@
 
     {#if showList}
       {#if requiresMemberSignIn(passkeys.error)}
-        <a href="/login?reauth=security" class="link-brand text-foreground"
-          >{t('login.credentialManagement')}</a
-        >
+        <a href="/login?reauth=security" class="link-brand text-foreground">
+          {t('login.credentialManagement')}
+        </a>
       {:else if passkeys.data && passkeys.data.passkeys.length > 0}
         <ul class="divide-y divide-border/60 rounded-md border border-border">
           {#each passkeys.data.passkeys as pk (pk.id)}

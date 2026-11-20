@@ -38,8 +38,10 @@
   onclick={() => {
     result = '';
     open = true;
-  }}>Open report</button
+  }}
 >
+  Open report
+</button>
 <p role="status">{result}</p>
 <ReportIssueModal
   bind:open

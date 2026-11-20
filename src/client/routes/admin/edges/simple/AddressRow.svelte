@@ -123,20 +123,24 @@
       </p>
       <!-- Spaces as {' '} expressions: Svelte drops the whitespace at the edges of a tag. -->
       <p class="text-muted-foreground text-xs">
-        <span class="text-foreground">{r ? r.word : addressStateWord(e, lanes)}</span
-        >{#if tested}{', '}<span class={tested.needsTest ? TONE_TEXT.warning : ''}
-            >{tested.word}</span
-          >{/if}{#if transport}{' · '}{transport}{/if}{#if r}{'. '}{r.line}{/if}
+        <span class="text-foreground">
+          {r ? r.word : addressStateWord(e, lanes)}
+        </span>{#if tested}{', '}<span class={tested.needsTest ? TONE_TEXT.warning : ''}>
+            {tested.word}
+          </span>{/if}{#if transport}{' · '}{transport}{/if}{#if r}{'. '}{r.line}{/if}
       </p>
       {#if groups.length > 0}
         <p class="text-xs">
           {#each groups as g, i (g.label)}{#if i > 0}<span
                 class="text-muted-foreground"
-                aria-hidden="true">{' · '}</span
-              >{/if}<span class={TONE_TEXT[g.tone]}>{g.label}:</span
-            >{#each g.countries as c (c.code)}{' '}<abbr class="no-underline" title={c.title}
-                >{c.code}</abbr
-              >{/each}{/each}
+                aria-hidden="true"
+              >
+                {' · '}
+              </span>{/if}<span class={TONE_TEXT[g.tone]}>
+              {g.label}:
+            </span>{#each g.countries as c (c.code)}{' '}<abbr class="no-underline" title={c.title}>
+                {c.code}
+              </abbr>{/each}{/each}
         </p>
       {/if}
     </div>

@@ -309,8 +309,10 @@
             <a
               class="link-brand text-foreground"
               href="/#support"
-              onclick={(e) => void goToSection(e, 'support')}>{t('home.support.heroLink')}</a
+              onclick={(e) => void goToSection(e, 'support')}
             >
+              {t('home.support.heroLink')}
+            </a>
           </span>
         </p>
       {/if}
@@ -440,9 +442,9 @@
             </p>
             {#if memberPrice}
               <p class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <bdi class="font-display text-[44px] font-extrabold leading-none text-foreground"
-                  >{memberPrice}</bdi
-                >
+                <bdi class="font-display text-[44px] font-extrabold leading-none text-foreground">
+                  {memberPrice}
+                </bdi>
                 <span class="text-muted-foreground">{t('home.support.perMonth')}</span>
               </p>
             {/if}
@@ -493,8 +495,10 @@
         <a
           class="link-brand text-foreground"
           href="/#{THREAT_MODEL_ID}"
-          onclick={(e) => void goToSection(e, THREAT_MODEL_ID)}>{t('faq.tabThreat')}</a
+          onclick={(e) => void goToSection(e, THREAT_MODEL_ID)}
         >
+          {t('faq.tabThreat')}
+        </a>
       </p>
     </div>
     <ul>
@@ -538,9 +542,9 @@
       {#if site?.supportEmail}
         <p class="mt-4 max-w-[22em] text-body">
           {t('faq.contactPrefix')}
-          <a class="link-brand text-foreground" href="mailto:{site.supportEmail}"
-            >{site.supportEmail}</a
-          >
+          <a class="link-brand text-foreground" href="mailto:{site.supportEmail}">
+            {site.supportEmail}
+          </a>
           {t('faq.contactSuffix')}
         </p>
       {/if}

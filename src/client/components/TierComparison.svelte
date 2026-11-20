@@ -128,9 +128,9 @@
                 {:else}
                   <Gauge class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
                 {/if}
-                <span class="tabular-nums {spotlight ? 'font-bold' : ''}"
-                  >{bandwidthLabel(tier.monthlyTrafficGb)}</span
-                >
+                <span class="tabular-nums {spotlight ? 'font-bold' : ''}">
+                  {bandwidthLabel(tier.monthlyTrafficGb)}
+                </span>
               </li>
               {#if showDevices}
                 <li class="flex items-start gap-2.5">

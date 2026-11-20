@@ -49,8 +49,10 @@
       onclick={(e) => {
         closeMenu();
         void goToSection(e, item.section);
-      }}>{t(item.label)}</a
+      }}
     >
+      {t(item.label)}
+    </a>
   {:else}
     <Link href={item.href} class={cls} onclick={closeMenu}>{t(item.label)}</Link>
   {/if}
@@ -81,8 +83,10 @@
         class="link-brand text-foreground"
         href="https://unredacted.org"
         target="_blank"
-        rel="noopener noreferrer">Unredacted</a
+        rel="noopener noreferrer"
       >
+        Unredacted
+      </a>
     </p>
     <div class="flex items-center gap-2">
       <HpkeBadge />
@@ -151,8 +155,10 @@
           <Link
             href="/login"
             class="flex min-h-11 items-center hover:text-primary"
-            onclick={closeMenu}>{t('nav.signIn')}</Link
+            onclick={closeMenu}
           >
+            {t('nav.signIn')}
+          </Link>
         {/if}
         <div class="pt-2 pb-2 sm:hidden">{@render primaryAction('w-full')}</div>
       </div>

@@ -242,9 +242,9 @@
 
     <div class="space-y-4">
       <div>
-        <label class="text-xs text-muted-foreground mb-1 block" for="srv-backend"
-          >Backend type</label
-        >
+        <label class="text-xs text-muted-foreground mb-1 block" for="srv-backend">
+          Backend type
+        </label>
         {#if isEdit}
           <div id="srv-backend" class="text-sm font-medium py-1">
             {ADMIN_BACKEND_LABELS[backend]}
@@ -256,9 +256,9 @@
             value={backend}
             onValueChange={(v) => (backend = v as BackendId)}
           >
-            <Select.Trigger id="srv-backend" class="w-56"
-              >{ADMIN_BACKEND_LABELS[backend]}</Select.Trigger
-            >
+            <Select.Trigger id="srv-backend" class="w-56">
+              {ADMIN_BACKEND_LABELS[backend]}
+            </Select.Trigger>
             <Select.Content>
               {#each BACKEND_IDS as id (id)}
                 <Select.Item value={id}>{ADMIN_BACKEND_LABELS[id]}</Select.Item>
@@ -282,9 +282,9 @@
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location"
-            >Location code</label
-          >
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location">
+            Location code
+          </label>
           <Input id="srv-location" bind:value={location} placeholder="MCI" autocomplete="off" />
           <p class="mt-1 text-[11px] text-muted-foreground">
             Short code (e.g. an airport code). Members can pick their config's location by it. Blank
@@ -292,9 +292,9 @@
           </p>
         </div>
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-label"
-            >Location label</label
-          >
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-label">
+            Location label
+          </label>
           <Input id="srv-location-label" bind:value={locationLabel} placeholder="Kansas City, MO" />
           <p class="mt-1 text-[11px] text-muted-foreground">
             What members see. Falls back to the code when blank.
@@ -308,9 +308,9 @@
           </p>
         </div>
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-lat"
-            >Map latitude</label
-          >
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-lat">
+            Map latitude
+          </label>
           <Input
             id="srv-location-lat"
             bind:value={locationLatText}
@@ -323,9 +323,9 @@
           </p>
         </div>
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-lng"
-            >Map longitude</label
-          >
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-lng">
+            Map longitude
+          </label>
           <Input
             id="srv-location-lng"
             bind:value={locationLngText}
@@ -339,9 +339,9 @@
 
       {#if backend === 'remnawave'}
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-baseurl"
-            >Backend base URL</label
-          >
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-baseurl">
+            Backend base URL
+          </label>
           <Input
             id="srv-baseurl"
             bind:value={baseUrl}
@@ -391,9 +391,9 @@
           </label>
           {#if websocketEnabled}
             <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="srv-wsdomain"
-                >WSS domain</label
-              >
+              <label class="text-xs text-muted-foreground mb-1 block" for="srv-wsdomain">
+                WSS domain
+              </label>
               <Input id="srv-wsdomain" bind:value={websocketDomain} placeholder="ws.example.org" />
             </div>
           {/if}
@@ -428,8 +428,9 @@
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-priority">Priority</label
-          >
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-priority">
+            Priority
+          </label>
           <Input
             id="srv-priority"
             type="number"
@@ -440,9 +441,9 @@
           />
         </div>
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-max-keys"
-            >Max keys (capacity cap)</label
-          >
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-max-keys">
+            Max keys (capacity cap)
+          </label>
           <Input
             id="srv-max-keys"
             type="number"
@@ -464,9 +465,9 @@
     </div>
 
     <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}
-        >Cancel</Button
-      >
+      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}>
+        Cancel
+      </Button>
       <Button onclick={() => save.mutate()} disabled={save.isPending || !name || !slug}>
         {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Register instance'}
       </Button>

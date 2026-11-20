@@ -65,8 +65,9 @@
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-lg`}>
     <Dialog.Header>
       <Dialog.Title>Send to the node</Dialog.Title>
-      <Dialog.Description>{transport.tag} on the profile {transport.profileName}</Dialog.Description
-      >
+      <Dialog.Description>
+        {transport.tag} on the profile {transport.profileName}
+      </Dialog.Description>
     </Dialog.Header>
     <div class="space-y-3 text-sm" aria-live="polite">
       {#if planError}

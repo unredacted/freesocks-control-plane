@@ -114,9 +114,9 @@
         <p class="text-amber-700 dark:text-amber-300">
           SNI checks from inside are on for {name}, but none runs now: SNI checks are off, or no
           source can check from here.
-          <Link href={edgesPaths.findNames()} class="underline underline-offset-2"
-            >SNIs, Find more</Link
-          >
+          <Link href={edgesPaths.findNames()} class="underline underline-offset-2">
+            SNIs, Find more
+          </Link>
         </p>
       {/if}
       {#if row.checkEdges && !v.switches.probes}

@@ -82,8 +82,9 @@
         </p>
       {:else}
         <Select.Root type="single" value={country} onValueChange={(v) => (country = v)}>
-          <Select.Trigger id="simulate-country" class="w-full">{country || 'Choose'}</Select.Trigger
-          >
+          <Select.Trigger id="simulate-country" class="w-full">
+            {country || 'Choose'}
+          </Select.Trigger>
           <Select.Content>
             {#each countries as c (c)}
               <Select.Item value={c}>{c}</Select.Item>

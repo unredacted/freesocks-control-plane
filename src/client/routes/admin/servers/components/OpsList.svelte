@@ -111,11 +111,11 @@
             <span class="block font-medium break-all">{opGroupTitle(g)}</span>
             <span class="text-muted-foreground block">{w.sentence}</span>
           </span>
-          <span class="text-muted-foreground"
-            >{ago(Date.now() - Date.parse(op.createdAt))}{g.count > 1
+          <span class="text-muted-foreground">
+            {ago(Date.now() - Date.parse(op.createdAt))}{g.count > 1
               ? `, first ${ago(Date.now() - Date.parse(g.last.createdAt))}`
-              : ''}</span
-          >
+              : ''}
+          </span>
           {#if op.open}
             <span class="flex gap-2">
               <Button

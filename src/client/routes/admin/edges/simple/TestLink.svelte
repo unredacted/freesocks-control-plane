@@ -49,9 +49,9 @@
         Show the full link
       </Collapsible.Trigger>
       <Collapsible.Content>
-        <code class="bg-muted mt-1 block rounded px-2 py-1 text-xs break-all select-all"
-          >{link}</code
-        >
+        <code class="bg-muted mt-1 block rounded px-2 py-1 text-xs break-all select-all">
+          {link}
+        </code>
       </Collapsible.Content>
     </Collapsible.Root>
   </div>

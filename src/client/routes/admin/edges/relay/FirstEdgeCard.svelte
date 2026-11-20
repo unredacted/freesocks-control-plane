@@ -55,9 +55,9 @@
     {#if tested.length === 0}
       <p class="text-muted-foreground text-sm">
         No provider account has passed a credential test yet:
-        <Link href={edgesPaths.providers()} class="text-primary underline underline-offset-4"
-          >add or test one</Link
-        >.
+        <Link href={edgesPaths.providers()} class="text-primary underline underline-offset-4">
+          add or test one
+        </Link>.
       </p>
     {/if}
     <div class="flex flex-wrap gap-2">

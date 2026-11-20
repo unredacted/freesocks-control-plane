@@ -206,9 +206,9 @@
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Close</Button>
-        <Button type="submit" disabled={busy || !mode || (websocket && !originHostname.trim())}
-          >Adopt</Button
-        >
+        <Button type="submit" disabled={busy || !mode || (websocket && !originHostname.trim())}>
+          Adopt
+        </Button>
       </Dialog.Footer>
     </form>
   </Dialog.Content>

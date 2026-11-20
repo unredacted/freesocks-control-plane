@@ -451,9 +451,9 @@
       </div>
 
       <label class="block">
-        <span class="mb-1 block text-xs font-medium text-muted-foreground"
-          >Crypto minimum term (months)</span
-        >
+        <span class="mb-1 block text-xs font-medium text-muted-foreground">
+          Crypto minimum term (months)
+        </span>
         <Input
           type="number"
           min={1}
@@ -474,9 +474,9 @@
       </label>
 
       <label class="block">
-        <span class="mb-1 block text-xs font-medium text-muted-foreground"
-          >Bitcoin (BTCPay) minimum term (months)</span
-        >
+        <span class="mb-1 block text-xs font-medium text-muted-foreground">
+          Bitcoin (BTCPay) minimum term (months)
+        </span>
         <Input
           type="number"
           min={1}
@@ -496,9 +496,9 @@
       </label>
 
       <label class="block">
-        <span class="mb-1 block text-xs font-medium text-muted-foreground"
-          >Underpayment tolerance (%)</span
-        >
+        <span class="mb-1 block text-xs font-medium text-muted-foreground">
+          Underpayment tolerance (%)
+        </span>
         <Input
           type="number"
           min={0}
@@ -527,9 +527,9 @@
            acquire crypto mid-checkout, which is the common case in censored regions. -->
       <div class="grid gap-4 sm:grid-cols-2">
         <label class="block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >BTCPay invoice expiry (minutes)</span
-          >
+          <span class="mb-1 block text-xs font-medium text-muted-foreground">
+            BTCPay invoice expiry (minutes)
+          </span>
           <Input
             type="number"
             min={1}
@@ -549,9 +549,9 @@
         </label>
 
         <label class="block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >Late-payment monitoring (minutes)</span
-          >
+          <span class="mb-1 block text-xs font-medium text-muted-foreground">
+            Late-payment monitoring (minutes)
+          </span>
           <Input
             type="number"
             min={1}
@@ -571,9 +571,9 @@
         </label>
 
         <label class="block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >Default payment method</span
-          >
+          <span class="mb-1 block text-xs font-medium text-muted-foreground">
+            Default payment method
+          </span>
           <Input
             class="min-h-9"
             placeholder="e.g. BTC-LN"
@@ -632,9 +632,9 @@
         <Button variant="outline" size="sm" class="mt-2" onclick={addAmount}>Add amount</Button>
 
         <label class="mt-4 block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >Minimum donation ({draft.currency})</span
-          >
+          <span class="mb-1 block text-xs font-medium text-muted-foreground">
+            Minimum donation ({draft.currency})
+          </span>
           <Input
             type="number"
             min={0}
@@ -651,9 +651,9 @@
         </label>
 
         <label class="mt-4 block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >Bandwidth per {draft.currency} donated (GB)</span
-          >
+          <span class="mb-1 block text-xs font-medium text-muted-foreground">
+            Bandwidth per {draft.currency} donated (GB)
+          </span>
           <Input
             type="number"
             min={0}
@@ -674,9 +674,9 @@
         </label>
 
         <label class="mt-4 block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >Monthly bonus cap (GB)</span
-          >
+          <span class="mb-1 block text-xs font-medium text-muted-foreground">
+            Monthly bonus cap (GB)
+          </span>
           <Input
             type="number"
             min={0}
@@ -697,9 +697,9 @@
         </label>
 
         <label class="mt-4 block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >Donation funding window (days)</span
-          >
+          <span class="mb-1 block text-xs font-medium text-muted-foreground">
+            Donation funding window (days)
+          </span>
           <Input
             type="number"
             min={1}
@@ -1081,9 +1081,9 @@
             <span class="capitalize">{o.processor}</span>
             <span class="tabular-nums">{formatMoney(o.amountCents, o.currency)}</span>
             {#if o.kind === 'gift'}
-              <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                >gift x{o.quantity}</span
-              >
+              <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                gift x{o.quantity}
+              </span>
             {/if}
             {#if o.paidRatio != null}
               <span

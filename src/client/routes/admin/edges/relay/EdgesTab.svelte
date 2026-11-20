@@ -181,9 +181,9 @@
               <Table.Cell>
                 <span class="block">{accountName(e)}</span>
                 {#if e.provider}
-                  <span class="block text-xs text-muted-foreground"
-                    >{providerLabel(e.provider)}</span
-                  >
+                  <span class="block text-xs text-muted-foreground">
+                    {providerLabel(e.provider)}
+                  </span>
                 {/if}
               </Table.Cell>
               <Table.Cell class="font-mono text-xs">{listenerKey(e)}</Table.Cell>
@@ -199,14 +199,15 @@
                     <Badge
                       variant="warning"
                       title="A test block is running on this address. The detector treats it as blocked."
-                      >Test block</Badge
                     >
+                      Test block
+                    </Badge>
                   {/if}
                 </div>
                 {#if e.failure?.code}
-                  <span class="mt-1 block text-xs text-destructive"
-                    >{codeLabel(e.failure.code)}</span
-                  >
+                  <span class="mt-1 block text-xs text-destructive">
+                    {codeLabel(e.failure.code)}
+                  </span>
                 {/if}
               </Table.Cell>
               <Table.Cell>{e.poolIndex !== null ? e.poolIndex + 1 : ''}</Table.Cell>
@@ -216,8 +217,10 @@
                 {:else}
                   <span
                     class="text-xs text-muted-foreground"
-                    title="Only L7 fronts are checked end to end.">Not needed</span
+                    title="Only L7 fronts are checked end to end."
                   >
+                    Not needed
+                  </span>
                 {/if}
               </Table.Cell>
               <Table.Cell class="text-right">

@@ -173,8 +173,10 @@
                             {#if n.nodeUuid}
                               <Link
                                 href={serversPaths.node(n.nodeUuid, { backend: m.serverSlug })}
-                                class="text-primary hover:underline">{n.node}</Link
+                                class="text-primary hover:underline"
                               >
+                                {n.node}
+                              </Link>
                             {:else}
                               {n.node}
                             {/if}

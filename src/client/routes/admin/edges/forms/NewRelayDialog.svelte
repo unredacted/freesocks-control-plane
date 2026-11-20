@@ -234,9 +234,9 @@
             <div class="flex items-center justify-between gap-2">
               <p class="text-sm font-medium">
                 {listeners[i]!.listenerKey || 'New listener'}
-                <span class="text-muted-foreground font-normal"
-                  >{formCombo(listeners[i]!).label}</span
-                >
+                <span class="text-muted-foreground font-normal">
+                  {formCombo(listeners[i]!).label}
+                </span>
               </p>
               <Button
                 type="button"

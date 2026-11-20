@@ -33,8 +33,10 @@
       Its mode groups show once its panel has been read.
       <Link
         href={edgesPaths.settings({ field: 'manage.observe' })}
-        class="underline underline-offset-2">Read panels every ten minutes</Link
+        class="underline underline-offset-2"
       >
+        Read panels every ten minutes
+      </Link>
       is in Settings, Maintenance.
     </p>
   {:else if tree.data}

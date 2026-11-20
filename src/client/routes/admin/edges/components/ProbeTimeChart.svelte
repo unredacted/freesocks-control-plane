@@ -91,13 +91,17 @@
           <Button
             size="sm"
             variant={mode === 'country' ? 'default' : 'outline'}
-            onclick={() => (mode = 'country')}>Failing by country</Button
+            onclick={() => (mode = 'country')}
           >
+            Failing by country
+          </Button>
           <Button
             size="sm"
             variant={mode === 'outcome' ? 'default' : 'outline'}
-            onclick={() => (mode = 'outcome')}>Ok vs failing</Button
+            onclick={() => (mode = 'outcome')}
           >
+            Ok vs failing
+          </Button>
         </div>
         <AdminRangePicker bind:range />
       </div>
@@ -157,9 +161,9 @@
             <ul class="space-y-1">
               {#each s.byCountry as c (c.country)}
                 <li class="flex items-baseline justify-between gap-2 text-sm">
-                  <span class="font-medium"
-                    >{c.country === 'XX' ? 'FCP (internal)' : c.country}</span
-                  >
+                  <span class="font-medium">
+                    {c.country === 'XX' ? 'FCP (internal)' : c.country}
+                  </span>
                   <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
                     {c.fail} failing / {c.ok} ok · {pct(c.fail, c.ok)}
                   </span>

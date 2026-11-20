@@ -510,9 +510,9 @@
                     {DOMAIN_WORDS[domainsChoice ?? domainsNow]}
                   </Select.Trigger>
                   <Select.Content>
-                    <Select.Item value="versionless"
-                      >{DOMAIN_WORDS.versionless} (recommended)</Select.Item
-                    >
+                    <Select.Item value="versionless">
+                      {DOMAIN_WORDS.versionless} (recommended)
+                    </Select.Item>
                     <Select.Item value="classic">{DOMAIN_WORDS.classic}</Select.Item>
                   </Select.Content>
                 </Select.Root>

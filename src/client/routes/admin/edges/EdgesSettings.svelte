@@ -676,8 +676,10 @@
                 setQuery('');
                 changedParam.value = '';
                 pickGroup(g);
-              }}>{groupLabel(g)}</button
+              }}
             >
+              {groupLabel(g)}
+            </button>
           {/each}.
         </div>
       {/if}

@@ -270,9 +270,9 @@
     <div class="mt-3 flex items-start gap-2">
       <Checkbox id={`force-${edge.id}`} bind:checked={force} class="mt-0.5" />
       <div>
-        <Label for={`force-${edge.id}`}
-          >{plain ? 'Start anyway' : 'Override and start anyway'}</Label
-        >
+        <Label for={`force-${edge.id}`}>
+          {plain ? 'Start anyway' : 'Override and start anyway'}
+        </Label>
         <p class="text-xs text-muted-foreground">
           The limits above protect budget and members. Overriding is recorded in the audit log.
           {#if blockers.some((b) => b.code === 'hosts_operator_managed') && plain}

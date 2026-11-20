@@ -368,8 +368,8 @@
             effectively unlimited and the device UI is hidden. When ON, each tier's device limit
             applies and the connect screen steers members to HWID-capable apps.
             <strong class="text-foreground">
-              Enforcement also requires HWID_DEVICE_LIMIT_ENABLED=true on the Remnawave backend</strong
-            >
+              Enforcement also requires HWID_DEVICE_LIMIT_ENABLED=true on the Remnawave backend
+            </strong>
             - FCP can't read or set that backend setting. Set the per-tier limit under Tiers.
           </CardDescription>
         </CardHeader>
@@ -414,9 +414,9 @@
             <span>When an admin disables a key that was online, restart its node at once</span>
           </label>
           <div>
-            <label class="text-xs text-muted-foreground mb-1 block" for="rev-interval"
-              >Restart a node at most once every (minutes)</label
-            >
+            <label class="text-xs text-muted-foreground mb-1 block" for="rev-interval">
+              Restart a node at most once every (minutes)
+            </label>
             <Input
               id="rev-interval"
               type="number"
@@ -435,9 +435,9 @@
             />
           </div>
           <div>
-            <label class="text-xs text-muted-foreground mb-1 block" for="rev-drain"
-              >Delete a Hysteria key this long after turning it off (minutes)</label
-            >
+            <label class="text-xs text-muted-foreground mb-1 block" for="rev-drain">
+              Delete a Hysteria key this long after turning it off (minutes)
+            </label>
             <Input
               id="rev-drain"
               type="number"
@@ -456,9 +456,9 @@
             />
           </div>
           <div>
-            <label class="text-xs text-muted-foreground mb-1 block" for="rev-days"
-              >Watch a turned-off key for (days)</label
-            >
+            <label class="text-xs text-muted-foreground mb-1 block" for="rev-days">
+              Watch a turned-off key for (days)
+            </label>
             <Input
               id="rev-days"
               type="number"
@@ -793,9 +793,9 @@
           </div>
           <div class="flex justify-end">
             {#if !vInit}
-              <span class="me-3 self-center text-xs text-muted-foreground"
-                >Loading current values…</span
-              >
+              <span class="me-3 self-center text-xs text-muted-foreground">
+                Loading current values…
+              </span>
             {/if}
             <Button
               onclick={() => saveVerification.mutate()}
@@ -1024,9 +1024,9 @@
           </div>
           <div class="flex justify-end">
             {#if !sInit}
-              <span class="me-3 self-center text-xs text-muted-foreground"
-                >Loading current values…</span
-              >
+              <span class="me-3 self-center text-xs text-muted-foreground">
+                Loading current values…
+              </span>
             {/if}
             <Button onclick={() => saveSite.mutate()} disabled={saveSite.isPending || !sInit}>
               {saveSite.isPending ? 'Saving…' : 'Save site settings'}
@@ -1181,9 +1181,9 @@
           {/if}
           <div class="flex justify-end">
             {#if !aInit}
-              <span class="me-3 self-center text-xs text-muted-foreground"
-                >Loading current values…</span
-              >
+              <span class="me-3 self-center text-xs text-muted-foreground">
+                Loading current values…
+              </span>
             {/if}
             <Button
               onclick={() => saveAnalytics.mutate()}
@@ -1204,9 +1204,9 @@
             The member transport catalog (families, modes, copy, defaults, per-backend
             applicability) moved to its own manager with full create/edit/delete:
             <Link href="/admin/connection-modes" class="underline">Connection modes</Link>.
-            Placement pools are under <Link href={serversPaths.pools()} class="underline"
-              >Servers, Mode pools</Link
-            >.
+            Placement pools are under <Link href={serversPaths.pools()} class="underline">
+              Servers, Mode pools
+            </Link>.
           </CardDescription>
         </CardHeader>
       </Card>

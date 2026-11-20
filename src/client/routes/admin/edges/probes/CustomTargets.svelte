@@ -186,9 +186,9 @@
           <Table.Cell class="font-mono text-xs">{t.display}</Table.Cell>
           <Table.Cell>{PROBE_CHECK_LABELS[t.probeProtocol] ?? t.probeProtocol}</Table.Cell>
           <Table.Cell>
-            <Badge variant={t.enabled ? 'success' : 'muted'}
-              >{t.enabled ? 'Every round' : 'On demand only'}</Badge
-            >
+            <Badge variant={t.enabled ? 'success' : 'muted'}>
+              {t.enabled ? 'Every round' : 'On demand only'}
+            </Badge>
           </Table.Cell>
           <Table.Cell class="text-right whitespace-nowrap">
             <Button
@@ -196,14 +196,18 @@
               variant="outline"
               class="h-7 px-2 text-xs"
               disabled={probeNow.isPending}
-              onclick={() => probeNow.mutate(t.key)}>Probe now</Button
+              onclick={() => probeNow.mutate(t.key)}
             >
+              Probe now
+            </Button>
             <Button
               size="sm"
               variant="ghost"
               class="h-7 px-2 text-xs"
-              onclick={() => (editor = editDraft(t))}>Edit</Button
+              onclick={() => (editor = editDraft(t))}
             >
+              Edit
+            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -211,8 +215,10 @@
               onclick={() => {
                 removing = t;
                 removeOpen = true;
-              }}>Remove</Button
+              }}
             >
+              Remove
+            </Button>
           </Table.Cell>
         </Table.Row>
       {/each}
@@ -276,9 +282,9 @@
             value={editor.probeProtocol}
             onValueChange={(v) => (editor!.probeProtocol = v as ProbeProtocol)}
           >
-            <Select.Trigger id="pt-check" class="w-full"
-              >{PROBE_CHECK_LABELS[editor.probeProtocol]}</Select.Trigger
-            >
+            <Select.Trigger id="pt-check" class="w-full">
+              {PROBE_CHECK_LABELS[editor.probeProtocol]}
+            </Select.Trigger>
             <Select.Content>
               {#each CHECKS as c (c.id)}
                 <Select.Item value={c.id}>{PROBE_CHECK_LABELS[c.id]}</Select.Item>
@@ -297,9 +303,9 @@
             onValueChange={(v) =>
               (editor!.referenceFor = v === NONE ? null : (v as EdgeProviderId))}
           >
-            <Select.Trigger id="pt-reference" class="w-full"
-              >{referenceLabel(editor.referenceFor)}</Select.Trigger
-            >
+            <Select.Trigger id="pt-reference" class="w-full">
+              {referenceLabel(editor.referenceFor)}
+            </Select.Trigger>
             <Select.Content>
               <Select.Item value={NONE}>{referenceLabel(null)}</Select.Item>
               {#each CDN_PROVIDERS as id (id)}

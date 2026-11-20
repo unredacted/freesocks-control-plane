@@ -80,9 +80,9 @@
           class="font-display text-[30px] font-bold leading-tight tracking-[-0.02em] text-foreground tabular-nums rtl:tracking-normal"
         >
           <bdi>{formatBytes(trafficUsedBytes)}</bdi>
-          <span class="font-sans text-[17px] font-normal tracking-normal text-muted-foreground"
-            >/ <bdi>{formatBytes(trafficLimitBytes)}</bdi></span
-          >
+          <span class="font-sans text-[17px] font-normal tracking-normal text-muted-foreground">
+            / <bdi>{formatBytes(trafficLimitBytes)}</bdi>
+          </span>
         </p>
         <div class="h-2.5 overflow-hidden border border-border/70 bg-well" aria-hidden="true">
           <div

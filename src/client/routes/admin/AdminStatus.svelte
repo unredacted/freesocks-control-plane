@@ -392,9 +392,11 @@
           community signal). Shown on /status as country × mode, for the countries on the
           censored-country list (<Link
             href={edgesPaths.countries()}
-            class="underline underline-offset-2">Servers, Countries</Link
-          >); a country with no cell and no label is left off the page. In a listed country, the
-          connection mode suggested to a member follows this matrix.
+            class="underline underline-offset-2"
+          >
+            Servers, Countries
+          </Link>); a country with no cell and no label is left off the page. In a listed country,
+          the connection mode suggested to a member follows this matrix.
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-4">

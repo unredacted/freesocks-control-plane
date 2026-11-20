@@ -158,9 +158,9 @@
 
     <div class="flex items-center justify-end gap-3">
       {#if changed > 0}
-        <span class="text-xs text-muted-foreground"
-          >{changed} change{changed === 1 ? '' : 's'} not saved</span
-        >
+        <span class="text-xs text-muted-foreground">
+          {changed} change{changed === 1 ? '' : 's'} not saved
+        </span>
       {/if}
       <Button
         disabled={changed === 0 || badMax || badBudget || badPriority || save.isPending}

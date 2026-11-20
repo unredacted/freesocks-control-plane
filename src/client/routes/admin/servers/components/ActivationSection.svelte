@@ -196,9 +196,9 @@
       {intent.mode.name} is turned off, so no member gets this node{intent.stage === 'live'
         ? ''
         : ' once it is live'}.
-      <Link href="/admin/connection-modes" class="text-primary underline underline-offset-4"
-        >Turn it on in Connection modes</Link
-      >
+      <Link href="/admin/connection-modes" class="text-primary underline underline-offset-4">
+        Turn it on in Connection modes
+      </Link>
     </p>
   {/if}
   {#if steps.length > 0}
@@ -224,10 +224,12 @@
                 ? 'text-muted-foreground'
                 : st.state === 'current'
                   ? 'font-medium'
-                  : ''}>{st.label}</span
-            ><span class="sr-only"
-              >{st.state === 'done' ? ', done' : st.state === 'current' ? ', now' : ', next'}</span
+                  : ''}
             >
+              {st.label}
+            </span><span class="sr-only">
+              {st.state === 'done' ? ', done' : st.state === 'current' ? ', now' : ', next'}
+            </span>
             {#if st.why}
               <span class="text-muted-foreground block">{st.why}</span>
             {/if}
@@ -279,9 +281,9 @@
           <Button class="h-11 sm:h-9" disabled={busy} onclick={works}>Works</Button>
         {/if}
       {:else}
-        <Button size="sm" variant="outline" disabled={busy} onclick={buildLink}
-          >Build a test link</Button
-        >
+        <Button size="sm" variant="outline" disabled={busy} onclick={buildLink}>
+          Build a test link
+        </Button>
       {/if}
     </div>
   {/if}
@@ -364,13 +366,13 @@
       </Button>
     {/if}
     {#if needsDecision}
-      <Button size="sm" variant="destructive" disabled={busy} onclick={() => (retireOpen = true)}
-        >Decide the retirement</Button
-      >
+      <Button size="sm" variant="destructive" disabled={busy} onclick={() => (retireOpen = true)}>
+        Decide the retirement
+      </Button>
       {#if intent.disposition !== 'retiring'}
-        <Button size="sm" variant="outline" disabled={busy} onclick={reject}
-          >Reject the request</Button
-        >
+        <Button size="sm" variant="outline" disabled={busy} onclick={reject}>
+          Reject the request
+        </Button>
       {/if}
     {/if}
   </div>

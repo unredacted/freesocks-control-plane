@@ -173,16 +173,16 @@
             {/if}
             <div class="text-muted-foreground">
               Priority: <strong class="text-foreground tabular-nums">{s.priority}</strong> · Keys:
-              <strong class="text-foreground tabular-nums"
-                >{s.keyCount}{s.maxKeys != null ? ` / ${s.maxKeys}` : ''}</strong
-              >
+              <strong class="text-foreground tabular-nums">
+                {s.keyCount}{s.maxKeys != null ? ` / ${s.maxKeys}` : ''}
+              </strong>
               {#if s.maxKeys != null && s.keyCount >= s.maxKeys}
                 <span class="text-amber-600 dark:text-amber-400">· At capacity</span>
               {/if}
               {#if s.lastHealthRttMs != null}
-                · Last RTT: <strong class="text-foreground tabular-nums"
-                  >{s.lastHealthRttMs}ms</strong
-                >
+                · Last RTT: <strong class="text-foreground tabular-nums">
+                  {s.lastHealthRttMs}ms
+                </strong>
               {/if}
             </div>
             <div class="flex flex-wrap items-center gap-2 pt-2">

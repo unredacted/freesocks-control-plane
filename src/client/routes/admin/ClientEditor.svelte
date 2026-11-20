@@ -175,8 +175,9 @@
         </div>
       </div>
       <div>
-        <label class="text-xs text-muted-foreground mb-1 block" for="cl-scheme">Import scheme</label
-        >
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-scheme">
+          Import scheme
+        </label>
         <select
           id="cl-scheme"
           bind:value={schemeId}
@@ -241,9 +242,9 @@
         </p>
       </div>
       <div>
-        <label class="text-xs text-muted-foreground mb-1 block" for="cl-hysteria2"
-          >Hysteria support</label
-        >
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-hysteria2">
+          Hysteria support
+        </label>
         <select
           id="cl-hysteria2"
           bind:value={hysteria2}
@@ -261,9 +262,9 @@
         </p>
       </div>
       <div>
-        <label class="text-xs text-muted-foreground mb-1 block" for="cl-format"
-          >Subscription format</label
-        >
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-format">
+          Subscription format
+        </label>
         <select
           id="cl-format"
           bind:value={format}
@@ -351,9 +352,9 @@
     </div>
 
     <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}
-        >Cancel</Button
-      >
+      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}>
+        Cancel
+      </Button>
       <Button onclick={() => save.mutate()} disabled={save.isPending || !name || !homepageUrl}>
         {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Add client'}
       </Button>

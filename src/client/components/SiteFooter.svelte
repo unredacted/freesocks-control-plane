@@ -106,8 +106,10 @@
         class="link-brand text-foreground"
         href="https://unredacted.org"
         target="_blank"
-        rel="noopener noreferrer">Unredacted</a
-      >{t('footer.operatedSuffix')}
+        rel="noopener noreferrer"
+      >
+        Unredacted
+      </a>{t('footer.operatedSuffix')}
     </p>
   </div>
 </footer>

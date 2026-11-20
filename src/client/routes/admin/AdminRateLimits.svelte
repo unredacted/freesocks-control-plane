@@ -151,8 +151,9 @@
             {#if !p.isDefault}
               <span
                 class="ms-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400"
-                >customized</span
               >
+                customized
+              </span>
             {/if}
             <div class="mt-0.5 text-xs text-muted-foreground">
               default: {p.default.max} / {humanWindow(p.default.windowMs)}{p.default.enabled

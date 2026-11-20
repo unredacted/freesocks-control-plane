@@ -221,9 +221,9 @@
                       {#if diff === 0}
                         <span class="text-muted-foreground">Provider defaults</span>
                       {:else}
-                        <Badge variant="neutral"
-                          >{diff} differ{diff === 1 ? 's' : ''} from default</Badge
-                        >
+                        <Badge variant="neutral">
+                          {diff} differ{diff === 1 ? 's' : ''} from default
+                        </Badge>
                       {/if}
                     </Table.Cell>
                     <Table.Cell>
@@ -231,9 +231,9 @@
                         {#if inUse?.id === t.id}
                           <Badge variant="success">In use</Badge>
                           {#if stale}
-                            <span class="ms-1 text-xs text-muted-foreground"
-                              >changed since qualification</span
-                            >
+                            <span class="ms-1 text-xs text-muted-foreground">
+                              changed since qualification
+                            </span>
                           {/if}
                         {:else}
                           <span class="text-muted-foreground">Available</span>
@@ -259,9 +259,9 @@
                           {/snippet}
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Content align="end">
-                          <DropdownMenu.Item onSelect={() => openEditor(t.id)}
-                            >Edit</DropdownMenu.Item
-                          >
+                          <DropdownMenu.Item onSelect={() => openEditor(t.id)}>
+                            Edit
+                          </DropdownMenu.Item>
                           <DropdownMenu.Separator />
                           <DropdownMenu.Item class="text-destructive" onSelect={() => askDelete(t)}>
                             Delete

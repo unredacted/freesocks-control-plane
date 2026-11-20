@@ -959,8 +959,10 @@
                   class="text-xs text-muted-foreground underline hover:text-foreground"
                   href={config.data.contactUrl}
                   target="_blank"
-                  rel="noopener noreferrer">{t('renew.contact')}</a
+                  rel="noopener noreferrer"
                 >
+                  {t('renew.contact')}
+                </a>
               {/if}
             {/snippet}
           </MembershipCallout>
@@ -980,8 +982,10 @@
                   class="text-xs text-muted-foreground underline hover:text-foreground"
                   href={config.data.contactUrl}
                   target="_blank"
-                  rel="noopener noreferrer">{t('renew.contact')}</a
+                  rel="noopener noreferrer"
                 >
+                  {t('renew.contact')}
+                </a>
               {/if}
             {/snippet}
           </MembershipCallout>
@@ -994,12 +998,12 @@
     <Tabs.Root bind:value={activeTab} class="gap-8">
       <div class="overflow-x-auto">
         <Tabs.List variant="line" class="min-w-max flex-nowrap">
-          <Tabs.Trigger variant="line" value="connection"
-            >{t('account.tab.connection')}</Tabs.Trigger
-          >
-          <Tabs.Trigger variant="line" value="membership"
-            >{t('account.tab.membership')}</Tabs.Trigger
-          >
+          <Tabs.Trigger variant="line" value="connection">
+            {t('account.tab.connection')}
+          </Tabs.Trigger>
+          <Tabs.Trigger variant="line" value="membership">
+            {t('account.tab.membership')}
+          </Tabs.Trigger>
           <Tabs.Trigger variant="line" value="gifts">{t('account.tab.gifts')}</Tabs.Trigger>
           <Tabs.Trigger variant="line" value="security">{t('account.tab.security')}</Tabs.Trigger>
         </Tabs.List>
@@ -1499,9 +1503,9 @@
               <div>
                 <p class="text-sm font-medium">{t('support.label')}</p>
                 <div class="mt-1 flex items-center gap-1.5">
-                  <code dir="ltr" class="select-all font-mono text-sm text-foreground"
-                    >{data.user.supportId}</code
-                  >
+                  <code dir="ltr" class="select-all font-mono text-sm text-foreground">
+                    {data.user.supportId}
+                  </code>
                   <Button
                     variant="ghost"
                     size="sm"

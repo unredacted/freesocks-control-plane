@@ -120,8 +120,9 @@
       <!-- Between the title and the buttons, the explanation included: scrolls when it outgrows the window. -->
       <div bind:this={bodyEl} data-slot="confirm-body" class={CONFIRM_BODY}>
         {#if body}
-          <AlertDialog.Description class="text-center sm:text-start">{body}</AlertDialog.Description
-          >
+          <AlertDialog.Description class="text-center sm:text-start">
+            {body}
+          </AlertDialog.Description>
         {/if}
         {#if children}
           <div class="text-sm">{@render children()}</div>

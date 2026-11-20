@@ -256,8 +256,9 @@
           {/if}
           {#if !providers.isPending && accounts.length === 0}
             No account has passed a credential test yet:
-            <Link class="underline underline-offset-2" href={edgesPaths.providers()}>Providers</Link
-            >.
+            <Link class="underline underline-offset-2" href={edgesPaths.providers()}>
+              Providers
+            </Link>.
           {/if}
         </p>
       </div>

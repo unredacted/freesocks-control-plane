@@ -214,10 +214,10 @@
             {#each t.sameCoverSite as f (f.slug)}
               <label class="flex items-start gap-2">
                 <input type="radio" class="mt-1" bind:group={existing} value={f.slug} />
-                <span
-                  >Use {f.label}, which has the same cover site ({f.names}
-                  {f.names === 1 ? 'SNI' : 'SNIs'})</span
-                >
+                <span>
+                  Use {f.label}, which has the same cover site ({f.names}
+                  {f.names === 1 ? 'SNI' : 'SNIs'})
+                </span>
               </label>
             {/each}
             <label class="flex items-start gap-2">

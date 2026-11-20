@@ -283,8 +283,9 @@
             value={qualificationMode === '' ? DEFAULT_MODE : qualificationMode}
             onValueChange={(v) => (qualificationMode = v === DEFAULT_MODE ? '' : v)}
           >
-            <Select.Trigger id="relay-qualification-mode" class="w-full">{modeLabel}</Select.Trigger
-            >
+            <Select.Trigger id="relay-qualification-mode" class="w-full">
+              {modeLabel}
+            </Select.Trigger>
             <Select.Content>
               <Select.Item value={DEFAULT_MODE}>Backend default</Select.Item>
               {#each modeOptions as m (m.id)}
