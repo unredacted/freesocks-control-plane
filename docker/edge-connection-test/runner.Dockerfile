@@ -10,7 +10,7 @@
 # The Bun version is packageManager's (passed in by the run script), like the
 # rest of the compat stack.
 ARG BUN_VERSION
-FROM docker:29.9.3-cli@sha256:5a7af0dcb0e46c803efe9b45371dd21cb500e5b4453250394ac6f06d49b6e6f1 AS docker-cli
+FROM docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d AS docker-cli
 FROM oven/bun:${BUN_VERSION} AS bun
 FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
