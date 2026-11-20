@@ -780,11 +780,14 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       expect(clash).toContain(client);
       expect(clash.split(client)).toHaveLength(2);
 
-      // A sing-box body: sing-box has no VLESS Encryption, so the backend
-      // leaves the encrypted entry out and keeps the plain one.
+      // A sing-box body: sing-box has no VLESS Encryption. A 3.x backend leaves
+      // the encrypted entry out and keeps the plain one. A 2.x backend still
+      // renders it, as a plain VLESS outbound the encrypted inbound refuses, so
+      // an encrypted twin needs a 3.x panel (docs/backends.md).
       const singbox = await body('SFA/1.12.12 (sing-box 1.12.12)');
       expect(singbox).toContain('192.0.2.62');
-      expect(singbox).not.toContain('192.0.2.61');
+      if (BACKEND_MAJOR >= 3) expect(singbox).not.toContain('192.0.2.61');
+      else expect(singbox).toContain('192.0.2.61');
       expect(singbox).not.toContain('mlkem768x25519plus');
 
       // Nothing a member is handed holds the server's seed.

@@ -923,7 +923,9 @@ handshake otherwise. `0s` on the server turns tickets off and makes every client
 - **The backend derives the client string itself** from the stored server string and writes it
   into the bodies it renders: link lists (`encryption=`), Clash (`encryption:`, Mihomo 1.19.13 or
   newer) and Xray JSON. A **sing-box** body leaves the encrypted entry out: sing-box has no VLESS
-  Encryption. `clientEncryption` is the same derivation, and the management integration test
+  Encryption. That is a **Remnawave 3.x** behavior: a 2.x backend still puts the encrypted entry in
+  the sing-box body, as a plain VLESS outbound the encrypted inbound refuses, so serve an encrypted
+  twin only from a 3.x panel (the nightly 2.x contract job pins both). `clientEncryption` is the same derivation, and the management integration test
   proves the two agree against a live backend: FCP adds the transport through its own guarded
   edit, and the entries the backend then renders carry exactly FCP's string.
 - The ML-KEM-768 client key makes an entry about 1.6 kB longer.
