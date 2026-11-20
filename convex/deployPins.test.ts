@@ -27,7 +27,8 @@ import YAML from 'yaml';
  *    (per Aug 2026) nobody would necessarily be watching.
  *  - `oven/bun` vs. `packageManager` in package.json: the image and CI would
  *    silently build on different Bun versions. The Docker updater does not
- *    change package.json, so a base-image PR must bump that half too. CI is kept out
+ *    change package.json, so a base-image PR must bump that half too
+ *    (.github/workflows/dependabot-fixups.yml does it on Dependabot's PR). CI is kept out
  *    of the duplication entirely — `.github/workflows/ci.yml` uses
  *    `bun-version-file: package.json`, and the last test here stops a literal
  *    `bun-version:` creeping back in.
@@ -306,11 +307,35 @@ describe('cross-file image pins', () => {
       expect(
         bunBase!.split('@')[0],
         `${name} pins ${bunBase} but package.json declares ${declared}. A Dependabot bump of ` +
-          'the base image does NOT touch package.json, so ' +
-          'update packageManager in the same PR or the image and CI build on different Bun ' +
-          'versions.',
+          'the base image does NOT touch package.json; .github/workflows/dependabot-fixups.yml ' +
+          'sets packageManager on a Dependabot PR (a hand re-pin must set it too), or the image ' +
+          'and CI build on different Bun versions.',
       ).toBe(expected);
     }
+  });
+
+  test('dependabot-fixups keeps the bumped code out of its write job', () => {
+    // The fixups workflow runs the bumped dependencies (bun install, prettier)
+    // to make its patch, and needs a write token to push it. Those must be two
+    // jobs: a compromised release run with contents:write could push anywhere.
+    const fixups = read('../.github/workflows/dependabot-fixups.yml');
+    const prepare = fixups.slice(fixups.indexOf('\n  prepare:'), fixups.indexOf('\n  apply:'));
+    const apply = fixups.slice(fixups.indexOf('\n  apply:'));
+    expect(prepare).toContain('contents: read');
+    expect(prepare).not.toMatch(/contents:\s*write/);
+    expect(apply).toContain('contents: write');
+    expect(
+      apply,
+      'the apply job (write token) must run git and gh only, never the bumped dependencies',
+    ).not.toMatch(/setup-bun|\bbun (install|run|x)\b|\bbunx\b|\bnpm\b|\bnpx\b|node_modules/);
+    expect(apply, 'the apply job must refuse a patch that touches .github/').toContain(
+      '^\\.github/',
+    );
+    // It reads the Bun version off the same Dockerfile line the pin test above checks.
+    expect(prepare).toContain('docker/web.Dockerfile');
+    expect(webDockerfile).toMatch(/^FROM oven\/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}/m);
+    // A GITHUB_TOKEN push starts no run; the fixups re-run CI by dispatching it.
+    expect(ciWorkflow).toMatch(/^\s*workflow_dispatch:/m);
   });
 
   test('CI derives its Bun version from package.json rather than pinning a copy', () => {

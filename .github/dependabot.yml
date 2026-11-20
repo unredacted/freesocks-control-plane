@@ -24,8 +24,9 @@
 #    files. CI's `caddyfile` job reads the image from web.Dockerfile rather than
 #    holding a copy (a copy is a `docker run` ref no ecosystem updates).
 #  - oven/bun: the three /docker Dockerfiles must equal `packageManager` in
-#    package.json, which the Docker updater does NOT touch: a Bun image PR fails
-#    until packageManager is bumped in it by hand.
+#    package.json, which the Docker updater does NOT touch.
+#    .github/workflows/dependabot-fixups.yml sets it on the Bun image PR (and
+#    reformats when a prettier release changes formatting), then re-runs CI.
 # Not coupled, on purpose: the Node in docker/convex-node/ follows Convex's
 # .nvmrc (22) while the test images follow the clients (24); the sidecar's
 # Xray is a client and moves alone, while docker-compose.compat.yml's Xray pins

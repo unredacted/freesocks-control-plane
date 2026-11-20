@@ -3,6 +3,9 @@ on:
   pull_request:
   push:
     branches: [main, v2]
+  # dependabot-fixups.yml dispatches CI on its fixup commit (a GITHUB_TOKEN push
+  # starts no run by itself).
+  workflow_dispatch:
 
 # Force JS actions onto Node 24 (Node 20 is deprecated; Node 24 is the runner
 # default from 2026-06-16, after which this is a harmless no-op). Covers any
