@@ -159,9 +159,9 @@
         <div class="space-y-1.5">
           <Label>Edge to replace</Label>
           <Select.Root type="single" value={target?.id ?? ''} onValueChange={(v) => (pickedId = v)}>
-            <Select.Trigger class="w-full"
-              >{target ? edgeName(target) : 'Choose an edge'}</Select.Trigger
-            >
+            <Select.Trigger class="w-full">
+              {target ? edgeName(target) : 'Choose an edge'}
+            </Select.Trigger>
             <Select.Content>
               {#each published as e (e.id)}
                 <Select.Item value={e.id}>{edgeName(e)}</Select.Item>

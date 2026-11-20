@@ -670,9 +670,9 @@
                a fresh (re-revealed) number on /account. -->
             <p class="text-sm text-muted-foreground">
               {t('get.lostNumberHint')}
-              <Link href="/account" class="link-brand text-foreground"
-                >{t('get.lostNumberLinkLabel')}</Link
-              >.
+              <Link href="/account" class="link-brand text-foreground">
+                {t('get.lostNumberLinkLabel')}
+              </Link>.
             </p>
           {/if}
         </div>
@@ -726,9 +726,9 @@
             {#if subErrorIsUnavailable}
               <p class="text-sm text-muted-foreground">
                 {t('get.subErrorSafePrefix')}
-                <Link href="/account" class="link-brand text-foreground"
-                  >{t('get.manageLinkLabel')}</Link
-                >
+                <Link href="/account" class="link-brand text-foreground">
+                  {t('get.manageLinkLabel')}
+                </Link>
                 {t('get.subErrorSafeSuffix')}
               </p>
             {/if}

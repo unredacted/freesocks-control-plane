@@ -139,8 +139,10 @@
             class={`${LINK} shrink-0 text-xs`}
             disabled={disabled || pick.isPending}
             aria-expanded={changing === r.id}
-            onclick={() => (changing = changing === r.id ? null : r.id)}>Change options</button
+            onclick={() => (changing = changing === r.id ? null : r.id)}
           >
+            Change options
+          </button>
         </div>
         {#if pick.isError && mine && changing !== r.id}
           {@const issue = edgeErrorIssue(pick.error)}

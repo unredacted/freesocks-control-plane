@@ -53,9 +53,9 @@
 </script>
 
 {#if !row}
-  <Table.Cell colspan={8} class="text-muted-foreground text-sm"
-    >No origin: members connect directly.</Table.Cell
-  >
+  <Table.Cell colspan={8} class="text-muted-foreground text-sm">
+    No origin: members connect directly.
+  </Table.Cell>
 {:else}
   {@const relay = row.relay}
   <Table.Cell>

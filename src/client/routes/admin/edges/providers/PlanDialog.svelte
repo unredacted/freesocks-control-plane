@@ -89,9 +89,9 @@
               onchange={() => (chosen = p.size)}
             />
             <span class="min-w-0 flex-1 space-y-0.5">
-              <span class="block text-sm font-medium"
-                >{p.label}{p.size === current ? ' (now)' : ''}</span
-              >
+              <span class="block text-sm font-medium">
+                {p.label}{p.size === current ? ' (now)' : ''}
+              </span>
               <PlanFacts plan={p} />
             </span>
           </label>

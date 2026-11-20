@@ -371,9 +371,9 @@
         {#if building}
           <div>
             <div class="mb-1 flex justify-between text-xs">
-              <span id="edge-progress-label"
-                >Steps {edge.progress.done} of {edge.progress.total}</span
-              >
+              <span id="edge-progress-label">
+                Steps {edge.progress.done} of {edge.progress.total}
+              </span>
               <span class="text-muted-foreground">{Math.round(edge.progress.percent)}%</span>
             </div>
             <Progress value={edge.progress.percent} aria-labelledby="edge-progress-label" />
@@ -446,9 +446,9 @@
                 {#if firstName === 'refused'}
                   <Link href={edgesPaths.providers()} class="underline">Open Providers</Link>
                 {:else}
-                  <Link href={edgesPaths.settings({ section: 'names' })} class="underline"
-                    >Open Settings</Link
-                  >
+                  <Link href={edgesPaths.settings({ section: 'names' })} class="underline">
+                    Open Settings
+                  </Link>
                 {/if}
               </p>
             {/if}
@@ -516,14 +516,14 @@
                 <li class="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5">
                   <span>
                     {humanizeCode(r.kind)}
-                    <span class="text-muted-foreground font-mono text-xs"
-                      >{shortId(r.resourceId, 10)}</span
-                    >
+                    <span class="text-muted-foreground font-mono text-xs">
+                      {shortId(r.resourceId, 10)}
+                    </span>
                   </span>
                   <span class="flex gap-1">
-                    <Badge variant="outline"
-                      >{r.ownership === 'created' ? 'Created by FCP' : 'Imported'}</Badge
-                    >
+                    <Badge variant="outline">
+                      {r.ownership === 'created' ? 'Created by FCP' : 'Imported'}
+                    </Badge>
                     <Badge
                       variant={r.deleteState === 'present'
                         ? 'neutral'

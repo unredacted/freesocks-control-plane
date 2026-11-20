@@ -428,9 +428,9 @@
                       </select>
                     </div>
                     <div class="space-y-1">
-                      <Label for={`${uid}-name-${r.key}`} class="text-xs"
-                        >Group name on the backend</Label
-                      >
+                      <Label for={`${uid}-name-${r.key}`} class="text-xs">
+                        Group name on the backend
+                      </Label>
                       <Input
                         id={`${uid}-name-${r.key}`}
                         bind:value={r.name}
@@ -463,9 +463,9 @@
                         >
                           <option value={undefined}>Pick an SNI list</option>
                           {#each familyRows as f (f.slug)}
-                            <option value={optionSlug(f, r.familySlug)}
-                              >{f.label} ({f.target.address}, {f.counts.ready} usable)</option
-                            >
+                            <option value={optionSlug(f, r.familySlug)}>
+                              {f.label} ({f.target.address}, {f.counts.ready} usable)
+                            </option>
                           {/each}
                         </select>
                         {#if familyRows.length === 0}
@@ -478,9 +478,9 @@
                       {#if r.shape.fronting === 'edge-l4'}
                         <div class="flex items-center gap-2 self-end pb-1.5">
                           <Switch id={`${uid}-pp-${r.key}`} bind:checked={r.acceptProxyProtocol} />
-                          <Label for={`${uid}-pp-${r.key}`} class="text-xs font-normal"
-                            >Edges send PROXY protocol</Label
-                          >
+                          <Label for={`${uid}-pp-${r.key}`} class="text-xs font-normal">
+                            Edges send PROXY protocol
+                          </Label>
                         </div>
                       {/if}
                     {:else if r.hysteria}
@@ -496,9 +496,9 @@
                       </div>
                       <div class="flex items-center gap-2 self-end pb-1.5">
                         <Switch id={`${uid}-obfs-${r.key}`} bind:checked={r.hysteria.salamander} />
-                        <Label for={`${uid}-obfs-${r.key}`} class="text-xs font-normal"
-                          >Salamander</Label
-                        >
+                        <Label for={`${uid}-obfs-${r.key}`} class="text-xs font-normal">
+                          Salamander
+                        </Label>
                       </div>
                     {:else if r.ws}
                       <div class="space-y-1">
@@ -526,8 +526,10 @@
                         variant="ghost"
                         class="text-destructive"
                         aria-label={`Remove ${r.name || 'this mode'}`}
-                        onclick={() => removeRow(r.key)}><Trash2 class="size-4" /></Button
+                        onclick={() => removeRow(r.key)}
                       >
+                        <Trash2 class="size-4" />
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -580,9 +582,9 @@
                 >
                   <option value="">Pick a zone</option>
                   {#each zones as z (z.id)}
-                    <option value={z.id} disabled={!zoneActive(z) && !isCurrentZone(z)}
-                      >{z.name}{zoneActive(z) ? '' : ' (not active)'}</option
-                    >
+                    <option value={z.id} disabled={!zoneActive(z) && !isCurrentZone(z)}>
+                      {z.name}{zoneActive(z) ? '' : ' (not active)'}
+                    </option>
                   {/each}
                 </select>
                 {#if zonesError}

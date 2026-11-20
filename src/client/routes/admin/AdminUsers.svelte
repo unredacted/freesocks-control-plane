@@ -379,9 +379,9 @@
                   <div>
                     Backend status: <strong class="text-foreground">{s.status}</strong>
                     {#if (s.status === 'active') !== (u.status === 'active')}
-                      <span class="ml-1 text-amber-600 dark:text-amber-400"
-                        >· local "{u.status}" (mismatch)</span
-                      >
+                      <span class="ml-1 text-amber-600 dark:text-amber-400">
+                        · local "{u.status}" (mismatch)
+                      </span>
                     {/if}
                   </div>
                   <div class="text-muted-foreground tabular-nums">
@@ -390,9 +390,9 @@
                       : formatBytes(s.trafficLimitBytes)}
                   </div>
                   <div class="text-muted-foreground">
-                    Last online: <span class="text-foreground"
-                      >{s.onlineAt ? formatDateTime(s.onlineAt) : 'never'}</span
-                    >
+                    Last online: <span class="text-foreground">
+                      {s.onlineAt ? formatDateTime(s.onlineAt) : 'never'}
+                    </span>
                   </div>
                   {#if s.devices.length > 0}
                     <div class="text-muted-foreground">

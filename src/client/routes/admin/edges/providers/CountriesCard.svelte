@@ -90,9 +90,9 @@
     {:else if !data || data.countries.length === 0}
       <p class="text-muted-foreground text-sm">
         No country is checked yet. Choose them in the
-        <Link href={edgesPaths.settings({ section: 'probes' })} class="underline"
-          >probe settings</Link
-        >.
+        <Link href={edgesPaths.settings({ section: 'probes' })} class="underline">
+          probe settings
+        </Link>.
       </p>
     {:else if rows.length === 0}
       <p class="text-muted-foreground text-sm">This account has no location yet.</p>
@@ -100,9 +100,9 @@
       {#if !data.enabled}
         <p class="text-muted-foreground text-sm">
           Checks from each country are off, so nothing new is recorded. Turn them on in the
-          <Link href={edgesPaths.settings({ section: 'probes' })} class="underline"
-            >probe settings</Link
-          >.
+          <Link href={edgesPaths.settings({ section: 'probes' })} class="underline">
+            probe settings
+          </Link>.
         </p>
       {/if}
       {#if conflicts > 0}

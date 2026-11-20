@@ -188,9 +188,9 @@
                   {#if owner}{owner.name}{:else if ip.attachedTo}
                     <span class="font-mono text-xs">{ip.attachedTo}</span>
                   {:else}
-                    <span class="text-amber-700 dark:text-amber-300"
-                      >Nothing. A detached address may still be billed.</span
-                    >
+                    <span class="text-amber-700 dark:text-amber-300">
+                      Nothing. A detached address may still be billed.
+                    </span>
                   {/if}
                 </Table.Cell>
               </Table.Row>

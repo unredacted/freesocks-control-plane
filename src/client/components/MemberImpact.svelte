@@ -142,8 +142,8 @@
             amount: formatMoney(user.donatedCentsTotal, config.data?.billing?.currency ?? 'USD'),
           })}
           <span class="text-muted-foreground">
-            {t('impact.yourCount', { count: user.donationCount })}</span
-          >
+            {t('impact.yourCount', { count: user.donationCount })}
+          </span>
         </div>
         {#if personalGb > 0}
           <div class="mt-0.5 text-sm text-muted-foreground">
@@ -165,7 +165,9 @@
       class="link-brand text-foreground"
       href="https://unredacted.org"
       target="_blank"
-      rel="noopener noreferrer">{t('impact.aboutUnredacted')}</a
+      rel="noopener noreferrer"
     >
+      {t('impact.aboutUnredacted')}
+    </a>
   </p>
 </section>

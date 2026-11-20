@@ -166,8 +166,10 @@
                 {#if p.error}
                   <span
                     class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-                    title={p.error}>skipped</span
+                    title={p.error}
                   >
+                    skipped
+                  </span>
                 {:else if p.hardened}
                   <span
                     class="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
@@ -177,8 +179,9 @@
                 {:else}
                   <span
                     class="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
-                    >logs IPs</span
                   >
+                    logs IPs
+                  </span>
                 {/if}
               </div>
             {/each}

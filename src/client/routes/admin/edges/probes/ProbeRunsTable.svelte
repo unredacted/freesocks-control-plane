@@ -114,9 +114,9 @@
         {/if}
         {#each round.runs as r (r.id)}
           <Table.Row>
-            <Table.Cell class="whitespace-nowrap" title={r.requestedAt}
-              >{relativeTime(r.requestedAt)}</Table.Cell
-            >
+            <Table.Cell class="whitespace-nowrap" title={r.requestedAt}>
+              {relativeTime(r.requestedAt)}
+            </Table.Cell>
             <Table.Cell>{PROBE_SOURCE_LABELS[r.source] ?? r.source}</Table.Cell>
             <Table.Cell class="whitespace-nowrap">
               {familyLabel(r.ipVersion)}{r.port ? `, port ${r.port}` : ''}
@@ -136,13 +136,13 @@
                 <span class="me-2 whitespace-nowrap">
                   {countryLabel(n.country)}
                   {#if n.control}<span class="text-muted-foreground">control</span>{/if}
-                  <span class={n.fail > 0 && n.ok === 0 ? 'text-destructive' : ''}
-                    >{n.ok}/{n.fail}</span
-                  >
+                  <span class={n.fail > 0 && n.ok === 0 ? 'text-destructive' : ''}>
+                    {n.ok}/{n.fail}
+                  </span>
                   {#if networkMix(n)}
-                    <span class="text-muted-foreground" title="Where the probes sit"
-                      >({networkMix(n)})</span
-                    >
+                    <span class="text-muted-foreground" title="Where the probes sit">
+                      ({networkMix(n)})
+                    </span>
                   {/if}
                 </span>
               {/each}

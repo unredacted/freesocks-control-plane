@@ -114,8 +114,10 @@
               Needs its key under
               <Link
                 href={edgesPaths.settings({ section: 'probes' })}
-                class="underline underline-offset-2">Settings, Probes</Link
-              >.
+                class="underline underline-offset-2"
+              >
+                Settings, Probes
+              </Link>.
             </span>
           {/if}
         </div>

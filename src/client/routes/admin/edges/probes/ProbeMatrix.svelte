@@ -201,15 +201,19 @@
                 variant="ghost"
                 class="h-7 px-2 text-xs"
                 disabled={probeNow.isPending}
-                onclick={() => probeNow.mutate([t.key])}>Probe now</Button
+                onclick={() => probeNow.mutate([t.key])}
               >
+                Probe now
+              </Button>
               <Button
                 size="sm"
                 variant="ghost"
                 class="h-7 px-2 text-xs"
                 aria-expanded={opened === t.key}
-                onclick={() => toggleRuns(t.key)}>{opened === t.key ? 'Hide runs' : 'Runs'}</Button
+                onclick={() => toggleRuns(t.key)}
               >
+                {opened === t.key ? 'Hide runs' : 'Runs'}
+              </Button>
             </Table.Cell>
           </Table.Row>
           {#if opened === t.key}

@@ -435,16 +435,20 @@
                   <p class="mt-1" data-testid="fronted-addresses">
                     {#each frontedAddressWords( { reality: inbound.security === 'reality', list, twin: inbound.twin, encrypted: inbound.encrypted } ) as part, i (i)}{#if part.to === 'list' && list && list !== 'unknown'}<Link
                           href={edgesPaths.family(list.slug)}
-                          class="text-primary underline underline-offset-4">{part.text}</Link
-                        >{:else if part.to === 'addresses' || part.to === 'snis'}{@const to =
+                          class="text-primary underline underline-offset-4"
+                        >
+                          {part.text}
+                        </Link>{:else if part.to === 'addresses' || part.to === 'snis'}{@const to =
                           part.to}<a
                           href={`#${sectionId(to)}`}
                           class="text-primary underline underline-offset-4"
                           onclick={(e) => {
                             e.preventDefault();
                             nav.pick(to);
-                          }}>{part.text}</a
-                        >{:else}{part.text}{/if}{/each}
+                          }}
+                        >
+                          {part.text}
+                        </a>{:else}{part.text}{/if}{/each}
                   </p>
                 {/if}
                 {#if split.members.length === 0}
@@ -628,8 +632,10 @@
           under Recent changes on
           <Link
             href={serversPaths.nodes({ backend: slug })}
-            class="text-primary underline underline-offset-4">Nodes</Link
-          >.
+            class="text-primary underline underline-offset-4"
+          >
+            Nodes
+          </Link>.
         </p>
       {/if}
     </section>

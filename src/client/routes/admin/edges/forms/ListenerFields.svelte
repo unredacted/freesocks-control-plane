@@ -283,9 +283,9 @@
               </Select.Trigger>
               <Select.Content>
                 <Select.Item value="any" label="Any hostname">Any hostname</Select.Item>
-                <Select.Item value="names" label="Only its own hostnames"
-                  >Only its own hostnames</Select.Item
-                >
+                <Select.Item value="names" label="Only its own hostnames">
+                  Only its own hostnames
+                </Select.Item>
               </Select.Content>
             </Select.Root>
           </div>

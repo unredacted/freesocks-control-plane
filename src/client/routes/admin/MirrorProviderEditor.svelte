@@ -314,9 +314,9 @@
     </div>
 
     <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}
-        >Cancel</Button
-      >
+      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}>
+        Cancel
+      </Button>
       <Button
         onclick={() => save.mutate()}
         disabled={save.isPending || !name || !endpoint || !bucket || !publicUrl}

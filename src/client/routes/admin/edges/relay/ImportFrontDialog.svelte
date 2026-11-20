@@ -298,9 +298,9 @@
                   resourceId = '';
                 }}
               >
-                <Select.Trigger class="w-full"
-                  >{location?.label ?? 'Choose a location'}</Select.Trigger
-                >
+                <Select.Trigger class="w-full">
+                  {location?.label ?? 'Choose a location'}
+                </Select.Trigger>
                 <Select.Content>
                   {#each locations as l (l.id)}
                     <Select.Item value={l.id}>{l.label}</Select.Item>

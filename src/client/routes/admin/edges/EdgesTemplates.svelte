@@ -84,9 +84,9 @@
 {#if filter}
   <p class="mb-4 text-sm text-muted-foreground">
     Showing {providerLabel(filter)} only.
-    <button class="underline" onclick={() => (providerParam.value = null)}
-      >Show every provider</button
-    >
+    <button class="underline" onclick={() => (providerParam.value = null)}>
+      Show every provider
+    </button>
   </p>
 {/if}
 

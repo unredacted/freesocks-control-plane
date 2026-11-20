@@ -127,9 +127,9 @@
         <LayerBadge {layer} />
       {/each}
       {#if !relay.autoRotate}
-        <Badge variant="muted" title="The block detector never rotates this origin on its own."
-          >Auto rotate off</Badge
-        >
+        <Badge variant="muted" title="The block detector never rotates this origin on its own.">
+          Auto rotate off
+        </Badge>
       {/if}
       {#if chip}
         <Badge variant={chip.tone} title={chip.title}>{chip.label}</Badge>

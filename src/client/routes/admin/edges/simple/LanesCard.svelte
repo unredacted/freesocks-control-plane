@@ -79,8 +79,9 @@
       <p class="text-muted-foreground mt-1 text-xs">{openBudgetLine(view)}</p>
     {/if}
     <div class="mt-2 flex flex-wrap gap-2">
-      <Button size="sm" variant="outline" disabled={busy} onclick={edit}>{LANES_CARD.change}</Button
-      >
+      <Button size="sm" variant="outline" disabled={busy} onclick={edit}>
+        {LANES_CARD.change}
+      </Button>
       <Button size="sm" variant="outline" disabled={busy} onclick={() => (offOpen = true)}>
         {LANES_CARD.turnOff}
       </Button>

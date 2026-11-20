@@ -78,8 +78,10 @@
         <Link
           href={edgesPaths.relay(relay.slug, { tab: 'listeners' })}
           class="font-medium underline"
-          onclick={() => (open = false)}>the Listeners tab</Link
-        >.
+          onclick={() => (open = false)}
+        >
+          the Listeners tab
+        </Link>.
       </p>
     {/if}
   {/if}

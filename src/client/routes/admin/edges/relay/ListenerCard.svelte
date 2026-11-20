@@ -140,8 +140,9 @@
       {:else if !l.enabled}
         <Badge variant="warning">Disabled</Badge>
       {/if}
-      <Badge variant="outline">{l.source === 'role' ? 'From the node role' : 'Added by hand'}</Badge
-      >
+      <Badge variant="outline">
+        {l.source === 'role' ? 'From the node role' : 'Added by hand'}
+      </Badge>
     </Card.Title>
     {#if l.label}
       <Card.Description>{l.label}</Card.Description>
@@ -156,8 +157,9 @@
         >
           Provision an edge
         </Button>
-        <Button variant="outline" size="sm" disabled={locked} onclick={() => onEdit(l)}>Edit</Button
-        >
+        <Button variant="outline" size="sm" disabled={locked} onclick={() => onEdit(l)}>
+          Edit
+        </Button>
       </Card.Action>
     {/if}
   </Card.Header>
@@ -220,14 +222,18 @@
                     variant="ghost"
                     size="sm"
                     disabled={locked}
-                    onclick={() => (retireName = n.name)}>Retire</Button
+                    onclick={() => (retireName = n.name)}
                   >
+                    Retire
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
                     disabled={locked}
-                    onclick={() => (retireEverywhere = n.name)}>Retire on every listener</Button
+                    onclick={() => (retireEverywhere = n.name)}
                   >
+                    Retire on every listener
+                  </Button>
                 {:else}
                   <Button
                     variant="ghost"
@@ -240,8 +246,10 @@
                       act.mutate({
                         run: () => reactivateListenerNames(l.id, [n.name]),
                         success: `${n.name} can be selected again.`,
-                      })}>Reactivate</Button
+                      })}
                   >
+                    Reactivate
+                  </Button>
                 {/if}
               </span>
             </li>

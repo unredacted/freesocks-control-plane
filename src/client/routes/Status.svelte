@@ -140,9 +140,9 @@
                   : 'bg-destructive'}"
                 aria-hidden="true"
               ></span>
-              <span class="sr-only"
-                >{loc.online ? t('status.srOnline') : t('status.srOffline')}</span
-              >
+              <span class="sr-only">
+                {loc.online ? t('status.srOnline') : t('status.srOffline')}
+              </span>
               <span class="font-bold text-foreground">{loc.label}</span>
               <span class="font-mono text-sm text-muted-foreground" dir="ltr">{loc.code}</span>
             </div>

@@ -270,8 +270,9 @@
                 {#if !p.qualified}<Badge variant="muted">Not trusted yet</Badge>{/if}
                 {#if !p.usable}<Badge variant="warning">Off</Badge>{/if}
                 {#if !used}
-                  <Badge variant="muted" title={codeExplain('l4_not_for_websocket')}>Not used</Badge
-                  >
+                  <Badge variant="muted" title={codeExplain('l4_not_for_websocket')}>
+                    Not used
+                  </Badge>
                 {/if}
                 {#if line?.counts}
                   <span class="text-muted-foreground text-xs">{line.counts}</span>
@@ -287,8 +288,10 @@
                     onclick={() => {
                       wantFor = p;
                       wantOpen = true;
-                    }}>Change</button
+                    }}
                   >
+                    Change
+                  </button>
                 {/if}
                 {#if o && used}
                   {@const said = optionSummary(o.fields, o.chosen)}
@@ -298,8 +301,10 @@
                     type="button"
                     class="text-primary min-h-11 underline-offset-2 hover:underline disabled:opacity-50 sm:min-h-0"
                     disabled={busy || reprotect.isPending}
-                    onclick={() => openOptions(p)}>Change options</button
+                    onclick={() => openOptions(p)}
                   >
+                    Change options
+                  </button>
                 {/if}
               </p>
               {#if line?.cooling}<p class="text-xs">{line.cooling}</p>{/if}
@@ -496,11 +501,13 @@
       <Button
         class="h-11 sm:h-8"
         disabled={reprotect.isPending}
-        onclick={() => void askProtectAgain()}>Front again with these</Button
+        onclick={() => void askProtectAgain()}
       >
-      <Button variant="outline" class="h-11 sm:h-8" onclick={() => (optionsFor = null)}
-        >Cancel</Button
-      >
+        Front again with these
+      </Button>
+      <Button variant="outline" class="h-11 sm:h-8" onclick={() => (optionsFor = null)}>
+        Cancel
+      </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

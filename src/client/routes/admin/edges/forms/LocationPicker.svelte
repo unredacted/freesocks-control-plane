@@ -420,8 +420,9 @@
                   value={o.id}
                   label={o.label}
                   disabled={!!o.plan && planRefused(o.plan) && o.id !== current}
-                  >{o.plan ? planOptionLabel(o.plan) : o.label}</Select.Item
                 >
+                  {o.plan ? planOptionLabel(o.plan) : o.label}
+                </Select.Item>
               {/each}
             </Select.Content>
           </Select.Root>

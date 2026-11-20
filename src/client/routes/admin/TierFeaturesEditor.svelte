@@ -104,21 +104,27 @@
             size="icon-sm"
             aria-label="Move line {i + 1} up"
             disabled={i === 0}
-            onclick={() => move(i, -1)}><ChevronUp class="size-4" /></Button
+            onclick={() => move(i, -1)}
           >
+            <ChevronUp class="size-4" />
+          </Button>
           <Button
             variant="outline"
             size="icon-sm"
             aria-label="Move line {i + 1} down"
             disabled={i === features.length - 1}
-            onclick={() => move(i, 1)}><ChevronDown class="size-4" /></Button
+            onclick={() => move(i, 1)}
           >
+            <ChevronDown class="size-4" />
+          </Button>
           <Button
             variant="outline"
             size="icon-sm"
             aria-label="Remove line {i + 1}"
-            onclick={() => remove(i)}><Trash2 class="size-4" /></Button
+            onclick={() => remove(i)}
           >
+            <Trash2 class="size-4" />
+          </Button>
         </div>
       </li>
     {/each}

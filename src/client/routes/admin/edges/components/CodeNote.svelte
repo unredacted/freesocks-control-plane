@@ -83,8 +83,8 @@
       <span class="sr-only">{TONE_WORD[tone]}: </span>{codeLabel(code)}{#if subject}<span
           class="text-muted-foreground font-normal"
         >
-          ({subject})</span
-        >{/if}
+          ({subject})
+        </span>{/if}
     </p>
     {#if !compact && known}
       <p class="text-muted-foreground">{codeExplain(code)}</p>

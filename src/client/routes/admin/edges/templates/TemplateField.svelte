@@ -109,8 +109,10 @@
   <div class="flex flex-wrap items-center justify-between gap-2">
     <Label for={`${uid}-f`}>
       {field.label}{#if field.unit}<span class="text-muted-foreground">
-          ({field.unit})</span
-        >{/if}{#if field.required}<span class="text-destructive" aria-hidden="true"> *</span>{/if}
+          ({field.unit})
+        </span>{/if}{#if field.required}<span class="text-destructive" aria-hidden="true">
+          *
+        </span>{/if}
     </Label>
     {#if changed}
       <span class="flex items-center gap-1">
@@ -160,18 +162,19 @@
       {disabled}
       onValueChange={(v) => onchange(v)}
     >
-      <Select.Trigger id={`${uid}-f`} class="w-full"
-        >{sizeChoices.find((o) => o.id === shown)?.label ??
-          (typeof shown === 'string' && shown !== '' ? shown : 'Choose')}</Select.Trigger
-      >
+      <Select.Trigger id={`${uid}-f`} class="w-full">
+        {sizeChoices.find((o) => o.id === shown)?.label ??
+          (typeof shown === 'string' && shown !== '' ? shown : 'Choose')}
+      </Select.Trigger>
       <Select.Content>
         {#each sizeChoices as o (o.id)}
           <Select.Item
             value={o.id}
             label={o.label}
             disabled={!!o.plan && planRefused(o.plan) && o.id !== shown}
-            >{o.plan ? planOptionLabel(o.plan) : o.label}</Select.Item
           >
+            {o.plan ? planOptionLabel(o.plan) : o.label}
+          </Select.Item>
         {/each}
       </Select.Content>
     </Select.Root>

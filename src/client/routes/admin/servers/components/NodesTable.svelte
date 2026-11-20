@@ -108,9 +108,9 @@
         </Table.Cell>
         <Table.Cell class="text-sm">{country ?? ''}</Table.Cell>
         <Table.Cell class="text-sm">{row.modes.join(', ')}</Table.Cell>
-        <Table.Cell class="text-sm whitespace-nowrap"
-          >{addressesWords(row.origin, row.status)}</Table.Cell
-        >
+        <Table.Cell class="text-sm whitespace-nowrap">
+          {addressesWords(row.origin, row.status)}
+        </Table.Cell>
         <Table.Cell class="text-end text-sm tabular-nums">
           {#if row.usersOnline !== null}{row.usersOnline}{/if}
         </Table.Cell>

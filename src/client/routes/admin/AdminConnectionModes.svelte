@@ -130,10 +130,10 @@
       <p class="text-sm text-muted-foreground mt-1">
         The member transport picker, fully data-driven: families are the parent cards, modes are the
         transports inside them. A new mode ships unselectable until it is enabled here AND its
-        placement pool is bound in <Link href={serversPaths.pools()} class="underline"
-          >Servers, Mode pools</Link
-        >, with at least one node in that pool. While the catalog is empty the picker falls back to
-        the built-in defaults.
+        placement pool is bound in <Link href={serversPaths.pools()} class="underline">
+          Servers, Mode pools
+        </Link>, with at least one node in that pool. While the catalog is empty the picker falls
+        back to the built-in defaults.
       </p>
       {#if strandedDefault && effectiveDefault}
         <p

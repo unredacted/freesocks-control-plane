@@ -155,9 +155,9 @@
         <div class="min-w-0 flex-1 basis-64">
           <div class="flex flex-wrap items-center gap-2">
             <StatusBadge kind="severity" value={item.severity} />
-            <span class="text-sm font-medium"
-              >{heading.final ? heading.label : w(heading.label)}</span
-            >
+            <span class="text-sm font-medium">
+              {heading.final ? heading.label : w(heading.label)}
+            </span>
             {#if subject}<span class="text-muted-foreground text-sm">{subject}</span>{/if}
           </div>
           <p class="text-muted-foreground mt-1 text-sm">

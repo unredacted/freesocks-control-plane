@@ -387,11 +387,11 @@
             </div>
             <div class="text-sm text-muted-foreground">
               {#if perMonthPrice != null}
-                <span class="font-medium text-foreground tabular-nums"
-                  >{t('upgrade.fromPerMonth', {
+                <span class="font-medium text-foreground tabular-nums">
+                  {t('upgrade.fromPerMonth', {
                     price: formatMoney(Math.round(perMonthPrice), currency),
-                  })}</span
-                >
+                  })}
+                </span>
                 ·
               {/if}
               {benefitsLine}

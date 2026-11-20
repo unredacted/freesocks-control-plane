@@ -77,8 +77,9 @@
             <!-- <bdi>: a currency amount keeps its order inside right-to-left text. -->
             <bdi
               class="font-display text-[clamp(40px,5vw,52px)] font-extrabold leading-none tracking-[-0.03em] text-foreground rtl:tracking-normal"
-              >{price}</bdi
             >
+              {price}
+            </bdi>
             <span class="text-muted-foreground">{t('get.spotlight.priceNote')}</span>
           </p>
         {/if}

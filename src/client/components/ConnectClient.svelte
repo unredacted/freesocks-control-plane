@@ -276,8 +276,10 @@
                   href={c.sourceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="link-brand text-muted-foreground">{t('setup.viewSource')}</a
+                  class="link-brand text-muted-foreground"
                 >
+                  {t('setup.viewSource')}
+                </a>
               {/if}
             </p>
           </div>
@@ -324,8 +326,9 @@
               <code
                 dir="ltr"
                 class="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm text-foreground"
-                >{ownMirror}</code
               >
+                {ownMirror}
+              </code>
               <button
                 type="button"
                 onclick={() => void copy(ownMirror)}
@@ -403,9 +406,9 @@
     <ol class="mt-5 grid gap-3 border-t border-border/70 pt-5">
       {#each [t('setup.step.install'), rawConfigFirst ? t('setup.step.importConfig') : t('setup.step.import'), t('setup.step.connect')] as step, i (i)}
         <li class="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-2">
-          <span class="font-display font-bold text-primary tabular-nums"
-            >{stepNumber.format(i + 1)}</span
-          >
+          <span class="font-display font-bold text-primary tabular-nums">
+            {stepNumber.format(i + 1)}
+          </span>
           <span class="text-foreground">{step}</span>
         </li>
       {/each}

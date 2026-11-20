@@ -96,9 +96,9 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-2xl`}>
     <Dialog.Header>
-      <Dialog.Title
-        >{existing ? `Edit listener ${existing.listenerKey}` : 'Add a listener'}</Dialog.Title
-      >
+      <Dialog.Title>
+        {existing ? `Edit listener ${existing.listenerKey}` : 'Add a listener'}
+      </Dialog.Title>
       <Dialog.Description>
         One transport on the origin. Each listener gets its own edges.
       </Dialog.Description>

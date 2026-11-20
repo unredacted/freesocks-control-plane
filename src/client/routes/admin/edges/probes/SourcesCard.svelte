@@ -39,9 +39,9 @@
   <ul class="divide-y text-sm" aria-label="Probe sources">
     {#each rows as { h, words } (h.source)}
       <li class="flex flex-col gap-1 py-2 sm:flex-row sm:items-start sm:gap-4">
-        <span class="font-medium sm:w-40 sm:shrink-0"
-          >{PROBE_SOURCE_LABELS[h.source] ?? h.source}</span
-        >
+        <span class="font-medium sm:w-40 sm:shrink-0">
+          {PROBE_SOURCE_LABELS[h.source] ?? h.source}
+        </span>
         <span class="min-w-0 flex-1">
           <Badge variant={words.tone}>{words.label}</Badge>
           <span class="text-muted-foreground mt-1 block text-xs">{words.detail}</span>

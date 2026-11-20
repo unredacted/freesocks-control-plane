@@ -59,8 +59,10 @@
               variant="outline"
               size="sm"
               disabled={setup.data.running}
-              onclick={onChangeSetup}>Change setup</Button
+              onclick={onChangeSetup}
             >
+              Change setup
+            </Button>
           {/if}
         </div>
         <p class="text-muted-foreground text-sm">{setupSummary(setup.data)}</p>

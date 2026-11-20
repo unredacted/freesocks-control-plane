@@ -228,24 +228,27 @@
                     aria-label="Move {modeName(m)} up"
                     disabled={i === 0}
                     onclick={() => editing && (editing.modes = moved(editing.modes, i, -1))}
-                    ><ChevronUp class="size-4" /></Button
                   >
+                    <ChevronUp class="size-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     aria-label="Move {modeName(m)} down"
                     disabled={i === editing.modes.length - 1}
                     onclick={() => editing && (editing.modes = moved(editing.modes, i, 1))}
-                    ><ChevronDown class="size-4" /></Button
                   >
+                    <ChevronDown class="size-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     aria-label="Remove {modeName(m)}"
                     onclick={() =>
                       editing && (editing.modes = editing.modes.filter((x) => x !== m))}
-                    ><X class="size-4" /></Button
                   >
+                    <X class="size-4" />
+                  </Button>
                 </li>
               {/each}
             </ol>
@@ -283,24 +286,27 @@
                     aria-label="Move {locationLabel(l)} up"
                     disabled={i === 0}
                     onclick={() => editing && (editing.locations = moved(editing.locations, i, -1))}
-                    ><ChevronUp class="size-4" /></Button
                   >
+                    <ChevronUp class="size-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     aria-label="Move {locationLabel(l)} down"
                     disabled={i === editing.locations.length - 1}
                     onclick={() => editing && (editing.locations = moved(editing.locations, i, 1))}
-                    ><ChevronDown class="size-4" /></Button
                   >
+                    <ChevronDown class="size-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     aria-label="Remove {locationLabel(l)}"
                     onclick={() =>
                       editing && (editing.locations = editing.locations.filter((x) => x !== l))}
-                    ><X class="size-4" /></Button
                   >
+                    <X class="size-4" />
+                  </Button>
                 </li>
               {/each}
             </ol>
@@ -316,8 +322,9 @@
                 class="h-9 w-full rounded-md border border-dashed border-input bg-background px-2 text-sm"
               >
                 <option value="">Add a location…</option>
-                {#each locationChoices as l (l.code)}<option value={l.code}>{l.label}</option
-                  >{/each}
+                {#each locationChoices as l (l.code)}<option value={l.code}>
+                    {l.label}
+                  </option>{/each}
               </select>
             {/if}
             <p class="text-xs text-muted-foreground">

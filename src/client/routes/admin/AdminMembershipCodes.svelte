@@ -182,9 +182,9 @@
         <li class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
           <div class="flex items-center gap-3">
             <code class="font-mono">{code.codePrefix}…</code>
-            <span class="rounded px-2 py-0.5 text-xs {STATUS_COLORS[code.status]}"
-              >{code.status}</span
-            >
+            <span class="rounded px-2 py-0.5 text-xs {STATUS_COLORS[code.status]}">
+              {code.status}
+            </span>
             <span class="text-muted-foreground">{code.tierSlug} · {code.durationDays}d</span>
             {#if code.note}<span class="text-xs text-muted-foreground">“{code.note}”</span>{/if}
           </div>

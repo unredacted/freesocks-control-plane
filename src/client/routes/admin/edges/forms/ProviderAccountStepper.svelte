@@ -661,9 +661,9 @@
           >
             {discover.isPending ? 'Connecting' : 'Connect'}
           </Button>
-          {#if onCancel}<Button variant="outline" class="h-11 sm:h-8" onclick={onCancel}
-              >Cancel</Button
-            >{/if}
+          {#if onCancel}<Button variant="outline" class="h-11 sm:h-8" onclick={onCancel}>
+              Cancel
+            </Button>{/if}
         </div>
       </div>
     {:else}

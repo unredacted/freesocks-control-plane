@@ -166,15 +166,15 @@
         <span>{s.relays.total} {s.relays.total === 1 ? 'relay' : 'relays'}</span>
         <span>{s.relays.published} published</span>
         {#if s.relays.rotating > 0}<span>{s.relays.rotating} rotating</span>{/if}
-        {#if s.relays.suspected > 0}<span class="text-amber-700 dark:text-amber-300"
-            >{s.relays.suspected} suspected</span
-          >{/if}
-        {#if s.relays.quarantined > 0}<span class="text-destructive"
-            >{s.relays.quarantined} quarantined</span
-          >{/if}
-        {#if s.runtime.nodeVersion}<span class="ml-auto text-xs text-muted-foreground"
-            >actions runtime {s.runtime.nodeVersion}</span
-          >{/if}
+        {#if s.relays.suspected > 0}<span class="text-amber-700 dark:text-amber-300">
+            {s.relays.suspected} suspected
+          </span>{/if}
+        {#if s.relays.quarantined > 0}<span class="text-destructive">
+            {s.relays.quarantined} quarantined
+          </span>{/if}
+        {#if s.runtime.nodeVersion}<span class="ml-auto text-xs text-muted-foreground">
+            actions runtime {s.runtime.nodeVersion}
+          </span>{/if}
       </a>
     {/if}
 
@@ -216,8 +216,9 @@
               <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
                 <code class="font-mono text-foreground">{b.slug}</code>
                 <span class="text-xs text-muted-foreground">{b.backend}</span>
-                <span class="rounded px-1.5 py-0.5 text-[11px] font-medium {t.tone}">{t.label}</span
-                >
+                <span class="rounded px-1.5 py-0.5 text-[11px] font-medium {t.tone}">
+                  {t.label}
+                </span>
                 <span class="ms-auto text-xs text-muted-foreground">
                   {b.keyCount} keys{b.lastHealthRttMs != null
                     ? ` · ${b.lastHealthRttMs}ms`
@@ -276,11 +277,11 @@
             class="flex items-center gap-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300"
           >
             <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span
-              >Safe to enable - no cookie-only sessions remain. Set <code class="font-mono"
-                >POP_REQUIRED=true</code
-              > to enforce.</span
-            >
+            <span>
+              Safe to enable - no cookie-only sessions remain. Set <code class="font-mono">
+                POP_REQUIRED=true
+              </code> to enforce.
+            </span>
           </div>
         {:else}
           <div
@@ -337,20 +338,22 @@
                 {#if c.failing}
                   <span
                     class="mt-0.5 shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] font-medium text-destructive"
-                    >Failing</span
                   >
+                    Failing
+                  </span>
                 {:else}
                   <span
                     class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium {t.tone}"
-                    >{t.label}</span
                   >
+                    {t.label}
+                  </span>
                 {/if}
                 <div class="min-w-0">
                   <div>
                     <code class="font-mono text-xs text-foreground">{c.name}</code>
-                    <span class="ms-1 text-xs text-muted-foreground"
-                      >every {fmtEvery(c.everyMs)}</span
-                    >
+                    <span class="ms-1 text-xs text-muted-foreground">
+                      every {fmtEvery(c.everyMs)}
+                    </span>
                   </div>
                   <div class="text-xs text-muted-foreground">
                     {c.description} · {c.state === 'pending'

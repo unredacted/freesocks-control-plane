@@ -129,9 +129,9 @@
                     : t('hpke.copy')}
                 </button>
               </div>
-              <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed"
-                >{row.value}</code
-              >
+              <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed">
+                {row.value}
+              </code>
             </div>
           {/if}
         {/each}
@@ -227,9 +227,9 @@
               <CopyIcon class="size-3" />{copied === 'dns-cmd' ? t('hpke.copied') : t('hpke.copy')}
             </button>
           </div>
-          <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed"
-            >{digCommand}</code
-          >
+          <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed">
+            {digCommand}
+          </code>
         </div>
         <div class="rounded-md border border-border bg-muted/30 p-2">
           <div class="flex items-center justify-between gap-2">

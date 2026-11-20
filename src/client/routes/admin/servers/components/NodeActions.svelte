@@ -244,9 +244,9 @@
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>Edit {node.name}</Dialog.Title>
-      <Dialog.Description
-        >Where the backend reaches the node, not where members connect.</Dialog.Description
-      >
+      <Dialog.Description>
+        Where the backend reaches the node, not where members connect.
+      </Dialog.Description>
     </Dialog.Header>
     <form
       class="space-y-3"

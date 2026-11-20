@@ -169,9 +169,9 @@
         <div class="flex flex-wrap items-center gap-1.5 pt-1">
           <StatusBadge kind="phase" value={r.phase} />
           {#if r.simulated}
-            <Badge variant="warning" title="Started by test block evidence on a test deployment"
-              >Test block</Badge
-            >
+            <Badge variant="warning" title="Started by test block evidence on a test deployment">
+              Test block
+            </Badge>
           {/if}
           {#if r.cancelRequested && !r.terminal}
             <Badge variant="warning">Cancel requested</Badge>
@@ -225,9 +225,9 @@
               <StatusBadge kind="status" value={e.status} />
               <StatusBadge kind="health" value={e.health} />
               {#if onOpenEdge}
-                <Button size="xs" variant="outline" onclick={() => onOpenEdge(e.id)}
-                  >Open edge</Button
-                >
+                <Button size="xs" variant="outline" onclick={() => onOpenEdge(e.id)}>
+                  Open edge
+                </Button>
               {/if}
             </div>
           </section>
@@ -262,8 +262,9 @@
             <ol class="space-y-1.5 text-sm" aria-label="Rotation events, newest first">
               {#each events as ev, i (`${ev.at}:${ev.code}:${i}`)}
                 <li class="flex gap-2">
-                  <Badge variant={LEVEL_TONE[ev.level]} class="mt-0.5">{LEVEL_WORD[ev.level]}</Badge
-                  >
+                  <Badge variant={LEVEL_TONE[ev.level]} class="mt-0.5">
+                    {LEVEL_WORD[ev.level]}
+                  </Badge>
                   <span class="min-w-0 flex-1">
                     <span>{codeLabel(ev.code.replace(/^edge\./, ''))}</span>
                     {#if ev.detail}

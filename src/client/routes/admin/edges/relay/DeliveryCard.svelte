@@ -86,8 +86,10 @@
         Not ready yet. Next step: {SETUP_STEP_TITLES[setup.currentStep]}.
         <Link
           href={setupStepTarget(setup.currentStep, relay.slug)}
-          class="font-medium text-primary hover:underline">Do it</Link
+          class="font-medium text-primary hover:underline"
         >
+          Do it
+        </Link>
       </p>
     {/if}
     {#if relay.origin.kind !== 'manual'}

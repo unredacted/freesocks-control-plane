@@ -183,9 +183,9 @@
         per node. Two or more make a load-balanced pool. The UUIDs are write-only. Leave a field
         blank to keep its current pool. The node role's backend bootstrap sets these for you. The
         modes themselves are under
-        <Link href="/admin/connection-modes" class="underline underline-offset-2"
-          >Connection modes</Link
-        >.
+        <Link href="/admin/connection-modes" class="underline underline-offset-2">
+          Connection modes
+        </Link>.
       </CardDescription>
     </CardHeader>
     <CardContent class="space-y-5 text-sm">
@@ -238,18 +238,18 @@
                 <p class="text-muted-foreground text-xs">
                   {#each spread.found as f, fi (f.slug)}
                     {fi > 0 ? ', ' : ''}{f.count} on
-                    <Link href={backendHref(f.slug)} class="underline underline-offset-2"
-                      >{f.name}</Link
-                    >
+                    <Link href={backendHref(f.slug)} class="underline underline-offset-2">
+                      {f.name}
+                    </Link>
                   {/each}{#if spread.missing > 0}
-                    <span class="text-amber-600 dark:text-amber-400"
-                      >{spread.found.length > 0 ? ', ' : ''}{spread.missing} on no backend FCP reads</span
-                    >
+                    <span class="text-amber-600 dark:text-amber-400">
+                      {spread.found.length > 0 ? ', ' : ''}{spread.missing} on no backend FCP reads
+                    </span>
                   {:else if spread.missingUpTo > 0}
-                    <span class="text-amber-600 dark:text-amber-400"
-                      >{spread.found.length > 0 ? ', ' : ''}up to {spread.missingUpTo} may be on no backend
-                      FCP reads (a group on several backends counts once on each)</span
-                    >
+                    <span class="text-amber-600 dark:text-amber-400">
+                      {spread.found.length > 0 ? ', ' : ''}up to {spread.missingUpTo} may be on no backend
+                      FCP reads (a group on several backends counts once on each)
+                    </span>
                   {/if}.
                   {#each spread.withoutTransports as w (`${w.slug}:${w.group}`)}
                     <span class="text-amber-600 dark:text-amber-400">
@@ -281,17 +281,19 @@
                             <span class="font-medium">{g.name}</span> on
                             <Link
                               href={backendHref(g.backendSlug)}
-                              class="underline underline-offset-2">{g.backendName}</Link
+                              class="underline underline-offset-2"
                             >
+                              {g.backendName}
+                            </Link>
                           </span>
                         {/each}
                         {#if line.saved !== line.text}
                           <span class="text-muted-foreground">Saved as {line.saved}.</span>
                         {/if}
                       {:else if line.kind === 'unknown'}
-                        <span class="text-amber-600 dark:text-amber-400"
-                          >Not a mode group on any backend FCP reads.</span
-                        >
+                        <span class="text-amber-600 dark:text-amber-400">
+                          Not a mode group on any backend FCP reads.
+                        </span>
                       {:else}
                         <span class="text-destructive">Not a mode group UUID.</span>
                       {/if}
@@ -320,9 +322,12 @@
               <li class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
                 <span class="font-medium">{g.name}</span>
                 <span class="font-mono text-xs text-muted-foreground break-all">{g.uuid}</span>
-                <Link href={backendHref(g.backendSlug)} class="text-xs underline underline-offset-2"
-                  >{g.backendName}</Link
+                <Link
+                  href={backendHref(g.backendSlug)}
+                  class="text-xs underline underline-offset-2"
                 >
+                  {g.backendName}
+                </Link>
               </li>
             {/each}
           </ul>
@@ -356,8 +361,10 @@
                 {#each known as g (g.backendSlug)}
                   <Link
                     href={backendHref(g.backendSlug)}
-                    class="ml-1 text-xs underline underline-offset-2">{g.backendName}</Link
+                    class="ml-1 text-xs underline underline-offset-2"
                   >
+                    {g.backendName}
+                  </Link>
                 {/each}
                 {#if !sq.online}
                   <span class="ml-1 text-xs text-amber-600 dark:text-amber-400">· offline</span>

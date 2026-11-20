@@ -99,9 +99,9 @@
                     {c.schemeId}
                   </span>
                 {:else}
-                  <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground"
-                    >manual</span
-                  >
+                  <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground">
+                    manual
+                  </span>
                 {/if}
                 {#if !c.enabled}
                   <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground">
@@ -124,21 +124,17 @@
               · Priority: <strong class="text-foreground tabular-nums">{c.priority}</strong>
               · Ease of use: <strong class="text-foreground">{c.easeOfUse ?? 'unrated'}</strong>
               · IPv6:
-              <strong class="text-foreground"
-                >{c.ipv6 === true ? 'works' : c.ipv6 === false ? 'IPv4 only' : 'untested'}</strong
-              >
+              <strong class="text-foreground">
+                {c.ipv6 === true ? 'works' : c.ipv6 === false ? 'IPv4 only' : 'untested'}
+              </strong>
               · XHTTP:
-              <strong class="text-foreground"
-                >{c.xhttp === true ? 'works' : c.xhttp === false ? "can't" : 'untested'}</strong
-              >
+              <strong class="text-foreground">
+                {c.xhttp === true ? 'works' : c.xhttp === false ? "can't" : 'untested'}
+              </strong>
               · Hysteria:
-              <strong class="text-foreground"
-                >{c.hysteria2 === true
-                  ? 'works'
-                  : c.hysteria2 === false
-                    ? "can't"
-                    : 'untested'}</strong
-              >
+              <strong class="text-foreground">
+                {c.hysteria2 === true ? 'works' : c.hysteria2 === false ? "can't" : 'untested'}
+              </strong>
             </div>
             <div class="text-muted-foreground">
               License:
@@ -151,8 +147,10 @@
                   href={c.sourceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="underline break-all">source</a
+                  class="underline break-all"
                 >
+                  source
+                </a>
               {/if}
             </div>
             {#if c.description}

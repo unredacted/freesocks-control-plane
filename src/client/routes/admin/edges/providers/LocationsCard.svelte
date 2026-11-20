@@ -226,8 +226,9 @@
           <div class="min-w-0 space-y-1">
             <p class="flex flex-wrap items-center gap-2 font-medium">
               {l.label}
-              {#if l.isDefault && account.locations.length > 1}<Badge variant="info">Default</Badge
-                >{/if}
+              {#if l.isDefault && account.locations.length > 1}<Badge variant="info">
+                  Default
+                </Badge>{/if}
               {#if !l.enabled}<Badge variant="muted">Off</Badge>{/if}
               <Badge variant={trust.tone}>{trust.label}</Badge>
             </p>
@@ -281,13 +282,11 @@
               {@const pr = l.pricing}
               <p class="text-xs">
                 Plan {pr.plan?.label ?? pr.size ?? 'not set'}: {costWords(pr.cost)}.
-                {#if pr.plan}<span class="text-muted-foreground"
-                    >{trafficWords(pr.plan.traffic)}. {sourceWords(pr.plan)}.</span
-                  >{:else if pr.plans.length === 0}<span class="text-muted-foreground"
-                    >{pr.plansAt
-                      ? 'The provider listed no plans here.'
-                      : 'Prices not read yet.'}</span
-                  >{/if}
+                {#if pr.plan}<span class="text-muted-foreground">
+                    {trafficWords(pr.plan.traffic)}. {sourceWords(pr.plan)}.
+                  </span>{:else if pr.plans.length === 0}<span class="text-muted-foreground">
+                    {pr.plansAt ? 'The provider listed no plans here.' : 'Prices not read yet.'}
+                  </span>{/if}
               </p>
               {#if pr.plansError}
                 <p class="text-muted-foreground text-xs">
@@ -309,8 +308,10 @@
                   onclick={() => {
                     onlyFor = l;
                     onlyOpen = true;
-                  }}>{l.onlyForMeant ? 'Back to everyone' : 'Only for these countries'}</button
+                  }}
                 >
+                  {l.onlyForMeant ? 'Back to everyone' : 'Only for these countries'}
+                </button>
               </p>
             {/if}
             <p class="text-xs">{zones ? CDN_PLACE_LINE : memberPlaceLine(l.memberPlace)}</p>

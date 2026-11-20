@@ -138,9 +138,9 @@
   {:else if review.isError || !review.data}
     <p class="text-destructive">{serverErrorWords(codeOf(review.error))}</p>
     <div class="flex flex-wrap gap-2">
-      <Button size="sm" variant="outline" onclick={() => void review.refetch()}
-        >Read it again</Button
-      >
+      <Button size="sm" variant="outline" onclick={() => void review.refetch()}>
+        Read it again
+      </Button>
       {#if inMaintenance}{@render finishButton()}{/if}
     </div>
   {:else}

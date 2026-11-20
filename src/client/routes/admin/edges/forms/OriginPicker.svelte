@@ -148,8 +148,9 @@
 
   {#if value.kind !== 'manual'}
     <div class="space-y-1.5">
-      <Label for={`${uid}-server`}>{value.kind === 'panel-node' ? 'Panel' : 'Backend server'}</Label
-      >
+      <Label for={`${uid}-server`}>
+        {value.kind === 'panel-node' ? 'Panel' : 'Backend server'}
+      </Label>
       {#if servers.isError}
         <AdminListState error={servers.error} onRetry={() => void servers.refetch()} />
       {:else if !servers.isPending && serverOptions.length === 0}

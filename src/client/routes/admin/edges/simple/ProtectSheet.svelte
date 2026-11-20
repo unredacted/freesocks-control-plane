@@ -636,8 +636,10 @@
                 backend, or pick another node.
                 <Link
                   href={serversPaths.node(preset.node, { backend: serverSlug || undefined })}
-                  class={LINK}>Open it on Servers</Link
+                  class={LINK}
                 >
+                  Open it on Servers
+                </Link>
               </p>
             {/if}
             {#if candidates.isPending || (presetPending && refresh.isPending)}
@@ -649,9 +651,9 @@
                 class="text-muted-foreground space-y-2 rounded-md border border-dashed p-4 text-sm"
               >
                 <p>This panel has no nodes yet.</p>
-                <Link href={serversPaths.nodes({ backend: serverSlug || undefined })} class={LINK}
-                  >Add one under Servers</Link
-                >
+                <Link href={serversPaths.nodes({ backend: serverSlug || undefined })} class={LINK}>
+                  Add one under Servers
+                </Link>
               </div>
             {:else}
               <fieldset class="space-y-2">
@@ -743,9 +745,9 @@
                       {inboundLine(i)}
                       {#if i.refusesClients}
                         <!-- A warning, not a refusal: the review says why and the fix. -->
-                        <span class="block text-xs font-normal text-amber-700 dark:text-amber-300"
-                          >{realityRefusalWords(i.refusesClients).title}</span
-                        >
+                        <span class="block text-xs font-normal text-amber-700 dark:text-amber-300">
+                          {realityRefusalWords(i.refusesClients).title}
+                        </span>
                       {/if}
                     </li>
                   {/each}
@@ -791,9 +793,9 @@
                         {#if i.detail}
                           <!-- The mapper's own words for THIS inbound (a validator message or
                                a short code): without them "the detail names what" names nothing. -->
-                          <span class="text-muted-foreground mt-0.5 block font-mono text-xs"
-                            >{i.detail}</span
-                          >
+                          <span class="text-muted-foreground mt-0.5 block font-mono text-xs">
+                            {i.detail}
+                          </span>
                         {/if}
                       </p>
                     {/each}
@@ -801,8 +803,10 @@
                       A node's transports are set on its panel.
                       <Link
                         href={serversPaths.node(nodeUuid, { backend: serverSlug || undefined })}
-                        class={LINK}>Open the node on Servers</Link
+                        class={LINK}
                       >
+                        Open the node on Servers
+                      </Link>
                     </p>
                   </Collapsible.Content>
                 </Collapsible.Root>
@@ -875,9 +879,9 @@
                 {@const partial = a.compatible && a.carries.length < required.length}
                 <div class="rounded-md border">
                   <div class="p-3 pb-1">
-                    <span class={['block font-medium', !a.compatible && 'opacity-60']}
-                      >{a.name}</span
-                    >
+                    <span class={['block font-medium', !a.compatible && 'opacity-60']}>
+                      {a.name}
+                    </span>
                     <span class="text-muted-foreground block text-xs">
                       {providerLabel(a.provider)}
                       <span class="mx-1" aria-hidden="true">·</span>{a.layer === 'l7'
@@ -900,8 +904,9 @@
                               type="button"
                               class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
                               onclick={() => (addingLocationFor = a.id)}
-                              >{a.layer === 'l7' ? 'Add a zone' : 'Add a location'}</button
                             >
+                              {a.layer === 'l7' ? 'Add a zone' : 'Add a location'}
+                            </button>
                             {#if a.layer === 'l4'}
                               <!-- No region is listed for it yet: listing again may offer some. -->
                               <div class="pt-1">
@@ -922,20 +927,23 @@
                               type="button"
                               class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
                               disabled={planM.isPending}
-                              onclick={replan}>{reasonLabel(r)}</button
+                              onclick={replan}
                             >
+                              {reasonLabel(r)}
+                            </button>
                           {:else if href}
                             <Link
                               {href}
                               class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
-                              >{reasonLabel(r)}</Link
                             >
+                              {reasonLabel(r)}
+                            </Link>
                           {:else}
-                            <span class="text-muted-foreground"
-                              >{r === 'layer_mismatch'
+                            <span class="text-muted-foreground">
+                              {r === 'layer_mismatch'
                                 ? 'Cannot carry any chosen transport'
-                                : reasonLabel(r)}</span
-                            >
+                                : reasonLabel(r)}
+                            </span>
                           {/if}
                         </li>
                       {/each}
@@ -956,11 +964,9 @@
                               onchange={(e) => toggleLocation(l.id, e.currentTarget.checked)}
                             />
                             <span class="min-w-0 flex-1">
-                              <span class={['block text-sm', !l.compatible && 'opacity-60']}
-                                >{l.label}{l.isDefault && a.locations.length > 1
-                                  ? ' (default)'
-                                  : ''}</span
-                              >
+                              <span class={['block text-sm', !l.compatible && 'opacity-60']}>
+                                {l.label}{l.isDefault && a.locations.length > 1 ? ' (default)' : ''}
+                              </span>
                               <span class="text-muted-foreground block text-xs">
                                 {#if !l.compatible}
                                   {l.reasons.map(reasonLabel).join('. ')}.
@@ -1137,9 +1143,9 @@
                 ? 'that mode is'
                 : 'they are'} on.
             </p>
-            <Link href="/admin/connection-modes" class={`${LINK} mt-1 inline-block`}
-              >Open Connection modes</Link
-            >
+            <Link href="/admin/connection-modes" class={`${LINK} mt-1 inline-block`}>
+              Open Connection modes
+            </Link>
           </div>
         {/if}
         {#each refusing as i (i.listenerKey)}

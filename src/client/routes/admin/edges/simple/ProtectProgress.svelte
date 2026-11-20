@@ -337,8 +337,9 @@
               <Badge
                 variant={c.tone}
                 title={[countryName(c.country, 'en'), c.title].filter(Boolean).join('. ')}
-                >{c.country}: {c.label}</Badge
               >
+                {c.country}: {c.label}
+              </Badge>
             {/each}
           </li>
         {/each}
@@ -449,9 +450,9 @@
       {:else if need.code === 'review_changed'}
         <p>
           {moreDirectWords(run.reviewDelta.length)}
-          <span class="text-muted-foreground"
-            >{run.reviewDelta.map((d) => d.remark).join(', ')}</span
-          >
+          <span class="text-muted-foreground">
+            {run.reviewDelta.map((d) => d.remark).join(', ')}
+          </span>
         </p>
       {:else if need.code === 'quarantined' && pausedRelay.data?.quarantine}
         <!-- Resolving the pause does not wake the run: it carries on through a retry. -->
@@ -475,9 +476,9 @@
               )}
             {#if from.locationId && others.length > 0 && !moving.some((m) => m.published)}
               <fieldset class="space-y-1.5">
-                <legend class="text-xs font-medium"
-                  >Instead of {from.label ?? 'this location'}</legend
-                >
+                <legend class="text-xs font-medium">
+                  Instead of {from.label ?? 'this location'}
+                </legend>
                 <div class="flex flex-wrap gap-2">
                   {#each others as o (o.location.id)}
                     <Button
