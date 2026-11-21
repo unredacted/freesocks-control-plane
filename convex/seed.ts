@@ -5,12 +5,12 @@
  * set). Additional backend instances (more Remnawave, any Outline) are added via
  * the admin CMS, since their connection config is operator-specific + secret.
  */
-import { internalAction, internalMutation } from './_generated/server';
+import { internalAction, internalMutation, type DatabaseWriter } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { SETTINGS_DEFAULTS, upsertSettingRow } from './appSettings';
 import { FREEDOM_EDGES_ONLY_KEY, freedomEdgesOnly } from './lib/edges/freedomDelivery';
-import { DEFAULT_CLIENTS } from './lib/clientCatalog';
+import { DEFAULT_CLIENTS, RENAMED_DEFAULT_CLIENTS } from './lib/clientCatalog';
 import {
   BUILT_IN_MODES_VERSION,
   CONNECTION_MODE_DEFAULT_KEY,
@@ -196,8 +196,34 @@ export const seedBackendServersFromEnv = internalMutation({
  * instances via the admin CMS.
  */
 /**
+ * Rename stored default-app rows whose app changed its name
+ * (RENAMED_DEFAULT_CLIENTS), keeping the row (its `enabled`, priority and
+ * any admin description), unless a row under the current name already exists.
+ * Both catalog seeds run it first, so a renamed app is never listed twice.
+ */
+async function renameDefaultClients(db: DatabaseWriter): Promise<number> {
+  let renamed = 0;
+  for (const [former, current] of Object.entries(RENAMED_DEFAULT_CLIENTS)) {
+    const old = await db
+      .query('clients')
+      .withIndex('by_name', (q) => q.eq('name', former))
+      .unique();
+    if (!old) continue;
+    const taken = await db
+      .query('clients')
+      .withIndex('by_name', (q) => q.eq('name', current))
+      .unique();
+    if (taken) continue;
+    await db.patch(old._id, { name: current, updatedAt: Date.now() });
+    renamed++;
+  }
+  return renamed;
+}
+
+/**
  * Seed the recommended-client catalog from the compiled DEFAULT_CLIENTS.
- * Idempotent by name (skips a client that already exists), so it's safe on a
+ * Idempotent by name (skips a client that already exists; a renamed default's
+ * old row is renamed first), so it's safe on a
  * fresh deploy (via seedCutover) OR run once on an already-deployed instance
  * (`bunx convex run seed:seedClients '{}'`). The clientCatalog resolver also
  * falls back to DEFAULT_CLIENTS when the table is empty, so the UI is never blank.
@@ -206,6 +232,7 @@ export const seedClients = internalMutation({
   args: {},
   handler: async (ctx): Promise<{ inserted: number }> => {
     let inserted = 0;
+    await renameDefaultClients(ctx.db);
     for (const c of DEFAULT_CLIENTS) {
       const existing = await ctx.db
         .query('clients')
@@ -257,6 +284,7 @@ export const refreshDefaultClients = internalMutation({
   handler: async (ctx): Promise<{ inserted: number; updated: number }> => {
     let inserted = 0;
     let updated = 0;
+    await renameDefaultClients(ctx.db);
     for (const c of DEFAULT_CLIENTS) {
       const existing = await ctx.db
         .query('clients')

@@ -158,7 +158,7 @@ describe('the apps it names', () => {
       backend: 'remnawave',
       notice: OLD,
     });
-    expect(apps).toEqual(['FlClash', 'Mihomo Party']);
+    expect(apps).toEqual(['FlClash', 'Clash Party']);
     // Named for what it is, the Clash Verge Rev entry is offered too.
     const renamed = DEFAULT_CLIENTS.map((c) =>
       c.name === 'Clash' ? { ...c, name: 'Clash Verge Rev', easeOfUse: 'easy' as const } : c,
@@ -201,7 +201,7 @@ describe('the apps it names', () => {
     // Another mode is not narrowed by the flag.
     expect(
       noticeApps(evidenced, { backend: 'remnawave', modeId: 'privacy-reality', notice: OLD }),
-    ).toEqual(['FlClash', 'Mihomo Party']);
+    ).toEqual(['FlClash', 'Clash Party']);
   });
 
   test('on a device-limited plan, apps that honour the limit come first', () => {
@@ -226,18 +226,18 @@ describe('the apps it names', () => {
   test('only enabled apps on the key backend, at most two', () => {
     const one: CatalogClient[] = DEFAULT_CLIENTS.map((c) => ({
       ...c,
-      enabled: c.name === 'Mihomo Party' || c.name === 'Outline',
+      enabled: c.name === 'Clash Party' || c.name === 'Outline',
     }));
-    expect(noticeApps(one, { backend: 'remnawave', notice: OLD })).toEqual(['Mihomo Party']);
+    expect(noticeApps(one, { backend: 'remnawave', notice: OLD })).toEqual(['Clash Party']);
     expect(noticeApps([], { backend: 'remnawave', notice: OLD })).toEqual([]);
   });
 });
 
 describe('the words', () => {
   test('what is wrong, what to install, where to get help: by the service name, no domain', () => {
-    expect(noticeLines(OLD, ['FlClash', 'Mihomo Party'], 'FreeSocks')).toEqual([
+    expect(noticeLines(OLD, ['FlClash', 'Clash Party'], 'FreeSocks')).toEqual([
       '⚠ App too old for FreeSocks',
-      'Install FlClash or Mihomo Party',
+      'Install FlClash or Clash Party',
       'Help: your FreeSocks account page',
     ]);
     expect(noticeLines(SINGBOX_MODE, ['Hiddify'], 'Example VPN')).toEqual([
@@ -247,7 +247,7 @@ describe('the words', () => {
     ]);
     // No app to name: the install line goes.
     expect(noticeLines(OLD, [], 'FreeSocks')).toHaveLength(2);
-    for (const line of noticeLines(OLD, ['FlClash', 'Mihomo Party'], 'FreeSocks')) {
+    for (const line of noticeLines(OLD, ['FlClash', 'Clash Party'], 'FreeSocks')) {
       expect(line).not.toContain('—');
       expect(line).not.toMatch(/https?:|\.org|\.com/);
     }
@@ -265,7 +265,7 @@ describe('the words', () => {
 });
 
 describe('the notice bodies', () => {
-  const lines = noticeLines(OLD, ['FlClash', 'Mihomo Party'], 'FreeSocks');
+  const lines = noticeLines(OLD, ['FlClash', 'Clash Party'], 'FreeSocks');
 
   test('Clash: inert SOCKS5 entries the legacy core parses, one select group, MATCH to it', () => {
     const body = appNoticeBody(OLD, lines, 'FreeSocks', LEGACY_EMPTY);

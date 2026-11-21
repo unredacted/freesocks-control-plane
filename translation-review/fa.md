@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**235 of 842 strings are missing** (the app currently shows English for
+**236 of 843 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -669,7 +669,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(8 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(9 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -717,6 +717,7 @@ review.
 | `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | برنامهٔ دسکتاپی قدرتمند برای کاربران پیشرفته. واردکردن دستی است، و لینک‌هایی با رمزگذاری "none" ممکن است به تنظیم دستی نیاز داشته باشند. اگر این پیچیده به نظر می‌رسد، Hiddify را ترجیح دهید. |
 | `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | Clash Verge، یک برنامهٔ دسکتاپی محبوب با قوانین مسیریابی قوی. برخی نسخه‌ها لینک‌های اشتراک VLESS را نمی‌پذیرند؛ اگر وارد نشد، به‌جای آن از Hiddify یا v2rayN استفاده کنید. |
 | `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | برنامه‌ای تمیز و چندسکویی از خانوادهٔ Clash. با جای‌گذاری لینک اشتراک وارد کنید (واردکردن با یک ضربه ندارد). |
+| `setup.clientDesc.clashMetaForAndroid` | The Android app from the team behind the Clash (mihomo) core. Imports with one tap. | ⚠️ **MISSING** |
 | `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | برنامهٔ دسکتاپی دوستانه برای هستهٔ Clash (mihomo). برای واردکردن، لینک اشتراک خود را جای‌گذاری کنید. |
 | `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | کلاینت دسکتاپی پیشرفته‌ای که به محدودیت دستگاه پلن شما احترام می‌گذارد و پشتیبانی خوبی از لینوکس دارد. منتظر راه‌اندازی دستی باشید. |
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | برنامهٔ iOS پولی و بسته‌متنی که محبوب و قابل اعتماد است. اگر از قبل آن را دارید ارزش استفاده دارد؛ برنامه‌های متن‌باز بالا همان کار را رایگان انجام می‌دهند. |
