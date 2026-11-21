@@ -386,7 +386,8 @@ async function transportNetworksOf(
 type PlanContext = Awaited<ReturnType<typeof planContextOf>>;
 
 /**
- * The mode of an enrolled node not fronted yet when it is a DIRECT one
+ * The mode of an enrolled node not fronted yet (no origin, or only one a run
+ * left behind before go-live) when it is a DIRECT one
  * (members reach the node at its own address): the node's approval reviews
  * that shape, which carries no fronted listener, so a run would buy and test
  * an address that can never go live (`nodeActivation.approvalStageOf`). The
@@ -395,7 +396,9 @@ type PlanContext = Awaited<ReturnType<typeof planContextOf>>;
 function directModeOf(
   c: Pick<PlanContext, 'modes' | 'enrolled' | 'relay'>,
 ): { slug: string; label: string | null } | null {
-  if (!c.enrolled || c.relay) return null;
+  // A node already fronted (its origin went live) keeps what it has; an
+  // origin a run left behind before go-live (`setupOwned`) is no exemption.
+  if (!c.enrolled || (c.relay && !c.relay.setupOwned)) return null;
   const mode = c.modes.find((m) => m.slug === c.enrolled!.mode);
   return mode?.direct ? { slug: mode.slug, label: mode.label } : null;
 }
