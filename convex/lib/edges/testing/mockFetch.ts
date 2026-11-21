@@ -12,6 +12,8 @@ export interface Captured {
   method: string;
   headers: Record<string, string>;
   body: unknown;
+  /** A multipart body as sent (fetch sets its type and boundary). */
+  form?: FormData;
   rawBody: string | undefined;
   /** The `redirect` fetch option (adapters must send `manual`). */
   redirect: RequestRedirect | undefined;
@@ -79,6 +81,7 @@ export function mockFetch(handler: Handler): FetchStub {
         headers: hdrs,
         body,
         rawBody,
+        ...(init.body instanceof FormData ? { form: init.body } : {}),
         redirect: init.redirect,
       };
       calls.push(captured);

@@ -191,6 +191,27 @@ export function spectrumWorkerMetadata(
 }
 
 /**
+ * The Worker upload as Cloudflare documents it (exported for tests): a JSON
+ * part named `metadata`, and the module as a part named by its file name.
+ */
+export function spectrumWorkerUpload(
+  member: { address: string; port: number },
+  tpl: Pick<SpectrumTemplateParams, 'cpuLimitMs'>,
+): FormData {
+  const form = new FormData();
+  form.append(
+    'metadata',
+    new Blob([JSON.stringify(spectrumWorkerMetadata(member, tpl))], { type: 'application/json' }),
+  );
+  form.append(
+    SPECTRUM_WORKER_MODULE,
+    new Blob([SPECTRUM_RELAY_WORKER], { type: 'application/javascript+module' }),
+    SPECTRUM_WORKER_MODULE,
+  );
+  return form;
+}
+
+/**
  * The create-application body (exported for tests): exactly the four fields a
  * Pro or Business Worker application takes (Cloudflare's "settings by plan":
  * no `edge_ips`, `tls` or other Enterprise field, even unset). Cloudflare
@@ -471,20 +492,23 @@ export const spectrumProvider: EdgeProvider<SpectrumConfig, SpectrumTemplatePara
         try {
           accountId = await zoneAccountId(cfg, step.id);
           const client = cloudflareClient(cfg);
-          // The module part of the multipart upload (Node 22's global File).
-          const file = new File([SPECTRUM_RELAY_WORKER], SPECTRUM_WORKER_MODULE, {
-            type: 'application/javascript+module',
-          });
-          res = await cfCall(
+          const form = spectrumWorkerUpload(member, tpl);
+          // The SDK's own `workers.scripts.update` cannot send this: it forces
+          // `Content-Type: application/javascript` over the multipart body
+          // (Cloudflare then parses the whole body as one script: "Uncaught
+          // SyntaxError ... at worker.js:1:4") and flattens `metadata` into
+          // nested form fields. The raw request keeps the client's base URL
+          // and auth, and `fetch` sets the multipart type and boundary.
+          const answer = await cfCall(
             step.id,
             () =>
-              client.workers.scripts.update(step.resourceName, {
-                account_id: accountId,
-                metadata: spectrumWorkerMetadata(member, tpl),
-                files: [file],
-              }),
+              client.put<{ result?: { tag?: string | null } | null }>(
+                `/accounts/${accountId}/workers/scripts/${encodeURIComponent(step.resourceName)}`,
+                { body: form },
+              ),
             [cfg.apiToken],
           );
+          res = answer?.result ?? {};
         } catch (e) {
           const refused = refusedCreate(e, 'create_refused');
           if (refused) return refused;

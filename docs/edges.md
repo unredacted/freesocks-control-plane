@@ -7434,7 +7434,11 @@ uses runs this check on each of that account's locations in use with the new tok
    ledger. The node's address and port are its plain-text bindings `ORIGIN_HOST` and
    `ORIGIN_PORT`. The module (`SPECTRUM_RELAY_WORKER`) has only a `connect()` handler: no
    `fetch` handler, it never reads the member's address (`socket.opened.remoteAddress`) and
-   prints nothing; Workers observability and Logpush are off on upload. A node port a Worker
+   prints nothing; Workers observability and Logpush are off on upload. The upload is Cloudflare's
+   documented multipart form (a JSON `metadata` part, the module by file name) sent through the
+   SDK client's raw `put`: the SDK's own `workers.scripts.update` forces
+   `Content-Type: application/javascript` over the body and flattens `metadata` into nested
+   fields, which Cloudflare refuses (`10021 Uncaught SyntaxError ... worker.js:1:4`). A node port a Worker
    may not connect to (25) is refused before anything is made (`origin_port_blocked`).
 2. `create_lb`: the Spectrum application (`traffic_type: worker`, `protocol: tcp/<edge port>`,
    origin the Worker's tag). The body is exactly the four fields a Pro or Business zone takes
