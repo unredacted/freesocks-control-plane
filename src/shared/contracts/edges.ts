@@ -3618,6 +3618,11 @@ export const SetupPlanResponse = z.object({
   managementAddress: z.string().optional(),
   /** The node's earlier protection is still being removed (a run is refused until it is gone). */
   originDeleting: z.boolean().default(false),
+  /**
+   * An enrolled node not fronted yet whose mode is a direct one: its approval
+   * never covers fronted addresses, so a run is refused (`edge.node_mode_direct`).
+   */
+  directMode: z.object({ slug: z.string(), label: z.string().nullable() }).nullable().default(null),
   relaySlug: z.string(),
   inbounds: z.array(SetupPlanInbound),
   requiredListeners: z.array(z.string()),

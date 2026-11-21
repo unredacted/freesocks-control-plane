@@ -3908,3 +3908,49 @@ describe('changing the setup of a backend with a live node and a published edge'
     await memberBody(t, address);
   });
 });
+
+describe('a node whose mode is a direct one', () => {
+  test('is not fronted: the plan says so and a run is refused before anything is made', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const accts = await accounts(t);
+    await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    // The backend's mode becomes a direct one (members reach the node itself).
+    await t.run(async (c) => {
+      const setup = (await c.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+        .unique())!;
+      await c.db.patch(setup._id, {
+        modes: setup.modes.map((m) =>
+          m.slug === 'freedom-reality' ? { ...m, shape: { ...m.shape, fronting: 'direct' } } : m,
+        ),
+      } as never);
+    });
+    const node = (
+      await t.run((c) =>
+        c.db
+          .query('backendNodeInventory')
+          .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+          .collect(),
+      )
+    ).find((n) => n.name === NODE)!;
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: w.serverId,
+      nodeUuid: node.nodeUuid,
+    });
+    expect(plan.directMode).toEqual({ slug: 'freedom-reality', label: null });
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: w.serverId,
+        nodeUuid: node.nodeUuid,
+        accountId: accts.l4,
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/node_mode_direct/);
+    // Nothing was bought.
+    expect(await t.run((c) => c.db.query('edges').collect())).toHaveLength(0);
+  });
+});

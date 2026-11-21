@@ -511,6 +511,7 @@
           !choosingTransports &&
           plan.requiredListeners.length > 0 &&
           !plan.originDeleting &&
+          !plan.directMode &&
           !plan.originPrivate
       : step === 'account'
         ? setReady && !planM.isPending
@@ -819,6 +820,18 @@
               role="status"
             >
               This node's earlier fronting is still being removed. Front it again once it is gone.
+            </p>
+          {/if}
+          {#if plan?.directMode}
+            <p
+              class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+              role="status"
+            >
+              This node serves {adminModeName({
+                id: plan.directMode.slug,
+                label: plan.directMode.label,
+              })}, a mode members reach at the node's own address. A fronted node could never be
+              approved to go live in it, so nothing is created. Give the node a fronted mode first.
             </p>
           {/if}
           {#if asksOrigin && !planM.isPending && !choosingTransports}

@@ -368,6 +368,11 @@ export interface SetupPlanSnapshot {
    */
   modesOff?: Array<{ slug: string; label: string | null }>;
   /**
+   * An enrolled node not fronted yet whose mode is a direct one: its approval
+   * never covers fronted addresses, so the run is refused (`edge.node_mode_direct`).
+   */
+  directMode?: { slug: string; label: string | null } | null;
+  /**
    * The node is ENROLLED (FCP manages it, docs/servers.md "Node lifecycle"):
    * it goes live through its approval, and has no direct address to keep
    * members on (`keepDirect` is refused). Absent on runs from before.

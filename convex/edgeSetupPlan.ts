@@ -61,7 +61,7 @@ import { atCap } from './lib/edges/pricing';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
-import { enrolledOriginOf, nodeAddressesOf, withVerifiedIngress } from './nodeIntents';
+import { enrolledOriginOf, isDirect, nodeAddressesOf, withVerifiedIngress } from './nodeIntents';
 import {
   L4_NOT_FOR_WEBSOCKET,
   l4BarredFor,
@@ -301,6 +301,8 @@ async function planContextOf(
         tag: m.tag,
         label: entry?.label ?? null,
         enabled: entry?.enabled ?? false,
+        // Members reach a node of this mode at its own address.
+        direct: !!m.shape && isDirect(m.shape),
       };
     });
     return {
@@ -382,6 +384,21 @@ async function transportNetworksOf(
 }
 
 type PlanContext = Awaited<ReturnType<typeof planContextOf>>;
+
+/**
+ * The mode of an enrolled node not fronted yet when it is a DIRECT one
+ * (members reach the node at its own address): the node's approval reviews
+ * that shape, which carries no fronted listener, so a run would buy and test
+ * an address that can never go live (`nodeActivation.approvalStageOf`). The
+ * run is refused before anything is made; the node needs a fronted mode.
+ */
+function directModeOf(
+  c: Pick<PlanContext, 'modes' | 'enrolled' | 'relay'>,
+): { slug: string; label: string | null } | null {
+  if (!c.enrolled || c.relay) return null;
+  const mode = c.modes.find((m) => m.slug === c.enrolled!.mode);
+  return mode?.direct ? { slug: mode.slug, label: mode.label } : null;
+}
 
 /**
  * The modes the protected transports feed (an enrolled node's own mode, and
@@ -1222,6 +1239,7 @@ export async function buildPlan(
     activeRunId: c.activeRunId,
     enrolled: !!c.enrolled,
     modesOff: modesOffOf(c, required),
+    directMode: directModeOf(c),
     ...(set ? { set } : {}),
   };
   const offered = accounts.filter((x) => x.compatible);
@@ -1367,6 +1385,12 @@ export const create = internalAction({
       throw new ConvexError({
         code: 'edge.origin_deleting',
         message: "The node's earlier fronting is still being removed. Try again once it is gone",
+      });
+    if (plan.directMode)
+      throw new ConvexError({
+        code: 'edge.node_mode_direct',
+        message:
+          "The node's mode serves it directly, so a fronting run could never be approved. Give the node a fronted mode first",
       });
     if (planHash !== a.planHash)
       throw new ConvexError({

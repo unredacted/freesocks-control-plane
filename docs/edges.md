@@ -2325,6 +2325,12 @@ minClientVer, maxClientVer}` in the plan. Each restriction is its own reason wit
   plan says so (`originDeleting`, the sheet's note) and the create is refused with
   `edge.origin_deleting`; a run that meets the delete at prepare waits for it (event
   `origin_deleting`) and then creates its own origin, instead of failing as taken.
+- **A node whose mode is a direct one.** An enrolled node not fronted yet whose mode's shape is
+  `fronting: 'direct'` (members reach the node at its own address) is never fronted: its
+  approval reviews that shape, which carries no fronted listener, so a run would buy and test
+  an address that can never go live (`nodeActivation.approvalStageOf`). The plan says so
+  (`directMode`, the sheet's note, and Continue stays off) and the create is refused with
+  `edge.node_mode_direct` before anything is made. Give the node a fronted mode first.
 - **The operator's own front after go-live.** Its Host is an operator front, at an address or
   at a CDN hostname that resolves elsewhere
   (§ "Direct-Host hides and the restore workflow"): the plan lists it (`frontHosts`, which the

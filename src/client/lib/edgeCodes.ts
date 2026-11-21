@@ -2109,6 +2109,12 @@ const REFUSAL_COPY = {
       "A transport this fronting covers is in no mode group on the panel, so FCP's test account cannot reach it.",
     fix: 'Put the transport in a mode group on the panel, or choose the mode whose group the test account should use.',
   },
+  node_mode_direct: {
+    label: "Node's mode is direct",
+    explain:
+      'Members reach a node of this mode at its own address, so a fronted node could never be approved to go live in it.',
+    fix: 'Give the node a fronted mode first, then front it.',
+  },
   origin_deleting: {
     label: 'Old fronting still going',
     explain: "The node's earlier fronting is still being removed.",
