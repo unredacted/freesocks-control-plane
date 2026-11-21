@@ -325,7 +325,8 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     asyncOps: false,
     asyncDelete: false,
     needsPrivateNetwork: false,
-    ipv6: true,
+    // Every application gets an IPv4 and an IPv6; there is no family to choose.
+    ipv6: false,
     udp: false,
     idleTimeoutConfigurable: false,
     memberHealth: false,

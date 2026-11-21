@@ -666,7 +666,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+$',
-        purpose: "the account of the location's zone, where its relay Worker must live",
+        purpose:
+          'the location check (the zone is active, not paused, not on Free) and the account of the zone, where its relay Worker must live',
       },
       {
         method: 'GET',
@@ -688,19 +689,21 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+/spectrum/apps$',
-        purpose: "the zone's applications: discovery by DNS name and the location inventory",
+        purpose: "the zone's applications: discovery by DNS name, the location inventory and check",
         query: ['page', 'per_page'],
       },
       {
         method: 'POST',
         path: '^/client/v4/zones/[^/]+/spectrum/apps$',
-        purpose: 'create the application forwarding one TCP port to the relay Worker',
-        body: ['dns', 'protocol', 'traffic_type', 'origin_worker_id', 'edge_ips'],
+        purpose:
+          'create the application forwarding one TCP port to the relay Worker (the four fields a Pro or Business zone takes)',
+        body: ['dns', 'protocol', 'traffic_type', 'origin_worker_id'],
       },
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+/spectrum/apps/[^/]+$',
-        purpose: 'describe and inspect: the application still exists, and its DNS name',
+        purpose:
+          'describe and inspect: the application still exists, its DNS name and whether its Worker origin is available',
       },
       {
         method: 'DELETE',

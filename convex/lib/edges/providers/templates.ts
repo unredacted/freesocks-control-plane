@@ -1751,17 +1751,8 @@ export const EDGEONE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
  * zone. Cloudflare picks the application's anycast addresses.
  */
 export const SpectrumTemplate = z.object({
-  /**
-   * Publishing needs an IPv4 (the template Host and every member's primary
-   * entry are v4), so an IPv6-only application is refused, as on the other L4
-   * providers.
-   */
-  ipFamily: z
-    .enum(['dual', 'ipv4', 'ipv6'])
-    .default('dual')
-    .refine((f) => f !== 'ipv6', {
-      message: 'IPv6-only edges cannot be published (an IPv4 is required): use dual or ipv4',
-    }),
+  // No address-family choice: a Pro or Business Worker application takes no
+  // `edge_ips`, and Cloudflare gives it an IPv4 and an IPv6 of its choosing.
   /**
    * The relay Worker's CPU limit in milliseconds a connection. Absent = the
    * Workers plan's default (30 seconds on Workers Paid; a Free plan has 10 ms
@@ -1773,27 +1764,13 @@ export type SpectrumTemplateParams = z.infer<typeof SpectrumTemplate>;
 
 export const SPECTRUM_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   {
-    key: 'ipFamily',
-    label: 'IP versions',
-    type: 'select',
-    prominent: true,
-    group: 'Application',
-    help: 'An IPv4 address, or IPv4 and IPv6. Cloudflare picks both addresses.',
-    options: [
-      { value: 'dual', label: 'IPv4 and IPv6' },
-      { value: 'ipv4', label: 'IPv4 only' },
-    ],
-    wire: { resource: 'spectrum_app', field: 'edge_ips.connectivity', manual: true },
-    live: 'rebuild',
-  },
-  {
     key: 'cpuLimitMs',
     label: 'Worker CPU limit',
     type: 'number',
     unit: 'ms',
     group: 'Relay Worker',
     advanced: true,
-    help: "The relay Worker's CPU time limit for one connection. Empty keeps the plan's default. Needs Workers Paid; raise it when long sessions are cut.",
+    help: "The relay Worker's CPU time limit for one connection. Empty keeps the plan's default. A connection uses about 1 to 2 ms however long it lasts, so a low limit (50, say) caps what a fault could cost. Needs Workers Paid.",
     wire: { resource: 'worker', field: 'limits.cpu_ms', manual: true },
     live: 'rebuild',
   },

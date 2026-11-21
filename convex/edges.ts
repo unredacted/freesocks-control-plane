@@ -14,6 +14,7 @@
  * The reconcile cron itself lives in edgeReconcile.ts (it needs the Node
  * provider actions and the rotation machine).
  */
+import { locationEdgeCapOf } from './lib/edges/providers/capabilities';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -424,10 +425,9 @@ export async function insertPlannedEdge(
   if (live >= account.maxLiveEdges) {
     throw new ConvexError({ code: 'edge.capacity', message: 'Account is at its live-edge cap' });
   }
-  if (
-    location.maxLiveEdges !== undefined &&
-    (await liveCountForLocation(ctx.db, location)) >= location.maxLiveEdges
-  )
+  // The location's own cap, under its provider's (a Spectrum zone holds one).
+  const locationCap = locationEdgeCapOf(account.provider, location.maxLiveEdges);
+  if (locationCap !== null && (await liveCountForLocation(ctx.db, location)) >= locationCap)
     throw new ConvexError({
       code: 'edge.location_capacity',
       message: 'The location is at its live-edge cap',

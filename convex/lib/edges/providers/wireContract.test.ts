@@ -1488,7 +1488,14 @@ describe('wire contract: cloudflareSpectrum', () => {
     modified_on: '2026-11-21T00:00:00Z',
   };
 
-  function route(over: { accountToken?: boolean; noApps?: boolean } = {}) {
+  function route(
+    over: {
+      accountToken?: boolean;
+      noApps?: boolean;
+      zone?: Record<string, unknown>;
+      originStatus?: string;
+    } = {},
+  ) {
     return (c: Captured): Response => {
       const p = c.path;
       if (p.endsWith('/user/tokens/verify'))
@@ -1507,7 +1514,15 @@ describe('wire contract: cloudflareSpectrum', () => {
           },
         ]);
       if (p.endsWith(`/zones/${ZONE}`))
-        return env({ id: ZONE, name: 'example.net', status: 'active', account: { id: ACCOUNT } });
+        return env({
+          id: ZONE,
+          name: 'example.net',
+          status: 'active',
+          paused: false,
+          plan: { legacy_id: 'pro' },
+          account: { id: ACCOUNT },
+          ...over.zone,
+        });
       if (p.endsWith(`/accounts/${ACCOUNT}/workers/scripts`))
         return env([{ id: NAME, tag: TAG, handlers: ['connect'] }]);
       if (p.endsWith(`/accounts/${ACCOUNT}/workers/scripts/${NAME}`))
@@ -1517,7 +1532,12 @@ describe('wire contract: cloudflareSpectrum', () => {
       if (p.endsWith(`/zones/${ZONE}/spectrum/apps`))
         return c.method === 'POST' ? env(app) : page(over.noApps ? [] : [app]);
       if (p.endsWith(`/zones/${ZONE}/spectrum/apps/${APP}`))
-        return c.method === 'DELETE' ? env({ id: APP }) : env(app);
+        return c.method === 'DELETE'
+          ? env({ id: APP })
+          : env({
+              ...app,
+              ...(over.originStatus ? { origin_worker_status: over.originStatus } : {}),
+            });
       return jsonRes({ success: false, errors: [{ code: 7003, message: 'not found' }] }, 404);
     };
   }
@@ -1535,6 +1555,53 @@ describe('wire contract: cloudflareSpectrum', () => {
       resolve6: async () => ['2001:db8::9'],
     }));
   }
+
+  test('a location is a usable zone: active, not paused, not on Free', async () => {
+    const stub = mockFetch(route());
+    useStub();
+    expect(await spectrumProvider.checkLocation!(cfg)).toMatchObject({
+      ok: true,
+      zoneName: 'example.net',
+      observed: { zonePlan: 'pro', zoneStatus: 'active' },
+      detail: 'worker_apps_1',
+    });
+    for (const [zone, code] of [
+      [{ plan: { legacy_id: 'free' } }, 'zone_plan_free'],
+      [{ paused: true }, 'zone_paused'],
+      [{ status: 'pending' }, 'zone_not_active'],
+      [{ name: 'other.net' }, 'zone_name_mismatch'],
+    ] as const) {
+      stub.route(route({ zone }));
+      expect(await spectrumProvider.checkLocation!(cfg)).toMatchObject({ ok: false, code });
+    }
+    expectDeclared('cloudflareSpectrum', fromCaptured(wire(stub.calls)));
+  });
+
+  test('an application whose Worker origin is not available is never active', async () => {
+    const stub = mockFetch(route());
+    useStub();
+    const ledger = {
+      steps: [],
+      resources: [
+        {
+          stepId: 'app',
+          kind: 'lb',
+          resourceId: APP,
+          ownership: 'created',
+          deleteState: 'present',
+          meta: JSON.stringify({ name: APP_NAME }),
+        },
+      ],
+    } as unknown as Ledger;
+    for (const [originStatus, want] of [
+      ['available', { state: 'active' }],
+      ['not_found', { state: 'error', health: 'offline', code: 'worker_origin_missing' }],
+      ['unknown', { state: 'pending', code: 'worker_origin_unknown' }],
+    ] as const) {
+      stub.route(route({ originStatus }));
+      expect(await spectrumProvider.describe(cfg, ledger)).toMatchObject(want);
+    }
+  });
 
   test('the lifecycle stays inside the contract and exercises all of it', async () => {
     const stub = mockFetch(route({ accountToken: true }));
@@ -1579,14 +1646,13 @@ describe('wire contract: cloudflareSpectrum', () => {
       wire(stub.calls).every((c) => c.headers.authorization === `Bearer ${cfg.apiToken}`),
     ).toBe(true);
     // The application forwards one TCP port to the Worker, in the Worker's
-    // zone, with both address families.
+    // zone: the four fields a Pro or Business zone takes, nothing else.
     const create = stub.calls.find((c) => c.method === 'POST' && c.path.endsWith('/spectrum/apps'));
     expect(create!.body).toEqual({
       dns: { type: 'CNAME', name: APP_NAME },
       protocol: 'tcp/443',
       traffic_type: 'worker',
       origin_worker_id: TAG,
-      edge_ips: { type: 'dynamic', connectivity: 'all' },
     });
     // The Worker is uploaded into the zone's own account.
     expect(

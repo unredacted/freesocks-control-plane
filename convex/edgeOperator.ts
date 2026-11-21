@@ -44,6 +44,7 @@ import { accountsForSlot } from './lib/edges/rotation';
 import {
   edgeLayerOf,
   frontsAllowed,
+  locationEdgeCapOf,
   zoneModeGovernsOrigin,
   EDGE_PROVIDER_CAPABILITIES,
 } from './lib/edges/providers/capabilities';
@@ -3355,7 +3356,7 @@ export const providersUsage = internalQuery({
           enabled: loc.enabled,
           qualified: loc.qualified,
           liveEdges: managed.atLocation(loc._id),
-          maxLiveEdges: loc.maxLiveEdges ?? null,
+          maxLiveEdges: locationEdgeCapOf(a.provider, loc.maxLiveEdges),
         });
       accountRows.push({
         id: a._id as string,

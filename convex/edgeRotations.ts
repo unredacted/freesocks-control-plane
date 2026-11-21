@@ -4234,10 +4234,8 @@ export async function selectionContext(
       return failure('account_mismatch');
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
     if (live >= a.maxLiveEdges) return failure('account_capacity_reached');
-    if (
-      where.maxLiveEdges !== undefined &&
-      (await liveCountForLocation(ctx.db, where)) >= where.maxLiveEdges
-    )
+    const whereCap = locationEdgeCapOf(a.provider, where.maxLiveEdges);
+    if (whereCap !== null && (await liveCountForLocation(ctx.db, where)) >= whereCap)
       return failure('location_capacity_reached');
     const today = a.allocationsDayKey === todayKey() ? a.allocationsToday : 0;
     if (a.dailyAllocationBudget !== 0 && today >= a.dailyAllocationBudget)

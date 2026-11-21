@@ -44,6 +44,7 @@ import type {
   EdgeProvider,
   EdgeSpec,
   LedgerResource,
+  LocationCheckResult,
   ResourceStep,
   SpectrumConfig,
   StepOutcome,
@@ -122,13 +123,26 @@ function fail(step: string, message: string, code: string): EdgeProviderError {
   });
 }
 
-/** The one listener an application carries (one port per application). */
+/**
+ * Origin ports a Worker may not connect to (Cloudflare refuses outbound TCP
+ * to port 25), so an edge in front of one would take connections and fail
+ * every one of them.
+ */
+const WORKER_BLOCKED_PORTS = new Set([25]);
+
+/**
+ * The one listener an application carries (one port per application), refused
+ * before anything is made when it cannot work.
+ */
 function onlyListener(spec: EdgeSpec, step: string) {
   const l = spec.listeners[0];
   if (spec.listeners.length !== 1 || !l || l.members.length !== 1)
     throw fail(step, 'needs exactly one listener with one member', 'spectrum_one_port');
   if (l.transport === 'udp') throw fail(step, 'carries TCP only', 'udp_unsupported');
-  return { edgePort: l.edgePort, member: l.members[0] };
+  const member = l.members[0]!;
+  if (WORKER_BLOCKED_PORTS.has(member.port))
+    throw fail(step, `a Worker cannot connect to port ${member.port}`, 'origin_port_blocked');
+  return { edgePort: l.edgePort, member };
 }
 
 /** Characters in the application's DNS label. */
@@ -176,13 +190,17 @@ export function spectrumWorkerMetadata(
   };
 }
 
-/** The create-application body (exported for tests). */
+/**
+ * The create-application body (exported for tests): exactly the four fields a
+ * Pro or Business Worker application takes (Cloudflare's "settings by plan":
+ * no `edge_ips`, `tls` or other Enterprise field, even unset). Cloudflare
+ * gives it an IPv4 and an IPv6 of its own choosing.
+ */
 export function spectrumAppBody(
   cfg: SpectrumConfig,
   name: string,
   edgePort: number,
   workerTag: string,
-  tpl: Pick<SpectrumTemplateParams, 'ipFamily'>,
 ) {
   return {
     zone_id: cfg.zoneId,
@@ -190,11 +208,17 @@ export function spectrumAppBody(
     protocol: `tcp/${edgePort}`,
     traffic_type: 'worker' as const,
     origin_worker_id: workerTag,
-    edge_ips: {
-      type: 'dynamic' as const,
-      connectivity: tpl.ipFamily === 'ipv4' ? ('ipv4' as const) : ('all' as const),
-    },
   };
+}
+
+/**
+ * What the application says of its Worker origin (`origin_worker_status`,
+ * not in the SDK's types yet): `available`, `not_found` or `unknown`. Absent
+ * when Cloudflare does not report it.
+ */
+function originWorkerStatusOf(app: unknown): string | undefined {
+  const v = (app as { origin_worker_status?: unknown } | null)?.origin_worker_status;
+  return typeof v === 'string' ? v : undefined;
 }
 
 // --- addresses over DNS -------------------------------------------------------------------
@@ -388,6 +412,48 @@ export const spectrumProvider: EdgeProvider<SpectrumConfig, SpectrumTemplatePara
     }
   },
 
+  /**
+   * One location is one zone: the token reads it, it is active and not
+   * paused, its name is still the one the location holds, and it is not on
+   * the Free plan (which takes no Worker application). What it already holds
+   * is reported, never refused: a zone's one Worker application may be this
+   * location's own edge.
+   */
+  async checkLocation(cfg): Promise<LocationCheckResult> {
+    const zone = await cfCall(
+      'location',
+      () => cloudflareClient(cfg).zones.get({ zone_id: cfg.zoneId }),
+      [cfg.apiToken],
+    );
+    const name = String(zone.name ?? '')
+      .toLowerCase()
+      .replace(/\.$/, '');
+    const plan = (zone.plan as { legacy_id?: string } | undefined)?.legacy_id;
+    const observed: Record<string, string> = {
+      ...(plan ? { zonePlan: plan } : {}),
+      zoneStatus: zone.paused === true ? 'paused' : String(zone.status ?? 'unknown'),
+    };
+    const detail: string[] = [];
+    const out = (code?: string): LocationCheckResult => ({
+      ok: !code,
+      ...(code ? { code } : {}),
+      detail: detail.join(' '),
+      observed,
+      label: name,
+      zoneName: name,
+    });
+    if (cfg.zoneName && name !== cfg.zoneName.toLowerCase().replace(/\.$/, ''))
+      return out('zone_name_mismatch');
+    if (zone.paused === true) return out('zone_paused');
+    if (zone.status !== 'active') return out('zone_not_active');
+    if (plan === 'free') return out('zone_plan_free');
+    const workerApps = (await listApps(cfg, 'location')).filter(
+      (a) => a.trafficType === 'worker',
+    ).length;
+    detail.push(`worker_apps_${workerApps}`);
+    return out();
+  },
+
   /** Pure: the Worker, then the application that forwards to it. */
   planProvision(_cfg, spec): ResourceStep[] {
     return [
@@ -450,9 +516,7 @@ export const spectrumProvider: EdgeProvider<SpectrumConfig, SpectrumTemplatePara
           app = await cfCall(
             step.id,
             () =>
-              cloudflareClient(cfg).spectrum.apps.create(
-                spectrumAppBody(cfg, name, edgePort, tag, tpl),
-              ),
+              cloudflareClient(cfg).spectrum.apps.create(spectrumAppBody(cfg, name, edgePort, tag)),
             [cfg.apiToken],
           );
         } catch (e) {
@@ -532,6 +596,13 @@ export const spectrumProvider: EdgeProvider<SpectrumConfig, SpectrumTemplatePara
     const name = got.dns?.name ?? String(metaOf(app).name ?? '');
     if (!name) return { state: 'pending', addresses: {}, health: 'unknown', code: 'app_unnamed' };
     const addresses = await spectrumAddressesOf(name);
+    // An application whose Worker is gone takes connections and fails every
+    // one: never active, whatever its name resolves to.
+    const origin = originWorkerStatusOf(got);
+    if (origin === 'not_found')
+      return { state: 'error', addresses, health: 'offline', code: 'worker_origin_missing' };
+    if (origin !== undefined && origin !== 'available')
+      return { state: 'pending', addresses, health: 'unknown', code: 'worker_origin_unknown' };
     // An IPv4 is what publishing needs; until DNS answers one the edge waits.
     return addresses.v4
       ? { state: 'active', addresses, health: 'unknown' }

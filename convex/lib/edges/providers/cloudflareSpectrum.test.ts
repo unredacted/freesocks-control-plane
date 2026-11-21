@@ -73,23 +73,20 @@ describe('the application', () => {
     expect(spectrumAppName(cfg, { name: 'fcp-relay-node-b-0badf00d' })).not.toBe(name);
   });
 
-  test('forwards one TCP port to the Worker; IPv4 only when asked', () => {
-    expect(spectrumAppBody(cfg, 'x.example.net', 443, 'tag1', { ipFamily: 'dual' })).toEqual({
+  test('forwards one TCP port to the Worker, with only the fields a Pro or Business zone takes', () => {
+    expect(spectrumAppBody(cfg, 'x.example.net', 443, 'tag1')).toEqual({
       zone_id: cfg.zoneId,
       dns: { type: 'CNAME', name: 'x.example.net' },
       protocol: 'tcp/443',
       traffic_type: 'worker',
       origin_worker_id: 'tag1',
-      edge_ips: { type: 'dynamic', connectivity: 'all' },
     });
-    expect(spectrumAppBody(cfg, 'x.example.net', 8443, 'tag1', { ipFamily: 'ipv4' })).toMatchObject(
-      { protocol: 'tcp/8443', edge_ips: { connectivity: 'ipv4' } },
-    );
+    expect(spectrumAppBody(cfg, 'x.example.net', 8443, 'tag1').protocol).toBe('tcp/8443');
   });
 
-  test('an IPv6-only template is refused (publishing needs an IPv4)', () => {
-    expect(spectrumProvider.templateSchema.safeParse({ ipFamily: 'ipv6' }).success).toBe(false);
-    expect(spectrumProvider.defaultTemplate).toEqual({ ipFamily: 'dual' });
+  test('the template has no address-family choice', () => {
+    expect(spectrumProvider.defaultTemplate).toEqual({});
+    expect(spectrumProvider.templateFields.map((f) => f.key)).toEqual(['cpuLimitMs']);
   });
 
   test('two listeners or a UDP one are refused before anything is made', async () => {
@@ -101,6 +98,11 @@ describe('the application', () => {
         listeners: [...spec.listeners, { edgePort: 8443, members: spec.listeners[0]!.members }],
       },
       { ...spec, listeners: [{ ...spec.listeners[0]!, transport: 'udp' as const }] },
+      // A Worker cannot connect to port 25.
+      {
+        ...spec,
+        listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 25 }] }],
+      },
     ])
       await expect(
         spectrumProvider.runStep(cfg, worker!, bad, spectrumProvider.defaultTemplate, empty),

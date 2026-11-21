@@ -431,6 +431,31 @@ describe('every edge freezes its location', () => {
     const dflt = (await defaultLocationRow(t, fx.accountId))!._id;
     await expect(insert(dflt)).resolves.toBeTruthy();
   });
+
+  test('a Spectrum zone holds one edge at insert, whatever its own cap says', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t, { qualified: true });
+    const { id: accountId, locationId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflareSpectrum',
+      name: 'tcp',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.net' },
+      credentials: { apiToken: 'cf-1' },
+    });
+    // No cap of its own: the provider's one-per-zone still holds.
+    expect((await t.run((c) => c.db.get(locationId!)))!.maxLiveEdges).toBeUndefined();
+    const insert = () =>
+      insertPlanned(t, {
+        relayId: fx.relayId,
+        listenerId: fx.listenerId,
+        accountId,
+        locationId: locationId!,
+        templateHash: 'h',
+        listeners: [],
+        steps: [],
+      });
+    await insert();
+    await expect(insert()).rejects.toThrow(/location_capacity/);
+  });
 });
 
 describe('selection picks a trusted location', () => {

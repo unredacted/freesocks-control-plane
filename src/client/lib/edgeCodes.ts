@@ -1575,6 +1575,28 @@ const COPY = {
       'A Spectrum application forwards one TCP port to one node, and this edge asked for more listeners or members.',
     fix: 'Give the listener its own edge.',
   },
+  origin_port_blocked: {
+    label: 'Port a Worker cannot reach',
+    explain:
+      'Cloudflare Workers may not connect to this node port (25), so a Spectrum edge would take connections and fail every one.',
+    fix: 'Serve the listener on another node port.',
+  },
+  worker_origin_missing: {
+    label: 'Relay Worker gone',
+    explain:
+      'The Spectrum application is there, but Cloudflare says its relay Worker is not, so every connection fails.',
+    fix: 'Replace the edge. FCP uploads a new Worker with the new one.',
+  },
+  worker_origin_unknown: {
+    label: 'Relay Worker unconfirmed',
+    explain: "Cloudflare could not say whether the application's relay Worker is there.",
+    fix: 'Nothing to change if the next look confirms it.',
+  },
+  zone_plan_free: {
+    label: 'Zone on the Free plan',
+    explain: 'A Free zone takes no Spectrum Worker application.',
+    fix: 'Move the zone to Pro or Business, or pick another zone.',
+  },
   zone_account_unknown: {
     label: 'Zone has no account',
     explain:
