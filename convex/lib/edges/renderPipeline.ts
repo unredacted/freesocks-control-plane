@@ -105,6 +105,15 @@ export interface RenderSnapshot {
    */
   primaryTwin?: TwinDelivery;
   backupTwin?: TwinDelivery;
+  /**
+   * How the body named an encrypted entry and its plain twin: `tagged` = the
+   * encrypted one reads `… · Encrypted` and the plain one keeps the name
+   * (src/shared/entryNames.ts). Absent where the body carried no encrypted
+   * entry, and on a snapshot whose body named them the earlier way (the
+   * encrypted entry under the name, the plain one `… · Old apps`): the member
+   * view lists a body's entries under the names that body gave them.
+   */
+  twinNames?: 'tagged';
 }
 
 export type TwinDelivery = 'fallback' | 'only' | 'plain';
@@ -261,6 +270,9 @@ export function applyEdgeRender(
       autoGroup: hasAutoGroup,
       ...(primaryTwin ? { primaryTwin } : {}),
       ...(backupTwin ? { backupTwin } : {}),
+      ...([primaryTwin, backupTwin].some((x) => x === 'fallback' || x === 'only')
+        ? { twinNames: 'tagged' as const }
+        : {}),
       ...(assigned.primaryTier !== undefined ? { primaryTier: assigned.primaryTier } : {}),
       ...(assigned.backupTier !== undefined ? { backupTier: assigned.backupTier } : {}),
     },

@@ -8384,6 +8384,14 @@ One deploy, no migration, no env change; a deployment with no twin served writes
 To roll back, run `edgeRender:clearEntryFactsForRollback` with no arguments right before
 deploying the older build (its schema refuses the fields), and again if the push is refused.
 
+**The plain entry keeps the name** (§ "Names in apps") adds one more optional field,
+`subscriptions.lastRender.twinNames` (`tagged`), written with a snapshot whose body carried an
+encrypted entry under the new names. A snapshot without it whose body carried one was rendered
+under the earlier names (the encrypted entry under the connection's name, the plain one
+`… · Old apps`), and the member view lists that body's entries under those names until the
+member's app fetches again. No migration and no epoch bump. The same rollback strip
+(`edgeRender:clearEntryFactsForRollback`) removes it.
+
 **A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
 detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env
 change. Nothing is sent unless operator alerts are on. To roll back, run

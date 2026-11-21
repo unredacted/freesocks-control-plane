@@ -941,6 +941,11 @@ export default defineSchema({
         backupTwin: v.optional(
           v.union(v.literal('fallback'), v.literal('only'), v.literal('plain')),
         ),
+        // How the body named its encrypted entries: `tagged` = the encrypted
+        // one `… · Encrypted`, the plain one under the name. Absent with an
+        // encrypted entry = the earlier naming (the encrypted one under the
+        // name, the plain one `… · Old apps`); the member view follows it.
+        twinNames: v.optional(v.literal('tagged')),
         // The member's STORED country the body was shaped for (never a
         // transient reading), and, when their edges were ordered by it, the
         // tier each endpoint came from there (0 proven, 1 not known, 2 blocked).

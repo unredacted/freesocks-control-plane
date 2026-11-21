@@ -393,6 +393,7 @@ export const renderSnapshotValidator = v.object({
   autoGroup: v.optional(v.boolean()),
   primaryTwin: v.optional(v.union(v.literal('fallback'), v.literal('only'), v.literal('plain'))),
   backupTwin: v.optional(v.union(v.literal('fallback'), v.literal('only'), v.literal('plain'))),
+  twinNames: v.optional(v.literal('tagged')),
   country: v.optional(v.string()),
   primaryTier: v.optional(v.number()),
   backupTier: v.optional(v.number()),
@@ -412,6 +413,7 @@ function sameSnapshot(
     a.autoGroup === b.autoGroup &&
     a.primaryTwin === b.primaryTwin &&
     a.backupTwin === b.backupTwin &&
+    a.twinNames === b.twinNames &&
     a.country === b.country &&
     a.primaryTier === b.primaryTier &&
     a.backupTier === b.backupTier &&

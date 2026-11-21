@@ -221,6 +221,8 @@ export interface RenderSnapshot {
   /** How each endpoint was handed out where its listener has an encrypted twin (renderPipeline.ts). */
   primaryTwin?: 'fallback' | 'only' | 'plain';
   backupTwin?: 'fallback' | 'only' | 'plain';
+  /** How the body named its encrypted entries (renderPipeline.ts `RenderSnapshot.twinNames`). */
+  twinNames?: 'tagged';
   /**
    * The member's STORED country the body was shaped for (names, and edges when
    * steered); never a transient reading (docs/privacy.md).
@@ -512,6 +514,7 @@ export async function deliverBody(
           autoGroup: out.snapshot.autoGroup,
           ...(out.snapshot.primaryTwin ? { primaryTwin: out.snapshot.primaryTwin } : {}),
           ...(out.snapshot.backupTwin ? { backupTwin: out.snapshot.backupTwin } : {}),
+          ...(out.snapshot.twinNames ? { twinNames: out.snapshot.twinNames } : {}),
           ...(stored ? { country: stored } : {}),
           ...(stored && out.snapshot.primaryTier !== undefined
             ? { primaryTier: out.snapshot.primaryTier }

@@ -605,15 +605,20 @@ describe('applyEdgeRender: the snapshot of a twin', () => {
   test('says exactly what the body carries, under every rule', () => {
     const prefer = run(undefined);
     expect(prefer.snapshot.primaryTwin).toBe('fallback');
+    // The body names the encrypted entry `· Encrypted`, and the snapshot says so.
+    expect(prefer.snapshot.twinNames).toBe('tagged');
+    expect(prefer.body).toContain('Encrypted');
     expect([encryptedIn(prefer.body), plainIn(prefer.body)]).toEqual([1, 1]);
 
     const only = run('only');
     expect(only.snapshot.primaryTwin).toBe('only');
+    expect(only.snapshot.twinNames).toBe('tagged');
     expect([encryptedIn(only.body), plainIn(only.body)]).toEqual([1, 0]);
 
     // Said, not left out: an absent fact is a snapshot from before it existed.
     const plain = run('plain');
     expect(plain.snapshot.primaryTwin).toBe('plain');
+    expect(plain.snapshot).not.toHaveProperty('twinNames');
     expect([encryptedIn(plain.body), plainIn(plain.body)]).toEqual([0, 1]);
   });
 
