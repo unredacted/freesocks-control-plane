@@ -852,9 +852,11 @@ export const memberView = internalQuery({
     const encrypted = (role: 'primary' | 'backup') =>
       twinOf[role] === 'fallback' || twinOf[role] === 'only';
     const tagged = snap.twinNames === 'tagged';
-    const named = (name: string, entry: 'encrypted' | 'plain') =>
+    // Under the new names the encrypted entry is tagged only beside a plain
+    // one; alone (`only`) it has the address's name.
+    const named = (name: string, entry: 'encrypted' | 'plain', both: boolean) =>
       tagged
-        ? entry === 'encrypted'
+        ? entry === 'encrypted' && both
           ? encryptedName(name)
           : name
         : entry === 'plain'
@@ -865,8 +867,8 @@ export const memberView = internalQuery({
         encrypted(e.role)
           ? {
               ...e,
-              label: named(e.label, 'encrypted'),
-              base: named(e.base, 'encrypted'),
+              label: named(e.label, 'encrypted', twinOf[e.role] === 'fallback'),
+              base: named(e.base, 'encrypted', twinOf[e.role] === 'fallback'),
               entry: 'encrypted' as const,
             }
           : e,
@@ -875,8 +877,8 @@ export const memberView = internalQuery({
         .filter((e) => twinOf[e.role] === 'fallback')
         .map((e) => ({
           ...e,
-          label: named(e.label, 'plain'),
-          base: named(e.base, 'plain'),
+          label: named(e.label, 'plain', true),
+          base: named(e.base, 'plain', true),
           entry: 'plain' as const,
         })),
     ];

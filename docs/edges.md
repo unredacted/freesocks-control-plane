@@ -1365,7 +1365,8 @@ place leading edge entries (`… via …`) on 2026-11-05.
   apps keep a group's choice by name) stays on the entry it could always speak when the
   encrypted one is added beside it, so an app too old for the encryption never moves onto it by
   itself. The encrypted entry still comes first: an ordered auto group, and an app that takes
-  the first entry, try it before the plain one.
+  the first entry, try it before the plain one. Where the encrypted entry is handed out alone
+  (rule `only`), it has the connection's name: a server picked by hand moves onto it.
 - **No transport in a name.** Every body is one connection mode, and the mode is the title apps
   show (below). `via` is English in every locale: a translated word would sit between two
   left-to-right place names and scramble their order in right-to-left apps, and an arrow points

@@ -137,10 +137,7 @@ describe('a link list', () => {
 
   test('`only`: the encrypted entries alone', () => {
     const got = linksOut(render(rule('only')).body);
-    expect(got.slice(0, 2)).toEqual([
-      encryptedAt(encryptedName(A), FRONT_A),
-      encryptedAt(encryptedName(B), FRONT_B),
-    ]);
+    expect(got.slice(0, 2)).toEqual([encryptedAt(A, FRONT_A), encryptedAt(B, FRONT_B)]);
     expect(got).toHaveLength(3);
     expect(got.some((g) => g.encryption === 'none' && g.address !== 'elsewhere.example')).toBe(
       false,
@@ -172,8 +169,8 @@ describe('a link list', () => {
         { listenerKey: 'a1', matched: true, encrypted: true, twinOnly: true },
       ]);
       expect(linksOut(out.body).slice(0, 2)).toEqual([
-        encryptedAt(encryptedName(A), FRONT_A),
-        encryptedAt(encryptedName(B), FRONT_B),
+        encryptedAt(A, FRONT_A),
+        encryptedAt(B, FRONT_B),
       ]);
     }
     // A family that must not get the encrypted entry gets nothing to use, and
@@ -241,8 +238,8 @@ describe('a link list', () => {
     };
     const out = renderLinks({ body, matchers: [renamed], endpoints, rule: rule('only') });
     expect(linksOut(out.body).slice(0, 2)).toEqual([
-      encryptedAt(encryptedName(A), FRONT_A),
-      encryptedAt(encryptedName(B), FRONT_B),
+      encryptedAt(A, FRONT_A),
+      encryptedAt(B, FRONT_B),
     ]);
   });
 });
@@ -292,7 +289,7 @@ describe('a twin handed out only through the fronts it was checked on', () => {
 
   test('`only` never leaves a front without an entry: the unchecked one gets the plain entry', () => {
     expect(linksOut(render(['edge-primary'], rule('only')).body).slice(0, 2)).toEqual([
-      encryptedAt(encryptedName(A), FRONT_A),
+      encryptedAt(A, FRONT_A),
       plainAt(B, FRONT_B),
     ]);
   });
@@ -392,7 +389,8 @@ describe('a Clash body', () => {
 
   test('`only` and `plain`: one kind of entry, so the group picks the fastest as before', () => {
     const only = render(rule('only', true));
-    const enc = [encryptedName(A), encryptedName(B)];
+    // Alone, the encrypted entries carry the connection names.
+    const enc = [A, B];
     expect(only.doc.proxies.map((p) => p.name)).toEqual(enc);
     expect(only.doc.proxies.every((p) => p.encryption === ENCRYPTION)).toBe(true);
     expect(only.auto).toMatchObject({ type: 'url-test', tolerance: 50, proxies: enc });

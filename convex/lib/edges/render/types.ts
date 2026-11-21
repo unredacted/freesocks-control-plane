@@ -384,10 +384,13 @@ export function planEntries<T>(
     if (mode === 'plain') {
       if (plain) first.push({ endpoint, template: plain, label });
     } else if (twin) {
-      // The encrypted entry is named as such; the plain one keeps the name an
-      // app may already hold (lib/entryNames.ts `encryptedName`).
-      first.push({ endpoint, template: twin, label: encryptedName(label) });
-      if (mode === 'prefer' && plain) fallback.push({ endpoint, template: plain, label });
+      // Beside a plain entry the encrypted one is named as such and the plain
+      // one keeps the name an app may already hold (lib/entryNames.ts
+      // `encryptedName`). Alone (`only`), it takes the name: a server picked
+      // by hand moves onto it.
+      const both = mode === 'prefer' && !!plain;
+      first.push({ endpoint, template: twin, label: both ? encryptedName(label) : label });
+      if (both) fallback.push({ endpoint, template: plain, label });
     } else if (plain) first.push({ endpoint, template: plain, label });
   }
   return { entries: [...first, ...fallback], mixed: fallback.length > 0 };

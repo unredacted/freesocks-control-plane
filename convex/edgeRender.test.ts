@@ -868,7 +868,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       [`${PRIMARY} · IPv4`, PRIMARY, 'primary', 'plain'],
       [`${PRIMARY} · IPv6`, PRIMARY, 'primary', 'plain'],
     ]);
-    // Encrypted alone: one entry per address, marked as the encrypted one.
+    // Encrypted alone: one entry per address.
     await t.run(async (ctx) => {
       const sub = (await ctx.db.get(subId))!;
       await ctx.db.patch(subId, {
@@ -876,9 +876,10 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       });
     });
     view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    // Alone, the encrypted entry has the address's name.
     expect(view.connections.map((c) => [c.label, c.entry])).toEqual([
-      [`${PRIMARY} · IPv4 · Encrypted`, 'encrypted'],
-      [`${PRIMARY} · IPv6 · Encrypted`, 'encrypted'],
+      [`${PRIMARY} · IPv4`, 'encrypted'],
+      [`${PRIMARY} · IPv6`, 'encrypted'],
     ]);
     // A body rendered before that naming: its app shows the encrypted entry
     // under the name and the plain one as … · Old apps until it fetches again,

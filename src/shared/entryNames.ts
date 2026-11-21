@@ -22,9 +22,10 @@
  *   🇨🇦 Example City via CDN 1 / 2             a CDN front (L7), numbered in body order; never the CDN's name
  *   … · Domain / · IPv4 / · IPv6               one address in several forms (its name, its raw IPs)
  *   … #2                                       a further server name for the same address (auto groups only)
- *   … · Encrypted                              the same connection with VLESS Encryption inside it
- *                                              (docs/backends.md "VLESS Encryption"); the plain entry
- *                                              keeps the connection's own name
+ *   … · Encrypted                              the same connection with VLESS Encryption inside it, beside
+ *                                              its plain entry, which keeps the connection's own name
+ *                                              (docs/backends.md "VLESS Encryption"); handed out alone,
+ *                                              the encrypted entry has the name
  *
  * The place and flag that lead are the NODE's (where the traffic leaves: the
  * exit), the same place its direct entries read, so one node never has two

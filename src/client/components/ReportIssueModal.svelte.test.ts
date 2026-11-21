@@ -158,10 +158,11 @@ describe('which connection a report names', () => {
   });
 
   test('an address handed out encrypted alone is one option: there is no second entry to tell apart', () => {
-    const v = mount([{ label: EA, base: EA, role: 'primary', entry: 'encrypted' }]);
-    expect(v.labels()).toEqual([EA, 'Not sure']);
+    // Alone, the encrypted entry has the address's name.
+    const v = mount([{ label: A, base: A, role: 'primary', entry: 'encrypted' }]);
+    expect(v.labels()).toEqual([A, 'Not sure']);
     expect(v.text()).not.toContain(HINT);
-    v.pick(EA);
+    v.pick(A);
     expect([props.connection, props.connectionEntry]).toEqual(['primary', null]);
   });
 });
