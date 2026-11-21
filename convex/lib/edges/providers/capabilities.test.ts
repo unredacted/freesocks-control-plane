@@ -27,6 +27,7 @@ import {
   unsupportedTransport,
 } from './capabilities';
 import { EDGE_PROVIDERS } from './registry';
+import { EDGE_PROVIDER_META } from '../../../../src/client/lib/edgeProviderMeta';
 import { __setScalewayApiFactory } from './scaleway';
 import { __setSpectrumResolver } from './cloudflareSpectrum';
 import { __resetOvhSkewCache } from './ovh';
@@ -564,4 +565,15 @@ describe('origin capability record ⇔ adapters', () => {
     // At most one undiscoverable allocating step per plan (operator-resolved).
     expect(steps.filter((s) => s.discoverability === 'none').length).toBeLessThanOrEqual(1);
   });
+});
+
+describe('location checks in the admin', () => {
+  test.each([...L4_IDS])(
+    '%s: the Locations card offers "Check again" exactly when the adapter checks a location',
+    (id) => {
+      expect(EDGE_PROVIDER_META[id].checkedLocations === true).toBe(
+        typeof EDGE_PROVIDERS[id].checkLocation === 'function',
+      );
+    },
+  );
 });
