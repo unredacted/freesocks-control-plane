@@ -1340,7 +1340,7 @@ place leading edge entries (`… via …`) on 2026-11-05.
 🇨🇦 Example Port via relay A                    an address whose location has no member-facing name
 🇨🇦 Example Port via CDN 1                      a CDN front (L7), numbered; never the CDN's name
 🇨🇦 Example Port via Example Town · Domain #2   a further server name (auto groups only)
-🇨🇦 Example Port via CDN 1 · Old apps           the same connection without VLESS Encryption
+🇨🇦 Example Port via CDN 1 · Encrypted          the same connection with VLESS Encryption inside it
 ```
 
 - **Where the traffic leaves comes first.** Every name leads with the NODE's place and flag (the
@@ -1358,11 +1358,15 @@ place leading edge entries (`… via …`) on 2026-11-05.
   leads: `🇨🇦 via Example Town` would read as the front's. The place is part of the fronted
   route's cache token (`edgeRender.epochTokenFor`, a short hash after the epoch), so a changed
   location label, node country or names switch re-renders a member's body at its next fetch.
-- **The plain twin says who it is for.** Where a connection exists both with and without VLESS
-  Encryption ([backends.md](backends.md) § "VLESS Encryption"), the encrypted entry keeps the
-  connection's name and its plain twin reads `… · Old apps` (`PLAIN_FALLBACK_TAG`): a member
-  whose first entry does not connect can tell which one to try, and the tag names no technology.
-  The wording is the renderer's alone and has not been put to the owner.
+- **The plain entry keeps the name.** Where a connection exists both with and without VLESS
+  Encryption ([backends.md](backends.md) § "VLESS Encryption"), the plain entry keeps the
+  connection's name and the encrypted one reads `… · Encrypted` (`ENCRYPTED_TAG`,
+  `encryptedName`). An app that already holds the name (a member picked it by hand, and Clash
+  apps keep a group's choice by name) stays on the entry it could always speak when the
+  encrypted one is added beside it, so an app too old for the encryption never moves onto it by
+  itself. The encrypted entry still comes first: an ordered auto group, and an app that takes
+  the first entry, try it before the plain one. Where the encrypted entry is handed out alone
+  (rule `only`), it has the connection's name: a server picked by hand moves onto it.
 - **No transport in a name.** Every body is one connection mode, and the mode is the title apps
   show (below). `via` is English in every locale: a translated word would sit between two
   left-to-right place names and scramble their order in right-to-left apps, and an arrow points
@@ -2634,13 +2638,13 @@ member was using (optional; the labels the pass shows), and an edge-required sin
 (Outline) subscription is shown as the dynamic access key.
 
 **An address the app holds twice.** Where a body carried an address both with VLESS Encryption
-and without ([backends.md](backends.md) § "VLESS Encryption": the plain entry reads
-`… · Old apps`), the render snapshot says so per front (`subscriptions.lastRender.primaryTwin`
+and without ([backends.md](backends.md) § "VLESS Encryption": the encrypted entry reads
+`… · Encrypted`, the plain one keeps the address's name), the render snapshot says so per front (`subscriptions.lastRender.primaryTwin`
 / `backupTwin`: `fallback` = both entries, `only` = the encrypted one alone, `plain` = the plain
 one alone; absent = the listener has no twin), decided by the same rule the body was built with
 (`twinDelivery`, `convex/lib/edges/render/types.ts`). The member view lists each entry (`connections[].entry`:
-`encrypted` | `plain`), the dialog offers them as separate options with one line of help ("try
-the one marked Old apps before you report"), and the report carries the answer
+`encrypted` | `plain`), the dialog offers them as separate options with one line of help ("If the
+one marked Encrypted does not connect, try the other one before you report"), and the report carries the answer
 (`connectionEntry` on the wire and on the `issueReports` row, kept only beside a named
 connection). A report counts against the front only when the entry says something about the
 front (`entryNamesEdge`, `convex/edgeAttribution.ts`):
@@ -8380,6 +8384,14 @@ that has an encrypted twin, and `issueReports.connectionEntry`, written only whe
 One deploy, no migration, no env change; a deployment with no twin served writes none of them.
 To roll back, run `edgeRender:clearEntryFactsForRollback` with no arguments right before
 deploying the older build (its schema refuses the fields), and again if the push is refused.
+
+**The plain entry keeps the name** (§ "Names in apps") adds one more optional field,
+`subscriptions.lastRender.twinNames` (`tagged`), written with a snapshot whose body carried an
+encrypted entry under the new names. A snapshot without it whose body carried one was rendered
+under the earlier names (the encrypted entry under the connection's name, the plain one
+`… · Old apps`), and the member view lists that body's entries under those names until the
+member's app fetches again. No migration and no epoch bump. The same rollback strip
+(`edgeRender:clearEntryFactsForRollback`) removes it.
 
 **A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
 detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env

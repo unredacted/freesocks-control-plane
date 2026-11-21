@@ -57,7 +57,7 @@ import type { Cohort, CohortCursor, CohortPage } from '../../convex/lib/edges/co
 import { detectBodyFormat } from '../../convex/lib/edges/clientFamilies';
 import { ActivationReview } from '../../src/shared/contracts/servers';
 import { clients } from '../compat/manifest';
-import { AUTO_GROUP_NAME, plainFallbackName } from '../../src/shared/entryNames';
+import { AUTO_GROUP_NAME, encryptedName } from '../../src/shared/entryNames';
 import YAML from 'yaml';
 import {
   ADDR,
@@ -1251,7 +1251,8 @@ describe.skipIf(!ENABLED)(
             expect(String(encrypted!.raw.encryption)).toMatch(/^mlkem768x25519plus\.native\./);
             expect((encrypted!.raw['ws-opts'] as { path: string }).path).toBe(env.wsTwinPath);
             expect((plain!.raw['ws-opts'] as { path: string }).path).toBe(env.wsPath);
-            expect(plain!.name).toBe(plainFallbackName(encrypted!.name));
+            // The plain entry keeps the connection's name; the encrypted one is tagged.
+            expect(encrypted!.name).toBe(encryptedName(plain!.name));
             const auto = (YAML.parse(mihomo) as { 'proxy-groups': Array<Record<string, unknown>> })[
               'proxy-groups'
             ].find((g) => g.name === AUTO_GROUP_NAME)!;

@@ -252,9 +252,9 @@ export const NodeStatusResponse = z.object({
               role: z.enum(['primary', 'backup']),
               // `name` = a hostname-fronted connection (no address family).
               family: z.enum(['v4', 'v6', 'name']),
-              // Where the body carries this address twice: the encrypted
-              // entry, or the plain one behind it (`… · Old apps`). Absent =
-              // the address has one entry.
+              // Where the body carries this address encrypted: the encrypted
+              // entry (`… · Encrypted`), or the plain one behind it (the
+              // address's own name). Absent = the address has one entry.
               entry: z.enum(['encrypted', 'plain']).optional(),
             }),
           ),

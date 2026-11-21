@@ -13,7 +13,7 @@ import { twinRemarksOf } from '../listenerEncryption';
 import type { ListenerProto } from '../protocols';
 import { effectiveRule, ruleForDelivery } from '../render';
 import { EDGE_DEFAULTS } from '../../edgeConfig';
-import { AUTO_GROUP_NAME, plainFallbackName } from '../../../../src/shared/entryNames';
+import { AUTO_GROUP_NAME, encryptedName } from '../../../../src/shared/entryNames';
 import type { EncryptionRule } from '../../../../src/shared/encryptionRule';
 import { renderClash } from './clash';
 import { renderLinks } from './links';
@@ -116,19 +116,19 @@ describe('a link list', () => {
   const render = (r: RenderRuleInput, b = body) =>
     renderLinks({ body: b, matchers: [matcher], endpoints, rule: r });
 
-  test('by default: the encrypted entry of every front first, then the plain ones, named for who they are for', () => {
+  test('by default: the encrypted entry of every front first, then the plain ones, which keep the connection name', () => {
     const out = render(rule());
     expect(out.applied).toBe(true);
     expect(out.emitted).toBe(4);
     expect(out.listeners).toEqual([{ listenerKey: 'a1', matched: true, encrypted: true }]);
     const got = linksOut(out.body);
     expect(got.slice(0, 4)).toEqual([
-      encryptedAt(A, FRONT_A),
-      encryptedAt(B, FRONT_B),
-      plainAt(plainFallbackName(A), FRONT_A),
-      plainAt(plainFallbackName(B), FRONT_B),
+      encryptedAt(encryptedName(A), FRONT_A),
+      encryptedAt(encryptedName(B), FRONT_B),
+      plainAt(A, FRONT_A),
+      plainAt(B, FRONT_B),
     ]);
-    expect(plainFallbackName(A)).toBe('🌐 via CDN 1 · Old apps');
+    expect(encryptedName(A)).toBe('🌐 via CDN 1 · Encrypted');
     // Neither template leaves as it came, and what is not a template passes.
     expect(out.body).not.toContain(TEMPLATE_FRONT);
     expect(got[4]).toMatchObject({ name: 'node-b-ws', address: 'elsewhere.example' });
@@ -223,8 +223,8 @@ describe('a link list', () => {
   test('a cap counts connections: a fallback rides with its entry, so no app is left without one', () => {
     const out = render({ ...rule(), maxEntries: 1 });
     expect(linksOut(out.body).slice(0, 2)).toEqual([
-      encryptedAt(A, FRONT_A),
-      plainAt(plainFallbackName(A), FRONT_A),
+      encryptedAt(encryptedName(A), FRONT_A),
+      plainAt(A, FRONT_A),
     ]);
     expect(out.emitted).toBe(2);
   });
@@ -279,9 +279,9 @@ describe('a twin handed out only through the fronts it was checked on', () => {
   test('a front never checked on the twin gets the plain entry alone, under its ordinary name', () => {
     const out = render(['edge-primary']);
     expect(linksOut(out.body).slice(0, 3)).toEqual([
-      encryptedAt(A, FRONT_A),
+      encryptedAt(encryptedName(A), FRONT_A),
       plainAt(B, FRONT_B),
-      plainAt(plainFallbackName(A), FRONT_A),
+      plainAt(A, FRONT_A),
     ]);
     expect(out.emitted).toBe(3);
     expect(out.body).not.toContain(TEMPLATE_FRONT);
@@ -341,8 +341,8 @@ describe('a twin handed out only through the fronts it was checked on', () => {
     };
     expect(doc.proxies.map((p) => [p.name, p.server, p.encryption])).toEqual([
       [A, FRONT_A, undefined],
-      [B, FRONT_B, ENCRYPTION],
-      [plainFallbackName(B), FRONT_B, undefined],
+      [encryptedName(B), FRONT_B, ENCRYPTION],
+      [B, FRONT_B, undefined],
     ]);
     expect(doc['proxy-groups'].find((g) => g.name === AUTO_GROUP_NAME)).toMatchObject({
       type: 'fallback',
@@ -360,7 +360,7 @@ describe('a Clash body', () => {
     };
     return { out, doc, auto: doc['proxy-groups'].find((g) => g.name === AUTO_GROUP_NAME) };
   };
-  const order = [A, B, plainFallbackName(A), plainFallbackName(B)];
+  const order = [encryptedName(A), encryptedName(B), A, B];
 
   test('by default: both entries per front, and the auto group takes the first that works, in order', () => {
     const { out, doc, auto } = render(rule(undefined, true));
@@ -389,9 +389,11 @@ describe('a Clash body', () => {
 
   test('`only` and `plain`: one kind of entry, so the group picks the fastest as before', () => {
     const only = render(rule('only', true));
-    expect(only.doc.proxies.map((p) => p.name)).toEqual([A, B]);
+    // Alone, the encrypted entries carry the connection names.
+    const enc = [A, B];
+    expect(only.doc.proxies.map((p) => p.name)).toEqual(enc);
     expect(only.doc.proxies.every((p) => p.encryption === ENCRYPTION)).toBe(true);
-    expect(only.auto).toMatchObject({ type: 'url-test', tolerance: 50, proxies: [A, B] });
+    expect(only.auto).toMatchObject({ type: 'url-test', tolerance: 50, proxies: enc });
 
     const plain = render(rule('plain', true));
     expect(plain.doc.proxies.map((p) => p.name)).toEqual([A, B]);

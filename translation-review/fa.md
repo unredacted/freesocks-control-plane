@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**235 of 838 strings are missing** (the app currently shows English for
+**235 of 842 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -161,6 +161,7 @@ review.
 | `login.getOne` | Get a free account | دریافت حساب رایگان |
 | `login.failed` | Sign-in failed | ورود ناموفق بود |
 | `login.success` | Signed in | وارد شدید |
+| `login.credentialManagement` | Sign in again to manage your account number or passkeys. | برای مدیریت شمارهٔ حساب یا کلیدهای عبور خود، دوباره وارد شوید. |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | لطفاً دوباره وارد شوید - ممکن است نشست شما پایان یافته باشد. |
 | `login.popBroken` | Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again. | مرورگر شما نمی‌تواند این نشست را امن کند چون Web Workers مسدود یا در دسترس نیست. آن‌ها را فعال کنید (تنظیمات حریم خصوصی مرورگر را بررسی کنید) یا از مرورگر دیگری استفاده کنید و دوباره وارد شوید. |
 | `login.digitProgress` | {count} of {total} digits entered | {count} از {total} رقم وارد شده است |
@@ -244,7 +245,7 @@ review.
 | `account.regenSuccessBody` | Re-import it on each of your devices. The old URL works for 24 more hours. | آن را دوباره در همهٔ دستگاه‌هایتان وارد کنید. لینک قبلی تا ۲۴ ساعت دیگر کار می‌کند. |
 | `account.regenFailedTitle` | Could not create a new key | ساخت کلید جدید ناموفق بود |
 | `account.switchSuccessTitle` | Switched to {tier} | به {tier} تغییر کرد |
-| `account.switchSuccessBody` | Same subscription URL - your apps pick up the new configuration on their next refresh. | ⚠️ **MISSING** |
+| `account.switchSuccessBody` | Check your account for the connection details for your new server type. | ⚠️ **MISSING** |
 | `account.switchFailedTitle` | Could not switch server type | تغییر نوع سرور ناموفق بود |
 | `account.refreshWelcome` | Welcome to {tier} | به {tier} خوش آمدید |
 | `account.refreshNoneTitle` | No active membership found yet | هنوز عضویت فعالی یافت نشد |
@@ -369,9 +370,9 @@ review.
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `switch.title` | Switch to {to}? | تغییر به {to}؟ |
-| `switch.body` | Your current {from} subscription is replaced with a new {to} one. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switch.body` | Your current {from} subscription is replaced with a new {to} one. | ⚠️ **MISSING** |
 | `switch.point1` | A new key is issued on the {to} backend | ⚠️ **MISSING** |
-| `switch.point2` | Your subscription URL stays the same - apps pick up the new configuration on their next refresh | ⚠️ **MISSING** |
+| `switch.point2` | When switching into Privacy Mode, copy the new configuration from your account. Other backend switches keep your subscription link. | ⚠️ **MISSING** |
 | `switch.point3` | The old key keeps working for 24 hours while your apps refresh | ⚠️ **MISSING** |
 | `switch.confirm` | Switch to {to} | تغییر به {to} |
 | `switch.working` | Switching… | در حال تغییر… |
@@ -816,6 +817,9 @@ review.
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
+| `delivery.privateSwitchBody` | By default, your old links cannot fetch the new configuration. Copy it from your account to each device after switching. | به‌طور پیش‌فرض، پیوندهای قبلی نمی‌توانند پیکربندی جدید را دریافت کنند. پس از تغییر حالت، آن را از حساب کاربری خود در هر دستگاه کپی کنید. |
+| `delivery.keepUnsealedUrls` | Keep my existing links and mirrors. Anyone with a link, including a service that saw it, can then fetch my new configuration without signing in. | پیوندها و آینه‌های فعلی‌ام حفظ شوند. هر کسی که پیوند را داشته باشد، از جمله سرویسی که آن را دیده است، می‌تواند بدون ورود به حساب، پیکربندی جدیدم را دریافت کند. |
+| `delivery.privateSwitchSuccess` | Copy the new configuration from your account to each device. Your previous subscription links cannot fetch it. | پیکربندی جدید را از حساب خود در هر دستگاه کپی کنید. پیوندهای اشتراک قبلی به آن دسترسی ندارند. |
 | `delivery.title` | Connection mode | ⚠️ **MISSING** |
 | `delivery.subtitle` | Pick what fits where you are. Saved on this device only - change it anytime. | ⚠️ **MISSING** |
 | `delivery.subtitleServer` | Switching moves your key to the matching servers. Your link stays the same. | ⚠️ **MISSING** |
@@ -1035,7 +1039,7 @@ review.
 | `report.reasonLegend` | What's the problem? | ⚠️ **MISSING** |
 | `report.connectionLegend` | Which connection were you using? | ⚠️ **MISSING** |
 | `report.connectionUnsure` | Not sure | ⚠️ **MISSING** |
-| `report.connectionOldAppsHint` | Your app has two entries for each address. If the first one does not connect, try the one marked Old apps before you report. | ⚠️ **MISSING** |
+| `report.connectionTwoEntriesHint` | Your app has two entries for each address. If the one marked Encrypted does not connect, try the other one before you report. | ⚠️ **MISSING** |
 | `report.reasonCantConnect` | I can't connect at all | ⚠️ **MISSING** |
 | `report.reasonSlow` | It connects, but it's very slow | ⚠️ **MISSING** |
 | `report.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |

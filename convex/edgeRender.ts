@@ -17,7 +17,7 @@ import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { twinRemarksOf } from './lib/edges/listenerEncryption';
 import { servableEdges } from './lib/backend/nodeTwin';
-import { plainFallbackName } from '../src/shared/entryNames';
+import { ENTRY_NAME_SEP, encryptedName } from '../src/shared/entryNames';
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -761,6 +761,13 @@ export const latencyChanged = internalMutation({
  * last render carried (roles + address family only, never addresses). Read
  * from the persisted render snapshot: never reconstructed without the body.
  */
+/**
+ * What a body rendered before the `… · Encrypted` naming called a plain twin
+ * (the encrypted entry had the connection's name). Only to list such a body's
+ * entries as its app shows them until it fetches again; never written into a body.
+ */
+const LEGACY_PLAIN_TAG = 'Old apps';
+
 export const memberView = internalQuery({
   args: { subscriptionId: v.id('subscriptions') },
   handler: async (
@@ -777,8 +784,9 @@ export const memberView = internalQuery({
       role: 'primary' | 'backup';
       family: 'v4' | 'v6' | 'name';
       /**
-       * Where the body handed this address out twice: the encrypted entry, or
-       * the plain one behind it (named `… · Old apps`). Absent = the one entry.
+       * Where the body handed this address out encrypted: the encrypted entry
+       * (named `… · Encrypted`), or the plain one behind it (the address's own
+       * name). Absent = the one entry.
        */
       entry?: 'encrypted' | 'plain';
     }>;
@@ -832,22 +840,45 @@ export const memberView = internalQuery({
       role: e.role,
       family: e.family,
     }));
-    // Where the body carried an address twice (the snapshot says so: never
+    // Where the body carried an address encrypted (the snapshot says so: never
     // guessed from today's settings), the names follow the body: the encrypted
-    // entries first, then the plain ones under their own name.
+    // entries first, then the plain ones. A body is listed under the names IT
+    // gave them (`twinNames`): `tagged` = the encrypted one `… · Encrypted`
+    // and the plain one under the address's name; a body rendered before that
+    // naming (no `twinNames`) gave the encrypted one the name and the plain
+    // one `… · Old apps`, and the member's app shows those until it fetches
+    // again.
     const twinOf = { primary: snap.primaryTwin, backup: snap.backupTwin };
+    const encrypted = (role: 'primary' | 'backup') =>
+      twinOf[role] === 'fallback' || twinOf[role] === 'only';
+    const tagged = snap.twinNames === 'tagged';
+    // Under the new names the encrypted entry is tagged only beside a plain
+    // one; alone (`only`) it has the address's name.
+    const named = (name: string, entry: 'encrypted' | 'plain', both: boolean) =>
+      tagged
+        ? entry === 'encrypted' && both
+          ? encryptedName(name)
+          : name
+        : entry === 'plain'
+          ? `${name}${ENTRY_NAME_SEP}${LEGACY_PLAIN_TAG}`
+          : name;
     const connections = [
       ...entries.map((e) =>
-        twinOf[e.role] === 'fallback' || twinOf[e.role] === 'only'
-          ? { ...e, entry: 'encrypted' as const }
+        encrypted(e.role)
+          ? {
+              ...e,
+              label: named(e.label, 'encrypted', twinOf[e.role] === 'fallback'),
+              base: named(e.base, 'encrypted', twinOf[e.role] === 'fallback'),
+              entry: 'encrypted' as const,
+            }
           : e,
       ),
       ...entries
         .filter((e) => twinOf[e.role] === 'fallback')
         .map((e) => ({
           ...e,
-          label: plainFallbackName(e.label),
-          base: plainFallbackName(e.base),
+          label: named(e.label, 'plain', true),
+          base: named(e.base, 'plain', true),
           entry: 'plain' as const,
         })),
     ];
@@ -900,7 +931,7 @@ export const clearSnapshotAutoGroupForRollback = internalAction({
 
 // --- rollback: which entries an address was handed out as ------------------------------------------
 
-/** One page of the rollback strip: render snapshots lose `primaryTwin` / `backupTwin`. */
+/** One page of the rollback strip: render snapshots lose `primaryTwin` / `backupTwin` / `twinNames`. */
 export const stripSnapshotTwinPage = internalMutation({
   args: { cursor: v.union(v.string(), v.null()) },
   handler: async (ctx, { cursor }) => {
@@ -910,10 +941,17 @@ export const stripSnapshotTwinPage = internalMutation({
     let stripped = 0;
     for (const s of page.page) {
       const snap = s.lastRender;
-      if (!snap || (snap.primaryTwin === undefined && snap.backupTwin === undefined)) continue;
-      const { primaryTwin, backupTwin, ...rest } = snap;
+      if (
+        !snap ||
+        (snap.primaryTwin === undefined &&
+          snap.backupTwin === undefined &&
+          snap.twinNames === undefined)
+      )
+        continue;
+      const { primaryTwin, backupTwin, twinNames, ...rest } = snap;
       void primaryTwin;
       void backupTwin;
+      void twinNames;
       await ctx.db.patch(s._id, { lastRender: rest });
       stripped++;
     }

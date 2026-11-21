@@ -31,12 +31,14 @@ const one: Connection[] = [
   { label: A, base: A, role: 'primary' },
   { label: B, base: B, role: 'backup' },
 ];
-// The app holds each address twice: the encrypted entry, and the plain one for old apps.
+// The app holds each address twice: the encrypted entry, and the plain one under the address's name.
+const EA = `${A} · Encrypted`;
+const EB = `${B} · Encrypted`;
 const twice: Connection[] = [
-  { label: A, base: A, role: 'primary', entry: 'encrypted' },
-  { label: B, base: B, role: 'backup', entry: 'encrypted' },
-  { label: `${A} · Old apps`, base: `${A} · Old apps`, role: 'primary', entry: 'plain' },
-  { label: `${B} · Old apps`, base: `${B} · Old apps`, role: 'backup', entry: 'plain' },
+  { label: EA, base: EA, role: 'primary', entry: 'encrypted' },
+  { label: EB, base: EB, role: 'backup', entry: 'encrypted' },
+  { label: A, base: A, role: 'primary', entry: 'plain' },
+  { label: B, base: B, role: 'backup', entry: 'plain' },
 ];
 
 let app: ReturnType<typeof mountWithQuery> | null = null;
@@ -114,10 +116,10 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-const HINT = 'try the one marked Old apps';
+const HINT = 'If the one marked Encrypted does not connect, try the other one';
 
 describe('which connection a report names', () => {
-  test('one entry per address: one option each, and nothing about old apps', () => {
+  test('one entry per address: one option each, and no hint', () => {
     const v = mount(one);
     expect(v.labels()).toEqual([A, B, 'Not sure']);
     expect(v.text()).not.toContain(HINT);
@@ -127,17 +129,17 @@ describe('which connection a report names', () => {
 
   test('an address the app holds twice: each entry is its own option, with the way out for an old app', () => {
     const v = mount(twice);
-    expect(v.labels()).toEqual([A, `${A} · Old apps`, B, `${B} · Old apps`, 'Not sure']);
+    expect(v.labels()).toEqual([EA, A, EB, B, 'Not sure']);
     expect(v.text()).toContain(HINT);
 
-    v.pick(A);
+    v.pick(EA);
     expect([props.connection, props.connectionEntry]).toEqual(['primary', 'encrypted']);
-    expect(v.checked()).toEqual([A]);
+    expect(v.checked()).toEqual([EA]);
 
     // The same address, the other entry: one option stays chosen.
-    v.pick(`${A} · Old apps`);
+    v.pick(A);
     expect([props.connection, props.connectionEntry]).toEqual(['primary', 'plain']);
-    expect(v.checked()).toEqual([`${A} · Old apps`]);
+    expect(v.checked()).toEqual([A]);
 
     v.pick('Not sure');
     expect([props.connection, props.connectionEntry]).toEqual(['unsure', null]);
@@ -146,16 +148,17 @@ describe('which connection a report names', () => {
 
   test('only the address handed out twice gets two options', () => {
     const v = mount([
-      { label: A, base: A, role: 'primary', entry: 'encrypted' },
+      { label: EA, base: EA, role: 'primary', entry: 'encrypted' },
       { label: B, base: B, role: 'backup' },
-      { label: `${A} · Old apps`, base: `${A} · Old apps`, role: 'primary', entry: 'plain' },
+      { label: A, base: A, role: 'primary', entry: 'plain' },
     ]);
-    expect(v.labels()).toEqual([A, `${A} · Old apps`, B, 'Not sure']);
+    expect(v.labels()).toEqual([EA, A, B, 'Not sure']);
     v.pick(B);
     expect([props.connection, props.connectionEntry]).toEqual(['backup', null]);
   });
 
   test('an address handed out encrypted alone is one option: there is no second entry to tell apart', () => {
+    // Alone, the encrypted entry has the address's name.
     const v = mount([{ label: A, base: A, role: 'primary', entry: 'encrypted' }]);
     expect(v.labels()).toEqual([A, 'Not sure']);
     expect(v.text()).not.toContain(HINT);

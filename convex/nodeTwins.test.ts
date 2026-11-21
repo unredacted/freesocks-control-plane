@@ -87,7 +87,7 @@ const FRONTS = ['front-a.example.org', 'front-b.example.org'];
  * was), and the session through a front stubbed: `verdict(hostname)` says
  * whether a front carries the twin.
  */
-async function seed(opts: { twin?: boolean; fronted?: boolean } = {}) {
+async function seed(opts: { twin?: boolean; fronted?: boolean; externallyFronted?: boolean } = {}) {
   const t = convexTest(schema, modules);
   current = t;
   // The node's own origin answers (its reconcile looks at it; nothing here is about it).
@@ -180,6 +180,7 @@ async function seed(opts: { twin?: boolean; fronted?: boolean } = {}) {
     nodeUuid: NODE_UUID,
     mode: 'freedom-ws',
     originHostname: 'origin-w.example.net',
+    ...(opts.externallyFronted ? { externallyFronted: true } : {}),
   });
 
   // Its fronts: the origin, its listener with the address FCP keeps for it,
@@ -452,6 +453,17 @@ describe('a node serving the encrypted twin', () => {
     );
     expect(actions).toContain('admin.servers.node_twin.add');
     expect(actions).toContain('servers.node.twin_serving');
+  });
+
+  test('a node adopted while another tool fronted it serves it once FCP runs its fronts', async () => {
+    // Adopted with "its edge was made outside FCP": the flag stays on the
+    // node after FCP's own edges, address and delivery took over its front.
+    const s = await seed({ externallyFronted: true });
+    expect((await s.intent()).adopted?.externallyFronted).toBe(true);
+    await bringToServing(s);
+    expect(s.nodeActive()).toEqual([s.own, s.twinUuid()].sort());
+    expect(await s.servedThrough()).toEqual([...s.edgeIds].sort());
+    expect(await s.view()).toMatchObject({ state: 'serving', code: null, routeBy: 'operator' });
   });
 
   test('a front that does not carry it gets the plain entry alone', async () => {

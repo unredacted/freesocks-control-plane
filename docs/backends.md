@@ -979,10 +979,13 @@ family, "Encrypted connections"):
 - **`prefer` keeps every app connected.** An app that cannot speak the layer fails the first
   entry and uses the second. In a Clash body the automatic group then becomes a `fallback` group
   (the first entry that works, in order) instead of `url-test`: an entry and its twin are equally
-  fast, so "the fastest" would be either. A link list has no group: the order is all it says, and
-  the plain twin's name says who it is for (`… · Old apps`, [edges.md](edges.md) § "Names in
-  apps"). A member of such an app is protected when they use the first entry, which FCP cannot
-  enforce until the family is `only`.
+  fast, so "the fastest" would be either. A link list has no group: the order is all it says.
+  The plain entry keeps the connection's name and the encrypted one reads `… · Encrypted`
+  ([edges.md](edges.md) § "Names in apps"), so an app that already holds the name (picked by
+  hand, or a Clash group's remembered choice) stays on the plain entry: adding the encrypted
+  entry never moves an old app onto something it cannot speak. A member of such an app is
+  protected when they use the encrypted entry, which FCP cannot enforce until the family is
+  `only`.
 - **`plain` is where nobody has seen the app work.** sing-box does not speak the layer (the
   backend leaves the entry out of its format anyway, and an outbound under a twin's name is
   dropped, never copied: it would be the encrypted transport spoken plainly). Hiddify runs a
@@ -1031,7 +1034,7 @@ encrypted twin), and sing-box on the plain entry it gets. Xray as a client and t
 are not in that gate: their results above are from the one manual run.
 
 An old Mihomo loads the body without complaint and speaks plain VLESS to the encrypted
-transport, which refuses it: only the ordered group (or picking a `… · Old apps` entry by hand)
+transport, which refuses it: only the ordered group (or picking the entry without `· Encrypted` by hand)
 gets that member through. With Xray, the encrypted entry spoken plain, or with another key, does
 not connect.
 

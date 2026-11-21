@@ -856,25 +856,46 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     // behind it (the snapshot says so: never guessed from today's settings).
     await t.run(async (ctx) => {
       const sub = (await ctx.db.get(subId))!;
-      await ctx.db.patch(subId, { lastRender: { ...sub.lastRender!, primaryTwin: 'fallback' } });
+      await ctx.db.patch(subId, {
+        lastRender: { ...sub.lastRender!, primaryTwin: 'fallback', twinNames: 'tagged' },
+      });
     });
     let view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
-    // The encrypted entries first, then the plain ones under their own name.
+    // The encrypted entries first, then the plain ones under the address's name.
     expect(view.connections.map((c) => [c.label, c.base, c.role, c.entry])).toEqual([
-      [`${PRIMARY} · IPv4`, PRIMARY, 'primary', 'encrypted'],
-      [`${PRIMARY} · IPv6`, PRIMARY, 'primary', 'encrypted'],
-      [`${PRIMARY} · IPv4 · Old apps`, `${PRIMARY} · Old apps`, 'primary', 'plain'],
-      [`${PRIMARY} · IPv6 · Old apps`, `${PRIMARY} · Old apps`, 'primary', 'plain'],
+      [`${PRIMARY} · IPv4 · Encrypted`, `${PRIMARY} · Encrypted`, 'primary', 'encrypted'],
+      [`${PRIMARY} · IPv6 · Encrypted`, `${PRIMARY} · Encrypted`, 'primary', 'encrypted'],
+      [`${PRIMARY} · IPv4`, PRIMARY, 'primary', 'plain'],
+      [`${PRIMARY} · IPv6`, PRIMARY, 'primary', 'plain'],
     ]);
-    // Encrypted alone: one entry per address, marked as the encrypted one.
+    // Encrypted alone: one entry per address.
     await t.run(async (ctx) => {
       const sub = (await ctx.db.get(subId))!;
-      await ctx.db.patch(subId, { lastRender: { ...sub.lastRender!, primaryTwin: 'only' } });
+      await ctx.db.patch(subId, {
+        lastRender: { ...sub.lastRender!, primaryTwin: 'only', twinNames: 'tagged' },
+      });
     });
     view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    // Alone, the encrypted entry has the address's name.
     expect(view.connections.map((c) => [c.label, c.entry])).toEqual([
       [`${PRIMARY} · IPv4`, 'encrypted'],
       [`${PRIMARY} · IPv6`, 'encrypted'],
+    ]);
+    // A body rendered before that naming: its app shows the encrypted entry
+    // under the name and the plain one as … · Old apps until it fetches again,
+    // and the view lists them so (the entry each name is stays right).
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      const { twinNames, ...rest } = sub.lastRender!;
+      void twinNames;
+      await ctx.db.patch(subId, { lastRender: { ...rest, primaryTwin: 'fallback' } });
+    });
+    view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    expect(view.connections.map((c) => [c.label, c.base, c.entry])).toEqual([
+      [`${PRIMARY} · IPv4`, PRIMARY, 'encrypted'],
+      [`${PRIMARY} · IPv6`, PRIMARY, 'encrypted'],
+      [`${PRIMARY} · IPv4 · Old apps`, `${PRIMARY} · Old apps`, 'plain'],
+      [`${PRIMARY} · IPv6 · Old apps`, `${PRIMARY} · Old apps`, 'plain'],
     ]);
     // The plain entry alone on a twin's listener: one entry, with nothing to tell apart.
     await t.run(async (ctx) => {
