@@ -2220,17 +2220,17 @@ export const bootstrap = internalAction({
       { intentId },
     );
     const ingress = c.ingress;
-    // The node's front server also routes its mode's ENCRYPTED TWIN while the
-    // node serves it (nodeTwins.ts): its path to its loopback port, beside the
-    // node's own. It is no machine setting: the node's own route, revision and
-    // approval stay as they are, and the twin is handed to members only once a
-    // session through each front proved the route.
-    const twin = c.intent.twin;
+    // The node's front server also routes its mode's ENCRYPTED TWIN
+    // (nodeTwins.ts): its path to its loopback port, beside the node's own.
+    // Handed out whenever the mode HAS a twin, not only while this node serves
+    // it: a node's first role run comes before it has fronts, so a route given
+    // only once the twin is switched on would wait for a second run. Until the
+    // twin's transport is on for the node the path has nothing behind it (the
+    // front answers it as a dead upstream), and nothing reaches members before
+    // a session through each front proved the route. It is no machine
+    // setting: the node's own route, revision and approval stay as they are.
     const setupTwin = modeOf(c.setup, modeSlug(c.intent))?.twin;
-    const twinRoutes =
-      twin && twin.state !== 'removing' && setupTwin && !setupTwin.detaching
-        ? [twinRoute(setupTwin)]
-        : [];
+    const twinRoutes = setupTwin && !setupTwin.detaching ? [twinRoute(setupTwin)] : [];
     return {
       machineRevision: c.intent.machineRevision,
       secretKey,

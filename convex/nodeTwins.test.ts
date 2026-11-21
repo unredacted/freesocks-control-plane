@@ -929,7 +929,7 @@ describe('the node behind its fronts', () => {
     expect(opId).toBeTruthy();
   });
 
-  test('the node role is handed the twin’s route beside the node’s own, and only while it is wanted', async () => {
+  test('the node role is handed the twin’s route from the first run, whenever the mode has a twin', async () => {
     const s = await seed();
     // A node the role runs (enrolled, with an origin name of its own).
     const { intentId } = await s.t.mutation(internal.nodeIntents.enroll, {
@@ -950,22 +950,57 @@ describe('the node behind its fronts', () => {
     const routes = async () =>
       (await s.t.action(internal.nodeIntents.bootstrap, { intentId })).ingress!.routes;
     const revision = (await s.t.run((ctx) => ctx.db.get(intentId)))!.machineRevision;
-    expect(await routes()).toEqual([{ path: '/ws', port: 8443 }]);
+    const both = [
+      { path: '/ws', port: 8443 },
+      { path: '/ws-e', port: 8444 },
+    ];
+    // Its first run, before it serves anything: the twin's route is already there.
+    expect((await s.t.run((ctx) => ctx.db.get(intentId)))!.twin).toBeUndefined();
+    expect(await routes()).toEqual(both);
     const setTwin = (state: 'activating' | 'serving' | 'removing') =>
       s.t.run((ctx) =>
         ctx.db.patch(intentId, { twin: { state, since: Date.now(), updatedAt: Date.now() } }),
       );
-    for (const state of ['activating', 'serving'] as const) {
+    // Whatever the node's own twin is doing, the route stays: switching it on
+    // or off never needs another role run.
+    for (const state of ['activating', 'serving', 'removing'] as const) {
       await setTwin(state);
-      expect(await routes()).toEqual([
-        { path: '/ws', port: 8443 },
-        { path: '/ws-e', port: 8444 },
-      ]);
+      expect(await routes()).toEqual(both);
     }
-    await setTwin('removing');
+    // The mode's twin being taken off the backend takes the route away.
+    await s.t.run(async (ctx) => {
+      const setup = (await ctx.db.query('panelSetups').first())!;
+      await ctx.db.patch(setup._id, {
+        modes: setup.modes.map((m) =>
+          m.twin ? { ...m, twin: { ...m.twin, detaching: true } } : m,
+        ),
+      });
+    });
     expect(await routes()).toEqual([{ path: '/ws', port: 8443 }]);
     // No machine setting moved for it: the node's own revision and approval stand.
     expect((await s.t.run((ctx) => ctx.db.get(intentId)))!.machineRevision).toBe(revision);
+  });
+
+  test('a mode without a twin hands the role its own route alone', async () => {
+    const s = await seed({ twin: false });
+    const { intentId } = await s.t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: s.serverId,
+      name: 'node-p',
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.71', port: 2222 },
+        publicIps: { v4: '203.0.113.71' },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    await s.t.mutation(internal.nodeIntents.patchSettings, {
+      intentId,
+      patch: { explicitHostname: 'origin-p.example.net' },
+    });
+    expect(
+      (await s.t.action(internal.nodeIntents.bootstrap, { intentId })).ingress!.routes,
+    ).toEqual([{ path: '/ws', port: 8443 }]);
   });
 });
 

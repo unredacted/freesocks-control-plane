@@ -1375,7 +1375,7 @@ export function nodeTwinWords(t: NodeTwinLike): { dot: Dot; sentence: string } {
           sentence:
             t.routeBy === 'operator'
               ? `No front carries it yet. No role runs this node: add the route ${route ?? 'for the twin'} to its front server. It is checked again every few minutes.`
-              : `No front carries it yet. Run the node role on this node so its front server gets the route ${route ?? 'for the twin'}. It is checked again every few minutes.`,
+              : `No front carries it yet. If the node role last ran before the mode got its twin, run it once so its front server gets the route ${route ?? 'for the twin'}. It is checked again every few minutes.`,
         };
       if (t.code && !TWIN_WAITING.has(t.code))
         return { dot: 'red', sentence: `Not serving it yet: ${serverErrorWords(t.code)}` };

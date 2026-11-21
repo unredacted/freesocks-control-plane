@@ -1040,7 +1040,7 @@ describe('nodeTwinWords', () => {
     expect(nodeTwinWords(failed)).toEqual({
       dot: 'red',
       sentence:
-        'No front carries it yet. Run the node role on this node so its front server gets the route /ws-e to 127.0.0.1:8444. It is checked again every few minutes.',
+        'No front carries it yet. If the node role last ran before the mode got its twin, run it once so its front server gets the route /ws-e to 127.0.0.1:8444. It is checked again every few minutes.',
     });
     expect(nodeTwinWords({ ...failed, routeBy: 'operator' })).toEqual({
       dot: 'amber',

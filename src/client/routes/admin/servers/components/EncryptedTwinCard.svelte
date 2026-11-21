@@ -72,7 +72,7 @@
               .route.port}.
             {#if intent.twin.state === 'activating'}
               {intent.twin.routeBy === 'role'
-                ? 'The node role adds it on its next run.'
+                ? 'The node role adds it on any run since the mode got its twin.'
                 : 'No role runs this node, so it is added by hand.'}
             {/if}
           </p>
