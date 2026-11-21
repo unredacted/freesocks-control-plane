@@ -276,7 +276,26 @@ describe('the isolated test link', () => {
     );
   });
 
-  test('an ambiguous body (two direct Hosts on the transport at the origin) is refused; a body with no entry for the transport too', async () => {
+  test('a node with a Host per SNI of its pool: the entry is built from the transport, not refused', async () => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const { t, edgeId } = await seed({
+      hosts: [directHost(), directHost({ uuid: H(2), remark: 'node-one | b.example' })],
+      extraLines: [`vless://x@${ORIGIN}:443?${REALITY_QS}#node-one | b.example`],
+      profiles: realityProfile(),
+    });
+    const r = await t.action(internal.edgeTestLinks.build, { edgeId });
+    const lines = r.link.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+    const u = parseProxyUri(lines[0])!;
+    expect(u.host).toBe(SPARE);
+    expect(u.params.get('security')).toBe('reality');
+    expect(u.params.get('sid')).toBe('abcd');
+    expect(r.link).not.toContain(ORIGIN);
+  });
+
+  test('an ambiguous body (two direct Hosts on the transport at the origin) is refused when the entry cannot be built; a body with no entry for the transport too', async () => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    // No REALITY profile on the panel: nothing to build the entry from.
     const { t, edgeId } = await seed({
       hosts: [directHost(), directHost({ uuid: H(2), remark: 'node-one-reality-copy' })],
       extraLines: [`vless://x@${ORIGIN}:443?${REALITY_QS}#node-one-reality-copy`],
@@ -515,14 +534,18 @@ describe('testLinkSourceOf (what a protect plan promises before it buys)', () =>
     ownRemarks,
   });
 
-  test('exactly one Host at the origin, else exactly one of its own; two are ambiguous as the test link finds them', () => {
+  test('exactly one Host at the origin, else exactly one of its own; else the entry is built where it can be', () => {
     expect(testLinkSourceOf(ss, at([host(1)]))).toBe('host');
     expect(testLinkSourceOf(ss, at([host(1), host(2)]))).toBeNull();
-    // Two at the origin are ambiguous even for a transport whose entry could be built.
-    expect(testLinkSourceOf(reality, at([host(1), host(2)]))).toBeNull();
+    // Several at the origin (a Host per SNI of the node's pool): a transport
+    // whose entry can be built is tested with that, as the test link does.
+    expect(testLinkSourceOf(reality, at([host(1), host(2)]))).toBe('synthesized');
     const own = (n: number) => host(n, { address: '198.51.100.1', remark: 'node-one-relay-a' });
     expect(testLinkSourceOf(ss, at([own(3)], ['node-one-relay-a']))).toBe('host');
     expect(testLinkSourceOf(ss, at([own(3), own(4)], ['node-one-relay-a']))).toBeNull();
+    expect(testLinkSourceOf(reality, at([own(3), own(4)], ['node-one-relay-a']))).toBe(
+      'synthesized',
+    );
     // None: built from a REALITY transport, nowhere for another.
     expect(testLinkSourceOf(reality, at([]))).toBe('synthesized');
     expect(testLinkSourceOf(ss, at([]))).toBeNull();

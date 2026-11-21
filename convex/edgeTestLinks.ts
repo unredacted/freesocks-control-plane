@@ -208,9 +208,11 @@ export function synthesizable(proto: ListenerProto, backend: BackendId): boolean
  * transport would take its entry from (`build`, the same order as
  * `selectTestEntry`): the ONE Host on the transport at the origin address and
  * port, else the ONE Host of the listener's own (`host`); the entry built from
- * the transport itself when neither is there (`synthesized`); or nowhere
- * (null): two such Hosts are ambiguous, which the test link refuses, and the
- * run would stop at its test card after the address was bought. `hosts` null:
+ * the transport itself when neither is there, or when several are (a node with
+ * a Host per SNI of its pool: `synthesized`, which also uses a server name the
+ * node really serves); or nowhere (null): a transport whose entry cannot be
+ * built with no single Host, and the run would stop at its test card after the
+ * address was bought. `hosts` null:
  * a backend without Hosts, whose body is matched by the origin address and
  * port alone (`host`, as far as a plan can tell).
  */
@@ -237,9 +239,14 @@ export function testLinkSourceOf(
   const direct = onInbound.filter(
     (h) => sameAddress(h.address, a.originAddress) && h.port === spec.originPort,
   );
-  if (direct.length > 0) return direct.length === 1 ? 'host' : null;
-  const own = onInbound.filter((h) => a.ownRemarks.includes(h.remark));
-  if (own.length > 0) return own.length === 1 ? 'host' : null;
+  if (direct.length === 1) return 'host';
+  if (direct.length === 0) {
+    const own = onInbound.filter((h) => a.ownRemarks.includes(h.remark));
+    if (own.length === 1) return 'host';
+  }
+  // None, or several (a node with a Host per SNI of its pool): the entry is
+  // built from the transport's live parameters where it can be, as the test
+  // link does when its matcher finds no single entry.
   return spec.panelBinding && synthesizable(spec, a.backend) ? 'synthesized' : null;
 }
 
@@ -449,8 +456,12 @@ export const build = internalAction({
         })
       : null;
     let picked = selectTestEntry(fetched.content, c, hosts);
-    if ('code' in picked && picked.code === 'no_match' && c.synth) {
-      const line = await synthesizedEntry(ctx, c.relayId as Id<'relays'>, c.synth, c);
+    // No single entry for the transport (none, or one per SNI of the node's
+    // pool): built from its live parameters where it can be. After several
+    // entries, a build that fails leaves the ambiguity as the reason.
+    if ('code' in picked && c.synth) {
+      const build = () => synthesizedEntry(ctx, c.relayId as Id<'relays'>, c.synth!, c);
+      const line = picked.code === 'no_match' ? await build() : await build().catch(() => null);
       if (line) picked = { line };
     }
     if ('code' in picked)
