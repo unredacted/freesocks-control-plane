@@ -9,7 +9,10 @@
 # Downloads the pinned engines (checksummed, tests/compat/manifest.ts), builds
 # their image, then runs convex/lib/realityKeyShares.integration.test.ts, which
 # writes a fresh Xray config, starts the containers and connects through each
-# core. Requires Docker (amd64 engines run under emulation on Apple Silicon).
+# core. The same run is the post-quantum gate (§ "Post-quantum key exchange"):
+# a tap in front of the cores (docker/compat/hello-tap.ts) reads which TLS group
+# each engine's handshake ended on, and a VLESS Encryption inbound takes
+# Xray-core and Mihomo on the encrypted entry. Requires Docker (amd64 engines run under emulation on Apple Silicon).
 # Always tears down (FCP_REALITY_KEEP=1 leaves the stack up for debugging; the
 # next run starts with a teardown). Nothing it prints or keeps carries the
 # per-run client id or key: .cache/compat/reality is removed afterwards.

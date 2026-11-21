@@ -37,6 +37,14 @@
  * that speaks them and connected through the candidate edge before the tick),
  * is the production code against the real panel.
  *
+ * The post-quantum key exchange (docs/client-compatibility.md § "Post-quantum
+ * key exchange", tests/compat/pqMatrix.ts) rides along: the L4 edge reads each
+ * connection's TLS handshake, so every REALITY cell asserts the group the
+ * node's core picked for the engine's REAL body (X25519MLKEM768 for Mihomo,
+ * X25519 for sing-box, the pinned no); the share links the Xray apps get must
+ * carry the `chrome` fingerprint; and the encrypted twin is checked as every
+ * catalogued app is served it.
+ *
  * Run by scripts/edge-connection-integration.sh inside the runner container.
  */
 import { convexTest, type TestConvex } from 'convex-test';
@@ -57,6 +65,9 @@ import type { Cohort, CohortCursor, CohortPage } from '../../convex/lib/edges/co
 import { detectBodyFormat } from '../../convex/lib/edges/clientFamilies';
 import { ActivationReview } from '../../src/shared/contracts/servers';
 import { clients } from '../compat/manifest';
+import { PQ_APPS, PQ_ENGINES, PQ_GROUP } from '../compat/pqMatrix';
+import { defaultClientRule } from '../../convex/lib/edgeConfig';
+import { classifyClient } from '../../convex/lib/edges/clientFamilies';
 import { AUTO_GROUP_NAME, encryptedName } from '../../src/shared/entryNames';
 import YAML from 'yaml';
 import {
@@ -69,6 +80,7 @@ import {
   clientLog,
   fetchThroughClientEventually,
   forwarderConnections,
+  forwarderHellos,
   forwarderStats,
   sleep,
   startClient,
@@ -90,6 +102,7 @@ import {
   parseShareLink,
   sandboxServed,
   servedEntries,
+  servedLinks,
   type Engine,
 } from './clients';
 
@@ -880,14 +893,20 @@ async function bodyCarrying(
 
 /**
  * Connect with the served body through ONE of its entries; the page must come
- * back from `peer` (the node), and the traffic must have crossed `edge`.
+ * back from `peer` (the node), and the traffic must have crossed `edge`. With
+ * `keyExchange` (an L4 edge in front of a TLS 1.3 handshake: REALITY), every
+ * connection the engine made through the edge must have ended on that group,
+ * as the edge read the node's Server Hello.
  */
 async function connectThrough(
   engine: Engine,
   served: { body: string; entry: string },
   edge: CellEdge,
   peer: string,
+  keyExchange?: string,
 ) {
+  const frontend = `${edge.address}:443`;
+  const hellosBefore = keyExchange ? ((await forwarderHellos())[frontend]?.length ?? 0) : 0;
   // The body's own default route takes its proxies (the sandbox then picks one).
   expect(defaultRouteFaults(served.body), 'the served default route').toEqual([]);
   const { config, port } = sandboxServed(engine, served.body, served.entry);
@@ -906,6 +925,17 @@ async function connectThrough(
   } finally {
     // Closing the tunnels makes the front log the session.
     stopClient();
+  }
+  if (keyExchange) {
+    expect(edge.layer, 'a key exchange is read at an L4 edge').toBe('l4');
+    const mine = ((await forwarderHellos())[frontend] ?? []).slice(hellosBefore);
+    expect(mine.length, 'the edge read no handshake').toBeGreaterThan(0);
+    for (const h of mine) {
+      expect(h.tls13, `${engine}: TLS 1.3`).toBe(true);
+      expect(h.negotiated, `${engine}: the group the node picked`).toBe(keyExchange);
+      if (keyExchange === PQ_GROUP) expect(h.shares, `${engine}: shares`).toContain(PQ_GROUP);
+      else expect(h.shares, `${engine}: shares`).not.toContain(PQ_GROUP);
+    }
   }
   if (edge.layer === 'l4')
     expect(await forwarderConnections(443, edge.address)).toBeGreaterThan(before);
@@ -1017,7 +1047,15 @@ describe.skipIf(!ENABLED)(
                   headers: { Host: edge.address },
                 });
               }
-              await connectThrough(engine, served, edge, node.addr.origin);
+              // REALITY: the key exchange the engine's real body ends on
+              // (tests/compat/pqMatrix.ts; sing-box's X25519 is the pinned no).
+              await connectThrough(
+                engine,
+                served,
+                edge,
+                node.addr.origin,
+                key === 'ws' ? undefined : PQ_ENGINES[engine].reality!,
+              );
               if (key === 'ws') {
                 // The node's ingress saw the FRONT, never the member.
                 expect(accessLog('ingress').some((e) => e.remoteIp.startsWith('203.0.113.'))).toBe(
@@ -1040,6 +1078,31 @@ describe.skipIf(!ENABLED)(
                 ).toBe(true);
               }
             });
+
+        // The Xray apps' REALITY key exchange is their core's with the
+        // fingerprint the link names: Xray-core with `chrome` ends on
+        // X25519MLKEM768 (proved against real cores by the reality-keyshare
+        // job). Every REALITY entry each of those apps is served must name it.
+        if (key !== 'ws')
+          test('post-quantum: the share links the Xray apps get carry the chrome fingerprint', async () => {
+            const edges = await edgesByTag(node.name);
+            const allowed = edgeAddresses(edges);
+            for (const app of PQ_APPS.filter((a) => a.engine === 'xray')) {
+              const res = await fetchSub(token, app.userAgent);
+              expect(res.status, app.name).toBe(200);
+              const body = await res.text();
+              expectNoOrigin(body);
+              const reality = servedLinks(body).filter(
+                (u) => u.searchParams.get('security') === 'reality',
+              );
+              expect(reality.length, `${app.name}: no REALITY entry`).toBeGreaterThan(0);
+              for (const u of reality) {
+                expect(allowed, `${app.name}: an entry off the edges`).toContain(u.hostname);
+                expect(u.searchParams.get('fp'), `${app.name}: fingerprint`).toBe('chrome');
+                expect(u.searchParams.get('pbk'), `${app.name}: public key`).toBeTruthy();
+              }
+            }
+          });
 
         // A provider set of two locations (docs/edges.md "Provider sets"): the
         // live node gets an address in a second location through an `add` run
@@ -1332,6 +1395,39 @@ describe.skipIf(!ENABLED)(
             expect(served.body).not.toContain(env.wsTwinPath);
             expect(servedEntries('singbox', served.body)).toHaveLength(1);
             await connectThrough('singbox', served, edge, node.addr.origin);
+
+            // 6. Every catalogued app as it is served (tests/compat/pqMatrix.ts):
+            //    a family the twin is handed gets the encrypted entry FIRST for
+            //    this front; any other family gets no encrypted entry at all.
+            for (const app of PQ_APPS) {
+              const family = classifyClient(app.userAgent).family;
+              const twin = defaultClientRule(family).encryption !== 'plain';
+              const res = await fetchSub(token, app.userAgent);
+              expect(res.status, app.name).toBe(200);
+              const body = await res.text();
+              expectNoOrigin(body);
+              const what = `${app.name} (${family})`;
+              if (!twin) {
+                expect(body.includes('mlkem768x25519plus'), `${what}: an encrypted entry`).toBe(
+                  false,
+                );
+                continue;
+              }
+              const format = detectBodyFormat(body);
+              const first =
+                format === 'links'
+                  ? servedLinks(body)
+                      .filter((u) => u.hostname === edge.address)
+                      .map((u) => u.searchParams.get('encryption'))[0]
+                  : format === 'clash-yaml'
+                    ? servedEntries('mihomo', body)
+                        .filter((x) => x.server === edge.address)
+                        .map((x) => x.raw.encryption)[0]
+                    : undefined;
+              expect(String(first), `${what}: its first entry for the front`).toMatch(
+                /^mlkem768x25519plus\./,
+              );
+            }
           });
       });
     }

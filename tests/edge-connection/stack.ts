@@ -135,6 +135,26 @@ export async function forwarderStats(): Promise<
   return res.json();
 }
 
+/**
+ * One connection's TLS key exchange as the forwarder read it off the wire
+ * (docker/compat/tlsHello.ts `describeObservation`: group names only).
+ */
+export interface ForwarderHello {
+  offered: string[];
+  shares: string[];
+  negotiated: string | null;
+  helloRetry: boolean;
+  tls13: boolean;
+}
+
+/** Per frontend (`address:port`): the key exchange of every connection it carried, oldest first. */
+export async function forwarderHellos(): Promise<Record<string, ForwarderHello[]>> {
+  const res = await realFetch(`${ADDR.forwarder.api}/hellos`, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  return res.json();
+}
+
 /** Connections the forwarder carried on one frontend so far. */
 export async function forwarderConnections(
   port: number,

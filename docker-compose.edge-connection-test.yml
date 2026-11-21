@@ -179,11 +179,13 @@ services:
     image: oven/bun:${FCP_COMPAT_BUN_VERSION:?read from packageManager by the run script}
     container_name: ec-l4-forwarder
     restart: 'no'
-    command: [bun, /forwarder.ts]
+    command: [bun, /src/edge-connection-test/forwarder.ts]
     environment:
       - EC_FORWARDER_ADDRESS=203.0.113.21
     volumes:
-      - ./docker/edge-connection-test/forwarder.ts:/forwarder.ts:ro
+      # The repository's layout: the forwarder imports ../compat/tlsHello.ts.
+      - ./docker/edge-connection-test/forwarder.ts:/src/edge-connection-test/forwarder.ts:ro
+      - ./docker/compat/tlsHello.ts:/src/compat/tlsHello.ts:ro
     networks:
       ec-client:
         ipv4_address: 203.0.113.21
