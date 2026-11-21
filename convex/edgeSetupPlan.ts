@@ -45,6 +45,7 @@ import { originHostNeeded } from './lib/edges/layers';
 import {
   edgeLayerOf,
   frontsAllowed,
+  locationEdgeCapOf,
   originPortCarriedBy,
 } from './lib/edges/providers/capabilities';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
@@ -242,7 +243,7 @@ async function planContextOf(
           qualified: loc.qualified,
           isDefault: !!dflt && dflt._id === loc._id,
           live: managed.atLocation(loc._id),
-          maxLiveEdges: loc.maxLiveEdges ?? null,
+          maxLiveEdges: locationEdgeCapOf(a.provider, loc.maxLiveEdges),
           // Why no new edge can be planned in this place (the zone itself, a
           // Scaleway location with no project to create in, or a size there
           // that takes only Scaleway's own servers).

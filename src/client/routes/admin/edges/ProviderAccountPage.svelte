@@ -538,7 +538,12 @@
     onQualify={acct.qualify}
   />
   <RenameDialog bind:open={renameOpen} account={a} taken={others.map((x) => x.name)} />
-  <RotateCredentialsDialog bind:open={rotateOpen} account={a} {credentialFields} />
+  <RotateCredentialsDialog
+    bind:open={rotateOpen}
+    account={a}
+    {credentialFields}
+    accounts={providers.data?.accounts ?? []}
+  />
   <ConfirmDialog
     bind:open={useOpen}
     title={useChoice === 'front'

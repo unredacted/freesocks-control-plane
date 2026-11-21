@@ -753,6 +753,12 @@ const COPY = {
     explain: 'The location already runs as many addresses as its limit allows.',
     fix: 'Raise the limit on the location or pick another one.',
   },
+  borrower_refused: {
+    label: 'Shared token refused',
+    explain:
+      "Another provider account uses this account's token, and the new token failed that account's own test.",
+    fix: 'Give the new token the permissions that account needs too, then rotate again.',
+  },
   location_unreachable: {
     label: 'A location is not reachable',
     explain: 'The new credentials could not read one of the account locations in use.',
@@ -1561,6 +1567,58 @@ const COPY = {
     explain:
       "This EdgeOne zone is connected by CNAME, so each front's CNAME goes in a DNS account's zone of the same domain.",
     fix: 'Add the location again with the DNS account and its zone for this domain.',
+  },
+  // Cloudflare Spectrum with a Worker origin (providers/cloudflareSpectrum.ts).
+  spectrum_one_port: {
+    label: 'One port only',
+    explain:
+      'A Spectrum application forwards one TCP port to one node, and this edge asked for more listeners or members.',
+    fix: 'Give the listener its own edge.',
+  },
+  origin_port_blocked: {
+    label: 'Port a Worker cannot reach',
+    explain:
+      'Cloudflare Workers may not connect to this node port (25), so a Spectrum edge would take connections and fail every one.',
+    fix: 'Serve the listener on another node port.',
+  },
+  worker_origin_missing: {
+    label: 'Relay Worker gone',
+    explain:
+      'The Spectrum application is there, but Cloudflare says its relay Worker is not, so every connection fails.',
+    fix: 'Replace the edge. FCP uploads a new Worker with the new one.',
+  },
+  worker_origin_unknown: {
+    label: 'Relay Worker unconfirmed',
+    explain: "Cloudflare could not say whether the application's relay Worker is there.",
+    fix: 'Nothing to change if the next look confirms it.',
+  },
+  zone_plan_free: {
+    label: 'Zone on the Free plan',
+    explain: 'A Free zone takes no Spectrum Worker application.',
+    fix: 'Move the zone to Pro or Business, or pick another zone.',
+  },
+  zone_account_unknown: {
+    label: 'Zone has no account',
+    explain:
+      "Cloudflare did not say which account the zone belongs to, so FCP cannot tell where the zone's relay Worker must live.",
+    fix: 'Check that the token can read the zone, then try again.',
+  },
+  worker_tag_unknown: {
+    label: 'Worker id missing',
+    explain:
+      'The relay Worker was uploaded, but Cloudflare did not give its id, which the application needs as its origin.',
+    fix: 'Try again. If it repeats, check the Worker in the Cloudflare dashboard.',
+  },
+  dns_lookup_failed: {
+    label: 'Address lookup failed',
+    explain: "Asking Cloudflare's resolver for the application's addresses failed.",
+    fix: 'Nothing to change if it passes on the next look. If it repeats, check that the zone is active.',
+  },
+  addresses_not_resolved: {
+    label: 'Addresses not out yet',
+    explain:
+      'The application exists, but its name does not resolve to an IPv4 yet, so there is nothing to publish.',
+    fix: 'Wait a minute. Cloudflare usually answers within seconds of the application being made.',
   },
   zone_dns_at_edgeone: {
     label: 'DNS is at EdgeOne',

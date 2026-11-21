@@ -45,6 +45,11 @@ export interface EdgeProviderMeta {
   sharedCertificates: boolean;
   /** Paid DDoS protection an edge's page can turn on and off (`ddosProtection`). */
   ddosProtection?: true;
+  /**
+   * The account may use the token of an account of this provider instead of
+   * its own (Cloudflare Spectrum takes a Cloudflare CDN account's).
+   */
+  tokenFrom?: EdgeProviderId;
 }
 
 const L4 = {
@@ -62,8 +67,9 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
   upcloud: { ...L4, label: 'UpCloud' },
   scaleway: { ...L4, label: 'Scaleway' },
   ovh: { ...L4, label: 'OVHcloud' },
+  cloudflareSpectrum: { ...L4, label: 'Cloudflare Spectrum', tokenFrom: 'cloudflare' },
   cloudflare: {
-    label: 'Cloudflare',
+    label: 'Cloudflare CDN',
     layer: 'l7',
     role: 'dns',
     addressKind: 'hostname',

@@ -101,6 +101,13 @@ export interface EdgeProviderCapabilities {
    * adapter has `ddos`. Absent = none.
    */
   ddosProtection?: true;
+  /**
+   * At most this many of the provider's edges in one location, whatever the
+   * location's own cap says (Spectrum: one Worker-origin application per
+   * zone). Account picking skips a full location instead of meeting the
+   * provider's refusal. Absent = no provider limit.
+   */
+  edgesPerLocation?: number;
   /** Typical wall clock from create to active (informational; bounds `discoverySettleMs`). */
   typicalProvisionMs: number;
   /**
@@ -305,6 +312,28 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     typicalProvisionMs: 15 * MIN,
     discoverySettleMs: 0,
   },
+  // A Spectrum application with a Worker origin in one zone: the relay Worker
+  // pipes each TCP connection to the node untouched (TLS passes through: a
+  // Pro or Business zone gets no TLS options). Cloudflare picks the anycast
+  // IPv4 and IPv6 and may change them; they are read over DNS. TCP on one port
+  // only, no member health on the wire, and ONE Worker-origin application per
+  // zone (`edgesPerLocation`). Creates and deletes answer at once.
+  // Sources: developers.cloudflare.com/spectrum/how-to/route-tcp-traffic-to-a-worker/,
+  // /spectrum/reference/configuration-options/ and /workers/runtime-apis/handlers/connect/, 2026-11-21.
+  cloudflareSpectrum: {
+    ...L4,
+    asyncOps: false,
+    asyncDelete: false,
+    needsPrivateNetwork: false,
+    // Every application gets an IPv4 and an IPv6; there is no family to choose.
+    ipv6: false,
+    udp: false,
+    idleTimeoutConfigurable: false,
+    memberHealth: false,
+    edgesPerLocation: 1,
+    typicalProvisionMs: 1 * MIN,
+    discoverySettleMs: 1 * MIN,
+  },
   // LiveDNS: plain DNS, nothing proxied, so a DNS account and never a front
   // (`dnsOnly`). Carries no transport and builds no edge; the layer only says
   // its places are zones (one anycast place, like the CDNs).
@@ -329,6 +358,22 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     discoverySettleMs: 0,
   },
 };
+
+/**
+ * A location's effective live-edge cap: its own, lowered to the provider's
+ * `edgesPerLocation` when that is smaller. Null = no cap.
+ */
+export function locationEdgeCapOf(
+  id: EdgeProviderId | string | null | undefined,
+  locationCap: number | null | undefined,
+): number | null {
+  const provider =
+    id && id in EDGE_PROVIDER_CAPABILITIES
+      ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].edgesPerLocation
+      : undefined;
+  if (provider === undefined) return locationCap ?? null;
+  return locationCap == null ? provider : Math.min(locationCap, provider);
+}
 
 /**
  * How long a provider may take to build an edge before the run fails: the

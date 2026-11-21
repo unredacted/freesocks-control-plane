@@ -166,9 +166,17 @@
   let optionValues = $state<Record<string, unknown>>({});
 
   const meta = $derived(EDGE_PROVIDER_META[provider]);
-  const secretNames = $derived(providers.data?.credentialFields[provider] ?? []);
+  /** The account will use another account's token (Cloudflare Spectrum): no secret of its own. */
+  const borrowsToken = $derived(!!meta.tokenFrom && (values['tokenAccountId'] ?? '') !== '');
+  const secretNames = $derived(
+    borrowsToken ? [] : (providers.data?.credentialFields[provider] ?? []),
+  );
   /** Secrets the provider takes but does not require (an STS session token). */
-  const optionalSecretNames = $derived(OPTIONAL_CREDENTIALS[provider] ?? []);
+  const optionalSecretNames = $derived(borrowsToken ? [] : (OPTIONAL_CREDENTIALS[provider] ?? []));
+  /** Where the token comes from, shown above the provider's token help. */
+  const tokenFields = $derived(
+    fieldsFor(provider, 'credentials').filter((f) => f.from === 'tokenAccounts'),
+  );
   const accounts = $derived(providers.data?.accounts ?? []);
   /** A front's DNS account, and the zones it reaches (its catalog plus its own zones). */
   const dnsCatalog = providerCatalogQuery(() =>
@@ -431,11 +439,14 @@
         disabled={held}
       >
         <Select.Trigger id={`${uid}-${f.key}`} class="w-full">
-          {opts.find((o) => o.id === current)?.label ?? (current || 'Choose one')}
+          {opts.find((o) => o.id === current)?.label ??
+            (current || (f.required ? 'Choose one' : (f.noneLabel ?? 'Choose one')))}
         </Select.Trigger>
         <Select.Content>
           {#if !f.required}
-            <Select.Item value="__none" label="None">None</Select.Item>
+            <Select.Item value="__none" label={f.noneLabel ?? 'None'}>
+              {f.noneLabel ?? 'None'}
+            </Select.Item>
           {/if}
           {#each opts as o (o.id)}
             <Select.Item value={o.id} label={o.label}>{o.label}</Select.Item>
@@ -446,6 +457,10 @@
       <AdminListState
         emptyText="No DNS account yet. Add one from the DNS providers in the provider list to pick a zone."
       />
+    {:else if f.from === 'tokenAccounts'}
+      <p class="text-muted-foreground text-sm">
+        No Cloudflare CDN account yet, so this account needs its own token.
+      </p>
     {:else if f.from === 'dnsZones'}
       <p class="text-muted-foreground text-sm">
         {values['dnsAccountId']
@@ -588,6 +603,9 @@
             {/if}
           </div>
         {/if}
+        {#each tokenFields as f (f.key)}
+          <div class="max-w-md">{@render settingField(f)}</div>
+        {/each}
         {#if CREDENTIAL_HELP[provider]}
           <p class="rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm">
             {CREDENTIAL_HELP[provider]}
@@ -624,7 +642,7 @@
               <p class="text-muted-foreground text-xs">Write only. Never shown again.</p>
             </div>
           {/each}
-          {#each fieldsFor(provider, 'credentials') as f (f.key)}
+          {#each fieldsFor(provider, 'credentials').filter((f) => f.from !== 'tokenAccounts') as f (f.key)}
             {@render settingField(f)}
           {/each}
         </div>

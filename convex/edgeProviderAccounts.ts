@@ -26,9 +26,12 @@ import {
 } from '../src/shared/contracts/edgeLimits';
 export { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
+  EDGE_CREDENTIAL_FIELDS,
   EDGE_NEW_ACCOUNT_SETTINGS,
   EDGE_RETEST_SETTINGS,
+  EDGE_TOKEN_SOURCE,
   buildCredentials,
+  tokenAccountOf,
   legacyOptionDefaults,
   legacySettingsOf,
   locatingSettingsChanged,
@@ -506,6 +509,98 @@ async function clearQualificationOfReferencing(
   return n;
 }
 
+// --- Borrowed tokens ---------------------------------------------------------------------
+//
+// One Cloudflare token can run a Cloudflare CDN account and a Cloudflare
+// Spectrum account alike. The Spectrum account then names the CDN account in
+// its settings (`tokenAccountId`, EDGE_TOKEN_SOURCE) and holds a COPY of its
+// credentials, so everything that reads an account's secret reads it as
+// usual. Every change of the lender's credentials rewrites the copies in the
+// same mutation, and the lender cannot be removed while it lends.
+
+/**
+ * The credentials a borrowing account takes from the account its settings
+ * name: the lender's own (without `type`). Null when they name none. Refused
+ * when the named account is missing or of another provider.
+ */
+async function lentCredentials(
+  db: import('./_generated/server').DatabaseReader,
+  provider: EdgeProviderId,
+  settings: Record<string, unknown> | undefined,
+): Promise<Record<string, unknown> | null> {
+  const lenderId = tokenAccountOf(provider, settings);
+  if (!lenderId) return null;
+  const id = db.normalizeId('edgeProviderAccounts', lenderId);
+  const lender = id ? await db.get(id) : null;
+  if (!lender || lender.provider !== EDGE_TOKEN_SOURCE[provider])
+    throw new ConvexError({
+      code: 'validation',
+      message: 'tokenAccountId must name an account of the provider whose token this one uses',
+    });
+  const { type: _type, ...creds } = lender.credentials as Record<string, unknown>;
+  return creds;
+}
+
+/** Accounts that use this account's token. The account table is small and operator-managed. */
+async function accountsBorrowingToken(
+  db: import('./_generated/server').DatabaseReader,
+  id: Id<'edgeProviderAccounts'>,
+): Promise<Doc<'edgeProviderAccounts'>[]> {
+  return (await db.query('edgeProviderAccounts').collect()).filter(
+    (r) => tokenAccountOf(r.provider, r.settings as Record<string, unknown>) === id,
+  );
+}
+
+/** Whether an update payload carries a secret (a blank field keeps the stored one). */
+function carriesSecret(provider: EdgeProviderId, credentials: unknown): boolean {
+  const c = (credentials ?? {}) as Record<string, unknown>;
+  return EDGE_CREDENTIAL_FIELDS[provider].some(
+    (f) => typeof c[f] === 'string' && (c[f] as string).trim() !== '',
+  );
+}
+
+/**
+ * The lender's credentials changed: every account using its token gets the
+ * new copy. An edit is a credential change for them as well (their
+ * locations' trust goes as with an edit of their own); a tested rotation
+ * keeps it, like the lender's, because `rotateCredentials` tested the new
+ * token for each of them first. Returns the locations that lost their trust.
+ */
+async function syncBorrowedTokens(
+  ctx: import('./_generated/server').MutationCtx,
+  lender: Doc<'edgeProviderAccounts'>,
+  opts: { rotation: boolean; actorAdminId?: Id<'adminUsers'> },
+): Promise<number> {
+  const { type: _type, ...creds } = lender.credentials as Record<string, unknown>;
+  const now = Date.now();
+  let n = 0;
+  for (const b of await accountsBorrowingToken(ctx.db, lender._id)) {
+    await ctx.db.patch(b._id, {
+      credentials: { type: b.provider, ...creds } as never,
+      updatedAt: now,
+      ...(opts.rotation ? {} : { credentialsChangedAt: now }),
+    });
+    if (!opts.rotation)
+      n += await untrustAccountLocations(ctx, (await ctx.db.get(b._id))!, {
+        actorAdminId: opts.actorAdminId,
+        releaseHolds: true,
+      });
+  }
+  return n;
+}
+
+/** The accounts that use this account's token (the rotation tests each with the new one). */
+export const tokenBorrowersOf = internalQuery({
+  args: { id: v.id('edgeProviderAccounts') },
+  handler: async (ctx, { id }) =>
+    (await accountsBorrowingToken(ctx.db, id)).map((r) => ({
+      id: r._id,
+      name: r.name,
+      provider: r.provider,
+      settings: r.settings as Record<string, unknown>,
+    })),
+});
+
 /**
  * The first location an account created with the old single-location shape
  * gets, completed: a Fastly payload that named only its DNS account takes that
@@ -722,9 +817,16 @@ export const create = internalMutation({
       if (!p.ok) throw new ConvexError({ code: 'validation', message: p.issues.join('; ') });
       await assertDnsAccountOfPlacement(ctx.db, a.provider, initialPlacement);
     }
+    // An account using another account's token takes that token, whatever
+    // the payload says.
+    const lent = await lentCredentials(
+      ctx.db,
+      a.provider,
+      settings.settings as Record<string, unknown>,
+    );
     const creds = buildCredentials(
       a.provider,
-      a.credentials as Record<string, unknown> | undefined,
+      lent ?? (a.credentials as Record<string, unknown> | undefined),
     );
     if (!creds.ok) {
       throw new ConvexError({
@@ -935,7 +1037,36 @@ export const update = internalMutation({
         (patch.settings ?? row.settings) as Record<string, unknown>,
         nextDefaults ?? accountOptionDefaultsOf(row),
       ) as never;
-    if (a.credentials !== undefined) {
+    // An account using another account's token: its credentials are that
+    // token, re-read on every write. Leaving the lender needs a token of its
+    // own in the same write (the stored copy is the lender's).
+    const borrowedBefore = tokenAccountOf(row.provider, row.settings as Record<string, unknown>);
+    const lent = await lentCredentials(
+      ctx.db,
+      row.provider,
+      (patch.settings ?? row.settings) as Record<string, unknown>,
+    );
+    if (lent) {
+      if (carriesSecret(row.provider, a.credentials))
+        throw new ConvexError({
+          code: 'validation',
+          message:
+            "this account uses another account's token: change that one, or clear tokenAccountId",
+        });
+      const creds = buildCredentials(row.provider, lent);
+      if (!creds.ok)
+        throw new ConvexError({
+          code: 'validation',
+          message: `missing credentials: ${creds.missing.join(', ')}`,
+        });
+      patch.credentials = creds.credentials as never;
+      credentialsChanged = !settingsEqual(creds.credentials, row.credentials);
+    } else if (borrowedBefore && !carriesSecret(row.provider, a.credentials)) {
+      throw new ConvexError({
+        code: 'validation',
+        message: "enter this account's own token: it stops using another account's",
+      });
+    } else if (a.credentials !== undefined) {
       const creds = buildCredentials(
         row.provider,
         a.credentials as Record<string, unknown>,
@@ -1021,6 +1152,12 @@ export const update = internalMutation({
     // that write THROUGH it either: clear theirs too, audited per location.
     if (credentialsChanged || settingsChanged)
       requalify += await clearQualificationOfReferencing(ctx, a.id, a.actorAdminId);
+    // The accounts using its token get the new one.
+    if (credentialsChanged)
+      requalify += await syncBorrowedTokens(ctx, fresh, {
+        rotation: false,
+        actorAdminId: a.actorAdminId,
+      });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
@@ -1096,6 +1233,11 @@ export const remove = internalMutation({
         message: 'Another provider account uses this one for DNS; repoint or remove it first',
       });
     }
+    if ((await accountsBorrowingToken(ctx.db, id)).length > 0)
+      throw new ConvexError({
+        code: 'edge.account_referenced',
+        message: "Another provider account uses this account's token; give it its own first",
+      });
     if ((await originNamesUsing(ctx.db, id)) > 0)
       throw new ConvexError({
         code: 'edge.account_referenced',
@@ -1230,6 +1372,10 @@ export const applyCredentialRotation = internalMutation({
         qualifiedKept: trusted,
       },
     });
+    // The accounts using its token get the new one (tested for each of them
+    // by `rotateCredentials`); they keep their trust like this account.
+    if (credentialsChanged)
+      await syncBorrowedTokens(ctx, (await ctx.db.get(a.id))!, { rotation: true });
     return { ok: true as const, credentialsChanged, identifiersChanged, qualified: trusted };
   },
 });

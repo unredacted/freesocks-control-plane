@@ -18,6 +18,7 @@ import { fastlyProvider } from './fastly';
 import { cloudFrontProvider } from './cloudfront';
 import { gandiProvider } from './gandi';
 import { edgeOneProvider } from './edgeone';
+import { spectrumProvider } from './cloudflareSpectrum';
 import { FAKE_L4_SHADOW, FAKE_L7_SHADOW, fakeEdgeProvider, fakeEdgeProviderEnabled } from './fake';
 
 export const EDGE_PROVIDERS: Record<EdgeProviderId, EdgeProvider> = {
@@ -30,6 +31,7 @@ export const EDGE_PROVIDERS: Record<EdgeProviderId, EdgeProvider> = {
   cloudfront: cloudFrontProvider as unknown as EdgeProvider,
   gandi: gandiProvider as unknown as EdgeProvider,
   edgeone: edgeOneProvider as unknown as EdgeProvider,
+  cloudflareSpectrum: spectrumProvider as unknown as EdgeProvider,
 };
 
 /**

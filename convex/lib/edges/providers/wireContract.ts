@@ -642,6 +642,77 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
     ],
   },
 
+  // --- L4: Cloudflare Spectrum with a Worker origin (relay Worker + application) --------
+  cloudflareSpectrum: {
+    source:
+      'https://developers.cloudflare.com/api/ (Workers scripts, Spectrum applications) and /spectrum/how-to/route-tcp-traffic-to-a-worker/ via cloudflare@7.3.0, 2026-11-21',
+    calls: [
+      {
+        method: 'GET',
+        path: '^/client/v4/user/tokens/verify$',
+        purpose: 'credential test: the token is active',
+      },
+      {
+        method: 'GET',
+        path: '^/client/v4/accounts/[^/]+/tokens/verify$',
+        purpose: 'credential test: an account-owned token is active',
+      },
+      {
+        method: 'GET',
+        path: '^/client/v4/zones$',
+        purpose: 'credential test (one page) and the account catalog: the zones the token reaches',
+        query: ['page', 'per_page'],
+      },
+      {
+        method: 'GET',
+        path: '^/client/v4/zones/[^/]+$',
+        purpose:
+          'the location check (the zone is active, not paused, not on Free) and the account of the zone, where its relay Worker must live',
+      },
+      {
+        method: 'GET',
+        path: '^/client/v4/accounts/[^/]+/workers/scripts$',
+        purpose:
+          "credential test (the token reads the account's Workers) and relay Worker discovery by name",
+      },
+      {
+        method: 'PUT',
+        path: '^/client/v4/accounts/[^/]+/workers/scripts/[^/]+$',
+        purpose: 'upload the relay Worker by name (idempotent: a re-upload replaces it)',
+      },
+      {
+        method: 'DELETE',
+        path: '^/client/v4/accounts/[^/]+/workers/scripts/[^/]+$',
+        purpose: 'delete the relay Worker',
+        query: ['force'],
+      },
+      {
+        method: 'GET',
+        path: '^/client/v4/zones/[^/]+/spectrum/apps$',
+        purpose: "the zone's applications: discovery by DNS name, the location inventory and check",
+        query: ['page', 'per_page'],
+      },
+      {
+        method: 'POST',
+        path: '^/client/v4/zones/[^/]+/spectrum/apps$',
+        purpose:
+          'create the application forwarding one TCP port to the relay Worker (the four fields a Pro or Business zone takes)',
+        body: ['dns', 'protocol', 'traffic_type', 'origin_worker_id'],
+      },
+      {
+        method: 'GET',
+        path: '^/client/v4/zones/[^/]+/spectrum/apps/[^/]+$',
+        purpose:
+          'describe and inspect: the application still exists, its DNS name and whether its Worker origin is available',
+      },
+      {
+        method: 'DELETE',
+        path: '^/client/v4/zones/[^/]+/spectrum/apps/[^/]+$',
+        purpose: 'delete the application',
+      },
+    ],
+  },
+
   // --- L7: Fastly (service + domain + TLS subscription) ---------------------------------
   fastly: {
     source:

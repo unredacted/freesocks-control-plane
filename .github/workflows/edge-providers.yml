@@ -30,7 +30,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [gcore, upcloud, scaleway, ovh, cloudflare, fastly, cloudfront, edgeone]
+        provider:
+          - gcore
+          - upcloud
+          - scaleway
+          - ovh
+          - cloudflare
+          - fastly
+          - cloudfront
+          - edgeone
+          - cloudflareSpectrum
     steps:
       - uses: actions/checkout@v7
       # Same single source of truth as ci.yml: Bun from package.json.

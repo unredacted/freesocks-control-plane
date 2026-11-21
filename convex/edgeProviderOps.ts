@@ -54,7 +54,9 @@ import { frozenSettingsOf, parseObservedSettings, type ProvisionIntent } from '.
 import type { ListenerProto } from './lib/edges/protocols';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import {
+  EDGE_TOKEN_SOURCE,
   buildCredentials,
+  tokenAccountOf,
   legacySettingsOf,
   pickCredentialIdentifiers,
   validatePlacement,
@@ -1232,23 +1234,31 @@ export const rotateCredentials = internalAction({
           retryable: false,
           timedOut: false,
         });
+      // An account using another account's token gets a token of its own here
+      // (and stops using the other's): never the stored copy, which is the
+      // other account's.
+      const borrowing =
+        tokenAccountOf(acct.provider, acct.settings as Record<string, unknown>) !== null;
       const creds = buildCredentials(
         acct.provider,
         a.credentials as Record<string, unknown>,
-        acct.credentials as Record<string, unknown>,
+        borrowing ? undefined : (acct.credentials as Record<string, unknown>),
       );
       if (!creds.ok)
         throw new ConvexError({
           code: 'validation',
           message: `missing credentials: ${creds.missing.join(', ')}`,
         });
-      const settings = validateSettings(acct.provider, {
-        ...withoutPlacementKeys(acct.provider, acct.settings as Record<string, unknown>),
-        ...pickCredentialIdentifiers(
-          acct.provider,
-          a.identifiers as Record<string, unknown> | undefined,
-        ),
-      });
+      const { tokenAccountId: _lender, ...ownSettings } = withoutPlacementKeys(
+        acct.provider,
+        acct.settings as Record<string, unknown>,
+      );
+      // A rotation never starts sharing a token: what it tested is the token typed.
+      const { tokenAccountId: _named, ...identifiers } = pickCredentialIdentifiers(
+        acct.provider,
+        a.identifiers as Record<string, unknown> | undefined,
+      );
+      const settings = validateSettings(acct.provider, { ...ownSettings, ...identifiers });
       if (!settings.ok)
         throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
       const cfg = edgeProviderConfigFrom(
@@ -1365,6 +1375,67 @@ export const rotateCredentials = internalAction({
           }
         }
       }
+      // The accounts using this account's token get the new one with it: each
+      // passes its own credential test with it first, or nothing changes.
+      const { type: _type, ...secret } = creds.credentials as Record<string, unknown>;
+      for (const b of await ctx.runQuery(internal.edgeProviderAccounts.tokenBorrowersOf, {
+        id: a.accountId,
+      })) {
+        const borrowed = await edgeProviderFor(b.provider).testCredentials(
+          edgeProviderConfigFrom(
+            { ...secret, type: b.provider } as Record<string, unknown> & {
+              type: typeof b.provider;
+            },
+            { ...withoutPlacementKeys(b.provider, b.settings), type: b.provider } as Record<
+              string,
+              unknown
+            > & { type: typeof b.provider },
+          ),
+        );
+        if (!borrowed.ok)
+          return {
+            ok: false,
+            code: 'borrower_refused',
+            detail: `${b.name} (${borrowed.code ?? 'error'})`,
+          };
+        // Its places in use must stay reachable with the new token too, as
+        // this account's own are: their edges keep being described and
+        // destroyed with it.
+        const lending = edgeProviderFor(b.provider);
+        if (!lending.checkLocation) continue;
+        const bLegacy = legacySettingsOf(b.provider, b.settings);
+        for (const loc of await ctx.runQuery(internal.edgeLocations.listForAccount, {
+          accountId: b.id,
+        })) {
+          if (!loc.enabled && loc.liveEdges === 0) continue;
+          const where = {
+            ...edgeProviderConfigFrom(
+              { ...secret, type: b.provider } as Record<string, unknown> & {
+                type: typeof b.provider;
+              },
+              { ...withoutPlacementKeys(b.provider, b.settings), type: b.provider } as Record<
+                string,
+                unknown
+              > & { type: typeof b.provider },
+            ),
+            ...bLegacy,
+            ...loc.placement,
+          } as EdgeProviderConfig;
+          let code: string | undefined;
+          try {
+            const res = await lending.checkLocation(where);
+            if (!res.ok && !ZONE_STATE_REFUSALS.has(res.code ?? '')) code = res.code ?? 'error';
+          } catch (err) {
+            code = toOpsFailure(err).data.code;
+          }
+          if (code)
+            return {
+              ok: false,
+              code: 'borrower_refused',
+              detail: `${b.name}: ${loc.label} (${code})`,
+            };
+        }
+      }
       // Apply EXACTLY what was tested, against the row version it was built from.
       const applied = await ctx.runMutation(internal.edgeProviderAccounts.applyCredentialRotation, {
         id: a.accountId,
@@ -1421,7 +1492,24 @@ export const discoverOptions = internalAction({
       let creds: Record<string, unknown> = {
         ...((a.credentials as Record<string, unknown> | undefined) ?? {}),
       };
-      if (a.accountId) {
+      // An account that will use another account's token is asked with it.
+      const lenderId = tokenAccountOf(
+        a.provider,
+        a.settings as Record<string, unknown> | undefined,
+      );
+      if (lenderId) {
+        const lender = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
+          id: lenderId as Id<'edgeProviderAccounts'>,
+        });
+        if (!lender || lender.provider !== EDGE_TOKEN_SOURCE[a.provider])
+          throw new ConvexError({
+            code: 'validation',
+            message:
+              'tokenAccountId must name an account of the provider whose token this one uses',
+          });
+        const { type: _type, ...lent } = lender.credentials as Record<string, unknown>;
+        creds = lent;
+      } else if (a.accountId) {
         const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
           id: a.accountId,
         });
@@ -1570,6 +1658,8 @@ const ZONE_STATE_REFUSALS: ReadonlySet<string> = new Set([
   'zone_ssl_off',
   'zone_paused',
   'zone_not_active',
+  // A Spectrum zone moved to the Free plan.
+  'zone_plan_free',
   'zone_name_mismatch',
   'caa_forbids_ca',
   // What a front needs of a fronting DNS account's zone.
@@ -1597,6 +1687,8 @@ const LOCATION_REFUSALS: Record<string, string> = {
   zone_dns_at_edgeone:
     "EdgeOne hosts that zone's DNS and writes the fronts' records itself: add it without a DNS account",
   zone_access_unsupported: 'That EdgeOne zone is connected neither by name servers nor by CNAME',
+  zone_plan_free:
+    'That zone is on the Free plan, which takes no Spectrum Worker application: move it to Pro or Business',
 };
 
 /**
@@ -1743,7 +1835,9 @@ export const createLocation = internalAction({
         actorAdminId: a.actorAdminId,
       },
     );
-    if (res.created && !provider.checkLocation)
+    // An L4 location's inventory is its own read (a zone check does not list
+    // what it holds).
+    if (res.created && (!provider.checkLocation || edgeLayerOf(acct.provider) === 'l4'))
       await ctx.scheduler.runAfter(0, internal.edgeProviderOps.inventory, {
         accountId: a.accountId,
         locationId: res.id as Id<'edgeLocations'>,

@@ -1743,6 +1743,39 @@ export const EDGEONE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   },
 ];
 
+// --- Cloudflare Spectrum (L4) --------------------------------------------------------
+
+/**
+ * A Spectrum application with a Worker origin: FCP uploads a relay Worker
+ * holding the node's address and creates the application on the location's
+ * zone. Cloudflare picks the application's anycast addresses.
+ */
+export const SpectrumTemplate = z.object({
+  // No address-family choice: a Pro or Business Worker application takes no
+  // `edge_ips`, and Cloudflare gives it an IPv4 and an IPv6 of its choosing.
+  /**
+   * The relay Worker's CPU limit in milliseconds a connection. Absent = the
+   * Workers plan's default (30 seconds on Workers Paid; a Free plan has 10 ms
+   * and refuses a limit).
+   */
+  cpuLimitMs: z.number().int().min(10).max(300_000).optional(),
+});
+export type SpectrumTemplateParams = z.infer<typeof SpectrumTemplate>;
+
+export const SPECTRUM_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
+  {
+    key: 'cpuLimitMs',
+    label: 'Worker CPU limit',
+    type: 'number',
+    unit: 'ms',
+    group: 'Relay Worker',
+    advanced: true,
+    help: "The relay Worker's CPU time limit for one connection. Empty keeps the plan's default. A connection uses about 1 to 2 ms however long it lasts, so a low limit (50, say) caps what a fault could cost. Needs Workers Paid.",
+    wire: { resource: 'worker', field: 'limits.cpu_ms', manual: true },
+    live: 'rebuild',
+  },
+];
+
 // --- certificate options (CDN fronts) -------------------------------------------------
 
 /**
@@ -1858,6 +1891,7 @@ export const EDGE_TEMPLATES: Record<EdgeProviderId, TemplateDefinition> = {
   cloudfront: template(CloudFrontTemplate, CLOUDFRONT_TEMPLATE_FIELDS),
   gandi: template(GandiTemplate, GANDI_TEMPLATE_FIELDS),
   edgeone: template(EdgeOneTemplate, EDGEONE_TEMPLATE_FIELDS),
+  cloudflareSpectrum: template(SpectrumTemplate, SPECTRUM_TEMPLATE_FIELDS),
 };
 
 export interface CertificateDefinition {
@@ -1883,6 +1917,8 @@ export const EDGE_CERTIFICATE_OPTIONS: Record<EdgeProviderId, CertificateDefinit
   gandi: certificate(NO_CERTIFICATE, []),
   // EdgeOne's free certificate, one per front: nothing to choose.
   edgeone: certificate(NO_CERTIFICATE, []),
+  // An L4 relay: TLS passes through untouched.
+  cloudflareSpectrum: certificate(NO_CERTIFICATE, []),
 };
 
 /** Every option of a provider, tuning then certificate: what the forms render. */

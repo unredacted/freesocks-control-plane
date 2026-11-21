@@ -686,7 +686,7 @@ async function frontingChecks(
 }
 
 /** One zone as the listing shows it. */
-interface ListedZone {
+export interface ListedZone {
   id: string;
   name: string;
   status: string;
@@ -704,7 +704,7 @@ const ZONE_PAGES_MAX = 20;
  * more exist). Each page is one request against the rate limit shared with the
  * dashboard, so a credential test reads one page and the catalog all of them.
  */
-async function listZones(
+export async function listZones(
   apiToken: string,
   step: string,
   maxPages = ZONE_PAGES_MAX,

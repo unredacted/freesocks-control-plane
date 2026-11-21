@@ -76,11 +76,12 @@ export const PROVIDER_LABELS: Record<string, string> = {
   upcloud: 'UpCloud',
   scaleway: 'Scaleway',
   ovh: 'OVH',
-  cloudflare: 'Cloudflare',
+  cloudflare: 'Cloudflare CDN',
   fastly: 'Fastly',
   cloudfront: 'Amazon CloudFront',
   gandi: 'Gandi',
   edgeone: 'Tencent EdgeOne',
+  cloudflareSpectrum: 'Cloudflare Spectrum',
 };
 export const providerLabel = (id: string | null | undefined): string =>
   id ? (PROVIDER_LABELS[id] ?? id) : 'Imported';

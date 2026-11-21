@@ -44,6 +44,7 @@ export type FieldSource =
   | 'tlsConfigurations'
   | 'dnsAccounts'
   | 'dnsZones'
+  | 'tokenAccounts'
   | 'fixed';
 
 export interface ProviderField {
@@ -63,6 +64,8 @@ export interface ProviderField {
   readOnly?: boolean;
   /** A location's field (where edges live), never the account's own. */
   location?: boolean;
+  /** What an optional select says for "nothing chosen" (default "None"). */
+  noneLabel?: string;
 }
 
 export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
@@ -239,6 +242,48 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       readOnly: true,
       help: 'Filled from the chosen zone.',
       placeholder: 'front.example',
+    },
+    {
+      key: 'accountId',
+      label: 'Account id',
+      kind: 'text',
+      step: 'placement',
+      required: false,
+      advanced: true,
+      help: 'Only needed for an account API token that reaches no zone yet. Not a secret.',
+    },
+  ],
+  cloudflareSpectrum: [
+    {
+      key: 'tokenAccountId',
+      label: 'API token',
+      kind: 'select',
+      step: 'credentials',
+      from: 'tokenAccounts',
+      required: false,
+      noneLabel: 'Its own token',
+      help: "A Cloudflare CDN account's token works here too once it has the permissions below. FCP keeps this account on that token, through every rotation.",
+    },
+    {
+      key: 'zoneId',
+      label: 'Zone',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'zones',
+      required: true,
+      help: 'A Pro or Business zone the token reaches. It takes one application, so each edge needs its own zone.',
+    },
+    {
+      key: 'zoneName',
+      label: 'Zone name',
+      kind: 'text',
+      step: 'placement',
+      location: true,
+      required: true,
+      readOnly: true,
+      help: 'Filled from the chosen zone.',
+      placeholder: 'relay.example',
     },
     {
       key: 'accountId',
@@ -466,6 +511,8 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
     "A personal access token of the organization that owns the domains, limited to them, allowed to see and change their DNS records (LiveDNS). The older API key is not accepted. Gandi tokens expire, so rotate this account's credentials before the date you set.",
   edgeone:
     "A key of a CAM sub-user, never the root account's. Its policy allows only the teo actions docs/edges.md lists (EdgeOne), limited to the zones FCP uses. A session token is needed only for a temporary STS key, which stops working when it expires.",
+  cloudflareSpectrum:
+    "A user or account API token with Zone Read and Zone Settings Edit (Spectrum) on the zones, and Workers Scripts Edit on their account. A Cloudflare CDN account can share its token: give that token these permissions too and choose that account as this one's token. Each zone must be on Pro or Business: a Free zone cannot take a Worker application.",
   cloudfront:
     'An access key of a dedicated IAM user. Its policy allows cloudfront:CreateDistribution, GetDistribution, GetDistributionConfig, UpdateDistribution, DeleteDistribution, ListDistributions, CreateOriginRequestPolicy, ListOriginRequestPolicies and ListDistributionsByOriginRequestPolicyId, and acm:RequestCertificate, DescribeCertificate, ListCertificates and DeleteCertificate in us-east-1. No IAM or Lambda permissions.',
 };
@@ -564,6 +611,10 @@ export function optionsFor(
       .filter((a) => EDGE_PROVIDER_META[a.provider].providesDns)
       .map((a) => ({ id: a.id, label: a.name }));
   if (f.from === 'dnsZones') return [...(ctx.dnsZones ?? [])];
+  if (f.from === 'tokenAccounts')
+    return ctx.accounts
+      .filter((a) => Object.values(EDGE_PROVIDER_META).some((m) => m.tokenFrom === a.provider))
+      .map((a) => ({ id: a.id, label: a.name }));
   const d = ctx.discovered;
   if (!d) return [];
   switch (f.from) {

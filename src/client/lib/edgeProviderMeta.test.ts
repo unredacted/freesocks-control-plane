@@ -80,6 +80,7 @@ describe('edge provider meta', () => {
       'upcloud',
       'scaleway',
       'ovh',
+      'cloudflareSpectrum',
     ]);
     expect(groups.find((g) => g.id === 'l7')!.providers).toEqual([
       'fastly',
@@ -95,7 +96,7 @@ describe('edge provider meta', () => {
   });
 
   it('names the supported DNS providers and says what a DNS account does', () => {
-    expect(dnsProviderNames(EDGE_PROVIDER_IDS)).toEqual(['Cloudflare', 'Gandi']);
+    expect(dnsProviderNames(EDGE_PROVIDER_IDS)).toEqual(['Cloudflare CDN', 'Gandi']);
     expect(DNS_ACCOUNT_BLURB).toMatch(/no member traffic unless it is set to DNS and fronting/);
     for (const g of providerGroups(EDGE_PROVIDER_IDS)) expect(g.blurb).not.toMatch(/\u2014/);
     for (const u of Object.values(DNS_ACCOUNT_USES)) {

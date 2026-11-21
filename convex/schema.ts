@@ -133,6 +133,7 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('scaleway'), secretKey: v.string() }),
   v.object({ type: v.literal('ovh'), applicationSecret: v.string(), consumerKey: v.string() }),
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
+  v.object({ type: v.literal('cloudflareSpectrum'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
   v.object({ type: v.literal('cloudfront'), secretAccessKey: v.string() }),
   v.object({ type: v.literal('gandi'), apiToken: v.string() }),
@@ -168,6 +169,14 @@ const relayProviderSettings = v.union(
     accountId: v.optional(v.string()),
     zoneId: v.optional(v.string()), // legacy (migrated onto the location)
     zoneName: v.optional(v.string()), // legacy (migrated onto the location)
+  }),
+  // L4 (Spectrum with a Worker origin): the token's Cloudflare account
+  // (account-owned tokens), and the Cloudflare CDN account whose token it
+  // uses, when it does not hold its own.
+  v.object({
+    type: v.literal('cloudflareSpectrum'),
+    accountId: v.optional(v.string()),
+    tokenAccountId: v.optional(v.string()),
   }),
   // L7: nothing of its own. `certificateAuthority` / `certificateScope` are the
   // pre-options copies of the account's certificate options, moved into
@@ -232,6 +241,7 @@ const relayEdgePlacement = v.union(
     zoneId: v.optional(v.string()),
     zoneName: v.optional(v.string()),
   }),
+  v.object({ type: v.literal('cloudflareSpectrum'), zoneId: v.string(), zoneName: v.string() }),
   v.object({
     type: v.literal('fastly'),
     dnsAccountId: v.optional(v.string()),

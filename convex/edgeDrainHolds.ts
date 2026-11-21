@@ -11,6 +11,7 @@
  * per node (`count`, scheduled by `judge`), and stores counts only on the edge
  * (`edges.drainHold`): never a key, a member or an address.
  */
+import { locationEdgeCapOf } from './lib/edges/providers/capabilities';
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
@@ -65,9 +66,11 @@ async function accountFullOldest(db: DatabaseReader, edge: Edge, now: number): P
 async function locationFullOldest(db: DatabaseReader, edge: Edge, now: number): Promise<boolean> {
   if (!edge.locationId) return false;
   const location = await db.get(edge.locationId);
-  if (!location || location.maxLiveEdges === undefined) return false;
+  if (!location) return false;
+  const cap = locationEdgeCapOf(edge.provider, location.maxLiveEdges);
+  if (cap === null) return false;
   const live = (await liveEdgesOfLocation(db, location)).filter((e) => e.managed);
-  return heldToFree(live, location.maxLiveEdges, now) === edge._id;
+  return heldToFree(live, cap, now) === edge._id;
 }
 
 /**
