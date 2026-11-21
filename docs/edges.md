@@ -2252,12 +2252,14 @@ reach it through a load balancer the operator built by hand, by an operator Host
   (`convex/lib/nodePinning.ts`), so the members on the node are pinned to it, the plan does not
   read the node as empty, the rehearsal and the restore checks see the real members, and members
   see the neutral entry name.
-- **Its test link.** With no Host at the node, a load balancer address is tested through the
-  entry built from the transport's live REALITY parameters (§ "Publication", the test link). The
-  plan reads those parameters from the panel as the test link will (`edgeTestLinks.synthesisReady`:
-  the transport still there, with a public key and a server name). A transport with neither (no
-  Host at `originAddress:originPort`, and not REALITY or not readable), or with two such Hosts
-  (the test link refuses an ambiguous entry), is marked `noTestLink` in the plan; a load balancer pick that would carry it is a set problem
+- **Its test link.** With no single Host at the node (none, or several: a node with a Host per
+  SNI of its pool), a load balancer address is tested through the entry built from the
+  transport's live REALITY parameters (§ "Publication", the test link); the rendered link carries
+  the edge's own server name, as members get it, whichever entry it was built from. The plan
+  reads those parameters from the panel as the test link
+  will (`edgeTestLinks.synthesisReady`: the transport still there, with a public key and a server
+  name). A transport with no single Host at `originAddress:originPort` whose entry cannot be built
+  (not REALITY, or not readable) is marked `noTestLink` in the plan; a load balancer pick that would carry it is a set problem
   (`test_link_unavailable`) and the create is refused with `edge.test_link_unavailable`, before
   any address is bought. Add a Host at the node's own address for it, or pick a CDN location.
 - **Which clients its REALITY transport lets in.** A REALITY client puts a version in its
