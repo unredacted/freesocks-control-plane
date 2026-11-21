@@ -10,7 +10,8 @@
    * account's locations are DNS zones (a front's: the DNS account's zone and
    * its TLS configuration), each checked with the provider: what the check
    * saw (the zone's encryption mode, WebSockets) and a refusal show here,
-   * with "Check again".
+   * with "Check again". A Spectrum account's zones are checked the same way
+   * (`checkedLocations`): its refusal and "Check again" show too.
    *
    * Props:
    *   account: EdgeProviderAccountAdmin
@@ -46,7 +47,7 @@
   } from '../../../../lib/edgesApi';
   import PlanDialog from './PlanDialog.svelte';
   import { costWords, sourceWords, trafficWords } from '../lib/planWords';
-  import { codeLabel } from '../../../../lib/edgeCodes';
+  import { codeFix, codeLabel } from '../../../../lib/edgeCodes';
   import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import NameDialog from '../components/NameDialog.svelte';
@@ -74,6 +75,8 @@
   const places = $derived(hasLocations(account.provider));
   /** A CDN account's places are its DNS zones. */
   const zones = $derived(EDGE_PROVIDER_META[account.provider].layer === 'l7');
+  /** Locations the provider checks itself: every CDN's, and a Spectrum zone. */
+  const checked = $derived(zones || EDGE_PROVIDER_META[account.provider].checkedLocations === true);
 
   const check = createMutation(() => ({
     mutationFn: (id: string) => checkProviderLocation(account.id, id),
@@ -271,12 +274,15 @@
                   </p>
                 {/if}
               {/if}
-              {#if l.checkError}
-                <p class="text-destructive text-xs" role="alert">
-                  The last check refused this zone: {l.checkError}. No new address is made here
-                  until a check passes.
-                </p>
-              {/if}
+            {/if}
+            {#if l.checkError}
+              <!-- Any provider whose locations are checked (a CDN's zone, a Spectrum zone). -->
+              <p class="text-destructive text-xs" role="alert">
+                The last check refused this {checked ? 'zone' : 'location'}:
+                {codeLabel(l.checkError)}{codeFix(l.checkError)
+                  ? `. ${codeFix(l.checkError)}`
+                  : ''}. No new address is made here until a check passes.
+              </p>
             {/if}
             {#if !zones && l.pricing}
               {@const pr = l.pricing}
@@ -377,7 +383,7 @@
                 Name in apps
               </Button>
             {/if}
-            {#if zones}
+            {#if checked}
               <Button
                 size="sm"
                 variant="outline"

@@ -50,6 +50,11 @@ export interface EdgeProviderMeta {
    * its own (Cloudflare Spectrum takes a Cloudflare CDN account's).
    */
   tokenFrom?: EdgeProviderId;
+  /**
+   * An L4 provider whose locations the provider itself checks (a Spectrum
+   * zone), as every CDN's are: its Locations card offers "Check again".
+   */
+  checkedLocations?: true;
 }
 
 const L4 = {
@@ -67,7 +72,12 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
   upcloud: { ...L4, label: 'UpCloud' },
   scaleway: { ...L4, label: 'Scaleway' },
   ovh: { ...L4, label: 'OVHcloud' },
-  cloudflareSpectrum: { ...L4, label: 'Cloudflare Spectrum', tokenFrom: 'cloudflare' },
+  cloudflareSpectrum: {
+    ...L4,
+    label: 'Cloudflare Spectrum',
+    tokenFrom: 'cloudflare',
+    checkedLocations: true,
+  },
   cloudflare: {
     label: 'Cloudflare CDN',
     layer: 'l7',

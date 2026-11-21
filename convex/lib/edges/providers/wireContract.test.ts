@@ -1551,6 +1551,7 @@ describe('wire contract: cloudflareSpectrum', () => {
   function useStub() {
     __setCloudflareApiFactory((c, f) => cloudflareApi(c, f ?? (globalThis.fetch as typeof fetch)));
     __setSpectrumResolver(() => ({
+      resolveCname: async () => ['0123456789abcdef0123456789abcdef.pacloudflare.com'],
       resolve4: async () => ['203.0.113.9'],
       resolve6: async () => ['2001:db8::9'],
     }));
@@ -1654,13 +1655,29 @@ describe('wire contract: cloudflareSpectrum', () => {
       traffic_type: 'worker',
       origin_worker_id: TAG,
     });
-    // The Worker is uploaded into the zone's own account.
-    expect(
-      stub.calls.some(
-        (c) =>
-          c.method === 'PUT' && c.path.endsWith(`/accounts/${ACCOUNT}/workers/scripts/${NAME}`),
-      ),
-    ).toBe(true);
+    // The Worker is uploaded into the zone's own account, as Cloudflare's
+    // multipart upload: no forced script type over the body (fetch sets the
+    // multipart one), a JSON `metadata` part and the module by file name.
+    const upload = stub.calls.find(
+      (c) => c.method === 'PUT' && c.path.endsWith(`/accounts/${ACCOUNT}/workers/scripts/${NAME}`),
+    )!;
+    expect(upload).toBeTruthy();
+    expect(upload.headers['content-type']).toBeUndefined();
+    const meta = upload.form!.get('metadata') as Blob;
+    expect(meta.type).toBe('application/json');
+    expect(JSON.parse(await meta.text())).toMatchObject({
+      main_module: 'relay.mjs',
+      bindings: [
+        { type: 'plain_text', name: 'ORIGIN_HOST', text: ORIGIN_IP },
+        { type: 'plain_text', name: 'ORIGIN_PORT', text: '443' },
+      ],
+    });
+    const mod = upload.form!.get('relay.mjs') as File;
+    expect(mod.name).toBe('relay.mjs');
+    expect(mod.type).toBe('application/javascript+module');
+    expect(await mod.text()).toContain('async connect(socket, env)');
+    // Nothing else in the form (no SDK-flattened `metadata[...]` fields).
+    expect([...upload.form!.keys()].sort()).toEqual(['metadata', 'relay.mjs']);
     // The name in DNS never carries the edge's name (it holds the node's slug).
     expect(APP_NAME).not.toContain('relay');
   });

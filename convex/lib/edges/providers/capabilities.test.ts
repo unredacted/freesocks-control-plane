@@ -27,6 +27,7 @@ import {
   unsupportedTransport,
 } from './capabilities';
 import { EDGE_PROVIDERS } from './registry';
+import { EDGE_PROVIDER_META } from '../../../../src/client/lib/edgeProviderMeta';
 import { __setScalewayApiFactory } from './scaleway';
 import { __setSpectrumResolver } from './cloudflareSpectrum';
 import { __resetOvhSkewCache } from './ovh';
@@ -206,6 +207,7 @@ const HEALTHY_SPECTRUM_APP = {
 /** The application's name resolves (Spectrum reads its addresses over DNS). */
 function healthySpectrumDns() {
   __setSpectrumResolver(() => ({
+    resolveCname: async () => ['0123456789abcdef0123456789abcdef.pacloudflare.com'],
     resolve4: async () => ['203.0.113.5'],
     resolve6: async () => ['2001:db8::5'],
   }));
@@ -564,4 +566,15 @@ describe('origin capability record ⇔ adapters', () => {
     // At most one undiscoverable allocating step per plan (operator-resolved).
     expect(steps.filter((s) => s.discoverability === 'none').length).toBeLessThanOrEqual(1);
   });
+});
+
+describe('location checks in the admin', () => {
+  test.each([...L4_IDS])(
+    '%s: the Locations card offers "Check again" exactly when the adapter checks a location',
+    (id) => {
+      expect(EDGE_PROVIDER_META[id].checkedLocations === true).toBe(
+        typeof EDGE_PROVIDERS[id].checkLocation === 'function',
+      );
+    },
+  );
 });

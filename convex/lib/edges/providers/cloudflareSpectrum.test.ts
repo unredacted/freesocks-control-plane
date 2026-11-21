@@ -111,18 +111,46 @@ describe('the application', () => {
 });
 
 describe('addresses', () => {
-  test('come from DNS; a name with no record yet answers nothing', async () => {
+  const TARGET = '0123456789abcdef0123456789abcdef.pacloudflare.com';
+
+  test("come from DNS through the name's Spectrum CNAME; a family with no record answers nothing", async () => {
+    const asked: string[] = [];
     __setSpectrumResolver(() => ({
-      resolve4: async () => ['203.0.113.9', '203.0.113.2'],
+      resolveCname: async () => [TARGET],
+      resolve4: async (n) => (asked.push(n), ['203.0.113.9', '203.0.113.2']),
       resolve6: async () => {
         throw Object.assign(new Error('no data'), { code: 'ENODATA' });
       },
     }));
     expect(await spectrumAddressesOf('x.example.net')).toEqual({ v4: '203.0.113.2' });
+    // The target is asked, never the name (a wildcard could answer for it).
+    expect(asked).toEqual([TARGET]);
+  });
+
+  test("a wildcard answering before Cloudflare publishes the CNAME is not the edge's address", async () => {
+    const wildcard = {
+      resolve4: async () => ['198.51.100.77'],
+      resolve6: async () => ['2001:db8::77'],
+    };
+    // No CNAME yet: the wildcard's A record is never read.
+    __setSpectrumResolver(() => ({
+      resolveCname: async () => {
+        throw Object.assign(new Error('no data'), { code: 'ENODATA' });
+      },
+      ...wildcard,
+    }));
+    expect(await spectrumAddressesOf('x.example.net')).toEqual({});
+    // A CNAME somewhere else (a wildcard CNAME to the zone's own host) neither.
+    __setSpectrumResolver(() => ({
+      resolveCname: async () => ['edge.example.net'],
+      ...wildcard,
+    }));
+    expect(await spectrumAddressesOf('x.example.net')).toEqual({});
   });
 
   test('a failed lookup is an error, not an empty answer', async () => {
     __setSpectrumResolver(() => ({
+      resolveCname: async () => [TARGET],
       resolve4: async () => {
         throw Object.assign(new Error('timeout'), { code: 'ETIMEOUT' });
       },
