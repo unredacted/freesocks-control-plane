@@ -209,8 +209,9 @@ export function synthesizable(proto: ListenerProto, backend: BackendId): boolean
  * `selectTestEntry`): the ONE Host on the transport at the origin address and
  * port, else the ONE Host of the listener's own (`host`); the entry built from
  * the transport itself when neither is there, or when several are (a node with
- * a Host per SNI of its pool: `synthesized`, which also uses a server name the
- * node really serves); or nowhere (null): a transport whose entry cannot be
+ * a Host per SNI of its pool: `synthesized`; the rendered link then carries
+ * the edge's own server name, as members get it, whichever entry it was
+ * built from); or nowhere (null): a transport whose entry cannot be
  * built with no single Host, and the run would stop at its test card after the
  * address was bought. `hosts` null:
  * a backend without Hosts, whose body is matched by the origin address and
@@ -457,11 +458,11 @@ export const build = internalAction({
       : null;
     let picked = selectTestEntry(fetched.content, c, hosts);
     // No single entry for the transport (none, or one per SNI of the node's
-    // pool): built from its live parameters where it can be. After several
-    // entries, a build that fails leaves the ambiguity as the reason.
+    // pool): built from its live parameters where it can be. Nothing to build
+    // from leaves the match's own reason; a failed read of the panel is that
+    // failure, as for any build.
     if ('code' in picked && c.synth) {
-      const build = () => synthesizedEntry(ctx, c.relayId as Id<'relays'>, c.synth!, c);
-      const line = picked.code === 'no_match' ? await build() : await build().catch(() => null);
+      const line = await synthesizedEntry(ctx, c.relayId as Id<'relays'>, c.synth, c);
       if (line) picked = { line };
     }
     if ('code' in picked)

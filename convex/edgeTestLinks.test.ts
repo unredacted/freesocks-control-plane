@@ -295,14 +295,33 @@ describe('the isolated test link', () => {
 
   test('an ambiguous body (two direct Hosts on the transport at the origin) is refused when the entry cannot be built; a body with no entry for the transport too', async () => {
     vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
-    // No REALITY profile on the panel: nothing to build the entry from.
+    // The panel's REALITY transport has no key: nothing to build the entry from.
+    const keyless = realityProfile();
+    delete (
+      keyless[FIXTURE_CONFIG_PROFILE].config.inbounds[0] as {
+        streamSettings: { realitySettings: Record<string, unknown> };
+      }
+    ).streamSettings.realitySettings.privateKey;
     const { t, edgeId } = await seed({
       hosts: [directHost(), directHost({ uuid: H(2), remark: 'node-one-reality-copy' })],
       extraLines: [`vless://x@${ORIGIN}:443?${REALITY_QS}#node-one-reality-copy`],
+      profiles: keyless,
     });
     await expect(t.action(internal.edgeTestLinks.build, { edgeId })).rejects.toThrow(
       /test_link_no_match/,
     );
+  });
+
+  test('several direct Hosts and a panel that cannot be read: the read failure is the answer, not a matching problem', async () => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    // No profile on the panel at all: reading the transport fails.
+    const { t, edgeId } = await seed({
+      hosts: [directHost(), directHost({ uuid: H(2), remark: 'node-one-reality-copy' })],
+      extraLines: [`vless://x@${ORIGIN}:443?${REALITY_QS}#node-one-reality-copy`],
+    });
+    const err = await t.action(internal.edgeTestLinks.build, { edgeId }).catch((e: unknown) => e);
+    expect(String(err)).not.toMatch(/test_link_no_match/);
+    expect(String(err)).toMatch(/404/);
   });
 
   test("a node FCP does not manage, fronted by the operator's own load balancer: no Host dials the node, so the entry is built from the transport's live REALITY parameters", async () => {

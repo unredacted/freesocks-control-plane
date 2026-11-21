@@ -2254,8 +2254,9 @@ reach it through a load balancer the operator built by hand, by an operator Host
   see the neutral entry name.
 - **Its test link.** With no single Host at the node (none, or several: a node with a Host per
   SNI of its pool), a load balancer address is tested through the entry built from the
-  transport's live REALITY parameters (§ "Publication", the test link), which also uses a server
-  name the node really serves. The plan reads those parameters from the panel as the test link
+  transport's live REALITY parameters (§ "Publication", the test link); the rendered link carries
+  the edge's own server name, as members get it, whichever entry it was built from. The plan
+  reads those parameters from the panel as the test link
   will (`edgeTestLinks.synthesisReady`: the transport still there, with a public key and a server
   name). A transport with no single Host at `originAddress:originPort` whose entry cannot be built
   (not REALITY, or not readable) is marked `noTestLink` in the plan; a load balancer pick that would carry it is a set problem
