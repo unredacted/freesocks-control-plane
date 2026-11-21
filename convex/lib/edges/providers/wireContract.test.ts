@@ -1551,6 +1551,7 @@ describe('wire contract: cloudflareSpectrum', () => {
   function useStub() {
     __setCloudflareApiFactory((c, f) => cloudflareApi(c, f ?? (globalThis.fetch as typeof fetch)));
     __setSpectrumResolver(() => ({
+      resolveCname: async () => ['0123456789abcdef0123456789abcdef.pacloudflare.com'],
       resolve4: async () => ['203.0.113.9'],
       resolve6: async () => ['2001:db8::9'],
     }));

@@ -207,6 +207,7 @@ const HEALTHY_SPECTRUM_APP = {
 /** The application's name resolves (Spectrum reads its addresses over DNS). */
 function healthySpectrumDns() {
   __setSpectrumResolver(() => ({
+    resolveCname: async () => ['0123456789abcdef0123456789abcdef.pacloudflare.com'],
     resolve4: async () => ['203.0.113.5'],
     resolve6: async () => ['2001:db8::5'],
   }));

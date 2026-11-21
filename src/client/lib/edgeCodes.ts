@@ -1617,7 +1617,7 @@ const COPY = {
   addresses_not_resolved: {
     label: 'Addresses not out yet',
     explain:
-      'The application exists, but its name does not resolve to an IPv4 yet, so there is nothing to publish.',
+      "The application exists, but its name does not point at Cloudflare's Spectrum address yet, so there is nothing to publish.",
     fix: 'Wait a minute. Cloudflare usually answers within seconds of the application being made.',
   },
   zone_dns_at_edgeone: {

@@ -246,9 +246,17 @@ function originWorkerStatusOf(app: unknown): string | undefined {
 
 /** How an application's addresses are looked up (a test replaces it). */
 export interface SpectrumResolver {
+  resolveCname(name: string): Promise<string[]>;
   resolve4(name: string): Promise<string[]>;
   resolve6(name: string): Promise<string[]>;
 }
+
+/**
+ * Where Cloudflare points an application's name (`<id>.pacloudflare.com`,
+ * the target its CNAME has had on every application seen). Only addresses
+ * reached through it are the application's.
+ */
+const SPECTRUM_TARGET = /^[0-9a-f]{16,64}\.pacloudflare\.com\.?$/i;
 
 function cloudflareResolver(): SpectrumResolver {
   // Cloudflare's own resolver answers for a zone it hosts without waiting on
@@ -283,14 +291,20 @@ async function lookup(fn: () => Promise<string[]>): Promise<string | undefined> 
 }
 
 /**
- * The application's current addresses, as DNS answers for its name. Both
- * families are asked: an IPv4-only application answers no AAAA.
+ * The application's current addresses: its name's CNAME, when it points at
+ * Cloudflare's Spectrum target, and that target's A and AAAA answers. The
+ * name itself is never resolved for addresses: a zone with a wildcard record
+ * answers for it with the wildcard's address until Cloudflare publishes the
+ * CNAME (seen on beta: the zone's own server, taken for the edge). No such
+ * CNAME yet is no address yet.
  */
 export async function spectrumAddressesOf(name: string): Promise<{ v4?: string; v6?: string }> {
   const r = resolverFactory();
+  const target = await lookup(() => r.resolveCname(name));
+  if (!target || !SPECTRUM_TARGET.test(target)) return {};
   const [v4, v6] = await Promise.all([
-    lookup(() => r.resolve4(name)),
-    lookup(() => r.resolve6(name)),
+    lookup(() => r.resolve4(target)),
+    lookup(() => r.resolve6(target)),
   ]);
   return { ...(v4 ? { v4 } : {}), ...(v6 ? { v6 } : {}) };
 }

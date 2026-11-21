@@ -7452,8 +7452,11 @@ confirmation.
 
 **Addresses.** Cloudflare picks a unique anycast IPv4 and IPv6 for each application, the
 customer cannot choose them, and Cloudflare says they may change over time and are best read
-over DNS. So `describe` resolves the application's name through Cloudflare's own resolver each
-time and reports what it answers; the edge is `active` once an IPv4 answers
+over DNS. So `describe` asks Cloudflare's own resolver each time for the name's CNAME and, when it
+points at Cloudflare's Spectrum target (`<id>.pacloudflare.com`), for that target's A and AAAA
+records. It never resolves the name itself for addresses: a zone with a wildcard record answers
+for it with the wildcard's address until Cloudflare publishes the CNAME (seen on beta, where the
+zone's own server was taken for the edge). No such CNAME yet is no address yet; the edge is `active` once an IPv4 answers
 (`addresses_not_resolved` until then) and the application reports its Worker origin available
 (`origin_worker_status`: `not_found` is an `error` edge, `worker_origin_missing`, offline; any
 other value waits as `worker_origin_unknown`). An address that changes is recorded like any learned
