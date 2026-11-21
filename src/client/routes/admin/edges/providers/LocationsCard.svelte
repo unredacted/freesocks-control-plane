@@ -46,7 +46,7 @@
   } from '../../../../lib/edgesApi';
   import PlanDialog from './PlanDialog.svelte';
   import { costWords, sourceWords, trafficWords } from '../lib/planWords';
-  import { codeLabel } from '../../../../lib/edgeCodes';
+  import { codeFix, codeLabel } from '../../../../lib/edgeCodes';
   import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import NameDialog from '../components/NameDialog.svelte';
@@ -271,12 +271,15 @@
                   </p>
                 {/if}
               {/if}
-              {#if l.checkError}
-                <p class="text-destructive text-xs" role="alert">
-                  The last check refused this zone: {l.checkError}. No new address is made here
-                  until a check passes.
-                </p>
-              {/if}
+            {/if}
+            {#if l.checkError}
+              <!-- Any provider whose locations are checked (a CDN's zone, a Spectrum zone). -->
+              <p class="text-destructive text-xs" role="alert">
+                The last check refused this {zones || l.placement.zoneId ? 'zone' : 'location'}:
+                {codeLabel(l.checkError)}{codeFix(l.checkError)
+                  ? `. ${codeFix(l.checkError)}`
+                  : ''}. No new address is made here until a check passes.
+              </p>
             {/if}
             {#if !zones && l.pricing}
               {@const pr = l.pricing}

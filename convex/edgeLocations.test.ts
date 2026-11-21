@@ -776,3 +776,30 @@ describe('edgeLocations: a CDN account is as ready as its best zone', () => {
     ]);
   });
 });
+
+describe('a Spectrum zone whose check refused it', () => {
+  test('is not offered, as a CDN zone is not', async () => {
+    const t = convexTest(schema, modules);
+    const { id, locationId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflareSpectrum',
+      name: 'tcp',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.net' },
+      credentials: { apiToken: 'cf-1' },
+    });
+    const problem = () =>
+      t.run(async (ctx) =>
+        placeProblemOf(ctx.db, (await ctx.db.get(id))!, (await ctx.db.get(locationId!))!),
+      );
+    expect(await problem()).toBeNull();
+    // A Free zone takes no Worker application: the check refuses it.
+    await t.mutation(internal.edgeLocations.recordCheck, {
+      id: locationId!,
+      ok: false,
+      code: 'zone_plan_free',
+    });
+    expect(await problem()).toBe('location_check_failed');
+    // A later check that passes offers it again.
+    await t.mutation(internal.edgeLocations.recordCheck, { id: locationId!, ok: true });
+    expect(await problem()).toBeNull();
+  });
+});

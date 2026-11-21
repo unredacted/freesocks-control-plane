@@ -98,8 +98,9 @@ export async function l7PlaceProblemOf(
  * Why no new edge can be planned in this location, or null: a placement value
  * the location left empty that the account's credential test could not observe
  * either (`EDGE_OBSERVED_PLACEMENT`: a Scaleway location with no Project id
- * whose API key's default project is unknown reads `project_unresolved`), then
- * an L7 place's own problems (`l7PlaceProblemOf`).
+ * whose API key's default project is unknown reads `project_unresolved`), an
+ * L4 location whose last check refused it (`location_check_failed`), then an
+ * L7 place's own problems (`l7PlaceProblemOf`).
  */
 export async function placeProblemOf(
   db: DatabaseReader,
@@ -113,5 +114,14 @@ export async function placeProblemOf(
     for (const [key, { fact, missing }] of defaults)
       if (!placed[key] && !observed[fact]) return missing;
   }
+  // An L4 location whose provider checks it (a Spectrum zone): a refused
+  // check is a refused place, as on a CDN (a zone on the Free plan). A CAA
+  // refusal stays the certificate's, as `l7PlaceProblemOf` reads it.
+  if (
+    edgeLayerOf(account.provider) === 'l4' &&
+    location.checkError &&
+    location.checkError !== 'caa_forbids_ca'
+  )
+    return 'location_check_failed';
   return l7PlaceProblemOf(db, account, location);
 }
