@@ -619,7 +619,7 @@ export type MessageKey =
   | "report.body"
   | "report.confirm"
   | "report.connectionLegend"
-  | "report.connectionOldAppsHint"
+  | "report.connectionTwoEntriesHint"
   | "report.connectionUnsure"
   | "report.done"
   | "report.doneBody"

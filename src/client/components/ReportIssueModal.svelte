@@ -79,7 +79,7 @@
   // One option per role, named after its address (a role carries one entry per
   // form of its address: `· Domain`, `· IPv4`, `· IPv6` share one base name).
   // Where the app holds an address twice (an encrypted entry and a plain one
-  // marked for old apps), each is its own option: which of them failed says
+  // the plain one under the address's own name), each is its own option: which of them failed says
   // whether the address is at fault or the app.
   const connectionOptions = $derived(
     (['primary', 'backup'] as const).flatMap((role): Option[] => {
@@ -170,7 +170,7 @@
           </label>
         {/each}
         {#if twoEntries}
-          <p class="px-2 text-sm text-muted-foreground">{t('report.connectionOldAppsHint')}</p>
+          <p class="px-2 text-sm text-muted-foreground">{t('report.connectionTwoEntriesHint')}</p>
         {/if}
       </fieldset>
     {/if}

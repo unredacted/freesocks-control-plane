@@ -17,7 +17,7 @@ import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { twinRemarksOf } from './lib/edges/listenerEncryption';
 import { servableEdges } from './lib/backend/nodeTwin';
-import { plainFallbackName } from '../src/shared/entryNames';
+import { encryptedName } from '../src/shared/entryNames';
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -777,8 +777,9 @@ export const memberView = internalQuery({
       role: 'primary' | 'backup';
       family: 'v4' | 'v6' | 'name';
       /**
-       * Where the body handed this address out twice: the encrypted entry, or
-       * the plain one behind it (named `… · Old apps`). Absent = the one entry.
+       * Where the body handed this address out encrypted: the encrypted entry
+       * (named `… · Encrypted`), or the plain one behind it (the address's own
+       * name). Absent = the one entry.
        */
       entry?: 'encrypted' | 'plain';
     }>;
@@ -832,24 +833,27 @@ export const memberView = internalQuery({
       role: e.role,
       family: e.family,
     }));
-    // Where the body carried an address twice (the snapshot says so: never
+    // Where the body carried an address encrypted (the snapshot says so: never
     // guessed from today's settings), the names follow the body: the encrypted
-    // entries first, then the plain ones under their own name.
+    // entries first under their own tag, then the plain ones under the
+    // address's own name.
     const twinOf = { primary: snap.primaryTwin, backup: snap.backupTwin };
+    const encrypted = (role: 'primary' | 'backup') =>
+      twinOf[role] === 'fallback' || twinOf[role] === 'only';
     const connections = [
       ...entries.map((e) =>
-        twinOf[e.role] === 'fallback' || twinOf[e.role] === 'only'
-          ? { ...e, entry: 'encrypted' as const }
+        encrypted(e.role)
+          ? {
+              ...e,
+              label: encryptedName(e.label),
+              base: encryptedName(e.base),
+              entry: 'encrypted' as const,
+            }
           : e,
       ),
       ...entries
         .filter((e) => twinOf[e.role] === 'fallback')
-        .map((e) => ({
-          ...e,
-          label: plainFallbackName(e.label),
-          base: plainFallbackName(e.base),
-          entry: 'plain' as const,
-        })),
+        .map((e) => ({ ...e, entry: 'plain' as const })),
     ];
     return { refreshSuggested, known: true, connections };
   },

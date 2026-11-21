@@ -1113,7 +1113,7 @@
     "reasonLegend": "What's the problem?",
     "connectionLegend": "Which connection were you using?",
     "connectionUnsure": "Not sure",
-    "connectionOldAppsHint": "Your app has two entries for each address. If the first one does not connect, try the one marked Old apps before you report.",
+    "connectionTwoEntriesHint": "Your app has two entries for each address. If the one marked Encrypted does not connect, try the other one before you report.",
     "reasonCantConnect": "I can't connect at all",
     "reasonSlow": "It connects, but it's very slow",
     "reasonDisconnects": "It keeps disconnecting",

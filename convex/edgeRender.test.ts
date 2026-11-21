@@ -861,10 +861,10 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     let view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
     // The encrypted entries first, then the plain ones under their own name.
     expect(view.connections.map((c) => [c.label, c.base, c.role, c.entry])).toEqual([
-      [`${PRIMARY} · IPv4`, PRIMARY, 'primary', 'encrypted'],
-      [`${PRIMARY} · IPv6`, PRIMARY, 'primary', 'encrypted'],
-      [`${PRIMARY} · IPv4 · Old apps`, `${PRIMARY} · Old apps`, 'primary', 'plain'],
-      [`${PRIMARY} · IPv6 · Old apps`, `${PRIMARY} · Old apps`, 'primary', 'plain'],
+      [`${PRIMARY} · IPv4 · Encrypted`, `${PRIMARY} · Encrypted`, 'primary', 'encrypted'],
+      [`${PRIMARY} · IPv6 · Encrypted`, `${PRIMARY} · Encrypted`, 'primary', 'encrypted'],
+      [`${PRIMARY} · IPv4`, PRIMARY, 'primary', 'plain'],
+      [`${PRIMARY} · IPv6`, PRIMARY, 'primary', 'plain'],
     ]);
     // Encrypted alone: one entry per address, marked as the encrypted one.
     await t.run(async (ctx) => {
@@ -873,8 +873,8 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     });
     view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
     expect(view.connections.map((c) => [c.label, c.entry])).toEqual([
-      [`${PRIMARY} · IPv4`, 'encrypted'],
-      [`${PRIMARY} · IPv6`, 'encrypted'],
+      [`${PRIMARY} · IPv4 · Encrypted`, 'encrypted'],
+      [`${PRIMARY} · IPv6 · Encrypted`, 'encrypted'],
     ]);
     // The plain entry alone on a twin's listener: one entry, with nothing to tell apart.
     await t.run(async (ctx) => {

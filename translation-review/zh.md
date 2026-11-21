@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**235 of 838 strings are missing** (the app currently shows English for
+**235 of 842 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -160,6 +160,7 @@ review.
 | `login.getOne` | Get a free account | 获取免费账户 |
 | `login.failed` | Sign-in failed | 登录失败 |
 | `login.success` | Signed in | 已登录 |
+| `login.credentialManagement` | Sign in again to manage your account number or passkeys. | 请重新登录以管理账户号码或通行密钥。 |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | 请重新登录 - 你的会话可能已结束。 |
 | `login.popBroken` | Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again. | 您的浏览器无法保护此会话，因为 Web Workers 被阻止或不可用。请启用它们（检查浏览器的隐私设置）或使用其他浏览器，然后重新登录。 |
 | `login.digitProgress` | {count} of {total} digits entered | {count}位数，共{total}位数字 |
@@ -243,7 +244,7 @@ review.
 | `account.regenSuccessBody` | Re-import it on each of your devices. The old URL works for 24 more hours. | 请在每台设备上重新导入。旧链接还能用 24 小时。 |
 | `account.regenFailedTitle` | Could not create a new key | 无法创建新密钥 |
 | `account.switchSuccessTitle` | Switched to {tier} | 已切换到 {tier} |
-| `account.switchSuccessBody` | Same subscription URL - your apps pick up the new configuration on their next refresh. | ⚠️ **MISSING** |
+| `account.switchSuccessBody` | Check your account for the connection details for your new server type. | ⚠️ **MISSING** |
 | `account.switchFailedTitle` | Could not switch server type | 无法切换服务器类型 |
 | `account.refreshWelcome` | Welcome to {tier} | 欢迎加入 {tier} |
 | `account.refreshNoneTitle` | No active membership found yet | 尚未找到有效会员 |
@@ -368,9 +369,9 @@ review.
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `switch.title` | Switch to {to}? | 切换到 {to}？ |
-| `switch.body` | Your current {from} subscription is replaced with a new {to} one. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switch.body` | Your current {from} subscription is replaced with a new {to} one. | ⚠️ **MISSING** |
 | `switch.point1` | A new key is issued on the {to} backend | ⚠️ **MISSING** |
-| `switch.point2` | Your subscription URL stays the same - apps pick up the new configuration on their next refresh | ⚠️ **MISSING** |
+| `switch.point2` | When switching into Privacy Mode, copy the new configuration from your account. Other backend switches keep your subscription link. | ⚠️ **MISSING** |
 | `switch.point3` | The old key keeps working for 24 hours while your apps refresh | ⚠️ **MISSING** |
 | `switch.confirm` | Switch to {to} | 切换到 {to} |
 | `switch.working` | Switching… | 切换中… |
@@ -815,6 +816,9 @@ review.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
+| `delivery.privateSwitchBody` | By default, your old links cannot fetch the new configuration. Copy it from your account to each device after switching. | 默认情况下，旧链接无法获取新配置。切换后，请从账户中复制新配置到每台设备。 |
+| `delivery.keepUnsealedUrls` | Keep my existing links and mirrors. Anyone with a link, including a service that saw it, can then fetch my new configuration without signing in. | 保留现有链接和镜像。任何持有链接的人或见过该链接的服务都可以在不登录的情况下获取我的新配置。 |
+| `delivery.privateSwitchSuccess` | Copy the new configuration from your account to each device. Your previous subscription links cannot fetch it. | 请从账户中复制新配置到每台设备。旧订阅链接无法获取新配置。 |
 | `delivery.title` | Connection mode | ⚠️ **MISSING** |
 | `delivery.subtitle` | Pick what fits where you are. Saved on this device only - change it anytime. | ⚠️ **MISSING** |
 | `delivery.subtitleServer` | Switching moves your key to the matching servers. Your link stays the same. | ⚠️ **MISSING** |
@@ -1034,7 +1038,7 @@ review.
 | `report.reasonLegend` | What's the problem? | ⚠️ **MISSING** |
 | `report.connectionLegend` | Which connection were you using? | ⚠️ **MISSING** |
 | `report.connectionUnsure` | Not sure | ⚠️ **MISSING** |
-| `report.connectionOldAppsHint` | Your app has two entries for each address. If the first one does not connect, try the one marked Old apps before you report. | ⚠️ **MISSING** |
+| `report.connectionTwoEntriesHint` | Your app has two entries for each address. If the one marked Encrypted does not connect, try the other one before you report. | ⚠️ **MISSING** |
 | `report.reasonCantConnect` | I can't connect at all | ⚠️ **MISSING** |
 | `report.reasonSlow` | It connects, but it's very slow | ⚠️ **MISSING** |
 | `report.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |

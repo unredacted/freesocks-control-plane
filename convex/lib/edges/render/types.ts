@@ -8,7 +8,7 @@
  * response for an edge-required subscription (edgeRender.ts).
  */
 import type { EncryptionRule } from '../../../../src/shared/encryptionRule';
-import { plainFallbackName } from '../../../../src/shared/entryNames';
+import { encryptedName } from '../../../../src/shared/entryNames';
 import type { ListenerProto } from '../protocols';
 import type { MatchRule } from '../registration';
 
@@ -384,9 +384,10 @@ export function planEntries<T>(
     if (mode === 'plain') {
       if (plain) first.push({ endpoint, template: plain, label });
     } else if (twin) {
-      first.push({ endpoint, template: twin, label });
-      if (mode === 'prefer' && plain)
-        fallback.push({ endpoint, template: plain, label: plainFallbackName(label) });
+      // The encrypted entry is named as such; the plain one keeps the name an
+      // app may already hold (lib/entryNames.ts `encryptedName`).
+      first.push({ endpoint, template: twin, label: encryptedName(label) });
+      if (mode === 'prefer' && plain) fallback.push({ endpoint, template: plain, label });
     } else if (plain) first.push({ endpoint, template: plain, label });
   }
   return { entries: [...first, ...fallback], mixed: fallback.length > 0 };

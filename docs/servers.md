@@ -796,6 +796,12 @@ machine revision or its approval, and closing the twin leaves the plain path exa
 | `serving`    | The address is on. The twin is handed out through the fronts that passed and no other. Each front is checked again before its check is an hour old.                                                                                                                                                                                              |
 | `removing`   | No front counted, the address off and then deleted, the renderer forgets it, and the transport is dropped from the node.                                                                                                                                                                                                                         |
 
+**An adopted node.** It may serve the twin like any other: what counts is that FCP runs its
+front today (its listener, the address FCP keeps for it, and published fronts of FCP's), not how
+it was adopted. A node adopted while an earlier tool fronted it keeps "Its edge was made outside
+FCP" (`adopted.externallyFronted`) after FCP's own edges take its front over; that switch says
+how the node reopens after a maintenance and nothing about the twin.
+
 **The route.** The node's front server must send the twin's path to its loopback port. A node
 the role runs reads it with its other routes: the bootstrap answer's `ingress.routes` carries
 the twin's route beside the node's own while the node activates or serves it. It is not a

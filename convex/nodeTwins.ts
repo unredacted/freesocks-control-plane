@@ -376,13 +376,16 @@ export const add = internalMutation({
     const twin = modeOf(setup, modeSlug(intent))?.twin;
     if (!twin || twin.detaching) refuse('servers.twin_absent', WORDS['servers.twin_absent']!);
     // The twin is checked through the node's own fronts and rides their
-    // listener: a node whose front another tool runs has neither here.
+    // listener: a node whose front another tool runs has neither here. Read
+    // from what FCP runs today, never from how the node was adopted: a node
+    // adopted while an earlier tool fronted it (`adopted.externallyFronted`)
+    // keeps that flag after FCP's own edges took over its front.
     const hosts = await ctx.db
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
       .collect();
     const front = await frontOf(ctx, intent, setup, hosts);
-    if (intent.adopted?.externallyFronted || !front.listener || !front.listenerHost)
+    if (!front.listener || !front.listenerHost)
       refuse('servers.node_twin_no_front', WORDS['servers.node_twin_no_front']!);
     const delivery = await deliveryBindingFor(ctx.db, intent.backendServerId, intent.name);
     if (front.relay!.bindingDeferred || delivery?.relaySlug !== front.relay!.slug)
