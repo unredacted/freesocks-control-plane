@@ -32,10 +32,12 @@ const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: Subscriptio
   { re: /hiddify/i, family: 'hiddify', format: 'links' },
   { re: /streisand/i, family: 'streisand', format: 'links' },
   { re: /v2rayng/i, family: 'v2rayng', format: 'links' },
-  // Anywhere (iOS, `Anywhere/<version>`): imports a plain link list and has no
-  // automatic group, so its members get the link entries (main, then backup).
-  // Anchored: "anywhere" is an ordinary word inside other User-Agents.
-  { re: /^Anywhere\//i, family: 'xray-links', format: 'links' },
+  // Anywhere (iOS): imports a plain link list and has no automatic group, so
+  // its members get the link entries (main, then backup). Its subscription
+  // fetch sends the bare name (`User-Agent: Anywhere`, its
+  // SubscriptionFetcher.swift); `Anywhere/<version>` is taken too. Anchored
+  // and whole: "anywhere" is an ordinary word inside other User-Agents.
+  { re: /^Anywhere(?:\/|$)/i, family: 'xray-links', format: 'links' },
   {
     re: /(?:v2ray|xray|nekobox|nekoray|shadowrocket|v2box|foxray|fair|loon)/i,
     family: 'xray-links',
