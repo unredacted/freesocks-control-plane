@@ -66,6 +66,10 @@ const LEGACY_UAS = [
 const MODERN_UAS = [
   'mihomo/1.19.33',
   'FlClash/v0.8.93 clash-verge Platform/android',
+  // FlClash on Windows and Linux (its app name there), and ClashX Meta's CFNetwork default.
+  'clash/v0.9.4 clash-verge Platform/windows',
+  'fl_clash/v0.9.4 clash-verge Platform/linux',
+  'ClashX%20Meta/1 CFNetwork/1568.300.101 Darwin/24.4.0',
   'clash-verge/v2.4.0',
   'clash.meta',
   'ClashMetaForAndroid/2.11.5.Meta',

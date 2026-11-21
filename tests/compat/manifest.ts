@@ -41,6 +41,9 @@ export const clients: CompatibilityClient[] = [
       'SFA/1.14.0',
       'SFI/1.14.0',
       'SFM/1.14.0',
+      // sing-box 1.14.x shells' own form (tests/compat/userAgents.ts).
+      'SFA (sing-box 1.14.4; language en_US)',
+      'SFI (sing-box 1.14.4; language en_US)',
     ],
     application: 'automated-sfl',
     limitation:
@@ -49,7 +52,7 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'Hiddify',
     format: 'links',
-    userAgents: ['Hiddify/2.0'],
+    userAgents: ['HiddifyNext/5.5.5 (android) like ClashMeta v2ray sing-box'],
     application: 'manual',
     limitation:
       'Subscription contract only; bundled parser, engine and GUI need device verification.',
@@ -57,7 +60,7 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'Karing',
     format: 'singbox',
-    userAgents: ['Karing/1.0'],
+    userAgents: ['Karing/1.2.26.2934'],
     application: 'manual',
     limitation:
       'Contract plus reference sing-box engine; bundled engine, HWID and GUI require device verification.',
@@ -73,21 +76,21 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'v2rayNG',
     format: 'links',
-    userAgents: ['v2rayNG/1.8.29'],
+    userAgents: ['v2rayNG/2.3.15'],
     application: 'manual',
     limitation: 'Android application and bundled Xray engine require device verification.',
   },
   {
     name: 'v2rayN',
     format: 'links',
-    userAgents: ['v2rayN/7.0'],
+    userAgents: ['v2rayN/7.25.6'],
     application: 'manual',
     limitation: 'Application and bundled Xray engine require device verification.',
   },
   {
     name: 'Clash',
     format: 'mihomo',
-    userAgents: ['Clash-Verge/v2.0'],
+    userAgents: ['clash-verge/v2.5.10'],
     application: 'manual',
     limitation:
       'Contract plus reference Mihomo engine; packaged application requires device verification.',
@@ -95,13 +98,13 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'FlClash',
     format: 'mihomo',
-    // Default UA built by v0.9.2 lib/common/package.dart; custom UAs remain possible.
-    // https://github.com/chen08209/FlClash/blob/v0.9.2/lib/common/package.dart
+    // Default UA built by lib/common/package.dart; its app name is `clash` on
+    // Windows and `fl_clash` on Linux (tests/compat/userAgents.ts).
     userAgents: [
-      'FlClash/v0.9.2 clash-verge Platform/linux',
-      'FlClash/v0.9.2 clash-verge Platform/android',
-      'FlClash/v0.9.2 clash-verge Platform/windows',
-      'FlClash/v0.9.2 clash-verge Platform/macos',
+      'FlClash/v0.9.4 clash-verge Platform/android',
+      'FlClash/v0.9.4 clash-verge Platform/macos',
+      'clash/v0.9.4 clash-verge Platform/windows',
+      'fl_clash/v0.9.4 clash-verge Platform/linux',
       'FlClash/0.8',
     ],
     application: 'manual',
@@ -111,7 +114,7 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'Mihomo Party',
     format: 'mihomo',
-    userAgents: ['mihomo/1.19.30'],
+    userAgents: ['mihomo.party/v2.0.5 (clash.meta)', 'mihomo/1.19.30'],
     application: 'manual',
     limitation:
       'Contract plus reference Mihomo engine; packaged application requires device verification.',
@@ -119,7 +122,7 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'Throne',
     format: 'links',
-    userAgents: ['Throne/1.0'],
+    userAgents: ['Throne/1.4.2'],
     application: 'manual',
     limitation:
       'Subscription contract only; packaged application and HWID require device verification.',
@@ -127,7 +130,7 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'Shadowrocket',
     format: 'links',
-    userAgents: ['Shadowrocket/2.2'],
+    userAgents: ['Shadowrocket/2592 CFNetwork/1568.300.101 Darwin/24.4.0'],
     application: 'manual',
     limitation: 'Licensed iOS application on Apple hardware required.',
   },

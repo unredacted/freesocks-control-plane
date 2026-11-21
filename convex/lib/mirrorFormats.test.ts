@@ -3,7 +3,7 @@ import { sha256Hex } from './crypto';
 import { DEFAULT_CLIENTS } from './clientCatalog';
 import { legacyClashCore } from './appNotice';
 import { classifyClient } from './edges/clientFamilies';
-import { normalizeSubscriptionUserAgent } from './backends/remnawave';
+import { normalizeSubscriptionUserAgent } from './backends/remnawaveUserAgent';
 import {
   MIRROR_FETCH_UA,
   mirrorFamily,
