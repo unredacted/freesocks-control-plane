@@ -23,6 +23,7 @@
  * The node environment is needed for the node-runtime modules (ingress check,
  * front qualification, mirrors). Fixtures are RFC 5737 / `*.example` only.
  */
+import { registerRelay } from './lib/edges/testing/fixtures';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
@@ -3906,5 +3907,95 @@ describe('changing the setup of a backend with a live node and a published edge'
     expect(done.state).toBe('ready');
     expect(backend.writes.slice(writes).map((x) => x.call)).toEqual(['POST /api/internal-squads']);
     await memberBody(t, address);
+  });
+});
+
+describe('a node whose mode is a direct one', () => {
+  test('is not fronted: the plan says so and a run is refused before anything is made', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const accts = await accounts(t);
+    await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    // The backend's mode becomes a direct one (members reach the node itself).
+    await t.run(async (c) => {
+      const setup = (await c.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+        .unique())!;
+      await c.db.patch(setup._id, {
+        modes: setup.modes.map((m) =>
+          m.slug === 'freedom-reality' ? { ...m, shape: { ...m.shape, fronting: 'direct' } } : m,
+        ),
+      } as never);
+    });
+    const node = (
+      await t.run((c) =>
+        c.db
+          .query('backendNodeInventory')
+          .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+          .collect(),
+      )
+    ).find((n) => n.name === NODE)!;
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: w.serverId,
+      nodeUuid: node.nodeUuid,
+    });
+    expect(plan.directMode).toEqual({ slug: 'freedom-reality', label: null });
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: w.serverId,
+        nodeUuid: node.nodeUuid,
+        accountId: accts.l4,
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/node_mode_direct/);
+    // Nothing was bought.
+    expect(await t.run((c) => c.db.query('edges').collect())).toHaveLength(0);
+  });
+
+  test('an origin a run left behind before go-live is no exemption; a live one is', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    const node = (
+      await t.run((c) =>
+        c.db
+          .query('backendNodeInventory')
+          .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+          .collect(),
+      )
+    ).find((n) => n.name === NODE)!;
+    await t.run(async (c) => {
+      const setup = (await c.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+        .unique())!;
+      await c.db.patch(setup._id, {
+        modes: setup.modes.map((m) =>
+          m.slug === 'freedom-reality' ? { ...m, shape: { ...m.shape, fronting: 'direct' } } : m,
+        ),
+      } as never);
+    });
+    const { relayId } = await registerRelay(t, {
+      slug: 'node-r-origin',
+      nodeName: NODE,
+      originAddress: ORIGIN_V4,
+    });
+    const relay = await t.run((c) => c.db.get(relayId));
+    expect(relay).toBeTruthy();
+    const plan = () =>
+      t.action(internal.edgeSetupPlan.plan, {
+        backendServerId: w.serverId,
+        nodeUuid: node.nodeUuid,
+      });
+    // Left behind by a run that never went live.
+    await t.run((c) => c.db.patch(relay!._id, { setupOwned: true, setupStage: 'prepare' }));
+    expect((await plan()).directMode).toEqual({ slug: 'freedom-reality', label: null });
+    // Live (its run cleared the ownership at go-live).
+    await t.run((c) => c.db.patch(relay!._id, { setupOwned: undefined, setupStage: undefined }));
+    expect((await plan()).directMode).toBeNull();
   });
 });
