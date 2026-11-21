@@ -807,7 +807,12 @@ the role runs reads it with its other routes: the bootstrap answer's `ingress.ro
 the twin's route beside the node's own whenever the node's mode has a twin on the backend (not
 only while the node activates or serves it), so a new node's first role run already sets it up
 and switching the twin on or off needs no further run. A node whose role last ran before its
-mode got the twin needs one more run. Until the twin's transport is on for the node, the path has
+mode got the twin needs one more run. FCP records the routes each run was handed
+(`panelNodeIntents.servedRoutes`), so the node page says whether the twin's route reached the
+role (`routeServed`), and which routes the node's front server still has that FCP no longer
+hands out (a twin taken off the mode since, `staleRoutes`): until the role runs there again, no
+new transport may take such a route's path or port (`servers.route_still_served`), since that
+path would reach it. Until the twin's transport is on for the node, the path has
 nothing behind it and its front server answers it as a dead upstream (a 502). It is not a
 machine setting, so no machine revision moves and nothing is approved again. On a node no role
 runs (an adopted one), an operator adds the route by hand; the node page shows it. Nobody

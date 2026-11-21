@@ -50,7 +50,13 @@ import {
 } from './lib/edges/verification';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { extraTransportOn } from './lib/backend/extraModes';
-import { twinRoute, twinTransportOn } from './lib/backend/nodeTwin';
+import {
+  desiredRoutes,
+  staleRoutes,
+  twinRoute,
+  twinTransportOn,
+  type ServedRoute,
+} from './lib/backend/nodeTwin';
 import {
   confirmExtraModesFromRole,
   confirmFromRole,
@@ -2157,8 +2163,12 @@ export const bootstrapContext = internalQuery({
 });
 
 export const markBootstrapServed = internalMutation({
-  args: { intentId: v.id('panelNodeIntents') },
-  handler: async (ctx, { intentId }) => {
+  args: {
+    intentId: v.id('panelNodeIntents'),
+    /** The routes this answer hands the role (`panelNodeIntents.servedRoutes`). */
+    routes: v.optional(v.array(v.object({ path: v.string(), port: v.number() }))),
+  },
+  handler: async (ctx, { intentId, routes }) => {
     const intent = await ctx.db.get(intentId);
     if (!intent) return null;
     if (intent.activation.stage === 'registered')
@@ -2166,9 +2176,32 @@ export const markBootstrapServed = internalMutation({
         activation: { ...intent.activation, stage: 'bootstrap_available' },
         updatedAt: Date.now(),
       });
+    if (routes) await ctx.db.patch(intentId, { servedRoutes: routes });
     return null;
   },
 });
+
+/**
+ * Routes a node role was handed on its last run that FCP no longer hands out
+ * (lib/backend/nodeTwin.ts `staleRoutes`): its front server still routes them
+ * until the role runs again. Empty for a node no role runs, and before the
+ * routes it was handed are known.
+ */
+export async function staleRoutesOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Doc<'panelNodeIntents'>,
+): Promise<ServedRoute[]> {
+  if (intent.adopted || !intent.servedRoutes) return [];
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+    .unique();
+  const twin = setup ? modeOf(setup, modeSlug(intent))?.twin : undefined;
+  return staleRoutes(
+    intent.servedRoutes,
+    desiredRoutes(intent.settings.ingress?.internal ?? [], twin),
+  );
+}
 
 export interface BootstrapAnswer {
   machineRevision: number;
@@ -2214,7 +2247,6 @@ export const bootstrap = internalAction({
     if (!writes)
       throw new ConvexError({ code: 'servers.unsupported_backend', message: 'Unsupported' });
     const secretKey = await writes.nodeSecret(c.server.config as BackendConfig);
-    await ctx.runMutation(internal.nodeIntents.markBootstrapServed, { intentId });
     const ports: FirewallPortRow[] = await ctx.runQuery(
       internal.backendPortChanges.firewallForIntent,
       { intentId },
@@ -2231,22 +2263,28 @@ export const bootstrap = internalAction({
     // setting: the node's own route, revision and approval stay as they are.
     const setupTwin = modeOf(c.setup, modeSlug(c.intent))?.twin;
     const twinRoutes = setupTwin && !setupTwin.detaching ? [twinRoute(setupTwin)] : [];
+    const routes = ingress
+      ? [
+          ...ingress.internal.map(ingressRoute),
+          ...twinRoutes.filter(
+            (r) => !ingress.internal.some((i) => i.path === r.path || i.port === r.port),
+          ),
+        ]
+      : null;
+    // What the role is handed, recorded: until its next run the node's front
+    // server routes exactly these (staleRoutesOf).
+    await ctx.runMutation(internal.nodeIntents.markBootstrapServed, {
+      intentId,
+      routes: (routes ?? []).map((r) => ({ path: r.path, port: r.port })),
+    });
     return {
       machineRevision: c.intent.machineRevision,
       secretKey,
       node: { port: c.intent.settings.nodePort, name: c.intent.name, mode: c.mode },
-      ingress: ingress
-        ? {
-            hostname: ingress.hostname,
-            externalPort: ingress.external.port,
-            routes: [
-              ...ingress.internal.map(ingressRoute),
-              ...twinRoutes.filter(
-                (r) => !ingress.internal.some((i) => i.path === r.path || i.port === r.port),
-              ),
-            ],
-          }
-        : null,
+      ingress:
+        ingress && routes
+          ? { hostname: ingress.hostname, externalPort: ingress.external.port, routes }
+          : null,
       origin: { hostname: c.hostname ?? null, dns: c.intent.origin.dns },
       firewall: { ports },
     };

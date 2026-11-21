@@ -350,6 +350,12 @@ export async function twinViewOf(ctx: { db: QueryCtx['db'] }, intent: Intent) {
     code: t.code ?? null,
     route: c?.twin ? twinRoute(c.twin) : null,
     routeBy: intent.adopted ? ('operator' as const) : ('role' as const),
+    // Whether the node role was handed the route on its last run (null: no
+    // role runs this node, or its last run is from before this was recorded).
+    routeServed:
+      intent.adopted || !intent.servedRoutes || !c?.twin
+        ? null
+        : intent.servedRoutes.some((r) => r.path === c.twin!.path && r.port === c.twin!.port),
     fronts: {
       checked: c ? checks.filter((x) => c.edges.includes(x.edgeId)).length : 0,
       published: c?.edges.length ?? 0,

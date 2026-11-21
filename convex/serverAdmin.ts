@@ -22,7 +22,7 @@ import { capabilitiesOf } from './lib/backends/capabilities';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
-import { modeRefOf } from './nodeIntents';
+import { modeRefOf, staleRoutesOf } from './nodeIntents';
 import { twinViewOf } from './nodeTwins';
 import { deliveryBindingFor } from './relays';
 import { frontKeysFor } from './lib/edges/frontKeys';
@@ -173,6 +173,9 @@ export const intentsView = internalQuery({
         })),
         // Its mode's encrypted twin (docs/servers.md "A node serving the encrypted twin").
         twin: await twinViewOf(ctx, i),
+        // Routes its front server still has from a role run whose route FCP no
+        // longer hands out: the role must run again (nodeIntents.staleRoutesOf).
+        staleRoutes: await staleRoutesOf(ctx, i),
         registeredAt: new Date(i.registeredAt).toISOString(),
         updatedAt: new Date(i.updatedAt).toISOString(),
       });
