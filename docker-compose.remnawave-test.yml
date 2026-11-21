@@ -66,7 +66,7 @@ services:
         condition: service_started
 
   rw-test-db:
-    image: postgres:18.7
+    image: postgres:19.0
     container_name: rw-test-db
     hostname: rw-test-db
     shm_size: 512mb

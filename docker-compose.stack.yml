@@ -135,7 +135,7 @@ services:
     # data directory, and with it the collation order its indexes were built on.
     # docker/backup.Dockerfile must pin the same image; Dependabot moves both in
     # one PR (.github/dependabot.yml, `stack-images`).
-    image: postgres:18.7-trixie@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+    image: postgres:19.0-trixie@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -283,7 +283,7 @@ services:
     # docker buildx imagetools inspect valkey/valkey:<version>-alpine).
     # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
     # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
-    image: valkey/valkey:9.1.4-alpine@sha256:56729e68bdda139cbd3f6a2538683dc3523325fc5711ea1a379938f1b37893f0
+    image: valkey/valkey:9.2.0-alpine@sha256:c8e2d17498838af5d91e12eb7c11220b3434a7b7131a333e3af52ad5e0b80882
     pids_limit: 128
     restart: unless-stopped
     logging: *log
