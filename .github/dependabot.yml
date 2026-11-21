@@ -141,11 +141,13 @@ updates:
   # like a way to keep majors out, but it silently drops DIGEST-ONLY updates
   # (dependabot-core's `semver_rules_allow_grouping?` bails when either side
   # fails `Version.correct?` or major/minor/patch are all equal); the first run
-  # with one produced zero grouped PRs. So majors ride in the PR. That is the
-  # accepted trade: a major here fails LOUDLY at deploy (PG19 refuses a PG18
-  # data dir) rather than silently, the PR body names every bump, and the
-  # cross-file locks in convex/deployPins.test.ts still fail CI on a half-
-  # applied one.
+  # with one produced zero grouped PRs. So majors ride in the PR, except the
+  # ones held below by a `versions` range (a range ignore does not have that
+  # problem: digest-only updates still group). Postgres is held at 18: a new
+  # major cannot start on the existing data directory (it needs pg_upgrade or
+  # a dump and restore), yet CI passes, because every CI database starts
+  # empty. Move it by hand with an upgrade runbook, then lift the hold here
+  # and in the Dockerfile entry below.
   - package-ecosystem: docker-compose
     directory: /
     multi-ecosystem-group: stack-images
@@ -158,6 +160,10 @@ updates:
       # X25519MLKEM768.
       - dependency-name: remnawave/node
         versions: ['>= 3.4.4']
+      # The Postgres major hold above (the stack's server and the Remnawave
+      # test database).
+      - dependency-name: postgres
+        versions: ['>= 19']
 
   # --- Dockerfile base images (stack-images) --------------------------------
   # docker/{web,deploy,backup}.Dockerfile and docker/edge-client-check/ (FCP's
@@ -170,6 +176,11 @@ updates:
     patterns: ['*']
     cooldown:
       default-days: 1
+    ignore:
+      # The backup sidecar's pg_dump must match the server, held at 18 in the
+      # compose entry above.
+      - dependency-name: postgres
+        versions: ['>= 19']
 
   # --- test-only Dockerfile base images --------------------------------------
   - package-ecosystem: docker
