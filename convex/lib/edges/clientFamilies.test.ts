@@ -18,6 +18,9 @@ describe('classifyClient', () => {
     ['v2rayNG/1.9', 'v2rayng', 'links'],
     ['Shadowrocket/2.2', 'xray-links', 'links'],
     ['Anywhere/1.0', 'xray-links', 'links'],
+    // What the app's subscription fetch really sends.
+    ['Anywhere', 'xray-links', 'links'],
+    ['Anywhereelse/1.0', 'other', 'links'],
     ['Mozilla/5.0 (works anywhere)', 'other', 'links'],
     ['curl/8.0', 'other', 'links'],
     ['', 'other', 'links'],

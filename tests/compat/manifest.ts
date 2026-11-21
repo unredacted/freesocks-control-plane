@@ -65,7 +65,8 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'Anywhere',
     format: 'links',
-    userAgents: ['Anywhere/1.0'],
+    // What its SubscriptionFetcher sends: the bare name.
+    userAgents: ['Anywhere'],
     application: 'manual',
     limitation: 'Apple hardware and installed App Store build required.',
   },
