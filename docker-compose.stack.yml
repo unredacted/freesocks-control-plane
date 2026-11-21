@@ -135,7 +135,7 @@ services:
     # data directory, and with it the collation order its indexes were built on.
     # docker/backup.Dockerfile must pin the same image; Dependabot moves both in
     # one PR (.github/dependabot.yml, `stack-images`).
-    image: postgres:18.7-trixie@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
     pids_limit: 512
     restart: unless-stopped
     logging: *log
