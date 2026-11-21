@@ -20,6 +20,7 @@ export const EDGE_PROVIDER_IDS = [
   'cloudfront',
   'gandi',
   'edgeone',
+  'cloudflareSpectrum',
 ] as const;
 export type EdgeProviderId = (typeof EDGE_PROVIDER_IDS)[number];
 

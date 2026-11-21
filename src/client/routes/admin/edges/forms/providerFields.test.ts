@@ -163,3 +163,26 @@ describe('provider fields: a place is a location, a CDN zone included', () => {
     expect(stale).toMatchObject({ zoneId: '', zoneName: '' });
   });
 });
+
+describe('a Cloudflare Spectrum account can use a Cloudflare CDN token', () => {
+  const field = PROVIDER_FIELDS.cloudflareSpectrum.find((f) => f.key === 'tokenAccountId')!;
+  const accounts = [
+    { id: 'cdn', name: 'CDN', provider: 'cloudflare' },
+    { id: 'lb', name: 'LB', provider: 'gcore' },
+    { id: 'tcp', name: 'TCP', provider: 'cloudflareSpectrum' },
+  ] as never;
+
+  test('the token choice lists the Cloudflare CDN accounts only, and is optional', () => {
+    expect(field).toMatchObject({ step: 'credentials', required: false, from: 'tokenAccounts' });
+    expect(optionsFor(field, { discovered: null, accounts, values: {} })).toEqual([
+      { id: 'cdn', label: 'CDN' },
+    ]);
+  });
+
+  test('the choice is sent as an account setting, never a place', () => {
+    expect(field.location).toBeUndefined();
+    expect(settingsBody('cloudflareSpectrum', { tokenAccountId: 'cdn' })).toEqual({
+      tokenAccountId: 'cdn',
+    });
+  });
+});

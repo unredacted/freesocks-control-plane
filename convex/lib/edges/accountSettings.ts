@@ -90,6 +90,21 @@ export const EDGE_SETTINGS_SCHEMAS = {
     secretId: z.string().regex(/^[A-Za-z0-9]{12,128}$/, 'SecretId is 12 to 128 letters and digits'),
     site: z.enum(['intl', 'china']).optional(),
   }),
+  // L4: Cloudflare Spectrum applications with a Worker origin. The token
+  // alone, like the Cloudflare DNS account; `accountId` is the account an
+  // account-owned token belongs to. The relay Worker always lives in the
+  // account of the zone its application is in (Cloudflare requires it), read
+  // from the zone when the edge is made; the zones the token reaches are
+  // locations. `tokenAccountId`: a Cloudflare CDN account whose token this
+  // account uses instead of its own (EDGE_TOKEN_SOURCE).
+  cloudflareSpectrum: z.object({
+    type: z.literal('cloudflareSpectrum'),
+    accountId: z
+      .string()
+      .regex(/^[0-9a-f]{32}$/)
+      .optional(),
+    tokenAccountId: z.string().min(1).max(64).optional(),
+  }),
 } as const;
 
 /** A DNS zone id as the zone's provider issues it (Cloudflare: 32 hex characters). */
@@ -182,6 +197,13 @@ export const EDGE_PLACEMENT_SCHEMAS = {
       message: 'a DNS account and its zone go together',
       path: ['dnsZoneId'],
     }),
+  // A Cloudflare zone on a plan that takes a Spectrum application with a
+  // Worker origin (Pro or Business: one such application per zone).
+  cloudflareSpectrum: z.object({
+    type: z.literal('cloudflareSpectrum'),
+    zoneId: ZONE_ID,
+    zoneName: ZONE_NAME,
+  }),
 } as const;
 
 export type EdgePlacementFor<P extends EdgeProviderId> = z.infer<
@@ -203,7 +225,29 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   cloudfront: ['secretAccessKey'],
   gandi: ['apiToken'],
   edgeone: ['secretKey'],
+  cloudflareSpectrum: ['apiToken'],
 };
+
+/**
+ * Providers whose account may use ANOTHER account's token instead of its own:
+ * the provider that lends it. One Cloudflare token can run the CDN account and
+ * the Spectrum account alike; the borrowing account names the lender in its
+ * settings (`tokenAccountId`) and holds a copy of its credentials, which every
+ * change of the lender's credentials rewrites (edgeProviderAccounts.ts).
+ */
+export const EDGE_TOKEN_SOURCE: Partial<Record<EdgeProviderId, EdgeProviderId>> = {
+  cloudflareSpectrum: 'cloudflare',
+};
+
+/** The account a borrowing account takes its token from, if it names one. */
+export function tokenAccountOf(
+  provider: EdgeProviderId,
+  settings: Record<string, unknown> | undefined,
+): string | null {
+  if (!EDGE_TOKEN_SOURCE[provider]) return null;
+  const id = settings?.tokenAccountId;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
 
 /**
  * Secret credential fields a provider takes but does not require: an EdgeOne
@@ -226,6 +270,7 @@ export const EDGE_PLACEMENT_SETTINGS: Record<EdgeProviderId, readonly string[]> 
   cloudfront: ['dnsAccountId', 'zoneId', 'zoneName'],
   gandi: ['zoneId', 'zoneName'],
   edgeone: ['zoneId', 'zoneName', 'dnsAccountId', 'dnsZoneId'],
+  cloudflareSpectrum: ['zoneId', 'zoneName'],
 };
 
 /**
@@ -249,6 +294,7 @@ export const EDGE_OBSERVED_PLACEMENT: Record<
   cloudfront: {},
   gandi: {},
   edgeone: {},
+  cloudflareSpectrum: {},
 };
 
 /** Account settings that still LOCATE every edge of the account: locked while any non-destroyed edge references it. */
@@ -264,6 +310,7 @@ export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> =
   cloudfront: [],
   gandi: [],
   edgeone: ['site'],
+  cloudflareSpectrum: [],
 };
 
 /** Defaults frozen into each new edge's provisionIntent (L7); a change never moves an existing edge. */
@@ -277,6 +324,7 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   cloudfront: [],
   gandi: [],
   edgeone: [],
+  cloudflareSpectrum: [],
 };
 
 /**
@@ -298,6 +346,7 @@ export const EDGE_RETEST_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   cloudfront: [],
   gandi: [],
   edgeone: [],
+  cloudflareSpectrum: [],
 };
 
 /**
@@ -338,6 +387,7 @@ export const EDGE_INTENT_FACTS: Record<
   cloudfront: {},
   gandi: {},
   edgeone: {},
+  cloudflareSpectrum: {},
 };
 
 /**
@@ -355,6 +405,7 @@ export const EDGE_LEGACY_OPTION_SETTINGS: Record<EdgeProviderId, readonly string
   cloudfront: [],
   gandi: [],
   edgeone: [],
+  cloudflareSpectrum: [],
 };
 
 /** The option defaults a settings payload (or a stored row) still carries the old way. */
@@ -376,6 +427,7 @@ export const EDGE_CREDENTIAL_IDENTIFIER_FIELDS: Record<EdgeProviderId, readonly 
   cloudfront: ['accessKeyId'],
   gandi: [],
   edgeone: ['secretId'],
+  cloudflareSpectrum: ['accountId', 'tokenAccountId'],
 };
 
 /**
@@ -395,6 +447,7 @@ export const EDGE_LEGACY_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   cloudfront: [],
   gandi: [],
   edgeone: [],
+  cloudflareSpectrum: [],
 };
 
 /** The legacy keys a stored settings object still carries (usually none). */

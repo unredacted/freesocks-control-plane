@@ -1743,6 +1743,62 @@ export const EDGEONE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   },
 ];
 
+// --- Cloudflare Spectrum (L4) --------------------------------------------------------
+
+/**
+ * A Spectrum application with a Worker origin: FCP uploads a relay Worker
+ * holding the node's address and creates the application on the location's
+ * zone. Cloudflare picks the application's anycast addresses.
+ */
+export const SpectrumTemplate = z.object({
+  /**
+   * Publishing needs an IPv4 (the template Host and every member's primary
+   * entry are v4), so an IPv6-only application is refused, as on the other L4
+   * providers.
+   */
+  ipFamily: z
+    .enum(['dual', 'ipv4', 'ipv6'])
+    .default('dual')
+    .refine((f) => f !== 'ipv6', {
+      message: 'IPv6-only edges cannot be published (an IPv4 is required): use dual or ipv4',
+    }),
+  /**
+   * The relay Worker's CPU limit in milliseconds a connection. Absent = the
+   * Workers plan's default (30 seconds on Workers Paid; a Free plan has 10 ms
+   * and refuses a limit).
+   */
+  cpuLimitMs: z.number().int().min(10).max(300_000).optional(),
+});
+export type SpectrumTemplateParams = z.infer<typeof SpectrumTemplate>;
+
+export const SPECTRUM_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
+  {
+    key: 'ipFamily',
+    label: 'IP versions',
+    type: 'select',
+    prominent: true,
+    group: 'Application',
+    help: 'An IPv4 address, or IPv4 and IPv6. Cloudflare picks both addresses.',
+    options: [
+      { value: 'dual', label: 'IPv4 and IPv6' },
+      { value: 'ipv4', label: 'IPv4 only' },
+    ],
+    wire: { resource: 'spectrum_app', field: 'edge_ips.connectivity', manual: true },
+    live: 'rebuild',
+  },
+  {
+    key: 'cpuLimitMs',
+    label: 'Worker CPU limit',
+    type: 'number',
+    unit: 'ms',
+    group: 'Relay Worker',
+    advanced: true,
+    help: "The relay Worker's CPU time limit for one connection. Empty keeps the plan's default. Needs Workers Paid; raise it when long sessions are cut.",
+    wire: { resource: 'worker', field: 'limits.cpu_ms', manual: true },
+    live: 'rebuild',
+  },
+];
+
 // --- certificate options (CDN fronts) -------------------------------------------------
 
 /**
@@ -1858,6 +1914,7 @@ export const EDGE_TEMPLATES: Record<EdgeProviderId, TemplateDefinition> = {
   cloudfront: template(CloudFrontTemplate, CLOUDFRONT_TEMPLATE_FIELDS),
   gandi: template(GandiTemplate, GANDI_TEMPLATE_FIELDS),
   edgeone: template(EdgeOneTemplate, EDGEONE_TEMPLATE_FIELDS),
+  cloudflareSpectrum: template(SpectrumTemplate, SPECTRUM_TEMPLATE_FIELDS),
 };
 
 export interface CertificateDefinition {
@@ -1883,6 +1940,8 @@ export const EDGE_CERTIFICATE_OPTIONS: Record<EdgeProviderId, CertificateDefinit
   gandi: certificate(NO_CERTIFICATE, []),
   // EdgeOne's free certificate, one per front: nothing to choose.
   edgeone: certificate(NO_CERTIFICATE, []),
+  // An L4 relay: TLS passes through untouched.
+  cloudflareSpectrum: certificate(NO_CERTIFICATE, []),
 };
 
 /** Every option of a provider, tuning then certificate: what the forms render. */

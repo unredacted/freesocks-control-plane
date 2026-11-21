@@ -49,6 +49,9 @@ export function placeKeyOf(placement: EdgePlacement): string {
     case 'cloudfront':
     case 'gandi':
     case 'edgeone':
+    // A Spectrum application's addresses are anycast from every Cloudflare
+    // data center: its zone is not a place.
+    case 'cloudflareSpectrum':
       return ANYCAST_PLACE;
   }
 }

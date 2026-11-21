@@ -44,6 +44,8 @@ const EMPTY_TEMPLATE_HASHES: Record<string, string> = {
   gandi: '08f44b07b5901a25',
   // Its first schema (every option optional, like CloudFront's): pinned from the start.
   edgeone: 'cc4939d2bf8fe80e',
+  // Its first schema (`ipFamily: dual`): pinned from the start.
+  cloudflareSpectrum: 'f83b106e29ccdae6',
 };
 
 type Node = {

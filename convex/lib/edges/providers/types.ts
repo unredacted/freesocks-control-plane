@@ -88,6 +88,20 @@ export interface CloudflareConfig {
    */
   frontsTraffic?: boolean;
 }
+/**
+ * A Cloudflare zone that takes a Spectrum application with a Worker origin
+ * (L4). The relay Worker is uploaded to the zone's own account, read from the
+ * zone when the edge is made (Cloudflare requires the two to share an
+ * account). `accountId`: the account an account-owned token belongs to, for
+ * its verify endpoint, like `CloudflareConfig`.
+ */
+export interface SpectrumConfig {
+  type: 'cloudflareSpectrum';
+  apiToken: string;
+  zoneId: string;
+  zoneName: string;
+  accountId?: string;
+}
 export interface FastlyConfig {
   type: 'fastly';
   apiToken: string;
@@ -171,6 +185,7 @@ export type EdgeProviderConfig =
   | ScalewayConfig
   | OvhConfig
   | CloudflareConfig
+  | SpectrumConfig
   | FastlyConfig
   | CloudFrontConfig
   | EdgeOneConfig;
@@ -217,6 +232,8 @@ export type ResourceKind =
   | 'attach_ip'
   /** Gcore: Advanced DDoS protection on the load balancer's public address (gcoreDdos.ts). */
   | 'create_ddos_profile'
+  /** Spectrum: the relay Worker a Spectrum application forwards to (cloudflareSpectrum.ts). */
+  | 'create_worker'
   // L7 (CDN) kinds
   | 'create_dns_record'
   | 'create_origin_rule'

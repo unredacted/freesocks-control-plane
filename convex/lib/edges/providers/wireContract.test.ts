@@ -56,6 +56,7 @@ import type {
   OvhConfig,
   ResourceStep,
   ScalewayConfig,
+  SpectrumConfig,
   StepOutcome,
   UpcloudConfig,
 } from './types';
@@ -78,6 +79,7 @@ import {
   __setCloudflareCaaLookup,
 } from './cloudflare';
 import { cloudflareApi } from './dns/cloudflareDns';
+import { __setSpectrumResolver, spectrumAppName, spectrumProvider } from './cloudflareSpectrum';
 import { fastlyProvider, __setFastlyCaaLookup, __setFastlyDnsClientFactory } from './fastly';
 import { __setFastlyBasePath } from './fastly/sdk';
 import {
@@ -1443,6 +1445,247 @@ describe('wire contract: cloudflare', () => {
 });
 
 // --- fastly ------------------------------------------------------------------------------
+
+describe('wire contract: cloudflareSpectrum', () => {
+  afterEach(() => {
+    __setCloudflareApiFactory(null);
+    __setSpectrumResolver(null);
+    vi.unstubAllGlobals();
+  });
+
+  const ZONE = '023e105f4ecef8ad9ca31a8372d0c353';
+  const ACCOUNT = '9a7806061c88ada191ed06f989cc3dac';
+  const TAG = '1f9a2b3c4d5e6f708192a3b4c5d6e7f8';
+  const APP = 'ea95132c15732412d22c1476fa83f27a';
+  const NAME = 'fcp-relay-o1-0badf00d';
+
+  const cfg: SpectrumConfig = {
+    type: 'cloudflareSpectrum',
+    apiToken: 'SECRET_CF_TOKEN',
+    zoneId: ZONE,
+    zoneName: 'example.net',
+  };
+  const tpl = spectrumProvider.templateSchema.parse({}) as never;
+  const spec: EdgeSpec = {
+    name: NAME,
+    listeners: [{ edgePort: 443, members: [{ address: ORIGIN_IP, port: 443 }] }],
+  };
+  const APP_NAME = spectrumAppName(cfg, spec);
+
+  const env = (result: unknown, extra: Record<string, unknown> = {}) =>
+    jsonRes({ success: true, errors: [], messages: [], result, ...extra });
+  const page = (result: unknown[]) =>
+    env(result, {
+      result_info: { page: 1, per_page: 100, count: result.length, total_count: result.length },
+    });
+  const app = {
+    id: APP,
+    dns: { type: 'CNAME', name: APP_NAME },
+    protocol: 'tcp/443',
+    traffic_type: 'worker',
+    origin_worker_id: TAG,
+    created_on: '2026-11-21T00:00:00Z',
+    modified_on: '2026-11-21T00:00:00Z',
+  };
+
+  function route(over: { accountToken?: boolean; noApps?: boolean } = {}) {
+    return (c: Captured): Response => {
+      const p = c.path;
+      if (p.endsWith('/user/tokens/verify'))
+        return over.accountToken
+          ? jsonRes({ success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] }, 401)
+          : env({ id: 't', status: 'active' });
+      if (/\/accounts\/[^/]+\/tokens\/verify$/.test(p)) return env({ id: 't', status: 'active' });
+      if (p.endsWith('/zones'))
+        return page([
+          {
+            id: ZONE,
+            name: 'example.net',
+            status: 'active',
+            paused: false,
+            account: { id: ACCOUNT },
+          },
+        ]);
+      if (p.endsWith(`/zones/${ZONE}`))
+        return env({ id: ZONE, name: 'example.net', status: 'active', account: { id: ACCOUNT } });
+      if (p.endsWith(`/accounts/${ACCOUNT}/workers/scripts`))
+        return env([{ id: NAME, tag: TAG, handlers: ['connect'] }]);
+      if (p.endsWith(`/accounts/${ACCOUNT}/workers/scripts/${NAME}`))
+        return c.method === 'DELETE'
+          ? env(null)
+          : env({ id: NAME, tag: TAG, handlers: ['connect'], startup_time_ms: 1 });
+      if (p.endsWith(`/zones/${ZONE}/spectrum/apps`))
+        return c.method === 'POST' ? env(app) : page(over.noApps ? [] : [app]);
+      if (p.endsWith(`/zones/${ZONE}/spectrum/apps/${APP}`))
+        return c.method === 'DELETE' ? env({ id: APP }) : env(app);
+      return jsonRes({ success: false, errors: [{ code: 7003, message: 'not found' }] }, 404);
+    };
+  }
+
+  /**
+   * The SDK's multipart upload first checks FormData support with a local
+   * `fetch('data:,')`, which never leaves the process: not a provider call.
+   */
+  const wire = (calls: readonly Captured[]) => calls.filter((c) => !c.url.startsWith('data:'));
+
+  function useStub() {
+    __setCloudflareApiFactory((c, f) => cloudflareApi(c, f ?? (globalThis.fetch as typeof fetch)));
+    __setSpectrumResolver(() => ({
+      resolve4: async () => ['203.0.113.9'],
+      resolve6: async () => ['2001:db8::9'],
+    }));
+  }
+
+  test('the lifecycle stays inside the contract and exercises all of it', async () => {
+    const stub = mockFetch(route({ accountToken: true }));
+    useStub();
+    expect(await spectrumProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+    stub.route(route());
+    expect(await spectrumProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+    expect(await spectrumProvider.discoverOptions!({ apiToken: cfg.apiToken })).toMatchObject({
+      zones: [{ id: ZONE, label: 'example.net' }],
+    });
+
+    const steps = spectrumProvider.planProvision(cfg, spec, tpl);
+    expect(steps.map((s) => s.kind)).toEqual(['create_worker', 'create_lb']);
+    let ledger: Ledger = { steps: [], resources: [] };
+    for (const step of steps) {
+      const out = await spectrumProvider.runStep(cfg, step, spec, tpl, ledger);
+      ledger = apply(ledger, step, out);
+      expect(out.status).toBe('done');
+    }
+    for (const step of steps) {
+      const found = await spectrumProvider.discover(cfg, step, spec, ledger, 1);
+      expect(found.status).toBe('found');
+    }
+    expect(await spectrumProvider.describe(cfg, ledger)).toMatchObject({
+      state: 'active',
+      addresses: { v4: '203.0.113.9', v6: '2001:db8::9' },
+      health: 'unknown',
+    });
+    expect((await spectrumProvider.inspect(cfg, ledger)).summary).toMatchObject({
+      members: [{ address: ORIGIN_IP, port: 443 }],
+      listeners: [{ port: 443, protocol: 'tcp' }],
+    });
+    await spectrumProvider.inventory(cfg);
+    // The application references the Worker: it goes first.
+    expect(await destroyAll(spectrumProvider as never, cfg as never, ledger)).toEqual([
+      'lb',
+      'worker',
+    ]);
+
+    expectContractCovered('cloudflareSpectrum', fromCaptured(wire(stub.calls)));
+    expect(
+      wire(stub.calls).every((c) => c.headers.authorization === `Bearer ${cfg.apiToken}`),
+    ).toBe(true);
+    // The application forwards one TCP port to the Worker, in the Worker's
+    // zone, with both address families.
+    const create = stub.calls.find((c) => c.method === 'POST' && c.path.endsWith('/spectrum/apps'));
+    expect(create!.body).toEqual({
+      dns: { type: 'CNAME', name: APP_NAME },
+      protocol: 'tcp/443',
+      traffic_type: 'worker',
+      origin_worker_id: TAG,
+      edge_ips: { type: 'dynamic', connectivity: 'all' },
+    });
+    // The Worker is uploaded into the zone's own account.
+    expect(
+      stub.calls.some(
+        (c) =>
+          c.method === 'PUT' && c.path.endsWith(`/accounts/${ACCOUNT}/workers/scripts/${NAME}`),
+      ),
+    ).toBe(true);
+    // The name in DNS never carries the edge's name (it holds the node's slug).
+    expect(APP_NAME).not.toContain('relay');
+  });
+
+  test('an allocating call is never retried and never replayed after a lost response', async () => {
+    const [, appStep] = spectrumProvider.planProvision(cfg, spec, tpl);
+    const withWorker: Ledger = {
+      steps: [],
+      resources: [resource('worker', 'worker', NAME, { accountId: ACCOUNT, tag: TAG })],
+    };
+    for (const status of [429, 500] as const) {
+      const stub = mockFetch(() =>
+        jsonRes({ success: false, errors: [{ code: 10000, message: 'busy' }] }, status),
+      );
+      useStub();
+      expect(
+        await caught(() => spectrumProvider.runStep(cfg, appStep!, spec, tpl, withWorker)),
+      ).toBeTruthy();
+      expect(stub.calls).toHaveLength(1);
+      vi.unstubAllGlobals();
+    }
+    const recovery = mockFetch(route());
+    useStub();
+    const found = await spectrumProvider.discover(cfg, appStep!, spec, withWorker, 1);
+    expect(found).toMatchObject({ status: 'found', resources: [{ kind: 'lb', resourceId: APP }] });
+    expect(recovery.calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    expectDeclared('cloudflareSpectrum', fromCaptured(wire(recovery.calls)));
+    // Nothing listed yet: unresolved on the first look, never absent at once.
+    recovery.route(route({ noApps: true }));
+    expect(await spectrumProvider.discover(cfg, appStep!, spec, withWorker, 1)).toEqual({
+      status: 'unresolved',
+    });
+  });
+
+  test('a second Worker application in the zone is refused, not retried', async () => {
+    mockFetch((c) =>
+      c.method === 'POST'
+        ? jsonRes(
+            {
+              success: false,
+              errors: [{ code: 11034, message: 'zone already has a worker application' }],
+            },
+            400,
+          )
+        : route()(c),
+    );
+    useStub();
+    const [, appStep] = spectrumProvider.planProvision(cfg, spec, tpl);
+    const out = await spectrumProvider.runStep(cfg, appStep!, spec, tpl, {
+      steps: [],
+      resources: [resource('worker', 'worker', NAME, { accountId: ACCOUNT, tag: TAG })],
+    });
+    expect(out).toMatchObject({ status: 'partial', refused: true, code: 'create_refused' });
+  });
+
+  test('a destroy after a partial provisioning touches only the recorded children', async () => {
+    const stub = mockFetch(route());
+    useStub();
+    const partial: Ledger = {
+      steps: [],
+      resources: [resource('worker', 'worker', NAME, { accountId: ACCOUNT, tag: TAG })],
+    };
+    expect(await destroyAll(spectrumProvider as never, cfg as never, partial)).toEqual(['worker']);
+    const deletes = stub.calls.filter((c) => c.method === 'DELETE');
+    expect(deletes.map((c) => c.path.split('/client/v4')[1])).toEqual([
+      `/accounts/${ACCOUNT}/workers/scripts/${NAME}`,
+    ]);
+    expectDeclared('cloudflareSpectrum', fromCaptured(wire(stub.calls)));
+  });
+
+  test('errors carry no token and no origin address', async () => {
+    mockFetch(() =>
+      jsonRes(
+        {
+          success: false,
+          errors: [{ code: 10000, message: `bad ${cfg.apiToken} ${ORIGIN_IP}` }],
+          result: null,
+        },
+        403,
+      ),
+    );
+    useStub();
+    const [step] = spectrumProvider.planProvision(cfg, spec, tpl);
+    const err = await caught(() =>
+      spectrumProvider.runStep(cfg, step!, spec, tpl, { steps: [], resources: [] }),
+    );
+    const blob = errorBlob(err);
+    expect(blob).not.toContain('SECRET_');
+    expect(blob).not.toContain(ORIGIN_IP);
+  });
+});
 
 describe('wire contract: fastly', () => {
   const HOST = 'k3m7q9zb.example.org';

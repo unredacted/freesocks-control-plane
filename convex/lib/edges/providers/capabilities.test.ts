@@ -28,6 +28,7 @@ import {
 } from './capabilities';
 import { EDGE_PROVIDERS } from './registry';
 import { __setScalewayApiFactory } from './scaleway';
+import { __setSpectrumResolver } from './cloudflareSpectrum';
 import { __resetOvhSkewCache } from './ovh';
 import type { EdgeSpec, EdgeProviderConfig, Ledger } from './types';
 import {
@@ -50,6 +51,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   __setScalewayApiFactory(null);
   __resetOvhSkewCache();
+  __setSpectrumResolver(null);
 });
 
 const spec: EdgeSpec = {
@@ -82,6 +84,12 @@ const CONFIGS: Record<(typeof EDGE_PROVIDER_IDS)[number], EdgeProviderConfig> = 
   cloudflare: {
     type: 'cloudflare',
     apiToken: 'SECRET_CF',
+    zoneId: '0123456789abcdef0123456789abcdef',
+    zoneName: 'example.org',
+  },
+  cloudflareSpectrum: {
+    type: 'cloudflareSpectrum',
+    apiToken: 'SECRET_SPECTRUM',
     zoneId: '0123456789abcdef0123456789abcdef',
     zoneName: 'example.org',
   },
@@ -145,6 +153,7 @@ const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<s
     subnetId: 's',
   },
   cloudflare: { zoneId: '0123456789abcdef0123456789abcdef', zoneName: 'example.org' },
+  cloudflareSpectrum: { zoneId: '0123456789abcdef0123456789abcdef', zoneName: 'example.org' },
   fastly: {
     dnsAccountId: 'acct',
     zoneId: '0123456789abcdef0123456789abcdef',
@@ -185,6 +194,22 @@ const HEALTHY_LB = {
   vip_address: '203.0.113.5',
   floatingIp: { id: 'fip', ip: '203.0.113.5' },
 };
+
+/** A Spectrum application as Cloudflare's envelope carries it (its addresses come from DNS). */
+const HEALTHY_SPECTRUM_APP = {
+  success: true,
+  errors: [],
+  messages: [],
+  result: { id: 'lb-1', dns: { type: 'CNAME', name: 'abc.example.org' }, protocol: 'tcp/443' },
+};
+
+/** The application's name resolves (Spectrum reads its addresses over DNS). */
+function healthySpectrumDns() {
+  __setSpectrumResolver(() => ({
+    resolve4: async () => ['203.0.113.5'],
+    resolve6: async () => ['2001:db8::5'],
+  }));
+}
 
 function healthyScalewayApi() {
   const list = (items: unknown[]) => Object.assign(Promise.resolve({}), { all: async () => items });
@@ -421,9 +446,14 @@ describe('origin capability record ⇔ adapters', () => {
     '%s: memberHealth mirrors whether describe() reports a healthy balancer as online',
     async (id) => {
       mockFetch((c) =>
-        c.path.endsWith('/auth/time') ? jsonRes(1_700_000_000) : jsonRes(HEALTHY_LB),
+        c.path.endsWith('/auth/time')
+          ? jsonRes(1_700_000_000)
+          : c.path.includes('/spectrum/apps/')
+            ? jsonRes(HEALTHY_SPECTRUM_APP)
+            : jsonRes(HEALTHY_LB),
       );
       healthyScalewayApi();
+      healthySpectrumDns();
       const d = await EDGE_PROVIDERS[id].describe(CONFIGS[id], lbLedger);
       expect(d.state).toBe('active');
       expect(d.health === 'online').toBe(EDGE_PROVIDER_CAPABILITIES[id].memberHealth);

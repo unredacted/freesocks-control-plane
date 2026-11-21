@@ -8,6 +8,7 @@
    *   open: boolean (bindable)
    *   account: EdgeProviderAccountAdmin
    *   credentialFields: string[]      the secret field names of this provider
+   *   accounts: EdgeProviderAccountAdmin[]  every account (who lends or borrows a token)
    */
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -28,8 +29,21 @@
     open: boolean;
     account: EdgeProviderAccountAdmin;
     credentialFields: string[];
+    accounts?: EdgeProviderAccountAdmin[];
   }
-  let { open = $bindable(false), account, credentialFields }: Props = $props();
+  let { open = $bindable(false), account, credentialFields, accounts = [] }: Props = $props();
+
+  /** The account whose token this one uses (Cloudflare Spectrum), if any. */
+  const lender = $derived.by(() => {
+    const id = (account.settings as Record<string, unknown> | undefined)?.['tokenAccountId'];
+    return typeof id === 'string' ? (accounts.find((x) => x.id === id) ?? null) : null;
+  });
+  /** The accounts that use this account's token and get the new one with it. */
+  const borrowers = $derived(
+    accounts.filter(
+      (x) => (x.settings as Record<string, unknown> | undefined)?.['tokenAccountId'] === account.id,
+    ),
+  );
 
   const qc = useQueryClient();
   /** Public identifiers that change together with a secret (an access key id). */
@@ -105,6 +119,18 @@
         if (canSubmit && !rotate.isPending) rotate.mutate();
       }}
     >
+      {#if lender}
+        <p class="rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm">
+          This account uses the token of {lender.name}, and gets that account's new token whenever
+          it is rotated. A token entered here becomes this account's own, and it stops using {lender.name}'s.
+        </p>
+      {:else if borrowers.length > 0}
+        <p class="rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm">
+          {borrowers.map((x) => x.name).join(', ')}
+          {borrowers.length === 1 ? 'uses' : 'use'} this token too and get the new one with it. The new
+          token is tested for {borrowers.length === 1 ? 'that account' : 'each of them'} first.
+        </p>
+      {/if}
       {#each identifierFields as f (f.key)}
         <div class="grid gap-1.5">
           <Label for={`rot-id-${f.key}`}>{f.label}</Label>
