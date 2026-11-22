@@ -235,6 +235,8 @@ export const insertSubscription = internalMutation({
     // listed country or `ZZ`, already checked by the HTTP layer and checked
     // again here. Wins over a carried one. Stored only on a freedom-family key.
     region: v.optional(v.string()),
+    // Bytes spent on earlier keys this period (account.ts carriedTrafficLimit).
+    periodCarryBytes: v.optional(v.number()),
   },
   handler: async (ctx, a) => {
     // The fronted-URL token: carried from the old row when requested, else a
@@ -1348,6 +1350,30 @@ export const setPlacementAndClearCache = internalMutation({
 });
 
 /**
+ * Record a superseded key's spending during its grace against the member's
+ * current key (lifecycle.settleGraceUsage). Serializable: the spend is
+ * recomputed from the stored base, so two sweeps cannot both count it. Returns
+ * the key whose provider limit to lower, or null when there is none.
+ */
+export const recordGraceSpend = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), usedBytes: v.number() },
+  handler: async (ctx, { subscriptionId, usedBytes }) => {
+    const old = await ctx.db.get(subscriptionId);
+    if (!old || old.state !== 'disabled' || old.graceBaseUsedBytes === undefined) return null;
+    const extraBytes = Math.floor(usedBytes) - old.graceBaseUsedBytes;
+    if (extraBytes <= 0) return null;
+    await ctx.db.patch(old._id, { graceBaseUsedBytes: Math.floor(usedBytes) });
+    const user = await ctx.db.get(old.userId);
+    const currentId = user?.currentSubscriptionId;
+    const current = currentId && currentId !== old._id ? await ctx.db.get(currentId) : null;
+    if (!current || current.state !== 'active' || current.userId !== old.userId) return null;
+    await ctx.db.patch(current._id, {
+      periodCarryBytes: (current.periodCarryBytes ?? 0) + extraBytes,
+    });
+    return { backend: current.backend, backendUserId: current.backendUserId, extraBytes };
+  },
+});
+/**
  * Soft-delete a subscription with a grace window: state→disabled,
  * deletedAt = now + graceMs; the backend user is left alive so the URL keeps
  * working until the tombstone sweep (P5d) hard-deletes it. Re-tombstoning a
@@ -1355,8 +1381,13 @@ export const setPlacementAndClearCache = internalMutation({
  * regenerate can't reset the grace clock.
  */
 export const tombstoneWithGrace = internalMutation({
-  args: { backendUserId: v.string(), graceMs: v.number() },
-  handler: async (ctx, { backendUserId, graceMs }) => {
+  args: {
+    backendUserId: v.string(),
+    graceMs: v.number(),
+    // The usage the successor's limit already counted (quota carryover).
+    graceBaseUsedBytes: v.optional(v.number()),
+  },
+  handler: async (ctx, { backendUserId, graceMs, graceBaseUsedBytes }) => {
     const sub = await ctx.db
       .query('subscriptions')
       .withIndex('by_backend_user_id', (q) => q.eq('backendUserId', backendUserId))
@@ -1364,7 +1395,12 @@ export const tombstoneWithGrace = internalMutation({
     if (!sub) return null;
     if (sub.state !== 'active') return sub.deletedAt != null ? { deletedAt: sub.deletedAt } : null;
     const deletedAt = Date.now() + graceMs;
-    await ctx.db.patch(sub._id, { state: 'disabled', deletedAt, updatedAt: Date.now() });
+    await ctx.db.patch(sub._id, {
+      state: 'disabled',
+      deletedAt,
+      updatedAt: Date.now(),
+      ...(graceBaseUsedBytes !== undefined ? { graceBaseUsedBytes } : {}),
+    });
     // A replaced key keeps its country through the grace, but only the key
     // that replaced it is counted (lib/countryKeyCounts.ts).
     await bumpCountryKeysForRow(ctx, sub, { ...sub, state: 'disabled' });
@@ -1396,11 +1432,20 @@ export const tombstoneWithGrace = internalMutation({
 const TOMBSTONE_RETRY_BACKOFF_MS = [30_000, 120_000, 480_000, 1_800_000];
 
 export const tombstoneWithGraceAction = internalAction({
-  args: { backendUserId: v.string(), graceMs: v.number(), attempt: v.optional(v.number()) },
-  handler: async (ctx, { backendUserId, graceMs, attempt }): Promise<null> => {
+  args: {
+    backendUserId: v.string(),
+    graceMs: v.number(),
+    attempt: v.optional(v.number()),
+    graceBaseUsedBytes: v.optional(v.number()),
+  },
+  handler: async (ctx, { backendUserId, graceMs, attempt, graceBaseUsedBytes }): Promise<null> => {
     const n = attempt ?? 0;
     try {
-      await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, { backendUserId, graceMs });
+      await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
+        backendUserId,
+        graceMs,
+        graceBaseUsedBytes,
+      });
       return null;
     } catch (err) {
       if (n >= TOMBSTONE_RETRY_BACKOFF_MS.length) {
@@ -1419,7 +1464,7 @@ export const tombstoneWithGraceAction = internalAction({
       await ctx.scheduler.runAfter(
         TOMBSTONE_RETRY_BACKOFF_MS[n]!,
         internal.subscriptions.tombstoneWithGraceAction,
-        { backendUserId, graceMs, attempt: n + 1 },
+        { backendUserId, graceMs, attempt: n + 1, graceBaseUsedBytes },
       );
       return null;
     }

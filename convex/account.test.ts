@@ -12,6 +12,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { SwitchServerReason } from '../src/shared/contracts/switchServerReasons';
 import { signValue } from './lib/cookies';
+import { livePeriodCarry } from './account';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -58,6 +59,98 @@ async function seedUser(
     ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
   );
 }
+
+describe('quota carryover across re-issues (Review D-M3)', () => {
+  const GB = 1024 * 1024 * 1024; // the mock backend reports 1 GB used on every key
+
+  test('a chain of regenerates keeps every earlier key in the period count', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+
+    await t.run(async (ctx) => {
+      const subs = (await ctx.db.query('subscriptions').collect()).sort(
+        (a, b) => a._creationTime - b._creationTime,
+      );
+      expect(subs.map((s) => s.periodCarryBytes)).toEqual([undefined, GB, 2 * GB]);
+      // Each superseded key records the usage its successor already counted.
+      expect(subs.map((s) => s.graceBaseUsedBytes)).toEqual([GB, GB, undefined]);
+    });
+  });
+
+  test('an unmetered tier carries nothing', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    await t.run((ctx) => ctx.db.patch(tierId, { monthlyTrafficGb: 0, isDefaultFree: false }));
+    const userId = await seedUser(t, tierId);
+
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+
+    await t.run(async (ctx) => {
+      for (const s of await ctx.db.query('subscriptions').collect()) {
+        expect(s.periodCarryBytes).toBeUndefined();
+        expect(s.graceBaseUsedBytes).toBeUndefined();
+      }
+    });
+  });
+
+  test('the tombstone sweep charges grace-period spending to the current key once', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const [oldId, currentId] = await t.run(async (ctx) => {
+      const subs = (await ctx.db.query('subscriptions').collect()).sort(
+        (a, b) => a._creationTime - b._creationTime,
+      );
+      // The old key had moved nothing when it was replaced; it then spent
+      // 1 GB (what the mock reports) during the grace. Make the grace elapse.
+      await ctx.db.patch(subs[0]!._id, { graceBaseUsedBytes: 0, deletedAt: Date.now() - 1 });
+      return [subs[0]!._id, subs[1]!._id];
+    });
+
+    await t.action(internal.lifecycle.sweepTombstones, {});
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(currentId))!.periodCarryBytes).toBe(2 * GB);
+      expect((await ctx.db.get(oldId))!.graceBaseUsedBytes).toBe(GB);
+    });
+    // A second settlement of the same reading charges nothing more.
+    await t.mutation(internal.subscriptions.recordGraceSpend, {
+      subscriptionId: oldId,
+      usedBytes: GB,
+    });
+    expect((await t.run((ctx) => ctx.db.get(currentId)))!.periodCarryBytes).toBe(2 * GB);
+  });
+
+  test('a carry goes stale when the traffic period rolls', () => {
+    const issued = Date.parse('2026-11-20T00:00:00Z');
+    const row = { _creationTime: issued, periodCarryBytes: 5 * GB };
+    expect(livePeriodCarry(row, {}, issued + 86_400_000)).toBe(5 * GB);
+    // The provider reset the key's counter after it was issued.
+    expect(
+      livePeriodCarry(
+        row,
+        { lastTrafficResetAt: '2026-12-01T00:00:00Z' },
+        issued + 12 * 86_400_000,
+      ),
+    ).toBe(0);
+    expect(
+      livePeriodCarry(row, { lastTrafficResetAt: '2026-11-01T00:00:00Z' }, issued + 86_400_000),
+    ).toBe(5 * GB);
+    // No reset stamp (Outline): a month after issuance, unless it never resets.
+    expect(livePeriodCarry(row, {}, issued + 40 * 86_400_000)).toBe(0);
+    expect(
+      livePeriodCarry(row, { trafficLimitStrategy: 'NO_RESET' }, issued + 40 * 86_400_000),
+    ).toBe(5 * GB);
+  });
+});
 
 describe('account.regenerate saga', () => {
   test('first regenerate creates an active sub and repoints the user', async () => {

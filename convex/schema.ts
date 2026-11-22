@@ -1000,6 +1000,15 @@ export default defineSchema({
     // and an in-place switch away, so the revocation watch covers the key by
     // what it was issued into, not by the current mode pools.
     hysteriaGroups: v.optional(v.array(v.string())),
+    // Quota carryover (Review D-M3). Bytes the member spent on earlier keys in
+    // this traffic period, already taken off this key's limit at issuance and
+    // added to by the tombstone sweep's grace settlement. A re-issue counts
+    // them with this key's own usage, so churning keys cannot reset a period.
+    periodCarryBytes: v.optional(v.number()),
+    // On a superseded key: the usage already counted toward its successor.
+    // The tombstone sweep charges anything spent after that (during the grace)
+    // to the member's current key before deleting this one.
+    graceBaseUsedBytes: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     // (userId, state): the active-subscription resolvers hit this directly

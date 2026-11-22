@@ -652,6 +652,31 @@ Operator sizing: one mode group per node, add them all to the mode's pool, and F
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for
 the multi-backend / Outline case.
 
+## Traffic quota across re-issues
+
+A regenerate, a backend, mode or server switch that re-issues, and a country-exit move all mint
+a new provider identity with a fresh traffic counter. On a tier with a traffic cap the new key's
+limit is the tier limit less what the member already spent this period
+(`account.ts` `carriedTrafficLimit`):
+
+- **Spent this period** = the old key's live usage plus the bytes that key had itself carried
+  in (`subscriptions.periodCarryBytes`), so a chain of re-issues never forgets an earlier key.
+  The new row stores the total as its own `periodCarryBytes`.
+- **The grace.** The superseded key keeps routing for 24 hours. Its tombstone records the usage
+  already counted (`graceBaseUsedBytes`), and the tombstone sweep charges anything spent after
+  that to the member's current key before deleting the old one (`lifecycle.settleGraceUsage`):
+  it lowers the current key's provider limit and adds the bytes to its `periodCarryBytes`. The
+  spend is recorded before the provider update, so a retried sweep never charges it twice.
+- **A new period.** A carry is dropped once the old key's counter reset after the key was
+  issued (Remnawave's `lastTrafficResetAt`), or, for a resetting strategy with no reset stamp
+  (Outline), a month after issuance.
+- **Best-effort.** A failed usage read issues at the full tier limit and a failed settlement
+  leaves the member the bytes: a member replacing a key on a failing server must still get one.
+  A fully spent quota carries as 1 byte, never 0 (0 means unlimited to Remnawave).
+
+The donation-bonus re-cap and a tier push set the tier limit outright, so they also clear a
+carried reduction until the next re-issue.
+
 ## Revoking a key with an open Hysteria connection
 
 FCP disables a key for a lapsed membership and an admin disable, and deletes one at the

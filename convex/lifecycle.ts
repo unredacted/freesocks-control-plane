@@ -10,7 +10,7 @@
  * types to break Convex's self-reference inference cycle.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx, DatabaseReader } from './_generated/server';
+import type { ActionCtx, MutationCtx, DatabaseReader } from './_generated/server';
 import { internal } from './_generated/api';
 import { runWithCronOutcome } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
@@ -18,6 +18,7 @@ import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
 import { deleteCopiesOf } from './mirrorCopies';
 import {
+  applyUsageCarryover,
   computeExpireAtIso,
   farFutureExpiryIso,
   resolveHwidLimit,
@@ -749,6 +750,7 @@ export const findTombstonedDue = internalQuery({
         subscriptionId: s._id,
         backend: s.backend,
         backendUserId: s.backendUserId,
+        graceBaseUsedBytes: s.graceBaseUsedBytes,
         attempts: s.tombstoneAttempts ?? 0,
         mirrors: s.subscriptionMirrors
           .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
@@ -784,6 +786,56 @@ export const deferTombstoneForDrain = internalMutation({
   },
 });
 
+/**
+ * Charge what the member spent on a superseded key during its grace to their
+ * current key (quota carryover, account.ts carriedTrafficLimit), so spending on
+ * old keys cannot get round the period quota. Best-effort: the delete that
+ * follows matters more, and a failed read or update only means the member
+ * keeps those bytes. The spend is recorded before the provider update, so a
+ * retry never charges it twice.
+ */
+async function settleGraceUsage(
+  ctx: ActionCtx,
+  d: {
+    subscriptionId: Id<'subscriptions'>;
+    backend: BackendId;
+    backendUserId: string;
+    graceBaseUsedBytes?: number;
+  },
+): Promise<void> {
+  if (d.graceBaseUsedBytes === undefined) return;
+  try {
+    const old = await ctx.runAction(internal.backends.getUser, {
+      backend: d.backend,
+      backendUserId: d.backendUserId,
+    });
+    const used = Math.max(0, Math.floor(old.usedTrafficBytes ?? 0));
+    if (used <= d.graceBaseUsedBytes) return;
+    const charge = await ctx.runMutation(internal.subscriptions.recordGraceSpend, {
+      subscriptionId: d.subscriptionId,
+      usedBytes: used,
+    });
+    if (!charge) return;
+    const current = await ctx.runAction(internal.backends.getUser, {
+      backend: charge.backend,
+      backendUserId: charge.backendUserId,
+    });
+    // Unlimited now (an upgrade since): nothing to charge against.
+    if (current.trafficLimitBytes === null) return;
+    await ctx.runAction(internal.backends.updateUser, {
+      backend: charge.backend,
+      backendUserId: charge.backendUserId,
+      patch: {
+        trafficLimitBytes: applyUsageCarryover(current.trafficLimitBytes, charge.extraBytes),
+      },
+    });
+  } catch (err) {
+    console.warn(
+      `[lifecycle] grace usage settlement failed: ${err instanceof Error ? err.message : 'unknown'}`,
+    );
+  }
+}
+
 /** Cron: hard-delete subscriptions whose 24h regenerate/switch grace has passed. */
 export const sweepTombstones = internalAction({
   args: { limit: v.optional(v.number()) },
@@ -795,6 +847,7 @@ export const sweepTombstones = internalAction({
       });
       let removed = 0;
       for (const d of due) {
+        await settleGraceUsage(ctx, d);
         try {
           const out = await deleteSubscriptionEverywhere(
             ctx,
