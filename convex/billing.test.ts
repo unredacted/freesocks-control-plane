@@ -2279,8 +2279,27 @@ describe('processor credential destinations', () => {
     vi.unstubAllGlobals();
   });
 
-  const save = (t: ReturnType<typeof convexTest>, secrets: Record<string, unknown>) =>
-    t.mutation(internal.adminApi.setBillingConfig, { patch: { secrets } });
+  const save = async (t: ReturnType<typeof convexTest>, secrets: Record<string, unknown>) => {
+    const actorAdminId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'billing-operator',
+        displayName: 'Billing operator',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    return t.mutation(internal.adminApi.setBillingConfig, { patch: { secrets }, actorAdminId });
+  };
+
+  test('processor credential writes require an admin actor', async () => {
+    const t = convexTest(schema, modules);
+    const secrets = { stripe: { webhookSecret: 'example-test-verifier' } };
+    await expect(
+      t.mutation(internal.adminApi.setBillingConfig, { patch: { secrets } }),
+    ).rejects.toThrow(/requires an admin session/i);
+    expect(await t.run((ctx) => ctx.db.query('appSettings').collect())).toHaveLength(0);
+    expect((await save(t, secrets)).secretStatus.stripe.webhookSecret).toBe(true);
+  });
   const resolve = (t: ReturnType<typeof convexTest>) =>
     t.query(internal.billing.resolveSecrets, {});
   const seed = (t: ReturnType<typeof convexTest>, rows: Record<string, string>) =>

@@ -43,7 +43,7 @@ SPA UpgradeMembership ──POST /api/v1/billing/checkout──▶ billing.creat
 - **Credentials** — processor API keys/secrets + the public base URL live in the
   same `appSettings` table under `billing.secret.*` (the same trust model as the
   proxy-backend secrets in `backendServers.config`): **set them in Admin →
-  Billing → Processor credentials** (write-only — the API never returns a secret,
+  Billing → Processor credentials** with a signed-in admin session (write-only — the API never returns a secret,
   only set/not-set booleans). Each field falls back to its env var
   (`NOWPAYMENTS_API_KEY`, …) when the DB row is unset, so an env-configured deploy
   keeps working; `resolveProcessorSecrets` (internal-only) reads DB-then-env.

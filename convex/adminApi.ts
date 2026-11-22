@@ -58,6 +58,7 @@ import { remnawaveApiUrl } from './lib/backends/remnawave';
 import { PROVIDERS, type BackendConfig, type RemnawaveServerConfig } from './lib/backends/registry';
 import { removalBlocker } from './serverAdmin';
 import {
+  BILLING_SECRET_KEYS,
   billingConfigWrites,
   billingSecretWrites,
   processorSecretStatus,
@@ -2005,15 +2006,27 @@ export const billingOverview = internalQuery({
 export const setBillingConfig = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
-    let writes: Array<{ key: string; value: string }>;
+    let configWrites: Array<{ key: string; value: string }>;
+    let secretWrites: Array<{ key: string; value: string }>;
     try {
-      writes = [...billingConfigWrites(patch), ...(await billingSecretWrites(ctx.db, patch))];
+      configWrites = billingConfigWrites(patch);
+      secretWrites = await billingSecretWrites(ctx.db, patch);
     } catch (e) {
       throw new ConvexError({
         code: 'validation',
         message: e instanceof Error ? e.message : 'invalid billing config',
       });
     }
+    if (
+      !actorAdminId &&
+      secretWrites.some(({ key }) => key !== BILLING_SECRET_KEYS.publicBaseUrl)
+    ) {
+      throw new ConvexError({
+        code: 'auth.forbidden',
+        message: 'Changing processor credentials and endpoints requires an admin session',
+      });
+    }
+    const writes = [...configWrites, ...secretWrites];
     if (writes.length === 0) {
       throw new ConvexError({ code: 'validation', message: 'no recognized billing fields' });
     }
