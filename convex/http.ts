@@ -684,7 +684,7 @@ const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> 
   const limited = await throttlePublicGet(ctx, req, 'hpke.keys.fetch');
   if (limited) return limited;
   const [candidate, revocation] = await Promise.all([
-    ctx.runQuery(internal.keyEpochs.current, {}),
+    ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {}),
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
   const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;

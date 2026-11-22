@@ -49,8 +49,8 @@ value already set, so it is safe to re-run on testing/beta/prod):
   `CAP_ADMIN_KEY` (it prints `CAP_ADMIN_KEY` — you need it to
   log into the Cap dashboard), and generates the **CDN-blinding keypair**: the
   `VITE_FS_*` public pins in `.env.beta` (baked into the SPA build) + the matching
-  `FS_*` secrets in `.env.convex`. Running it enables body-sealing; not running it
-  ships the SPA dark (plaintext dual-mode over TLS). See `docs/secrets.md`.
+  `FS_*` secrets in `.env.convex`. Signup and first-admin enrollment require
+  these matching keys. See `docs/secrets.md`.
 - The **five core app secrets** (`SESSION_SIGNING_KEY`, `ADMIN_SESSION_SIGNING_KEY`,
   `ADMIN_BOOTSTRAP_SECRET`, `IP_HASH_SALT`, `ACCOUNT_ID_PEPPER`) are auto-generated
   ONCE by the `deployer` itself — **leave them `CHANGE_ME`**. `ACCOUNT_ID_PEPPER`
@@ -184,6 +184,12 @@ git pull
 docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build --force-recreate web deployer
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 deployer  # expect "[deploy] OK"
 ```
+
+For the first upgrade to the volatile HPKE epoch store, stop `web` and `backup`
+first. Rerun the secrets bootstrap to add `HPKE_EPOCH_STORE_TOKEN`. Use a full
+stack build and startup so Compose attaches `backend` to the private network.
+Wait for the deployer to finish initializing the key store and scrubbing legacy
+seeds before accepting ingress or publishing backups.
 
 `--build` rebuilds both images from the pulled source; `--force-recreate web
 deployer` then recreates **both** containers — `web` restarts with the new SPA,
@@ -701,14 +707,14 @@ if [[ "$DUMP" == *.age ]]; then
   DUMP="${DUMP%.age}"
 fi
 gunzip -c "$DUMP" \
-  | docker compose -f docker-compose.stack.yml exec -T postgres \
-      psql -U convex -d freesocks_beta -v ON_ERROR_STOP=1
+  | docker compose -f docker-compose.stack.yml --env-file "$FCP_ENV_FILE" exec -T postgres \
+      psql -U convex -d "$POSTGRES_DB" -v ON_ERROR_STOP=1
 ```
 
 ### Before reopening access after a datastore restore
 
 Keep public ingress closed for both a SQL restore and a Convex
-`import --replace-all`. Stop `web` before the restore and use the loopback
+`import --replace-all`. Stop `web` and `backup` before the restore and use the loopback
 deployment endpoint from the host or the instance-admin deployer. Deploy the
 current recovery functions to the restored instance while ingress is closed.
 
@@ -734,6 +740,12 @@ restored admin sessions, and clears old invitations. It aborts before making
 changes if no approved passkey matches. In that case keep ingress closed
 until an operator establishes a trusted administrator. Reopen access only
 after both token and administrator recovery succeed.
+
+Run `bunx convex run lib/hpkeCrypto:initializeEpochStore '{}'` after any data
+import and before restarting `backup` and `web`. The action prepares a fresh
+epoch when manifest signing is enabled and deletes legacy epoch rows that
+contained private seeds. Apply normal protected retention to previously
+created backups, which can still contain those seeds.
 
 Run a **restore drill** before launch and periodically after:
 `bash docker/restore-verify.sh` verifies the signature with `BACKUP_VERIFY_KEY_FILE` and restores the latest dump into a scratch DB,

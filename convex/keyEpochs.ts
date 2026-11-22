@@ -2,13 +2,8 @@
  * Epoch-key store (CDN-blinding Phase 3). Rows are minted by the rotate cron
  * (which calls the "use node" generator in lib/hpkeCrypto.ts, the only place the
  * X-Wing keypair + manifest signature can be produced) and read on the login
- * path: the current epoch key is published via /config, and openRequest resolves
- * a transport envelope's epoch kid back to its seed here.
- *
- * The `seed` field is a short-lived secret destroyed by sweepExpired; never log
- * it or return it from a public query. `current`/`byKid` deliberately return the
- * fields the caller needs (public key, sig, validity) plus the seed only to the
- * internal open path.
+ * path: the current epoch public key is published by the key endpoint.
+ * Private seeds live in the separate volatile seed store.
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -25,8 +20,8 @@ const MAX_DRAIN_ROUNDS = 50;
 
 /**
  * Cron entry point for epoch rotation. Gates in the ISOLATE runtime: while
- * HPKE ships dark (FS_MANIFEST_SK unset) the 10-min cron used to cold-start a
- * Node action 144x/day just to early-return. Per-tick gating (not conditional
+ * HPKE ships dark (FS_MANIFEST_SK unset) each cron tick would cold-start a
+ * Node action just to early-return. Per-tick gating (not conditional
  * cron registration) so `convex env set FS_MANIFEST_SK` activates rotation on
  * the next tick without a redeploy; rotateEpochKey keeps its own skip as
  * belt-and-braces.
@@ -39,7 +34,7 @@ export const maybeRotate = internalMutation({
     // Rotation-gap alarm: epochs EXIST but none is currently valid — at least
     // 3 consecutive rotates failed (10-min cadence, 30-min validity), and
     // manifest-pinned clients cannot send sealed requests. (First-ever run,
-    // zero rows, is fine: the rotate below mints the first epoch.)
+    // zero rows, is fine: maintenance mints the first epoch.)
     const now = Date.now();
     const latest = await ctx.db
       .query('keyEpochs')
@@ -58,7 +53,7 @@ export const maybeRotate = internalMutation({
         payload: { lastNotAfter: latest.notAfter },
       });
     }
-    await ctx.scheduler.runAfter(0, internal.lib.hpkeCrypto.rotateEpochKey, {});
+    await ctx.scheduler.runAfter(0, internal.lib.hpkeCrypto.maintainEpoch, {});
     return null;
   },
 });
@@ -67,7 +62,6 @@ export const insert = internalMutation({
   args: {
     kid: v.string(),
     publicKey: v.string(),
-    seed: v.string(),
     manifestSig: v.string(),
     manifestSigPq: v.optional(v.string()),
     notBefore: v.number(),
@@ -89,7 +83,7 @@ export const current = internalQuery({
       .withIndex('by_not_before', (q) => q.lte('notBefore', now))
       .order('desc')
       .first();
-    if (!row || row.notAfter <= now) return null;
+    if (!row || row.seed !== undefined || row.notAfter <= now) return null;
     return {
       kid: row.kid,
       publicKey: row.publicKey,
@@ -101,7 +95,7 @@ export const current = internalQuery({
   },
 });
 
-/** Resolve an epoch by kid for the open path (returns the seed). Null if unknown. */
+/** Resolve the public lifetime for a kid before using the separate seed store. */
 export const byKid = internalQuery({
   args: { kid: v.string() },
   handler: async (ctx, { kid }) => {
@@ -109,12 +103,25 @@ export const byKid = internalQuery({
       .query('keyEpochs')
       .withIndex('by_kid', (q) => q.eq('kid', kid))
       .unique();
-    if (!row) return null;
-    return { seed: row.seed, notAfter: row.notAfter };
+    if (!row || row.seed !== undefined || row.notAfter + EPOCH_SWEEP_GRACE_MS <= Date.now())
+      return null;
+    return { notAfter: row.notAfter };
   },
 });
 
-/** Cron: destroy epochs whose validity + grace has elapsed (forward secrecy).
+/** Purge private seed fields left by older deployments or an old snapshot. */
+export const stripLegacySeeds = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const batch = await ctx.db.query('keyEpochs').paginate({ cursor, numItems: 200 });
+    for (const row of batch.page) {
+      if (row.seed !== undefined) await ctx.db.delete(row._id);
+    }
+    return { cursor: batch.continueCursor, isDone: batch.isDone };
+  },
+});
+
+/** Cron: remove public metadata after an epoch's validity and grace have elapsed.
  *  A FULL page re-runs immediately (drain-chain, same pattern as retention.ts)
  *  — 144 epochs mint/day vs a 100-row page means one page/day falls behind. */
 export const sweepExpired = internalMutation({

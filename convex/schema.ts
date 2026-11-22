@@ -5755,7 +5755,8 @@ export default defineSchema({
   keyEpochs: defineTable({
     kid: v.string(),
     publicKey: v.string(),
-    seed: v.string(),
+    // Compatibility with snapshots from before volatile seed storage.
+    seed: v.optional(v.string()),
     manifestSig: v.string(),
     // Phase 4: the ML-DSA-65 half of the hybrid manifest signature (Ed25519 is
     // `manifestSig`). Optional so a deployment without FS_MANIFEST_SK_PQ still

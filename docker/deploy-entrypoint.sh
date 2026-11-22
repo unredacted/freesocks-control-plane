@@ -104,6 +104,12 @@ if [ -n "${EDGE_CLIENT_CHECK_SECRET:-}" ]; then
   echo "[deploy]   env set EDGE_CLIENT_CHECK_SECRET (from the compose env)"
 fi
 
+if [ -n "${HPKE_EPOCH_STORE_URL:-}" ]; then
+  : "${HPKE_EPOCH_STORE_TOKEN:?missing private epoch seed store token}"
+  set_deployment_env HPKE_EPOCH_STORE_URL "$HPKE_EPOCH_STORE_URL"
+  set_deployment_env HPKE_EPOCH_STORE_TOKEN "$HPKE_EPOCH_STORE_TOKEN"
+fi
+
 # Auto-generate the pure-random secrets that are still unset. GENERATE-ONCE: only
 # set a secret the deployment doesn't already have — NEVER regenerate (rotating
 # ACCOUNT_ID_PEPPER would invalidate every account number; SESSION_SIGNING_KEY,
@@ -172,6 +178,10 @@ if [ "${DEPLOY_SKIP_NODE_FLOOR:-false}" != "true" ]; then
     exit 1
   fi
   check_node_floor "${node_version}" "after push"
+fi
+
+if [ -n "${HPKE_EPOCH_STORE_URL:-}" ]; then
+  bunx convex run lib/hpkeCrypto:initializeEpochStore '{}'
 fi
 
 echo "[deploy] seeding tiers + settings (+ Remnawave instance if REMNAWAVE_* is set)"

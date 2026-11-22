@@ -80,7 +80,7 @@ crons.daily(
 // also destroys long-expired epoch seeds (forward secrecy). Gated in the isolate
 // (keyEpochs.maybeRotate) so a dark deployment doesn't cold-start a Node action
 // every 10 min just to no-op. A daily backstop sweep runs even if rotation stalls.
-crons.interval('epoch-key-rotate', { minutes: 10 }, internal.keyEpochs.maybeRotate, {});
+crons.interval('epoch-key-rotate', { minutes: 1 }, internal.keyEpochs.maybeRotate, {});
 crons.daily('epoch-key-sweep', { hourUTC: 3, minuteUTC: 50 }, internal.keyEpochs.sweepExpired, {});
 
 // Member issue telemetry: bounded daily delete of rows past the admin-tunable

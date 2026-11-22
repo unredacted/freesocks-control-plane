@@ -34,7 +34,30 @@ x-logging: &log
 # `pids_limit` stays: it caps fork-bomb blast radius and throttles nothing.
 
 services:
+  hpke-epoch-store:
+    build:
+      context: .
+      dockerfile: docker/deploy.Dockerfile
+      target: epoch-seed-store
+    restart: unless-stopped
+    logging: *log
+    read_only: true
+    environment:
+      - HPKE_EPOCH_STORE_TOKEN=${HPKE_EPOCH_STORE_TOKEN:?run bootstrap to set HPKE_EPOCH_STORE_TOKEN}
+    networks: [epoch_keys]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          'const r = await fetch("http://127.0.0.1:8080/healthz"); if (!r.ok) process.exit(1)',
+        ]
+      interval: 10s
+      timeout: 2s
+      retries: 5
   backend:
+    networks: [default, epoch_keys]
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
     # (`precompiled-<date>-<sha7>` in convex/convex-backend). So the tag here
     # is the git sha of a release: 1447815 = precompiled-2026-10-22-1447815 (the npm 1.48.0 anchor).
@@ -214,6 +237,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      deployer:
+        condition: service_completed_successfully
 
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
@@ -439,6 +464,8 @@ services:
     logging: *log
     environment:
       - CONVEX_SELF_HOSTED_URL=http://backend:3210
+      - HPKE_EPOCH_STORE_URL=http://hpke-epoch-store:8080
+      - HPKE_EPOCH_STORE_TOKEN=${HPKE_EPOCH_STORE_TOKEN:?run bootstrap to set HPKE_EPOCH_STORE_TOKEN}
       # FCP's own client check: the same secret the edge-client-check service
       # holds, set on the deployment by the entrypoint (one place to set it).
       - EDGE_CLIENT_CHECK_SECRET=${EDGE_CLIENT_CHECK_SECRET:-}
@@ -451,6 +478,12 @@ services:
         condition: service_healthy
       keygen:
         condition: service_completed_successfully
+      hpke-epoch-store:
+        condition: service_healthy
+
+networks:
+  epoch_keys:
+    internal: true
 
 volumes:
   data:

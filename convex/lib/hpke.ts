@@ -217,6 +217,13 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
         path,
         wireBody: wire,
       });
+      if ('unavailable' in opened) {
+        return errorJson(
+          'hpke.key_unavailable',
+          'The server encryption key changed. Please try again shortly.',
+          503,
+        );
+      }
       bodyObj = (opened.plaintext ?? {}) as Record<string, unknown>;
     } else {
       bodyObj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};

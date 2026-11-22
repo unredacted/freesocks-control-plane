@@ -790,13 +790,15 @@ describe('cache-control defaults', () => {
   // "couldn't verify the encryption key" banner), so max-age is clamped to the
   // remaining validity and a rotation gap is never cached.
   test('the hpke keys route caps max-age at the epoch validity', async () => {
+    vi.stubEnv('HPKE_EPOCH_STORE_URL', 'http://epoch-store.test');
+    vi.stubEnv('HPKE_EPOCH_STORE_TOKEN', 'a'.repeat(64));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     const t = convexTest(schema, modules);
     const now = Date.now();
     await t.run(async (ctx) => {
       await ctx.db.insert('keyEpochs', {
         kid: 'kid-cache-cap',
         publicKey: 'pk',
-        seed: 'seed',
         manifestSig: 'sig',
         notBefore: now - 1_000,
         notAfter: now + 20_000, // 20s left: shorter than the 60s ceiling
@@ -810,13 +812,15 @@ describe('cache-control defaults', () => {
   });
 
   test('the hpke keys route keeps public, max-age=60 for a long-lived epoch', async () => {
+    vi.stubEnv('HPKE_EPOCH_STORE_URL', 'http://epoch-store.test');
+    vi.stubEnv('HPKE_EPOCH_STORE_TOKEN', 'a'.repeat(64));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     const t = convexTest(schema, modules);
     const now = Date.now();
     await t.run(async (ctx) => {
       await ctx.db.insert('keyEpochs', {
         kid: 'kid-cache-full',
         publicKey: 'pk',
-        seed: 'seed',
         manifestSig: 'sig',
         notBefore: now - 1_000,
         notAfter: now + 30 * 60_000,

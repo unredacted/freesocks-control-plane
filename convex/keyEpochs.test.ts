@@ -22,6 +22,7 @@ import {
 import { clientPrepareRequest } from '../src/shared/crypto/channel';
 import { epochStatement, revocationStatement, verifyManifest } from '../src/shared/crypto/manifest';
 import { EPOCH_SWEEP_GRACE_MS } from './keyEpochs';
+import { createSeedStore } from '../docker/epoch-seed-store.mjs';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -51,7 +52,6 @@ describe('keyEpochs store', () => {
       t.mutation(internal.keyEpochs.insert, {
         kid,
         publicKey: `pk-${kid}`,
-        seed: `seed-${kid}`,
         manifestSig: 'sig',
         notBefore,
         notAfter,
@@ -62,23 +62,20 @@ describe('keyEpochs store', () => {
     await mk('newest-valid', now - 10_000, now + 60_000);
     const cur = await t.query(internal.keyEpochs.current, {});
     expect(cur?.kid).toBe('newest-valid');
-    // The seed never leaves `current` (public fields only)…
     expect(cur).not.toHaveProperty('seed');
-    // …but byKid hands it to the internal open path.
-    expect(await t.query(internal.keyEpochs.byKid, { kid: 'newest-valid' })).toMatchObject({
-      seed: 'seed-newest-valid',
+    expect(await t.query(internal.keyEpochs.byKid, { kid: 'newest-valid' })).toEqual({
+      notAfter: now + 60_000,
     });
     expect(await t.query(internal.keyEpochs.byKid, { kid: 'unknown' })).toBeNull();
   });
 
-  test('sweepExpired destroys secrets past validity+grace, keeps in-grace (forward secrecy)', async () => {
+  test('sweepExpired removes public metadata past validity and grace', async () => {
     const t = convexTest(schema, modules);
     const now = Date.now();
     const mk = (kid: string, notAfter: number) =>
       t.mutation(internal.keyEpochs.insert, {
         kid,
         publicKey: `pk-${kid}`,
-        seed: `seed-${kid}`,
         manifestSig: 'sig',
         notBefore: now - 60_000,
         notAfter,
@@ -115,6 +112,53 @@ describe('keyRevocations store', () => {
 });
 
 describe('hpkeCrypto actions (node runtime)', () => {
+  const token = 'a'.repeat(64);
+
+  function restartSeedStore() {
+    const store = createSeedStore(token);
+    vi.stubEnv('HPKE_EPOCH_STORE_URL', 'http://epoch-store.test');
+    vi.stubEnv('HPKE_EPOCH_STORE_TOKEN', token);
+    vi.stubGlobal('fetch', (url: URL, init: RequestInit) => store.fetch(new Request(url, init)));
+  }
+
+  beforeEach(restartSeedStore);
+
+  test('store restart hides the stale epoch until maintenance publishes a live successor', async () => {
+    vi.stubEnv('FS_MANIFEST_SK', bytesToB64Url(manifestSk));
+    const t = convexTest(schema, modules);
+    await t.action(internal.lib.hpkeCrypto.maintainEpoch, {});
+    const old = await t.action(internal.lib.hpkeCrypto.liveEpoch, {});
+    expect(old).not.toBeNull();
+    restartSeedStore();
+    expect(await t.action(internal.lib.hpkeCrypto.liveEpoch, {})).toBeNull();
+    await t.action(internal.lib.hpkeCrypto.maintainEpoch, {});
+    const next = await t.action(internal.lib.hpkeCrypto.liveEpoch, {});
+    expect(next).not.toBeNull();
+    expect(next?.kid).not.toBe(old?.kid);
+  });
+
+  test('initializeEpochStore retires rows from snapshots that contained private seeds', async () => {
+    vi.stubEnv('FS_MANIFEST_SK', bytesToB64Url(manifestSk));
+    const t = convexTest(schema, modules);
+    const legacy = await t.run(async (ctx) => {
+      return ctx.db.insert('keyEpochs', {
+        kid: 'legacy',
+        publicKey: 'legacy-key',
+        seed: bytesToB64Url(SERVER_SEED),
+        manifestSig: 'signature',
+        notBefore: Date.now() - 1000,
+        notAfter: Date.now() + 60_000,
+      });
+    });
+    expect(await t.query(internal.keyEpochs.current, {})).toBeNull();
+    await t.action(internal.lib.hpkeCrypto.initializeEpochStore, {});
+    expect(await t.run((ctx) => ctx.db.get(legacy))).toBeNull();
+    expect(await t.query(internal.keyEpochs.current, {})).not.toBeNull();
+    const epochs = await t.run((ctx) => ctx.db.query('keyEpochs').collect());
+    expect(epochs).toHaveLength(1);
+    expect(epochs[0]).not.toHaveProperty('seed');
+  });
+
   test('rotateEpochKey skips cleanly when the manifest key is unset (dark deploy)', async () => {
     const t = convexTest(schema, modules);
     expect(await t.action(internal.lib.hpkeCrypto.rotateEpochKey, {})).toEqual({ skipped: true });
@@ -187,6 +231,7 @@ describe('hpkeCrypto actions (node runtime)', () => {
       path: '/api/v1/auth/account-login',
       wireBody: prepared.body,
     });
+    if ('unavailable' in out) throw new Error('expected the recipient to be available');
     expect(out.plaintext).toEqual({ accountId: '1'.repeat(32), captchaToken: 'tok' });
   });
 
@@ -209,6 +254,7 @@ describe('hpkeCrypto actions (node runtime)', () => {
       path: '/api/v1/auth/account-login',
       wireBody: prepared.body,
     });
+    if ('unavailable' in out) throw new Error('expected the recipient to be available');
     expect(out.plaintext).toEqual({ accountId: '2'.repeat(32), captchaToken: 'tok2' });
   });
 });

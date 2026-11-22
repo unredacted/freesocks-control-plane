@@ -62,7 +62,7 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   },
   {
     name: 'epoch-key-rotate',
-    everyMs: 10 * MIN,
+    everyMs: MIN,
     description: 'Rotate the HPKE epoch key (CDN-blinding)',
   },
   {

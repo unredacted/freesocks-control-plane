@@ -120,7 +120,16 @@ async function request<S extends z.ZodTypeAny>(
   }
   let json: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiCallError(res.status, json);
+    const error = new ApiCallError(res.status, json);
+    if (
+      res.status === 503 &&
+      error.payload.error.code === 'hpke.key_unavailable' &&
+      seal?.recipientKid
+    ) {
+      // The relay can alter error responses. Refresh on the next explicit attempt.
+      (await loadHpke()).invalidateEpoch(seal.recipientKid);
+    }
+    throw error;
   }
   if (seal) json = await (await loadHpke()).openInbound(seal, path, method, json);
   // PoP sid-binding: a member login / account-create response carries the public

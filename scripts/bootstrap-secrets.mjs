@@ -140,6 +140,7 @@ for (const [key, n] of [
   // FCP's own client check: the edge-client-check service and (through the
   // deployer) the deployment read it from here.
   ['EDGE_CLIENT_CHECK_SECRET', 32],
+  ['HPKE_EPOCH_STORE_TOKEN', 32],
 ]) {
   if (isPlaceholder(beta.get(key))) {
     setEnv(beta, key, randHex(n));

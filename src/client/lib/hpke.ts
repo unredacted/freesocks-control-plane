@@ -191,7 +191,6 @@ function applyRevocation(r: SignedRevocation): number | undefined {
     r.version < 0 ||
     r.version < _revVersion ||
     !Number.isFinite(r.notAfter) ||
-    r.notAfter <= Date.now() ||
     !Array.isArray(r.revokedKids) ||
     r.revokedKids.some((kid) => typeof kid !== 'string')
   )
@@ -202,6 +201,7 @@ function applyRevocation(r: SignedRevocation): number | undefined {
     r.sigPq,
   );
   if (!ok) return;
+  // Origin revocations stay in force until a newer signed list replaces them.
   const revoked = new Set(r.revokedKids);
   if (r.version === _revVersion) {
     if (revoked.size !== _revokedKids.size || [...revoked].some((kid) => !_revokedKids.has(kid)))
@@ -266,7 +266,7 @@ async function refreshEpoch(): Promise<void> {
       e.sig,
       e.sigPq,
     );
-    // Ignore a tampered, expired, or revoked epoch key -> fall back to static.
+    // Ignore a tampered, expired, or revoked epoch key.
     if (!ok || e.notAfter <= Date.now() || isRevoked(e.kid)) return;
     const pub = await deserializePublicKey(b64UrlToBytes(e.publicKey));
     if (isRevoked(e.kid)) return;
@@ -295,7 +295,7 @@ async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
  * Why an attestation did not attest, when the endpoint DID answer. Only
  * `signature` and `revoked` are tamper tells (a CDN swapping the key, or a key we
  * were told to refuse); `absent` and `expired` mean the server has no live epoch
- * to offer, so the client keeps sealing to the pinned static key. See
+ * to offer, so manifest-pinned clients pause sealed requests. See
  * `classifyAttestation` in ./hpke-status.svelte.ts for how each maps to UI.
  */
 export type AttestationFailure = 'absent' | 'expired' | 'signature' | 'revoked';
@@ -385,6 +385,7 @@ export interface OutboundSeal {
   header?: { name: string; value: string };
   /** Kept to open a reveal-leg response. */
   respEphPriv?: CryptoKey;
+  recipientKid?: string;
 }
 
 /** Prepare a sealed outbound request, or undefined if the route is not sealed (then send plaintext). */
@@ -437,6 +438,7 @@ export async function prepareOutbound(
   }
   const out: OutboundSeal = { policy, respEphPriv: prep.respEphPriv };
   if (policy.request === 'seal') {
+    out.recipientKid = sealKid;
     out.body = JSON.stringify(prep.body);
   } else if (policy.response === 'reveal') {
     if (m === 'GET' || m === 'HEAD') {
@@ -446,6 +448,10 @@ export async function prepareOutbound(
     }
   }
   return out;
+}
+
+export function invalidateEpoch(kid: string): void {
+  if (_epoch?.kid === kid) _epoch = null;
 }
 
 /** Open a reveal-leg response and enforce required sealing on successful replies. */
