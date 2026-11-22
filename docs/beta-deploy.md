@@ -36,9 +36,7 @@ Files: `docker-compose.stack.yml`, `Caddyfile`, `docker/web.Dockerfile`,
 ## 1. Fill the two env files
 
 ```sh
-cp .env.beta.example   .env.beta      # infra: Caddy + backend identity + Postgres + HPKE pins
-cp .env.convex.example .env.convex    # Convex deployment secrets
-bun run bootstrap                     # installs deps (if stale) + generates every secret (idempotent)
+bun run bootstrap                     # creates owner-only env files and generates secrets
 $EDITOR .env.beta .env.convex         # then fill the EXTERNAL creds by hand (below)
 ```
 
