@@ -328,7 +328,7 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // the PoP key); GET /account reveals the authenticated view. Both reveal.
   'POST /api/v1/auth/account-login': SEAL_REQ,
   'GET /api/v1/account': REVEAL,
-  'POST /api/v1/account': REVEAL,
+  'POST /api/v1/account': SEAL_BOTH_REQUIRED,
   // SEAL_BOTH: the first key may carry the member's answer to "Where are you
   // connecting from?" (`region`), which the handler refuses in plaintext.
   'POST /api/v1/account/regenerate': sealWhenCountry('region'),

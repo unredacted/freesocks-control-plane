@@ -161,8 +161,9 @@ artificial floor on failures.
 Account creation is its own flow, decoupled from proxy-key issuance:
 `POST /api/v1/account` (`convex/http.ts` -> `convex/freeTier.ts:createFreeAccount`):
 
-1. The captcha (self-hosted Cap) + fail-closed client IP are verified in the HTTP
-   layer (a per-IP throttle runs BEFORE the outbound captcha verify); the
+1. The HTTP layer checks the client IP and throttles requests before opening the
+   HPKE envelope and verifying the Cap captcha. The reveal key and session
+   signing key are inside the sealed request. The
    per-(IP,day) account cap is the ephemeral, serializable `freetier.create`
    rate-limit reservation — the hashed IP lives only in that auto-expiring
    counter, never in a durable store, and the slot is RELEASED if the mint
@@ -179,7 +180,7 @@ Account creation is its own flow, decoupled from proxy-key issuance:
    — an invalid code never blocks creation, and the response's
    `referralApplied` reports whether it bound).
 4. Mint a member session + signed `fs_session` cookie (auto sign-in), then return
-   `accountId` (plaintext, one-time) in `CreateAccountResponse`
+   `accountId` (one-time) in the sealed `CreateAccountResponse`
    (`src/shared/contracts/account.ts`). NO proxy backend is touched, so account
    creation succeeds even with no server available.
 5. **Cap reached** (same-IP-same-day): return `freetier.cap_reached` (429). There

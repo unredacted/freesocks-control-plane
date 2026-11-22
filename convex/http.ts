@@ -740,8 +740,35 @@ function epochCacheControl(notAfter: number | undefined): string {
 // Anonymous sign-up: Cap captcha -> mint a user + account number + member session.
 // NO proxy backend is touched here (the proxy key is created separately, once
 // signed in, via POST /api/v1/account/regenerate), so a missing/empty backend
-// can never block account creation. The account-number reveal is sealed (the
-// '/api/v1/account' reveal policy in src/shared/crypto/envelope.ts).
+// can never block account creation. Both legs are sealed, including the
+// response recipient and proof-of-possession enrollment metadata.
+
+async function admitAccountCreation(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  if (!ip) {
+    return errorJson(
+      'freetier.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
+  // drive verify QPS (the per-day account cap is enforced later by the
+  // freetier.create rate limit inside createFreeAccount).
+  const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'account.create.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!createRl.allowed) {
+    return errorJson(
+      'rate_limit.exceeded',
+      'Too many attempts from your network. Please wait a bit and try again.',
+      429,
+      { retryAfterMs: createRl.retryAfterMs },
+    );
+  }
+  return null;
+}
 
 http.route({
   path: '/api/v1/account',
@@ -767,29 +794,8 @@ http.route({
     if (!captchaToken) {
       return errorJson('validation', 'Captcha token required', 400);
     }
-    const ip = resolveClientIp(req);
-    if (!ip) {
-      return errorJson(
-        'freetier.ip_unresolved',
-        'Unable to establish your network address. Try again later or contact support.',
-        503,
-      );
-    }
-    // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
-    // drive verify QPS (the per-day account cap is enforced later by the
-    // freetier.create rate limit inside createFreeAccount).
-    const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account.create.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!createRl.allowed) {
-      return errorJson(
-        'rate_limit.exceeded',
-        'Too many attempts from your network. Please wait a bit and try again.',
-        429,
-        { retryAfterMs: createRl.retryAfterMs },
-      );
-    }
+    // The admission callback already verified the same request headers.
+    const ip = resolveClientIp(req)!;
     const cap = await verifyCaptcha(captchaToken);
     if (!cap.configured) return errorJson('config', 'Captcha not configured', 503);
     if (!cap.success) return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
@@ -868,7 +874,7 @@ http.route({
       200,
       { 'set-cookie': cookie },
     );
-  }),
+  }, admitAccountCreation),
 });
 
 // --- member auth ------------------------------------------------------------

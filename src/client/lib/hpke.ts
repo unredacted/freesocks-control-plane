@@ -448,7 +448,7 @@ export async function prepareOutbound(
   return out;
 }
 
-/** Open a sealed reveal-leg response; pass through anything that is not sealed. */
+/** Open a reveal-leg response and enforce required sealing on successful replies. */
 export async function openInbound(
   seal: OutboundSeal,
   path: string,
@@ -465,6 +465,9 @@ export async function openInbound(
     });
     markSealedResponse(); // a sealed response was actually opened (drives the "active" UI)
     return opened;
+  }
+  if (seal.policy.response === 'reveal' && seal.policy.required) {
+    throw new Error('Expected a sealed response from the origin');
   }
   return json;
 }

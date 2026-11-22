@@ -44,6 +44,41 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+async function signUp(t: ReturnType<typeof convexTest>, body: Record<string, unknown>) {
+  const path = '/api/v1/account';
+  const method = 'POST';
+  const seed = new Uint8Array(32).fill(24);
+  const keys = await serverKeyPairFromSeed(seed);
+  const kid = await kidFromPublicKey(await serializePublicKey(keys.publicKey));
+  vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(seed));
+  const request = await clientPrepareRequest({
+    serverPub: keys.publicKey,
+    serverKid: kid,
+    method,
+    path,
+    policy: routePolicy(path, method)!,
+    bodyObj: body,
+  });
+  const res = await t.fetch(path, {
+    method,
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.91' },
+    body: JSON.stringify(request.body),
+  });
+  if (!res.ok) return res;
+  const wire = await res.json();
+  expect(isSealedWire(wire)).toBe(true);
+  return Response.json(
+    await clientOpenResponse({
+      serverKid: kid,
+      method,
+      path,
+      respEphPriv: request.respEphPriv!,
+      wire,
+    }),
+    { status: res.status, headers: res.headers },
+  );
+}
+
 async function seedTierAndUser(
   t: ReturnType<typeof convexTest>,
 ): Promise<{ tierId: Id<'tiers'>; userId: Id<'users'> }> {
@@ -165,14 +200,25 @@ describe('billing webhook config vs HMAC', () => {
   });
 });
 
+test('account creation requires a sealed signup request', async () => {
+  const t = convexTest(schema, modules);
+  const res = await t.fetch('/api/v1/account', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.40' },
+    body: '{}',
+  });
+  expect(res.status).toBe(400);
+  expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+});
+
 describe('request-body caps (413)', () => {
-  test('sealed route: oversized wire body is rejected before any work', async () => {
+  test('sealed route: oversized wire body is rejected before opening an envelope', async () => {
     const t = convexTest(schema, modules);
-    // '/api/v1/account' has a reveal policy, so sealed() reads (and caps) the
+    // '/api/v1/account' requires a sealed request, so sealed() reads (and caps) the
     // wire body before the handler — no auth needed to observe the cap.
     const res = await t.fetch('/api/v1/account', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.33' },
       body: JSON.stringify({ pad: 'x'.repeat(70 * 1024) }),
     });
     expect(res.status).toBe(413);
@@ -1351,11 +1397,7 @@ describe('referral routes', () => {
         updatedAt: Date.now(),
       }),
     );
-    const res = await t.fetch('/api/v1/account', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.91' },
-      body: JSON.stringify({ captchaToken: 'tok', referralCode: 'fsr-aaaa-bbbb' }),
-    });
+    const res = await signUp(t, { captchaToken: 'tok', referralCode: 'fsr-aaaa-bbbb' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { accountId: string; referralApplied?: boolean };
     expect(body.referralApplied).toBe(true);
@@ -1379,11 +1421,7 @@ describe('referral routes', () => {
     );
     const t = convexTest(schema, modules);
     await seedTierAndUser(t);
-    const res = await t.fetch('/api/v1/account', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.92' },
-      body: JSON.stringify({ captchaToken: 'tok', referralCode: 'FSR-NOPE-0000' }),
-    });
+    const res = await signUp(t, { captchaToken: 'tok', referralCode: 'FSR-NOPE-0000' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { referralApplied?: boolean };
     expect(body.referralApplied).toBe(false);
