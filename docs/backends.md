@@ -1034,7 +1034,8 @@ published front checked on the twin's path with the twin's client string before 
 goes on ([servers.md](servers.md) § "A node serving the encrypted twin").
 
 **Engines run against it** (a test deployment, real fronts, the bodies as delivered,
-2026-11-17). They are engines, not the apps built on them: no GUI app was run.
+2026-11-17). They are engines, not the apps built on them: no GUI app was run in that test (the
+device checks of apps came later, below).
 
 | Engine                          | Encrypted entries               | Plain entries | Auto group                              |
 | ------------------------------- | ------------------------------- | ------------- | --------------------------------------- |
@@ -1056,7 +1057,9 @@ A member's report names the entry it is about, and a failed encrypted entry is n
 against the front while the plain one is in the same body ([edges.md](edges.md) § "An address
 the app holds twice"): an old app fails there whatever the front does.
 
-Not done yet: no GUI app has been run against an encrypted entry.
+**Apps checked on a device** (2026-11-22, each on an encrypted-only body from production): Happ
+(a current build) and Hiddify (5.5.5 or later) connect. Every other app's rule rests on its
+engine and its source, not on a device.
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the
