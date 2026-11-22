@@ -1188,6 +1188,7 @@ export default defineSchema({
     // Only this grant may enroll the first passkey. Older rows without a
     // recorded grant require an operator to reissue the invitation.
     pendingInviteId: v.optional(v.id('adminInvites')),
+    legacySessionsRevoked: v.optional(v.boolean()),
     username: v.string(),
     displayName: v.string(),
     isActive: v.boolean(),
@@ -5714,6 +5715,7 @@ export default defineSchema({
     kind: v.union(v.literal('member'), v.literal('admin')),
     userId: v.optional(v.id('users')),
     adminUserId: v.optional(v.id('adminUsers')),
+    adminPasskeyId: v.optional(v.id('passkeyCredentials')),
     expiresAt: v.number(),
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),

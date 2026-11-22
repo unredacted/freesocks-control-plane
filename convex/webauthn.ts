@@ -270,10 +270,6 @@ export const authenticateVerify = internalAction({
     if (!verification.verified)
       throw new ConvexError({ code: 'validation', message: 'Verification failed' });
 
-    await ctx.runMutation(internal.admins.bumpCredentialCounter, {
-      credentialId: credRow.credentialId,
-      newCounter: verification.authenticationInfo.newCounter,
-    });
     const adminUserId = credRow.adminUserId as Id<'adminUsers'>;
     const admin = await ctx.runQuery(internal.admins.getById, { adminUserId });
     if (!admin) throw new ConvexError({ code: 'validation', message: 'Admin user not found' });
@@ -293,6 +289,11 @@ export const authenticateVerify = internalAction({
       kind: 'admin',
       adminUserId,
       ttlMs: ADMIN_TTL_MS,
+      verifiedAdminPasskey: {
+        id: credRow._id,
+        previousCounter: credRow.counter,
+        newCounter: verification.authenticationInfo.newCounter,
+      },
       popPublicKey,
       popAlg,
       popSessionToken,

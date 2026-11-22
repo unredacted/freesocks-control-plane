@@ -51,11 +51,50 @@ export const create = internalMutation({
     // The public per-session token (binds each PoP signature to this session).
     // Stored only when the session is PoP-bound (popPublicKey present).
     popSessionToken: v.optional(v.string()),
+    verifiedAdminPasskey: v.optional(
+      v.object({
+        id: v.id('passkeyCredentials'),
+        previousCounter: v.number(),
+        newCounter: v.number(),
+      }),
+    ),
   },
   handler: async (
     ctx,
-    { sid, kind, userId, adminUserId, ttlMs, popPublicKey, popAlg, popSessionToken },
+    {
+      sid,
+      kind,
+      userId,
+      adminUserId,
+      ttlMs,
+      popPublicKey,
+      popAlg,
+      popSessionToken,
+      verifiedAdminPasskey,
+    },
   ) => {
+    // Verify the assertion's credential still exists and belongs to an active
+    // admin in the same transaction as session creation.
+    if (verifiedAdminPasskey) {
+      const credential = await ctx.db.get(verifiedAdminPasskey.id);
+      const admin = adminUserId ? await ctx.db.get(adminUserId) : null;
+      if (
+        kind !== 'admin' ||
+        !admin?.isActive ||
+        !credential ||
+        credential.adminUserId !== admin._id ||
+        credential.counter !== verifiedAdminPasskey.previousCounter
+      ) {
+        throw new ConvexError({
+          code: 'auth.forbidden',
+          message: 'Passkey is no longer authorized',
+        });
+      }
+      await ctx.db.patch(credential._id, {
+        counter: verifiedAdminPasskey.newCounter,
+        lastUsedAt: Date.now(),
+      });
+    }
     // PoP binding (CDN-blinding Phase 2). Normalize the client-reported algorithm
     // to the allowlist (unknown → ES256, the P-256 fallback). A supplied key that
     // does not decode to its scheme's length is a client bug or a mangled proxy:
@@ -84,6 +123,7 @@ export const create = internalMutation({
       userId,
       adminUserId,
       expiresAt: Date.now() + ttlMs,
+      adminPasskeyId: verifiedAdminPasskey?.id,
       ...(bound ? { popPublicKey, popAlg: boundAlg, popSessionToken } : {}),
     });
     // Counter bump keyed on the row's own _creationTime (the reconcile journal
@@ -106,6 +146,15 @@ export const bySid = internalQuery({
       .withIndex('by_sid', (q) => q.eq('sid', sid))
       .unique();
     if (!row || row.expiresAt < Date.now()) return null;
+    if (row.kind === 'admin' && row.adminUserId) {
+      if (row.adminPasskeyId) {
+        const credential = await ctx.db.get(row.adminPasskeyId);
+        if (!credential || credential.adminUserId !== row.adminUserId) return null;
+      } else if ((await ctx.db.get(row.adminUserId))?.legacySessionsRevoked) {
+        // Earlier admin sessions lack credential provenance.
+        return null;
+      }
+    }
     return row;
   },
 });

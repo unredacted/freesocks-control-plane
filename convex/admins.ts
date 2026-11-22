@@ -190,18 +190,6 @@ export const credentialByCredentialId = internalQuery({
       .unique(),
 });
 
-export const bumpCredentialCounter = internalMutation({
-  args: { credentialId: v.string(), newCounter: v.number() },
-  handler: async (ctx, { credentialId, newCounter }) => {
-    const row = await ctx.db
-      .query('passkeyCredentials')
-      .withIndex('by_credential_id', (q) => q.eq('credentialId', credentialId))
-      .unique();
-    if (row) await ctx.db.patch(row._id, { counter: newCounter, lastUsedAt: Date.now() });
-    return null;
-  },
-});
-
 // --- assertion challenges (replaces the webauthn:assert:<id> KV entry) ---
 
 export const insertAuthChallenge = internalMutation({
@@ -389,7 +377,10 @@ export const revokeCredential = internalMutation({
           'Cannot revoke the last passkey that can sign in. Register another passkey (or admin) first.',
       });
     }
-    await ctx.db.patch(cred.adminUserId, { pendingInviteId: undefined });
+    await ctx.db.patch(cred.adminUserId, {
+      pendingInviteId: undefined,
+      legacySessionsRevoked: true,
+    });
     await ctx.db.delete(credentialId);
     await writeAuditLog(ctx, {
       actorType: 'admin',

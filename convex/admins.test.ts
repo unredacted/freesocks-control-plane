@@ -42,6 +42,38 @@ const firstCredOf = (t: TestCtx, adminId: Id<'adminUsers'>) =>
     return all.find((r) => r.adminUserId === adminId)!._id;
   });
 
+test('passkey revocation invalidates its sessions and legacy sessions', async () => {
+  const t = convexTest(schema, modules);
+  const adminUserId = await seedAdmin(t, { username: 'op', passkeys: 2 });
+  const [first, second] = await t.run((ctx) => ctx.db.query('passkeyCredentials').collect());
+  const create = (sid: string, id: Id<'passkeyCredentials'>) =>
+    t.mutation(internal.sessions.create, {
+      kind: 'admin',
+      sid,
+      adminUserId,
+      ttlMs: 60_000,
+      verifiedAdminPasskey: { id, previousCounter: 0, newCounter: 1 },
+    });
+  await create('first', first!._id);
+  await create('second', second!._id);
+  await t.mutation(internal.sessions.create, {
+    kind: 'admin',
+    sid: 'legacy',
+    adminUserId,
+    ttlMs: 60_000,
+  });
+  expect(await t.query(internal.sessions.bySid, { sid: 'first' })).not.toBeNull();
+
+  await t.mutation(internal.admins.revokeCredential, {
+    credentialId: first!._id,
+    actorAdminId: adminUserId,
+  });
+  expect(await t.query(internal.sessions.bySid, { sid: 'first' })).toBeNull();
+  expect(await t.query(internal.sessions.bySid, { sid: 'legacy' })).toBeNull();
+  expect(await t.query(internal.sessions.bySid, { sid: 'second' })).not.toBeNull();
+  await expect(create('new', first!._id)).rejects.toThrow(/no longer authorized/);
+});
+
 describe('admins.setAdminActive (last-admin guard)', () => {
   test('the last admin who can sign in cannot be deactivated', async () => {
     const t = convexTest(schema, modules);
