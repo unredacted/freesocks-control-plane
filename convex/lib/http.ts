@@ -325,10 +325,6 @@ export function resolveCountry(req: Request): string | null {
   return cc;
 }
 
-// Session creation follows account creation, account-number login or passkey login.
-// Ordinary requests and valid PoP signatures do not renew this window.
-const CREDENTIAL_MANAGEMENT_WINDOW_MS = 5 * 60_000;
-
 export interface MemberAuth {
   userId: Id<'users'>;
   source: 'cookie' | 'token';
@@ -365,13 +361,11 @@ export async function resolveMember(
   if (raw && key) {
     const sid = await verifySignedValue(raw, key);
     if (sid) {
-      const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
+      const sess = await ctx.runQuery(internal.sessions.bySid, {
+        sid,
+        recentMember: typeof required === 'object',
+      });
       if (sess && sess.kind === 'member' && sess.userId) {
-        if (
-          typeof required === 'object' &&
-          sess._creationTime <= Date.now() - CREDENTIAL_MANAGEMENT_WINDOW_MS
-        )
-          return null;
         if (
           await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg)
         ) {

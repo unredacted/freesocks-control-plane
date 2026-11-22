@@ -23,6 +23,8 @@ import { POP_ALG, POP_ALG_ED } from '../src/shared/crypto/pop';
 
 /** Matches retention.ts: bound the immediate re-run chain (see sweepExpired). */
 const MAX_DRAIN_ROUNDS = 50;
+// Only a newly established member session can manage login credentials.
+const CREDENTIAL_MANAGEMENT_WINDOW_MS = 5 * 60_000;
 
 /** True when the base64url raw public key decodes to the byte length its PoP
  *  algorithm requires (Ed25519 = 32, P-256 uncompressed point = 65). */
@@ -170,13 +172,19 @@ export const create = internalMutation({
 });
 
 export const bySid = internalQuery({
-  args: { sid: v.string() },
-  handler: async (ctx, { sid }) => {
+  args: { sid: v.string(), recentMember: v.optional(v.boolean()) },
+  handler: async (ctx, { sid, recentMember }) => {
     const row = await ctx.db
       .query('sessions')
       .withIndex('by_sid', (q) => q.eq('sid', sid))
       .unique();
-    if (!row || row.expiresAt < Date.now()) return null;
+    const now = Date.now();
+    if (!row || row.expiresAt <= now) return null;
+    if (
+      recentMember &&
+      (row.kind !== 'member' || row._creationTime <= now - CREDENTIAL_MANAGEMENT_WINDOW_MS)
+    )
+      return null;
     if (row.kind === 'admin' && row.adminUserId) {
       if (row.adminPasskeyId) {
         const credential = await ctx.db.get(row.adminPasskeyId);

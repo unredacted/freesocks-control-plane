@@ -2093,7 +2093,7 @@ http.route({
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, { recentSession: true });
-    if (!member) return recentMemberSessionRequired();
+    if (!member?.sid) return recentMemberSessionRequired();
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.rotate',
       subject: member.userId,
@@ -2106,12 +2106,17 @@ http.route({
         { retryAfterMs: rl.retryAfterMs },
       );
     }
-    const result = await ctx.runAction(internal.auth.rotateAccountId, {
-      userId: member.userId,
-      requestId: newRequestId(),
-      keepSid: member.sid,
-    });
-    return json(result);
+    try {
+      return json(
+        await ctx.runAction(internal.auth.rotateAccountId, {
+          userId: member.userId,
+          requestId: newRequestId(),
+          keepSid: member.sid,
+        }),
+      );
+    } catch (err) {
+      return convexError(err);
+    }
   }),
 });
 
