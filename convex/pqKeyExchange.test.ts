@@ -273,7 +273,8 @@ describe('the post-quantum matrix', () => {
       mihomo: true,
       'xray-links': true,
       happ: true,
-      hiddify: false,
+      // From app 5.5.5 (an older Hiddify is served plain by its version).
+      hiddify: true,
       streisand: true,
       v2rayng: true,
       other: false,

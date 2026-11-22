@@ -26,7 +26,38 @@ describe('classifyClient', () => {
     ['curl/8.0', 'other', 'links'],
     ['', 'other', 'links'],
   ])('%s → %s / %s', (ua, family, format) => {
-    expect(classifyClient(ua)).toEqual({ family, expectedFormat: format });
+    expect(classifyClient(ua)).toMatchObject({ family, expectedFormat: format });
+  });
+
+  test('a Hiddify older than 5.5.5 (or of no readable version) cannot speak VLESS Encryption', () => {
+    const capable = (ua: string) => classifyClient(ua).encryptionCapable !== false;
+    // What its subscription fetch sends.
+    expect(capable('HiddifyNext/5.5.5 (android) like ClashMeta v2ray sing-box')).toBe(true);
+    expect(capable('HiddifyNext/5.9.15 (windows) like ClashMeta v2ray sing-box')).toBe(true);
+    expect(capable('HiddifyNext/6.0 (ios)')).toBe(true);
+    expect(capable('Hiddify/5.5.5')).toBe(true);
+    for (const old of [
+      'HiddifyNext/5.5.4 (android) like ClashMeta v2ray sing-box',
+      'HiddifyNext/5.4.0 (android)',
+      'HiddifyNext/4.1.1 (macos)',
+      'HiddifyNext/2.0',
+      'HiddifyNext (android)',
+    ])
+      expect(capable(old), old).toBe(false);
+    // Every family is still its own; only the encryption rule follows the version.
+    expect(classifyClient('HiddifyNext/4.1.1 (macos)')).toEqual({
+      family: 'hiddify',
+      expectedFormat: 'links',
+      encryptionCapable: false,
+    });
+    // No other app is judged by a version.
+    for (const ua of [
+      'v2rayNG/1.0',
+      'clash.meta/1.18.0',
+      'Anywhere',
+      'SFA/1.11.9 (sing-box 1.11.9)',
+    ])
+      expect(classifyClient(ua)).not.toHaveProperty('encryptionCapable');
   });
 });
 

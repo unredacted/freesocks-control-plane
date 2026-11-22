@@ -13,6 +13,46 @@ export interface ClientClassification {
   family: RenderClientFamily;
   /** The format this family USUALLY receives; the body decides in the end. */
   expectedFormat: SubscriptionFormat;
+  /**
+   * `false` when the app's version, read from its User-Agent, is known NOT to
+   * speak VLESS Encryption (or no version can be read where it decides): the
+   * request is served the plain rule whatever its family's rule says
+   * (`encryptionFloorOf`). Absent = the family's rule decides.
+   */
+  encryptionCapable?: false;
+}
+
+/** A dotted version, compared part by part. */
+function versionAtLeast(have: readonly number[], floor: readonly number[]): boolean {
+  for (let i = 0; i < floor.length; i++) {
+    const h = have[i] ?? 0;
+    if (h !== floor[i]) return h > floor[i]!;
+  }
+  return true;
+}
+
+/**
+ * The first version of an app that speaks VLESS Encryption, where it differs
+ * by version within a family. Hiddify: its link converter reads `encryption=`
+ * and its sing-box fork speaks the layer from app 5.5.5 (2026-11-04; earlier
+ * apps import the entry as plain VLESS). Its subscription fetch sends
+ * `HiddifyNext/<version> (<platform>) like ClashMeta v2ray sing-box`.
+ */
+const ENCRYPTION_FLOORS: Array<{ re: RegExp; floor: readonly number[] }> = [
+  { re: /hiddify(?:next)?\/(\d+)\.(\d+)(?:\.(\d+))?/i, floor: [5, 5, 5] },
+];
+
+/** Whether this User-Agent's app version is below its family's VLESS Encryption floor. */
+function belowEncryptionFloor(ua: string, family: RenderClientFamily): boolean {
+  if (family !== 'hiddify') return false;
+  for (const f of ENCRYPTION_FLOORS) {
+    const m = f.re.exec(ua);
+    // No readable version: not known to speak it.
+    if (!m) return true;
+    const have = [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)];
+    return !versionAtLeast(have, f.floor);
+  }
+  return false;
 }
 
 const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: SubscriptionFormat }> = [
@@ -77,7 +117,12 @@ const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: Subscriptio
 export function classifyClient(userAgent: string | undefined | null): ClientClassification {
   const ua = (userAgent ?? '').trim();
   for (const r of RULES) {
-    if (r.re.test(ua)) return { family: r.family, expectedFormat: r.format };
+    if (r.re.test(ua))
+      return {
+        family: r.family,
+        expectedFormat: r.format,
+        ...(belowEncryptionFloor(ua, r.family) ? { encryptionCapable: false as const } : {}),
+      };
   }
   return { family: 'other', expectedFormat: 'links' };
 }

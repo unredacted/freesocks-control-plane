@@ -24,7 +24,7 @@ const rows = appUserAgents.flatMap((a) =>
 
 describe('every app is recognised by the User-Agent it really sends', () => {
   test.each(rows)('%s: %s → %s / %s', (_app, ua, family, format) => {
-    expect(classifyClient(ua)).toEqual({ family, expectedFormat: format });
+    expect(classifyClient(ua)).toMatchObject({ family, expectedFormat: format });
   });
 
   test.each(rows)(

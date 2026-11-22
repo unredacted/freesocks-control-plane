@@ -13,6 +13,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
+import { defaultClientRule } from './lib/edgeConfig';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import { publishedEdgesOf } from './edgeRender';
 import { resolveEdgeAttribution } from './edgeAttribution';
@@ -508,6 +509,36 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect((await pool())[0].sniPick).toBeUndefined();
     await t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' });
     expect((await pool())[0].sniPick).toBe('hrw1');
+  });
+
+  test('decideForSubscription: an app version that cannot speak VLESS Encryption gets the plain rule', async () => {
+    stubPanel();
+    const { t, subId } = await seed();
+    // The Hiddify family is encrypted-only here.
+    await t.run((ctx) =>
+      upsertSettingRow(
+        ctx,
+        'edge.render.clients.hiddify',
+        JSON.stringify({ ...defaultClientRule('hiddify'), encryption: 'only' }),
+      ),
+    );
+    const ruleOf = async (encryptionCapable?: boolean) => {
+      const d = await t.query(internal.edgeRender.decideForSubscription, {
+        subscriptionId: subId,
+        family: 'hiddify',
+        ...(encryptionCapable === undefined ? {} : { encryptionCapable }),
+      });
+      expect(d.kind).toBe('render');
+      return d.kind === 'render' ? d.context.rule : null;
+    };
+    expect((await ruleOf())?.encryption).toBe('only');
+    expect((await ruleOf(false))?.encryption).toBe('plain');
+    // Everything else of the family's rule stands.
+    const { encryption: _a, ...rest } = (await ruleOf())!;
+    const { encryption: _b, ...restOld } = (await ruleOf(false))!;
+    void _a;
+    void _b;
+    expect(restOld).toEqual(rest);
   });
 
   test('publishedEdgesOf returns the pool with listener matchers; decideForSubscription hands the route a render context', async () => {

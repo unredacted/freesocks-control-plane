@@ -489,12 +489,18 @@ async function rehearseBody(
   // The representative must resolve to THIS node, or it says nothing about it.
   if (c.nodeName && pinnedNode && pinnedNode !== c.nodeName)
     return { cohortKey, format, reason: 'pinned_elsewhere' };
-  const family = classifyClient(ua).family;
+  const client = classifyClient(ua);
+  const family = client.family;
   const rctx: EdgeRenderContext = {
     epoch: c.epoch,
     matchers: c.matchers,
     published: c.published,
-    rule: { ...c.rules[family], enabled: true },
+    rule: {
+      ...c.rules[family],
+      enabled: true,
+      // An app version below its family's VLESS Encryption floor: plain (clientFamilies.ts).
+      ...(client.encryptionCapable === false ? { encryption: 'plain' as const } : {}),
+    },
     preferDistinctProviders: c.preferDistinctProviders,
     ...(c.edgePick ? { edgePick: c.edgePick } : {}),
     originAddress: c.originAddress,

@@ -970,11 +970,11 @@ Which entry an app gets is the client family's **encryption rule**
 (`edge.render.clients.<family>.encryption`, `src/shared/encryptionRule.ts`; Edges settings, per
 family, "Encrypted connections"):
 
-| Rule     | The app is handed                                                             | Default for                                  |
-| -------- | ----------------------------------------------------------------------------- | -------------------------------------------- |
-| `prefer` | per front the encrypted entry, then (after every first choice) its plain twin | Mihomo, v2rayNG, Happ, Streisand, Xray links |
-| `only`   | the encrypted entry alone                                                     | none: a family moves here on evidence        |
-| `plain`  | the plain entry alone                                                         | sing-box, Hiddify, every other client        |
+| Rule     | The app is handed                                                             | Default for                                           |
+| -------- | ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `prefer` | per front the encrypted entry, then (after every first choice) its plain twin | Mihomo, v2rayNG, Happ, Streisand, Xray links, Hiddify |
+| `only`   | the encrypted entry alone                                                     | none: a family moves here on evidence                 |
+| `plain`  | the plain entry alone                                                         | sing-box, every other client                          |
 
 - **`prefer` keeps every app connected.** An app that cannot speak the layer fails the first
   entry and uses the second. In a Clash body the automatic group then becomes a `fallback` group
@@ -988,9 +988,15 @@ family, "Encrypted connections"):
   `only`.
 - **`plain` is where nobody has seen the app work.** sing-box does not speak the layer (the
   backend leaves the entry out of its format anyway, and an outbound under a twin's name is
-  dropped, never copied: it would be the encrypted transport spoken plainly). Hiddify runs a
-  sing-box core. An app FCP does not recognise may refuse a whole list over one entry it cannot
-  read.
+  dropped, never copied: it would be the encrypted transport spoken plainly). An app FCP does not
+  recognise may refuse a whole list over one entry it cannot read.
+- **An app version below its floor is served plain.** Where support differs by version within a
+  family, FCP reads the version from the app's User-Agent and serves an older one the plain rule
+  whatever its family's rule (`encryptionCapable` in `convex/lib/edges/clientFamilies.ts`, applied
+  in `edgeRender.decideForSubscription` and the rehearsal). Hiddify: from app 5.5.5
+  (`HiddifyNext/5.5.5 (android) like ClashMeta v2ray sing-box`), when its link converter reads
+  `encryption=` and its sing-box fork speaks the layer; an older Hiddify, or one whose version
+  cannot be read, gets the plain entry.
 - **The body decides.** A node without a twin, or a twin whose Host does not exist yet, gives a
   body with the plain entry alone, rendered as it always was under any rule. A body with the twin
   alone (the plain Host kept out of a format on the backend) resolves the listener and is served

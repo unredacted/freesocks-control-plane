@@ -375,7 +375,8 @@ export async function deliverBody(
   // reports a node for every known body shape, so the stored pin only covers
   // unknown shapes.
   const node = fetched.pinnedNode ?? sub.pinnedNode;
-  const family = classifyClient(input.ua).family;
+  const client = classifyClient(input.ua);
+  const family = client.family;
   // Every edge-required refusal is counted per reason, with the node and the
   // client family it was for (deliveryRefusals.ts): dark members must be
   // visible to the operator, and where. Counting never changes the answer, nor
@@ -464,6 +465,7 @@ export async function deliverBody(
         subscriptionId: sub.subscriptionId,
         family,
         nodeName: node ?? undefined,
+        ...(client.encryptionCapable === false ? { encryptionCapable: false } : {}),
       });
       if (decision.kind === 'unavailable') return refuse(decision.reason);
       let body = fetched.content;
@@ -567,6 +569,7 @@ export async function deliverBody(
         subscriptionId: sub.subscriptionId,
         family,
         nodeName: node ?? undefined,
+        ...(client.encryptionCapable === false ? { encryptionCapable: false } : {}),
       });
       if (decision.kind === 'unavailable') return refuse(decision.reason);
       if (decision.kind === 'render') {
