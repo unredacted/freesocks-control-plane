@@ -774,8 +774,8 @@ FCP's fronted URL is **format-agnostic and transparent**: `GET /api/v1/sub/<toke
 forwards the caller's `User-Agent` upstream (`http.ts` →
 `backends.fetchSubscriptionContent` → `remnawave.ts`), sends no `Accept` / format
 override, passes Remnawave's `Content-Type` + body straight back, and caches
-per-exact-UA. So a **Clash-family client** (Clash Verge Rev, FlClash, Mihomo Party,
-Clash Meta) that imports the fronted URL receives Clash YAML **iff the Remnawave
+per-exact-UA. So a **Clash-family client** (Clash Verge Rev, FlClash, Clash Party,
+Clash Meta for Android) that imports the fronted URL receives Clash YAML **iff the Remnawave
 backend is configured to emit Clash output for that UA** — a **backend** concern
 (which format it picks per UA), _not_ a change to the fronted route. If Clash clients
 get base64 instead of YAML, fix that on the backend; the FCP front already does the

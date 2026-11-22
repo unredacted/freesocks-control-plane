@@ -994,7 +994,7 @@ Preconditions
    least two networks (Edges, Probes).
 5. A controlled client on a desktop machine that refreshes by itself on a short interval, with
    an automatic url-test group holding primary and backup and a log of the address each
-   connection dials (`docs/client-compatibility.md` "Refresh behaviour": Mihomo Party, or a
+   connection dials (`docs/client-compatibility.md` "Refresh behaviour": Clash Party, or a
    bare Mihomo core with a proxy-provider on the member's URL). Record its name and version.
 
 Walk

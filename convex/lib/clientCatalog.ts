@@ -207,9 +207,11 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     priority: 45,
   },
   {
+    // Clash Verge Rev: desktop only (no Android build); Android has Clash Meta
+    // for Android and FlClash.
     name: 'Clash',
     format: 'clash',
-    platforms: ['windows', 'desktop', 'android'],
+    platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
     homepageUrl: 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest',
     schemeId: 'clash',
@@ -241,17 +243,40 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     priority: 62,
   },
   {
-    // Clash-family (mihomo core) → needs the Clash-format subscription. Manual import.
-    name: 'Mihomo Party',
+    // MetaCubeX's own Android app for the Mihomo core (Clash-format
+    // subscription). It takes the `clash://install-config` link (its manifest
+    // registers `clash` and `clashmeta`). Its User-Agent is fixed:
+    // `ClashMetaForAndroid/<ver>.Meta` (tests/compat/userAgents.ts).
+    name: 'Clash Meta for Android',
+    format: 'clash',
+    platforms: ['android'],
+    backends: ['remnawave'],
+    homepageUrl: 'https://github.com/MetaCubeX/ClashMetaForAndroid/releases/latest',
+    schemeId: 'clash',
+    hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/MetaCubeX/ClashMetaForAndroid',
+    easeOfUse: 'moderate',
+    xhttp: true, // Mihomo v1.19.22+: v2.11.37 bundles Mihomo v1.19.34
+    enabled: true,
+    // After Clash Party: the app notice names the first two Clash apps, and a
+    // legacy Clash core is as often on a desktop.
+    priority: 65,
+  },
+  {
+    // Clash-family (mihomo core) → needs the Clash-format subscription. Manual
+    // import. Formerly Mihomo Party (RENAMED_DEFAULT_CLIENTS).
+    name: 'Clash Party',
     format: 'clash',
     platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/mihomo-party-org/mihomo-party/releases/latest',
+    homepageUrl: 'https://github.com/mihomo-party-org/clash-party/releases/latest',
     schemeId: null,
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
-    sourceUrl: 'https://github.com/mihomo-party-org/mihomo-party',
+    sourceUrl: 'https://github.com/mihomo-party-org/clash-party',
     easeOfUse: 'moderate',
     xhttp: true, // Mihomo v1.19.22+: Mihomo Party 1.9.5 or later
     enabled: true,
@@ -307,6 +332,16 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     priority: 80,
   },
 ];
+
+/**
+ * Default apps that changed their name: former name → current name. The
+ * seeds rename a stored row under a former name (keeping its `enabled`,
+ * priority and any admin description) before they look the current name up,
+ * so a deployment never lists one app twice.
+ */
+export const RENAMED_DEFAULT_CLIENTS: Readonly<Record<string, string>> = {
+  'Mihomo Party': 'Clash Party',
+};
 
 /**
  * Resolve the catalog: the `clients` table rows if any exist, else the compiled
