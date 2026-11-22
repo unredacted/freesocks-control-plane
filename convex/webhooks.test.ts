@@ -12,7 +12,7 @@ const SECRET = 'test-webhook';
 
 async function seedUserAndTiers(t: ReturnType<typeof convexTest>): Promise<{
   userId: Id<'users'>;
-  accountId: string;
+  supportId: string;
   freeTierId: Id<'tiers'>;
   memberTierId: Id<'tiers'>;
 }> {
@@ -54,23 +54,22 @@ async function seedUserAndTiers(t: ReturnType<typeof convexTest>): Promise<{
     });
     return { userId, freeTierId, memberTierId };
   });
-  const minted = await t.action(internal.accountId.mintForUser, { userId });
-  return { userId, accountId: minted.accountId, freeTierId, memberTierId };
+  const minted = await t.action(internal.supportId.ensureForUser, { userId });
+  return { userId, supportId: minted.supportId, freeTierId, memberTierId };
 }
 
 describe('webhooks.ingest', () => {
   beforeEach(() => {
     vi.stubEnv('WEBHOOK_SIGNING_SECRET', SECRET);
-    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
   });
   afterEach(() => vi.unstubAllEnvs());
 
   test('a valid event applies the tier change', async () => {
     const t = convexTest(schema, modules);
-    const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+    const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
     const body = JSON.stringify({
       eventId: 'evt-1',
-      accountId,
+      supportId,
       tierSlug: 'member',
       expiresAtMs: Date.now() + 30 * 86_400_000,
     });
@@ -88,8 +87,8 @@ describe('webhooks.ingest', () => {
 
   test('a replayed eventId is a deduped no-op', async () => {
     const t = convexTest(schema, modules);
-    const { accountId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-dup', accountId, tierSlug: 'member' });
+    const { supportId } = await seedUserAndTiers(t);
+    const body = JSON.stringify({ eventId: 'evt-dup', supportId, tierSlug: 'member' });
     const signature = await hmacSha256Hex(SECRET, body);
 
     const first = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
@@ -100,10 +99,10 @@ describe('webhooks.ingest', () => {
 
   test('a non-number expiresAtMs is ACKed processed (no retry churn, no grant)', async () => {
     const t = convexTest(schema, modules);
-    const { userId, accountId, freeTierId } = await seedUserAndTiers(t);
+    const { userId, supportId, freeTierId } = await seedUserAndTiers(t);
     const body = JSON.stringify({
       eventId: 'evt-badexpiry',
-      accountId,
+      supportId,
       tierSlug: 'member',
       expiresAtMs: 'next-month', // permanently malformed
     });
@@ -125,11 +124,11 @@ describe('webhooks.ingest', () => {
 
   test('a seconds-unit expiresAtMs is auto-corrected to ms', async () => {
     const t = convexTest(schema, modules);
-    const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+    const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
     const seconds = Math.floor((Date.now() + 30 * 86_400_000) / 1000);
     const body = JSON.stringify({
       eventId: 'evt-seconds',
-      accountId,
+      supportId,
       tierSlug: 'member',
       expiresAtMs: seconds, // a sender bug (seconds, not ms) — coerced, not a 1970 lapse
     });
@@ -145,19 +144,19 @@ describe('webhooks.ingest', () => {
 
   test('a bad signature throws', async () => {
     const t = convexTest(schema, modules);
-    const { accountId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-badsig', accountId, tierSlug: 'member' });
+    const { supportId } = await seedUserAndTiers(t);
+    const body = JSON.stringify({ eventId: 'evt-badsig', supportId, tierSlug: 'member' });
     await expect(
       t.action(internal.webhooks.ingest, { rawBody: body, signature: 'deadbeef' }),
     ).rejects.toThrow(/invalid signature/);
   });
 
-  test('an unknown accountId is ACKed as applied:false', async () => {
+  test('an unknown supportId is ACKed as applied:false', async () => {
     const t = convexTest(schema, modules);
     await seedUserAndTiers(t);
     const body = JSON.stringify({
       eventId: 'evt-unknown',
-      accountId: '99998888777766665555444433332222',
+      supportId: 'FS-ZZZZ-ZZZZ',
       tierSlug: 'member',
     });
     const signature = await hmacSha256Hex(SECRET, body);
@@ -165,10 +164,10 @@ describe('webhooks.ingest', () => {
     expect(res).toEqual({ ok: true, applied: false, reason: 'unknown_user' });
   });
 
-  test('the stored event payload redacts the account-number plaintext', async () => {
+  test('the stored event payload omits the member support ID', async () => {
     const t = convexTest(schema, modules);
-    const { accountId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-redact', accountId, tierSlug: 'member' });
+    const { supportId } = await seedUserAndTiers(t);
+    const body = JSON.stringify({ eventId: 'evt-redact', supportId, tierSlug: 'member' });
     const signature = await hmacSha256Hex(SECRET, body);
     await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     await t.run(async (ctx) => {
@@ -177,15 +176,14 @@ describe('webhooks.ingest', () => {
         .withIndex('by_event_id', (q) => q.eq('eventId', 'generic:evt-redact'))
         .unique();
       expect(ev).not.toBeNull();
-      expect(ev!.payload).not.toContain(accountId); // full plaintext never stored
-      expect(ev!.payload).toContain(accountId.slice(0, 4)); // 4-digit prefix retained
+      expect(ev!.payload).not.toContain(supportId);
     });
   });
 
   test('an unknown tierSlug is ACKed as applied:false', async () => {
     const t = convexTest(schema, modules);
-    const { accountId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-badtier', accountId, tierSlug: 'nope' });
+    const { supportId } = await seedUserAndTiers(t);
+    const body = JSON.stringify({ eventId: 'evt-badtier', supportId, tierSlug: 'nope' });
     const signature = await hmacSha256Hex(SECRET, body);
     const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     expect(res).toEqual({ ok: true, applied: false, reason: 'unknown_tier' });
@@ -196,21 +194,28 @@ describe('webhooks.ingest', () => {
   // so the portal's retry was swallowed as duplicate and the paid grant lost.
   test('a failed grant leaves the event retryable; the retry applies exactly once', async () => {
     const t = convexTest(schema, modules);
-    const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+    const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
     const body = JSON.stringify({
       eventId: 'evt-retry',
-      accountId,
+      supportId,
       tierSlug: 'member',
       expiresAtMs: Date.now() + 30 * 86_400_000,
     });
     const signature = await hmacSha256Hex(SECRET, body);
 
-    // Force a throw INSIDE the grant path (after the claim): hashAccountId
-    // requires the pepper, so unsetting it fails the user lookup step.
-    vi.stubEnv('ACCOUNT_ID_PEPPER', '');
-    await expect(t.action(internal.webhooks.ingest, { rawBody: body, signature })).rejects.toThrow(
-      /ACCOUNT_ID_PEPPER/,
+    // A bad legacy data import can create an ambiguous lookup after claiming the event.
+    const duplicate = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        supportId,
+        updatedAt: Date.now(),
+      }),
     );
+    await expect(
+      t.action(internal.webhooks.ingest, { rawBody: body, signature }),
+    ).rejects.toThrow();
+    await t.run((ctx) => ctx.db.delete(duplicate));
     await t.run(async (ctx) => {
       const ev = await ctx.db
         .query('webhookEvents')
@@ -222,7 +227,6 @@ describe('webhooks.ingest', () => {
 
     // The sender retries the same eventId: the failed claim re-opens and the
     // grant applies.
-    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
     const retry = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     expect(retry).toEqual({ ok: true, applied: true });
     const expiryAfterRetry = await t.run(async (ctx) => {
@@ -252,7 +256,7 @@ describe('webhooks.ingest', () => {
   // under test is the missing STATUS, not the prefix.)
   test('a legacy status-less event row is a terminal duplicate', async () => {
     const t = convexTest(schema, modules);
-    const { userId, accountId, freeTierId } = await seedUserAndTiers(t);
+    const { userId, supportId, freeTierId } = await seedUserAndTiers(t);
     await t.run(async (ctx) => {
       await ctx.db.insert('webhookEvents', {
         eventId: 'generic:evt-legacy',
@@ -261,7 +265,7 @@ describe('webhooks.ingest', () => {
         processedAt: Date.now(),
       });
     });
-    const body = JSON.stringify({ eventId: 'evt-legacy', accountId, tierSlug: 'member' });
+    const body = JSON.stringify({ eventId: 'evt-legacy', supportId, tierSlug: 'member' });
     const signature = await hmacSha256Hex(SECRET, body);
     const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     expect(res).toEqual({ ok: true, duplicate: true, applied: false });
@@ -276,7 +280,7 @@ describe('webhooks.ingest', () => {
     await seedUserAndTiers(t);
     const body = JSON.stringify({
       eventId: 'evt-ack-processed',
-      accountId: '99998888777766665555444433332222',
+      supportId: 'FS-ZZZZ-ZZZZ',
       tierSlug: 'member',
     });
     const signature = await hmacSha256Hex(SECRET, body);
@@ -297,7 +301,7 @@ describe('webhooks.ingest', () => {
   describe('stale-replay guard (Review E-M2)', () => {
     test('a replayed event with an EARLIER expiry than the member’s current one is refused', async () => {
       const t = convexTest(schema, modules);
-      const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+      const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
       // The member's current expiry: ~60 days out.
       const currentExpiry = Date.now() + 60 * 86_400_000;
       await t.run(async (ctx) => {
@@ -311,7 +315,7 @@ describe('webhooks.ingest', () => {
       // be) whose original grant ended ~30 days out — EARLIER than current.
       const body = JSON.stringify({
         eventId: 'evt-stale',
-        accountId,
+        supportId,
         tierSlug: 'member',
         expiresAtMs: Date.now() + 30 * 86_400_000,
       });
@@ -332,7 +336,7 @@ describe('webhooks.ingest', () => {
 
     test('a NEW event with a LATER expiry still applies (the guard only blocks regression)', async () => {
       const t = convexTest(schema, modules);
-      const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+      const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
       const currentExpiry = Date.now() + 10 * 86_400_000;
       await t.run(async (ctx) => {
         await ctx.db.patch(userId, {
@@ -344,7 +348,7 @@ describe('webhooks.ingest', () => {
       const laterExpiry = Date.now() + 40 * 86_400_000;
       const body = JSON.stringify({
         eventId: 'evt-renew',
-        accountId,
+        supportId,
         tierSlug: 'member',
         expiresAtMs: laterExpiry,
       });

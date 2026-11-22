@@ -13,6 +13,12 @@ This is additive to the two pre-existing entitlement paths: the generic
 redemption codes (`convex/membershipCodes.ts`). All three converge on the same
 core: `lifecycle.applyMembership`.
 
+The optional generic billing callback at `/api/webhooks/billing` accepts
+`eventId`, the member's non-secret `supportId`, `tierSlug`, and optional
+`expiresAtMs`. The sender signs the raw body with `WEBHOOK_SIGNING_SECRET`.
+Migrate older senders to the support ID before enabling the callback on an
+updated deployment. Keep the member's account number out of billing payloads.
+
 ## Architecture
 
 ```

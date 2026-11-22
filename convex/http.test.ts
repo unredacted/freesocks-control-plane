@@ -160,7 +160,7 @@ async function insertToken(
 describe('billing webhook config vs HMAC', () => {
   const body = JSON.stringify({
     eventId: 'evt-1',
-    accountId: '1'.repeat(32),
+    supportId: 'FS-ZZZZ-ZZZZ',
     tierSlug: 'member',
   });
 

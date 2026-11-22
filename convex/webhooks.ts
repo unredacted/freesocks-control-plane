@@ -2,11 +2,11 @@
  * Generic webhook seam (P7): the single transport integration point the future
  * billing portal plugs into to drive entitlements. HMAC-verified + deduped,
  * then mapped onto the lifecycle `setMembership` seam keyed by the member's
- * account number. CiviCRM's bespoke webhook is gone; this is intentionally
+ * support ID. CiviCRM's bespoke webhook is gone; this is intentionally
  * provider-agnostic.
  *
  * Contract (POST /api/webhooks/billing, header `x-signature: <hex hmac-sha256>`):
- *   { eventId, accountId, tierSlug, expiresAtMs? }
+ *   { eventId, supportId, tierSlug, expiresAtMs? }
  * The signature is HMAC-SHA256(WEBHOOK_SIGNING_SECRET, rawBody). Unknown
  * user/tier is ACKed (200, applied:false) so the sender doesn't retry forever;
  * a replayed eventId is a no-op.
@@ -15,7 +15,6 @@ import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
-import { hashAccountId, normalizeAccountId } from './lib/accountId';
 import { writeAuditLog } from './lib/audit';
 
 type IngestResult = { ok: true; duplicate?: boolean; applied: boolean; reason?: string };
@@ -39,7 +38,8 @@ export const ingest = internalAction({
 
     let payload: {
       eventId?: string;
-      accountId?: string;
+      supportId?: string;
+      accountId?: unknown;
       tierSlug?: string;
       expiresAtMs?: number | null;
     };
@@ -48,21 +48,28 @@ export const ingest = internalAction({
     } catch {
       throw new Error('invalid JSON body');
     }
-    const { eventId, accountId, tierSlug, expiresAtMs } = payload;
-    if (!eventId || !accountId || !tierSlug)
-      throw new Error('eventId, accountId, tierSlug required');
+    const { eventId, supportId, tierSlug, expiresAtMs } = payload;
+    if (
+      typeof eventId !== 'string' ||
+      !eventId ||
+      typeof tierSlug !== 'string' ||
+      !tierSlug ||
+      typeof supportId !== 'string' ||
+      !/^FS-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(supportId) ||
+      'accountId' in payload
+    ) {
+      throw new Error('eventId, supportId, and tierSlug required');
+    }
 
     // Claim the eventId first: a `processed` replay never reapplies, but a
     // `failed` (or crashed-mid-flight `pending`) claim stays retryable so a
-    // grant that threw isn't silently dropped by the sender's retry. Persist a
-    // REDACTED payload: the raw body carries the account-number plaintext,
-    // which must never be stored; keep only the 4-digit prefix for tracing.
+    // grant that threw isn't silently dropped by the sender's retry. Keep the
+    // support ID out of the stored event payload.
     // The dedupe id is namespaced (`generic:`) so a generic-seam eventId can
     // never pre-claim a processor rail's id (their adapters prefix their own).
     const dedupeId = `generic:${eventId}`;
     const safePayload = JSON.stringify({
       eventId,
-      accountIdPrefix: normalizeAccountId(accountId).slice(0, 4),
       tierSlug,
       expiresAtMs: expiresAtMs ?? null,
     });
@@ -89,11 +96,9 @@ export const ingest = internalAction({
         expiryMs = expiresAtMs < 1e12 ? Math.round(expiresAtMs * 1000) : Math.round(expiresAtMs);
       }
 
-      // Map account number → user (status-blind so a lapsed account can renew).
-      const accountHash = await hashAccountId(accountId);
-      const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, {
-        accountIdHash: accountHash,
-      });
+      // A reference is only for lookup; the portal signature authorizes the grant.
+      const userId = await ctx.runQuery(internal.supportId.findBySupportId, { input: supportId });
+      const user = userId ? await ctx.runQuery(internal.users.get, { id: userId }) : null;
       // Unknown user/tier is a permanent ACK (the sender must stop retrying),
       // so mark processed — only an exception below leaves the claim retryable.
       if (!user) {
