@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { spawnSync } from 'node:child_process';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,7 +29,13 @@ const FAKE_DOCKER = `#!/bin/sh
 printf '%s\\n' "$*" >> "$WORK/calls.log"
 case "$*" in
   *" exec -T backup "*) echo "${DUMP}" ;;
-  *" run --rm --no-deps -T --entrypoint age backup -d -i - ${DUMP}")
+  *" cp backup:${DUMP}.sig "*)
+    for target do :; done
+    cp "$WORK/dump.sig" "$target" ;;
+  *" cp backup:${DUMP} "*)
+    for target do :; done
+    cp "$WORK/dump" "$target" ;;
+  *" --entrypoint age backup -d -i - /run/verified-dump")
     cat > "$WORK/key.seen"
     printf '${SQL.replace(/\n/g, '\\n')}' | gzip -c ;;
   *"-q -v ON_ERROR_STOP=1")
@@ -56,13 +63,23 @@ function drill(env: Record<string, string> = {}) {
   for (const f of ['docker', 'age']) chmodSync(path.join(bin, f), 0o755);
   writeFileSync(path.join(work, 'env'), 'POSTGRES_DB=freesocks_test\nPOSTGRES_PASSWORD=pw\n');
   writeFileSync(path.join(work, 'age-key.txt'), 'AGE-SECRET-KEY-1TEST\n');
-  const res = spawnSync('sh', [script], {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const dump = Buffer.from('synthetic encrypted backup');
+  writeFileSync(
+    path.join(work, 'dump'),
+    env.CORRUPT === '1' ? Buffer.from('corrupted dump') : dump,
+  );
+  writeFileSync(path.join(work, 'dump.sig'), sign('sha256', dump, privateKey));
+  const verifyKey = path.join(work, 'verify.pem');
+  writeFileSync(verifyKey, publicKey.export({ type: 'spki', format: 'pem' }));
+  const res = spawnSync('bash', [script], {
     encoding: 'utf8',
     env: {
       PATH: `${bin}:${process.env.PATH}`,
       WORK: work,
       ENV_FILE: path.join(work, 'env'),
       AGE_KEY_FILE: path.join(work, 'age-key.txt'),
+      BACKUP_VERIFY_KEY_FILE: verifyKey,
       ...env,
     },
   });
@@ -85,8 +102,14 @@ describe('docker/restore-verify.sh', () => {
     expect(read('host-age')).toBeNull();
     expect(read('key.seen')).toBe('AGE-SECRET-KEY-1TEST\n');
     expect(read('restored.sql')).toBe(SQL);
-    // The encrypted dump is read in place; it is never copied to the host.
-    expect(read('calls.log')).not.toMatch(/ cp backup:/);
+    expect(read('calls.log')).toMatch(/ cp backup:.*\.sig/);
+  });
+
+  test('bad producer signature stops before decryption or SQL', () => {
+    const { res, read } = drill({ CORRUPT: '1' });
+    expect(res.status).not.toBe(0);
+    expect(read('key.seen')).toBeNull();
+    expect(read('calls.log')).not.toMatch(/CREATE DATABASE|DROP DATABASE/);
   });
 
   test('a restore that hits an SQL error fails the drill', () => {

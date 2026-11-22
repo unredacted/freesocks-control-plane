@@ -187,8 +187,15 @@ services:
       # Offsite uploads require an age recipient or explicit plaintext opt-in.
       - BACKUP_AGE_PUBLIC_KEY=${BACKUP_AGE_PUBLIC_KEY:-}
       - BACKUP_ALLOW_UNENCRYPTED=${BACKUP_ALLOW_UNENCRYPTED:-}
+      - BACKUP_SIGNING_KEY_FILE=/run/backup-signing.pem
     volumes:
       - backups:/backups
+      - type: bind
+        source: ${BACKUP_SIGNING_KEY_FILE:-/dev/null}
+        target: /run/backup-signing.pem
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       # Liveness = the last SUCCESSFUL cycle finished within the last interval
       # (+1h slack): backup.sh touches /backups/.heartbeat only when the dump AND

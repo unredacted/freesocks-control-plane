@@ -677,20 +677,36 @@ Backup coverage notes:
 grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
 restore drill below must have been run at least once.
 
-Restore a dump:
+Configure a producer signing key before enabling offsite backups. Create a
+deployment-specific EC key under `umask 077` using
+`openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out producer.pem`.
+Set `BACKUP_SIGNING_KEY_FILE` to its
+absolute path outside the checkout. Export its public key with
+`openssl pkey -in producer.pem -pubout -out producer.pub.pem`, and pin that
+public key through a channel independent of the backup bucket. Preserve trusted
+old public keys for any retained dumps they signed.
+
+Restore a dump after verifying its producer signature. Keep the dump and its
+detached signature together. Legacy unsigned dumps require independently
+established provenance before use.
 
 ```sh
-# copy the chosen dump into ~/fcp-snapshots (never into the checkout), then
-# (for an age-encrypted dump, decrypt first; the key file stays out of the checkout too):
-#   age -d -i /path/to/backup-key.txt -o "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz" \
-#     "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz.age"
-gunzip -c "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz" \
+set -euo pipefail
+# DUMP points to the locally staged, read-only download (.sql.gz or .sql.gz.age).
+openssl dgst -sha256 -verify "$BACKUP_VERIFY_KEY_FILE" -signature "$DUMP.sig" "$DUMP"
+# For an encrypted dump, decrypt these verified bytes to a private local file.
+if [[ "$DUMP" == *.age ]]; then
+  umask 077
+  age -d -i "$AGE_KEY_FILE" -o "${DUMP%.age}" "$DUMP"
+  DUMP="${DUMP%.age}"
+fi
+gunzip -c "$DUMP" \
   | docker compose -f docker-compose.stack.yml exec -T postgres \
-      psql -U convex -d freesocks_beta
+      psql -U convex -d freesocks_beta -v ON_ERROR_STOP=1
 ```
 
 Run a **restore drill** before launch and periodically after:
-`sh docker/restore-verify.sh` restores the latest dump into a scratch DB,
+`bash docker/restore-verify.sh` verifies the signature with `BACKUP_VERIFY_KEY_FILE` and restores the latest dump into a scratch DB,
 asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted
 dumps; it decrypts with the backup image's `age`, so the host needs none, and
 any SQL error fails the drill). A backup that has never been restored is not a
