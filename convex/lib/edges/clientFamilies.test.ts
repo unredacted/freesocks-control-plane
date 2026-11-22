@@ -84,7 +84,9 @@ describe('classifyClient', () => {
     ['v2rayN/7.14.6', undefined],
     ['v2rayN/7.25.6', undefined],
     ['Throne/1.0.13', 'plain'],
-    ['Throne/1.1.0', undefined],
+    // 1.1.0-beta.1 and beta.2 (no encryption) send `Throne/1.1.0` too.
+    ['Throne/1.1.0', 'plain'],
+    ['Throne/1.1.1', undefined],
     ['Exclave/0.16.1', 'plain'],
     ['Exclave/0.16.2', undefined],
     ['husi/0.14.2-alpha (390; sing-box v1.12.0)', 'plain'],
@@ -101,6 +103,8 @@ describe('classifyClient', () => {
     // Anywhere sends no version, and refuses the layer below iOS 26: both entries.
     ['Anywhere', 'prefer'],
     ['Anywhere/1.0', 'prefer'],
+    // Karing names HiddifyNext among the apps it passes for: its own family's rule.
+    ['Karing/1.2.10 HiddifyNext/2.0 mihomo/1.18 sing-box/1.12', undefined],
   ] as const)('%s → %s', (ua, cap) => {
     expect(classifyClient(ua).encryptionCap).toBe(cap);
   });

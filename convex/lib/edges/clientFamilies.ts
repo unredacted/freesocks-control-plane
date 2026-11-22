@@ -61,8 +61,9 @@ export const ENCRYPTION_FLOORS: readonly EncryptionFloor[] = [
   // VLESS. Sends `HiddifyNext/<version> (<platform>) like ClashMeta v2ray sing-box`.
   {
     app: 'Hiddify',
-    match: /hiddify/i,
-    version: { re: /hiddify(?:next)?\/v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i, floor: [5, 5, 5] },
+    // Anchored: Karing's User-Agent may name HiddifyNext among the apps it passes for.
+    match: /^Hiddify(?:Next)?(?:[/ ]|$)/i,
+    version: { re: /^hiddify(?:next)?\/v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i, floor: [5, 5, 5] },
     noVersion: 'plain',
   },
 
@@ -143,8 +144,9 @@ export const ENCRYPTION_FLOORS: readonly EncryptionFloor[] = [
     match: /^Throne\//i,
     // 1.1.0 (2026-03-07): a link with `encryption` goes to its Xray v25.12.8
     // outbound. Its User-Agent drops the pre-release tag, so 1.1.0-beta.1 and
-    // beta.2 (which dropped the field) read as 1.1.0 too.
-    version: { re: semver('Throne'), floor: [1, 1, 0] },
+    // beta.2 (which dropped the field) read as 1.1.0 too: the floor is the
+    // next release, 1.1.1, which no pre-release can pass for.
+    version: { re: semver('Throne'), floor: [1, 1, 1] },
     noVersion: 'plain',
   },
   {

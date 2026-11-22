@@ -521,7 +521,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Links, Clash YAML, sing-box JSON and Xray JSON; the panel serves links. A VLESS link with `encryption` goes to its Xray-core fork, from 1.1.0; an older one is served plain (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts). Was `other` (plain) before 2026-11-21.',
+      'Links, Clash YAML, sing-box JSON and Xray JSON; the panel serves links. A VLESS link with `encryption` goes to its Xray-core fork, from 1.1.0 (FCP reads 1.1.1 as the floor: the 1.1.0 betas without it send `Throne/1.1.0` too); an older one is served plain (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts). Was `other` (plain) before 2026-11-21.',
   },
   {
     app: 'Exclave',
