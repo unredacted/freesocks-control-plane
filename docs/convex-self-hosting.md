@@ -306,12 +306,12 @@ app.freesocks.org {
     # Security headers. The captcha (self-hosted Cap) is bundled + served
     # same-origin, so the CSP is pure 'self' — ZERO third-party origins. Inline
     # STYLES are allowed (Svelte style bindings); inline SCRIPTS are not (the FOUC
-    # theme logic is the external /theme-init.js). worker-src 'self' covers both
-    # the PoP signing worker and Cap's proof-of-work solver worker;
+    # theme logic is the external /theme-init.js). worker-src allows blob: for
+    # the bundled PoP signer and Cap's proof-of-work solver;
     # 'wasm-unsafe-eval' lets Cap's WASM compile (served same-origin via /cap).
     header {
         # Add the site policy so proxied subscription documents keep their sandbox.
-        +Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+        +Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
         # COOP/CORP isolate the context; COEP require-corp is now ENFORCEABLE
         # (every subresource is same-origin — the Turnstile iframe that blocked it
         # is gone). Permissions-Policy denies features the app never uses.
@@ -327,9 +327,8 @@ app.freesocks.org {
     }
     # Integrity-Policy "blocked-destinations=(script)" stays DEFERRED. Every chunk
     # now carries SRI (entry/css in index.html + an import map covering all dynamic
-    # chunks), but the enforcing header would block the PoP signing WORKER's module
-    # imports (a worker realm doesn't inherit the document import map → no integrity
-    # source → blocked → auth breaks). Flip only after an in-browser beta check.
+    # chunks), and the PoP signer ships inline. Check both the signing and
+    # captcha workers in supported browsers before enabling the header.
 
     # API + health/readiness → Convex HTTP actions (:3211)
     @api path /api/* /healthz /readyz

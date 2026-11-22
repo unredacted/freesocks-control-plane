@@ -11,6 +11,7 @@
  * that during rollout; once POP_REQUIRED is enabled, a bound session with no
  * signature is rejected (re-auth), which is the point.
  */
+import SigningWorker from './pop-worker?worker&inline';
 import { normalizePath } from '../../shared/crypto/envelope';
 import {
   POP_ALG_FIELD,
@@ -141,7 +142,8 @@ function ensureWorker(): Worker | null {
     return null;
   }
   try {
-    worker = new Worker(new URL('./pop-worker.ts', import.meta.url), { type: 'module' });
+    // Include the signer bytes in the integrity-covered importing bundle.
+    worker = new SigningWorker();
     worker.onmessage = (e: MessageEvent) => {
       const data = e.data as WorkerReply & { id: number };
       const resolve = pending.get(data.id);

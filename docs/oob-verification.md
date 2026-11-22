@@ -75,8 +75,9 @@ through as many of these independent channels as are available:
    `verifier-extension/pinned.js` from the built `dist/`: SHA-384 of a NONCE-NORMALIZED
    `index.html` (Caddy templates a per-request CSP nonce into `<meta name="csp-nonce">`,
    so the generator and the extension's `background.js` canonicalize that one tag before
-   hashing; the SRI `integrity=` attributes pin every chunk, so the normalized-index hash
-   pins the whole bundle). Once published to a web store, set the listing URL in Admin →
+   hashing). The badge confirms the HTML probe. It does not attest what ran in the tab.
+   The proof-of-possession signer is bundled into an integrity-covered script.
+   Once published to a web store, set the listing URL in Admin →
    Settings → verification (`verification.extensionUrl`) and the in-app backend links to it;
    until then the backend says "planned, not available yet." A native app reusing the
    existing proxy clients is the stronger sibling (the extension's own self-fetch can be
