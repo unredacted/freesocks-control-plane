@@ -21,7 +21,7 @@
 #     doubles on each further failure, never longer than the interval),
 #   BACKUP_RETENTION (local copies to keep, default 7),
 #   BACKUP_AGE_PUBLIC_KEY (age recipient; encrypts dumps before upload),
-#   BACKUP_ALLOW_UNENCRYPTED=true (silence the no-encryption warning),
+#   BACKUP_ALLOW_UNENCRYPTED=true (explicitly allow a plaintext offsite upload),
 #   and for offsite upload (all required to enable it):
 #     S3_ENDPOINT, S3_BUCKET, S3_PREFIX (default db-backups),
 #     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
@@ -41,10 +41,12 @@ if [ -z "${S3_BUCKET:-}" ] || [ -z "${S3_ENDPOINT:-}" ]; then
   fi
   echo "[backup] WARNING: BACKUP_ALLOW_LOCAL_ONLY=true — offsite backups DISABLED" >&2
 fi
-if [ -z "${BACKUP_AGE_PUBLIC_KEY:-}" ] && [ "${BACKUP_ALLOW_UNENCRYPTED:-}" != "true" ]; then
-  echo "[backup] WARNING: BACKUP_AGE_PUBLIC_KEY unset — dumps are uploaded UNENCRYPTED" >&2
-  echo "[backup]          (they contain accountIdHash + live sub tokens). Set an age" >&2
-  echo "[backup]          recipient, or BACKUP_ALLOW_UNENCRYPTED=true to accept this." >&2
+if [ -n "${S3_BUCKET:-}" ] && [ -n "${S3_ENDPOINT:-}" ] && [ -z "${BACKUP_AGE_PUBLIC_KEY:-}" ]; then
+  if [ "${BACKUP_ALLOW_UNENCRYPTED:-}" != "true" ]; then
+    echo "[backup] FATAL: set BACKUP_AGE_PUBLIC_KEY or explicitly allow plaintext offsite uploads" >&2
+    exit 1
+  fi
+  echo "[backup] WARNING: BACKUP_ALLOW_UNENCRYPTED=true — offsite dumps are uploaded unencrypted" >&2
 fi
 
 PGHOST="${POSTGRES_HOST:-postgres}"

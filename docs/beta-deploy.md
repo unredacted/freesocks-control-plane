@@ -639,8 +639,9 @@ interval, so a first cycle that raced a Postgres restart is retried within
 minutes instead of a day later; a failed upload still prunes local copies to
 `BACKUP_RETENTION`, so retries never fill the disk. Set `BACKUP_AGE_PUBLIC_KEY` (an age
 X25519 recipient; keep the private half offline) so dumps are encrypted
-client-side before upload: a dump carries `accountIdHash` + live subscription
-tokens, so an unencrypted bucket compromise yields the readable datastore.
+client-side before upload. Offsite upload requires this recipient or an explicit
+`BACKUP_ALLOW_UNENCRYPTED=true` opt-in. A dump carries `accountIdHash` and live
+subscription tokens.
 Also back up the **secret set** (the `bunx convex env` values, especially
 `ACCOUNT_ID_PEPPER` — losing it invalidates every account number). Export it
 alongside each dump, encrypted with the same age recipient, through the

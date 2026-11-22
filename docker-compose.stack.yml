@@ -184,8 +184,7 @@ services:
       # Explicit risk-acceptance opt-out: without BACKUP_S3_*, the sidecar
       # exits fatally unless this is 'true' (see docker/backup.sh).
       - BACKUP_ALLOW_LOCAL_ONLY=${BACKUP_ALLOW_LOCAL_ONLY:-}
-      # age recipient for client-side dump encryption (recommended); the warning
-      # is silenced with BACKUP_ALLOW_UNENCRYPTED=true.
+      # Offsite uploads require an age recipient or explicit plaintext opt-in.
       - BACKUP_AGE_PUBLIC_KEY=${BACKUP_AGE_PUBLIC_KEY:-}
       - BACKUP_ALLOW_UNENCRYPTED=${BACKUP_ALLOW_UNENCRYPTED:-}
     volumes:

@@ -93,6 +93,18 @@ function run(env: Record<string, string>, opts: { fails?: number; oldDumps?: num
 }
 
 describe('docker/backup.sh', () => {
+  test('fails startup when offsite storage requires an encryption recipient', () => {
+    const { res, heartbeat } = run({
+      S3_BUCKET: 'test-bucket',
+      S3_ENDPOINT: 'https://storage.example',
+      BACKUP_ALLOW_UNENCRYPTED: '',
+      SLEEPS: '1',
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain('set BACKUP_AGE_PUBLIC_KEY');
+    expect(heartbeat()).toBe(false);
+  });
+
   test('a failed cycle retries soon, backing off up to the interval; a success resets', () => {
     // Four failed cycles, then a good one, then one more wait to stop the loop.
     const { res, sleeps, heartbeat } = run(
