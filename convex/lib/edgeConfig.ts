@@ -77,10 +77,12 @@ const AUTO_FAMILIES: ReadonlySet<RenderClientFamily> = new Set(['singbox', 'miho
 /**
  * Families whose apps are not handed an encrypted entry until someone has
  * seen them work with one: sing-box does not speak the layer (the backend
- * leaves the entry out of its format anyway), Hiddify runs a sing-box core,
- * and an app FCP does not recognise may refuse a list it cannot read.
+ * leaves the entry out of its format anyway), and an app FCP does not
+ * recognise may refuse a list it cannot read. Hiddify speaks it from app
+ * 5.5.5: its family takes the usual rule, and an older Hiddify is served the
+ * plain entry by its version (lib/edges/clientFamilies.ts `ENCRYPTION_FLOORS`).
  */
-const PLAIN_FAMILIES: ReadonlySet<RenderClientFamily> = new Set(['singbox', 'hiddify', 'other']);
+const PLAIN_FAMILIES: ReadonlySet<RenderClientFamily> = new Set(['singbox', 'other']);
 
 export function defaultClientRule(family: RenderClientFamily): ClientRenderRule {
   return {

@@ -42,7 +42,13 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
+import {
+  RENDER_CLIENT_FAMILIES,
+  resolveEdgeConfig,
+  type EdgeConfig,
+  type RenderClientFamily,
+} from './lib/edgeConfig';
+import type { EncryptionRule } from '../src/shared/encryptionRule';
 import { classifyClient } from './lib/edges/clientFamilies';
 import { cohortKeyOf, type Cohort } from './lib/edges/cohorts';
 import {
@@ -490,11 +496,45 @@ async function rehearseBody(
   if (c.nodeName && pinnedNode && pinnedNode !== c.nodeName)
     return { cohortKey, format, reason: 'pinned_elsewhere' };
   const family = classifyClient(ua).family;
+  // Judged as served to an app at or above its VLESS Encryption floor (the
+  // family's rule) and, where that rule hands out an encrypted entry, as
+  // served to an app below it (plain; clientFamilies.ts `ENCRYPTION_FLOORS`).
+  // The representative User-Agent only selects the format, not the version.
+  const familyRule = c.rules[family];
+  const encryptions: Array<EncryptionRule | undefined> =
+    familyRule.encryption === 'plain' ? ['plain'] : [familyRule.encryption, 'plain'];
+  for (const encryption of encryptions) {
+    const failure = judgeRendered(
+      c,
+      cohortKey,
+      format,
+      content,
+      renderKey,
+      family,
+      encryption,
+      onReduced,
+    );
+    if (failure) return failure;
+  }
+  return null;
+}
+
+/** Render one body under one encryption rule and judge what it serves. */
+function judgeRendered(
+  c: RehearsalContext,
+  cohortKey: string,
+  format: RenderFormat,
+  content: string,
+  renderKey: string,
+  family: RenderClientFamily,
+  encryption: EncryptionRule | undefined,
+  onReduced?: (r: RehearsalReduced) => void,
+): RehearsalFailure | null {
   const rctx: EdgeRenderContext = {
     epoch: c.epoch,
     matchers: c.matchers,
     published: c.published,
-    rule: { ...c.rules[family], enabled: true },
+    rule: { ...c.rules[family], enabled: true, encryption },
     preferDistinctProviders: c.preferDistinctProviders,
     ...(c.edgePick ? { edgePick: c.edgePick } : {}),
     originAddress: c.originAddress,
@@ -598,7 +638,15 @@ export const run = internalAction({
       const failures: RehearsalFailure[] = [];
       const reduced: RehearsalReduced[] = [];
       const unrepresented: RehearsalUnrepresented[] = [];
-      const noteReduced = (r: RehearsalReduced) => reduced.push(r);
+      // A body judged under two encryption rules may note the same reduction twice.
+      const noteReduced = (r: RehearsalReduced) => {
+        if (
+          !reduced.some(
+            (x) => x.cohortKey === r.cohortKey && x.format === r.format && x.reason === r.reason,
+          )
+        )
+          reduced.push(r);
+      };
       let source: RehearsalResult['source'] = 'members';
       if (!c.activationCurrent) {
         // A newer approval (or none) owns the node now: this run proves nothing.

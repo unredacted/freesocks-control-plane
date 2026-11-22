@@ -632,7 +632,8 @@ describe('the rule per client family', () => {
     );
     expect(got).toEqual({
       singbox: 'plain',
-      hiddify: 'plain',
+      // From app 5.5.5; an older Hiddify is served plain by its version (clientFamilies.ts).
+      hiddify: 'prefer',
       other: 'plain',
       mihomo: 'prefer',
       'xray-links': 'prefer',
