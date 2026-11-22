@@ -29,7 +29,8 @@ describe('mirror formats', () => {
       v2rayNG: 'links',
       Clash: 'clash',
       FlClash: 'clash',
-      'Mihomo Party': 'clash',
+      'Clash Meta for Android': 'clash',
+      'Clash Party': 'clash',
       Shadowrocket: 'links',
       Outline: 'links',
     });

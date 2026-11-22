@@ -7,7 +7,7 @@
  * same format whose only entries are inert ones named with the notice:
  *
  *   ⚠ App too old for FreeSocks
- *   Install FlClash or Mihomo Party
+ *   Install FlClash or Clash Party
  *   Help: your FreeSocks account page
  *
  * The body decides, never the User-Agent alone: a body holding any entry is

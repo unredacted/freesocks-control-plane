@@ -112,7 +112,16 @@ export const clients: CompatibilityClient[] = [
       'Contract plus reference Mihomo engine; packaged application requires device verification.',
   },
   {
-    name: 'Mihomo Party',
+    name: 'Clash Meta for Android',
+    format: 'mihomo',
+    // Fixed by its fetch.go: `ClashMetaForAndroid/<versionName>`, `.Meta` the build flavour.
+    userAgents: ['ClashMetaForAndroid/2.11.37.Meta'],
+    application: 'manual',
+    limitation:
+      'Contract plus reference Mihomo engine; packaged Android application requires device verification.',
+  },
+  {
+    name: 'Clash Party',
     format: 'mihomo',
     userAgents: ['mihomo.party/v2.0.5 (clash.meta)', 'mihomo/1.19.30'],
     application: 'manual',

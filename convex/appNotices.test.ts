@@ -169,7 +169,7 @@ describe('a place no origin covers (direct delivery)', () => {
     const doc = YAML.parse(await res.text()) as ClashDoc;
     expect(doc.proxies.map((p) => p.name)).toEqual([
       '⚠ App too old for FreeSocks',
-      'Install FlClash or Mihomo Party',
+      'Install FlClash or Clash Party',
       'Help: your FreeSocks account page',
     ]);
     expect(doc.proxies.every((p) => p.type === 'socks5' && p.server === '127.0.0.1')).toBe(true);
@@ -358,7 +358,7 @@ describe('the record', () => {
       family: 'clash',
       why: 'old_app',
     });
-    expect(plain.lines[1]).toBe('Install FlClash or Mihomo Party');
+    expect(plain.lines[1]).toBe('Install FlClash or Clash Party');
   });
 
   test('a mode switch in place clears it; a server switch keeps it', async () => {

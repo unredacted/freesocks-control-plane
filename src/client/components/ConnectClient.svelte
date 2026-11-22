@@ -169,7 +169,9 @@
     v2rayN: 'setup.clientDesc.v2rayn',
     Clash: 'setup.clientDesc.clash',
     FlClash: 'setup.clientDesc.flclash',
-    'Mihomo Party': 'setup.clientDesc.mihomoParty',
+    'Clash Meta for Android': 'setup.clientDesc.clashMetaForAndroid',
+    // Formerly Mihomo Party: the copy never named it, so the key stays.
+    'Clash Party': 'setup.clientDesc.mihomoParty',
     Throne: 'setup.clientDesc.throne',
     Shadowrocket: 'setup.clientDesc.shadowrocket',
     Outline: 'setup.clientDesc.outline',

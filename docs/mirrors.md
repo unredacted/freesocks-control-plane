@@ -54,7 +54,7 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   mirror is the recommendation); the pass (copy, download, QR) and the app buttons follow the
   pick, which is page state only. The pass shows the mirror's plain link list; each app's button
   imports the mirror in that app's format, and a Clash or sing-box app's card also shows its own
-  mirror link to copy (FlClash and Mihomo Party import by paste). rawConfig modes get no
+  mirror link to copy (FlClash and Clash Party import by paste). rawConfig modes get no
   suggestion, as they get no mirrors. The member's own stored answer
   wins over this request's country (`suggestionCountry` in `src/client/lib/mirrorSuggestion.ts`):
   a listed answer brings the suggestion even when the request looks elsewhere (a VPN), and "Somewhere
@@ -112,11 +112,11 @@ The main link picks the body's format per request from the app's User-Agent (`do
 "Subscription formats"). A bucket cannot, so a mirror is one object per format, at sibling paths
 of the key's one random id (`src/shared/mirrorFormats.ts`):
 
-| Format    | Object              | Read by                                                    |
-| --------- | ------------------- | ---------------------------------------------------------- |
-| `links`   | `mirrors/<id>`      | apps that read a share-link list (Hiddify, v2rayNG, ...)   |
-| `clash`   | `mirrors/<id>.yaml` | Clash and Mihomo apps (Clash Verge, FlClash, Mihomo Party) |
-| `singbox` | `mirrors/<id>.json` | sing-box apps (sing-box, Karing)                           |
+| Format    | Object              | Read by                                                                           |
+| --------- | ------------------- | --------------------------------------------------------------------------------- |
+| `links`   | `mirrors/<id>`      | apps that read a share-link list (Hiddify, v2rayNG, ...)                          |
+| `clash`   | `mirrors/<id>.yaml` | Clash and Mihomo apps (Clash Verge, FlClash, Clash Meta for Android, Clash Party) |
+| `singbox` | `mirrors/<id>.json` | sing-box apps (sing-box, Karing)                                                  |
 
 - **Rendered like the main link's answer to that app.** Each format's body is fetched from the
   backend with a fixed User-Agent of its kind (`convex/lib/mirrorFormats.ts` `MIRROR_FETCH_UA`:
@@ -139,8 +139,8 @@ of the key's one random id (`src/shared/mirrorFormats.ts`):
 - **Which app gets which.** The catalog's `format` (`publicConfig.clients[].format`): the
   client row's own `format` (Admin -> Clients "Subscription format"; the defaults set it), else
   from the app's name by the rules a User-Agent goes by (`mirrorFormatOfApp`). MirrorHelp lists each
-  mirror once per format, labelled with the catalog apps that read it ("For Clash, FlClash and
-  Mihomo Party"); a format no catalog app reads is not offered.
+  mirror once per format, labelled with the catalog apps that read it ("For Clash, FlClash, Clash
+  Party and Clash Meta for Android"); a format no catalog app reads is not offered.
 - **Mirrors from before formats.** They hold the `links` object only, at the same URL, which keeps
   its meaning. The post-deploy seed (`storage:seedMirrorLedger`) counts copies not written in
   every format their key keeps and, when there are any, starts one mirror pass at once, so they

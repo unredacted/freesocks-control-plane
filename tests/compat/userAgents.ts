@@ -309,7 +309,7 @@ export const appUserAgents: AppUserAgent[] = [
   },
   {
     app: 'Clash Party (formerly Mihomo Party)',
-    catalog: 'Mihomo Party',
+    catalog: 'Clash Party',
     userAgents: ['mihomo.party/v2.0.5 (clash.meta)'],
     family: 'mihomo',
     format: 'clash-yaml',
@@ -344,6 +344,7 @@ export const appUserAgents: AppUserAgent[] = [
   },
   {
     app: 'Clash Meta for Android',
+    catalog: 'Clash Meta for Android',
     userAgents: ['ClashMetaForAndroid/2.11.37.Meta'],
     family: 'mihomo',
     format: 'clash-yaml',

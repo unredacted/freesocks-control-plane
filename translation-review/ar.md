@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**235 of 842 strings are missing** (the app currently shows English for
+**236 of 843 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -669,7 +669,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(8 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(9 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -717,6 +717,7 @@ review.
 | `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | تطبيق سطح مكتب قوي للمستخدمين المتقدمين. الاستيراد يدوي، والروابط التي تستخدم تشفير "none" قد تحتاج إلى تعديل يدوي. فضّل Hiddify إذا بدا ذلك معقدًا. |
 | `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | Clash Verge تطبيق سطح مكتب شائع بقواعد توجيه قوية. بعض الإصدارات ترفض روابط اشتراك VLESS؛ إذا لم يستورد رابطك، استخدم Hiddify أو v2rayN بدلًا منه. |
 | `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | تطبيق نظيف من عائلة Clash يعمل عبر المنصات. الاستيراد بلصق رابط اشتراكك (لا يوجد استيراد بلمسة واحدة). |
+| `setup.clientDesc.clashMetaForAndroid` | The Android app from the team behind the Clash (mihomo) core. Imports with one tap. | ⚠️ **MISSING** |
 | `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | تطبيق سطح مكتب ودود لنواة Clash (mihomo). الصق رابط اشتراكك للاستيراد. |
 | `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | عميل سطح مكتب متقدم يحترم حد الأجهزة في خطتك، مع دعم جيد للينكس. توقّع إعدادًا يدويًا. |
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | تطبيق iOS مدفوع ومغلق المصدر، شائع وموثوق. يستحق الاستخدام إن كنت تملكه أصلًا؛ وتطبيقات المصدر المفتوح بالأعلى تؤدي المهمة نفسها مجانًا. |

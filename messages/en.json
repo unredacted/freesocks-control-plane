@@ -767,6 +767,7 @@
       "v2rayn": "A powerful desktop app for advanced users. Import is manual, and links using encryption \"none\" can need a manual tweak. Prefer Hiddify if that sounds fiddly.",
       "clash": "Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead.",
       "flclash": "A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import).",
+      "clashMetaForAndroid": "The Android app from the team behind the Clash (mihomo) core. Imports with one tap.",
       "mihomoParty": "A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import.",
       "throne": "An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup.",
       "shadowrocket": "A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free.",

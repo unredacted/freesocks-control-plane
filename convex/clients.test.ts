@@ -279,6 +279,58 @@ describe('clients CRUD', () => {
     expect(after.find((c) => c.name === 'Anywhere')!.ipv6).toBe(true);
   });
 
+  test('a renamed default keeps its stored row under the new name, never listed twice', async () => {
+    const t = convexTest(schema, modules);
+    // A deployment seeded while Clash Party was still Mihomo Party, which an
+    // admin turned off and described.
+    const old = await t.mutation(internal.clients.create, {
+      name: 'Mihomo Party',
+      platforms: ['windows', 'desktop'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://github.com/mihomo-party-org/mihomo-party/releases/latest',
+    });
+    await t.mutation(internal.clients.update, {
+      id: old.id as Id<'clients'>,
+      enabled: false,
+      description: 'Admin blurb the rename must keep.',
+    });
+
+    // The deploy seed renames it before it inserts what is missing.
+    await t.mutation(internal.seed.seedClients, {});
+    let rows = (await t.query(internal.clients.listForAdmin, {})).clients;
+    expect(rows.some((c) => c.name === 'Mihomo Party')).toBe(false);
+    const party = rows.filter((c) => c.name === 'Clash Party');
+    expect(party).toHaveLength(1);
+    expect(party[0]!.id).toBe(old.id);
+    expect(party[0]!.enabled).toBe(false);
+    expect(party[0]!.description).toBe('Admin blurb the rename must keep.');
+    expect(rows.some((c) => c.name === 'Clash Meta for Android')).toBe(true);
+
+    // The refresh then repoints its links.
+    await t.mutation(internal.seed.refreshDefaultClients, {});
+    rows = (await t.query(internal.clients.listForAdmin, {})).clients;
+    expect(rows.find((c) => c.name === 'Clash Party')!.homepageUrl).toBe(
+      'https://github.com/mihomo-party-org/clash-party/releases/latest',
+    );
+    expect(rows).toHaveLength(DEFAULT_CLIENTS.length);
+  });
+
+  test('a rename never overwrites a row already under the new name', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedClients, {});
+    await t.mutation(internal.clients.create, {
+      name: 'Mihomo Party',
+      platforms: ['windows'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://admin.example',
+    });
+    await t.mutation(internal.seed.refreshDefaultClients, {});
+    const rows = (await t.query(internal.clients.listForAdmin, {})).clients;
+    expect(rows.filter((c) => c.name === 'Clash Party')).toHaveLength(1);
+    // The admin's own row stays where it is, for the admin to remove.
+    expect(rows.find((c) => c.name === 'Mihomo Party')?.homepageUrl).toBe('https://admin.example');
+  });
+
   test('a deployment seeded before xhttp gets the flags from the refresh, not the deploy seed', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.seedClients, {});
@@ -404,7 +456,8 @@ describe('clientCatalog resolve + project', () => {
       Anywhere: true,
       Clash: true,
       FlClash: true,
-      'Mihomo Party': true,
+      'Clash Meta for Android': true,
+      'Clash Party': true,
       // XHTTP under REALITY unverified: untested, so still shown.
       Shadowrocket: undefined,
     });
@@ -420,7 +473,7 @@ describe('clientCatalog resolve + project', () => {
     expect(find('Shadowrocket')?.openSource).toBe(false);
     expect(find('Shadowrocket')?.license).toBe('Proprietary');
     // the verified open-source additions are present + labeled OSS
-    for (const name of ['Anywhere', 'v2rayN', 'FlClash', 'Mihomo Party']) {
+    for (const name of ['Anywhere', 'v2rayN', 'FlClash', 'Clash Party', 'Clash Meta for Android']) {
       expect(find(name)?.openSource, name).toBe(true);
     }
     // every open-source app advertises a public source repo

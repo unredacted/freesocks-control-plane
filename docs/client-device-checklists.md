@@ -132,7 +132,16 @@ Android, Windows, macOS or Linux.
 - Refresh: the profile's sync action.
 - Version: Tools, About.
 
-### Mihomo Party
+### Clash Meta for Android
+
+Android.
+
+- Import: the account page's Clash button, or Profiles, add, URL: paste the copied URL and save.
+- Connect: the start card on the home screen; allow the VPN prompt.
+- Refresh: the profile's update action.
+- Version: About.
+
+### Clash Party (formerly Mihomo Party)
 
 Windows, macOS or Linux.
 
