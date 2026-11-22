@@ -719,6 +719,22 @@ response has `isDone: false`, repeat with the returned `cursor` until it reports
 tokens. Reissue only authorized tokens after completing recovery and before
 restarting the affected automation.
 
+Keep a current administrator passkey inventory outside the datastore
+snapshots. Update the independently trusted copy whenever admin access or
+passkeys change. The instance-admin command
+`bunx convex run admins:recoveryPasskeyInventory '{}'` exports the active
+admin usernames and their passkey IDs and public keys. Retain the inventory
+in protected operator storage so a backup writer cannot replace it.
+
+After restoring and while ingress is still closed, run
+`bunx convex run admins:reconcileRestoredAdmins "$(cat "$APPROVED_ADMINS_FILE")"`
+with that current, independently trusted inventory. Reconciliation removes
+unapproved passkeys, deactivates unapproved admin accounts, invalidates
+restored admin sessions, and clears old invitations. It aborts before making
+changes if no approved passkey matches. In that case keep ingress closed
+until an operator establishes a trusted administrator. Reopen access only
+after both token and administrator recovery succeed.
+
 Run a **restore drill** before launch and periodically after:
 `bash docker/restore-verify.sh` verifies the signature with `BACKUP_VERIFY_KEY_FILE` and restores the latest dump into a scratch DB,
 asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted

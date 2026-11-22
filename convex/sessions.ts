@@ -83,6 +83,7 @@ export const create = internalMutation({
       verifiedMemberPasskey,
     },
   ) => {
+    let adminSessionGeneration: number | undefined;
     // Verify the assertion's credential still exists and belongs to an active
     // admin in the same transaction as session creation.
     if (verifiedAdminPasskey) {
@@ -100,6 +101,7 @@ export const create = internalMutation({
           message: 'Passkey is no longer authorized',
         });
       }
+      adminSessionGeneration = admin.sessionGeneration ?? 0;
       await ctx.db.patch(credential._id, {
         counter: verifiedAdminPasskey.newCounter,
         lastUsedAt: Date.now(),
@@ -156,6 +158,7 @@ export const create = internalMutation({
       adminUserId,
       expiresAt: Date.now() + ttlMs,
       adminPasskeyId: verifiedAdminPasskey?.id,
+      adminSessionGeneration,
       memberPasskeyId: kind === 'member' ? (verifiedMemberPasskey?.id ?? null) : undefined,
       ...(bound ? { popPublicKey, popAlg: boundAlg, popSessionToken } : {}),
     });
@@ -186,10 +189,14 @@ export const bySid = internalQuery({
     )
       return null;
     if (row.kind === 'admin' && row.adminUserId) {
+      const admin = await ctx.db.get(row.adminUserId);
+      if (!admin || (row.adminSessionGeneration ?? 0) !== (admin.sessionGeneration ?? 0)) {
+        return null;
+      }
       if (row.adminPasskeyId) {
         const credential = await ctx.db.get(row.adminPasskeyId);
         if (!credential || credential.adminUserId !== row.adminUserId) return null;
-      } else if ((await ctx.db.get(row.adminUserId))?.legacySessionsRevoked) {
+      } else if (admin.legacySessionsRevoked) {
         // Earlier admin sessions lack credential provenance.
         return null;
       }

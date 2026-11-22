@@ -1191,6 +1191,7 @@ export default defineSchema({
     // recorded grant require an operator to reissue the invitation.
     pendingInviteId: v.optional(v.id('adminInvites')),
     legacySessionsRevoked: v.optional(v.boolean()),
+    sessionGeneration: v.optional(v.number()),
     username: v.string(),
     displayName: v.string(),
     isActive: v.boolean(),
@@ -5718,6 +5719,7 @@ export default defineSchema({
     userId: v.optional(v.id('users')),
     adminUserId: v.optional(v.id('adminUsers')),
     adminPasskeyId: v.optional(v.id('passkeyCredentials')),
+    adminSessionGeneration: v.optional(v.number()),
     memberPasskeyId: v.optional(v.union(v.id('memberPasskeyCredentials'), v.null())),
     expiresAt: v.number(),
     popPublicKey: v.optional(v.string()),
