@@ -641,7 +641,7 @@ export const appUserAgents: AppUserAgent[] = [
       },
     ],
     notes:
-      'Links and Xray JSON; the panel serves links. Xray 26.10.31: VLESS Encryption in the core, from a link unconfirmed. No floor: its versions differ by platform (Android 3.3.0 was the first on Xray 25.9.11, iOS unknown) and nothing shows when its link parser began passing `encryption=`.',
+      'Links and Xray JSON; the panel serves links. Xray 26.10.31: VLESS Encryption in the core, and from a link too: a current build connected on an encrypted-only body, checked on a device (2026-11-22). No floor: its versions differ by platform (Android 3.3.0 was the first on Xray 25.9.11, iOS unknown) and nothing shows when its link parser began passing `encryption=`, so an older build may still fail on an encrypted-only body.',
   },
   {
     app: 'Streisand',

@@ -1002,8 +1002,9 @@ sing-box`). Where a release is inferred, not confirmed, the floor is the later c
   User-Agent with no readable version gets what its row says: plain where the app always sends
   one, its family's rule where newer builds send none (Mihomo alpha builds). Anywhere sends no
   version and refuses the layer below iOS 26 while installing on iOS 18, so it gets at most both
-  entries (`prefer`). Happ has no floor yet: its versions differ by platform and nothing shows
-  when it began reading the field from a link.
+  entries (`prefer`). Happ reads the field from a link (a current build connected on an
+  encrypted-only body, checked on a device) but has no floor yet: its versions differ by platform
+  and nothing shows when it began reading the field.
 - **The body decides.** A node without a twin, or a twin whose Host does not exist yet, gives a
   body with the plain entry alone, rendered as it always was under any rule. A body with the twin
   alone (the plain Host kept out of a format on the backend) resolves the listener and is served
