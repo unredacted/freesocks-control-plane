@@ -1233,7 +1233,7 @@ describe('resolveCountry (CF-IPCountry, CF_FRONTED-gated)', () => {
   });
 });
 
-describe('opt-in mirror routes require a member session', () => {
+describe('opt-in mirror route authorization', () => {
   test('POST /api/v1/mirror/request → 401 without auth', async () => {
     const t = convexTest(schema, modules);
     const res = await t.fetch('/api/v1/mirror/request', {
@@ -1241,6 +1241,24 @@ describe('opt-in mirror routes require a member session', () => {
       body: JSON.stringify({ countryCode: 'IR' }),
     });
     expect(res.status).toBe(401);
+  });
+
+  test('mirror provisioning checks both delegated scopes', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const request = async (scopes: string[]) => {
+      const token = await insertToken(t, { scopes, subjectType: 'user', subjectUserId: userId });
+      return t.fetch('/api/v1/mirror/request', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '{}',
+      });
+    };
+    expect((await request(['account:write'])).status).toBe(403);
+    expect((await request(['subscription:read'])).status).toBe(401);
+    const permitted = await request(['account:write', 'subscription:read']);
+    expect(permitted.status).toBe(200);
+    expect(await permitted.json()).toMatchObject({ status: 'no_subscription' });
   });
 
   test('DELETE /api/v1/mirror → 401 without auth', async () => {

@@ -2292,6 +2292,9 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    if (member.source === 'token' && !hasScope(member.scopes, 'subscription:read')) {
+      return errorJson('auth.forbidden', 'Mirror access requires subscription:read', 403);
+    }
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'mirror.request',
       subject: member.userId,

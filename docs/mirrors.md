@@ -20,7 +20,7 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
 ## A member's mirror
 
 - **Asking.** `POST /api/v1/mirror/request` (sealed both ways) runs `storage.provisionMirror`:
-  the next active provider the member has not tried (country-matched first, the country used
+  a delegated token needs both `account:write` and `subscription:read`. The next active provider the member has not tried (country-matched first, the country used
   once and never stored), up to `mirror.maxPerUser` (default 3). The country that picks the host
   is, in order: the member's answer sent with the request (`region`, saved to the key first, see
   below), a host hint (`countryCode`, for a key with no country), "global" (`countryCode: null`),
