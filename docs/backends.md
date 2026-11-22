@@ -998,12 +998,13 @@ family, "Encrypted connections"):
   app's floor is its first release on Mihomo 1.19.13; an Xray-based app's is its first that reads
   `encryption=` from a link on Xray v25.8.31 or later (v25.8.29 had the layer on a wire the next
   release changed). Hiddify: from app 5.5.5 (`HiddifyNext/5.5.5 (android) like ClashMeta v2ray
-sing-box`). Where a release is inferred, not confirmed, the floor is the later candidate. A
+sing-box`; checked on a device on an encrypted-only body). Where a release is inferred, not confirmed, the floor is the later candidate. A
   User-Agent with no readable version gets what its row says: plain where the app always sends
   one, its family's rule where newer builds send none (Mihomo alpha builds). Anywhere sends no
   version and refuses the layer below iOS 26 while installing on iOS 18, so it gets at most both
-  entries (`prefer`). Happ has no floor yet: its versions differ by platform and nothing shows
-  when it began reading the field from a link.
+  entries (`prefer`). Happ reads the field from a link (a current build connected on an
+  encrypted-only body, checked on a device) but has no floor yet: its versions differ by platform
+  and nothing shows when it began reading the field.
 - **The body decides.** A node without a twin, or a twin whose Host does not exist yet, gives a
   body with the plain entry alone, rendered as it always was under any rule. A body with the twin
   alone (the plain Host kept out of a format on the backend) resolves the listener and is served
@@ -1033,7 +1034,8 @@ published front checked on the twin's path with the twin's client string before 
 goes on ([servers.md](servers.md) § "A node serving the encrypted twin").
 
 **Engines run against it** (a test deployment, real fronts, the bodies as delivered,
-2026-11-17). They are engines, not the apps built on them: no GUI app was run.
+2026-11-17). They are engines, not the apps built on them: no GUI app was run in that test (the
+device checks of apps came later, below).
 
 | Engine                          | Encrypted entries               | Plain entries | Auto group                              |
 | ------------------------------- | ------------------------------- | ------------- | --------------------------------------- |
@@ -1055,7 +1057,9 @@ A member's report names the entry it is about, and a failed encrypted entry is n
 against the front while the plain one is in the same body ([edges.md](edges.md) § "An address
 the app holds twice"): an old app fails there whatever the front does.
 
-Not done yet: no GUI app has been run against an encrypted entry.
+**Apps checked on a device** (2026-11-22, each on an encrypted-only body from production): Happ
+(a current build) and Hiddify (5.5.5 or later) connect. Every other app's rule rests on its
+engine and its source, not on a device.
 
 **What exists today.** The key material, the template (`buildTransport` takes a server string
 for any VLESS transport), the `encrypted` flag on a WebSocket or REALITY transport template, the
