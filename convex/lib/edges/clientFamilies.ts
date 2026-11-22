@@ -16,20 +16,42 @@ export interface ClientClassification {
 }
 
 const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: SubscriptionFormat }> = [
-  // Auto-capable clients first. Keep the official-shell prefix list in step
-  // with SINGBOX_*_UA_RE in lib/backends/remnawave.ts (the sub-fetch rewrite):
-  // a shell the backend is served sing-box JSON for must classify as `singbox`.
-  { re: /^(?:SFA|SFI|SFM|SFT|SFL|SFW)\//i, family: 'singbox', format: 'singbox-json' },
-  { re: /sing-?box/i, family: 'singbox', format: 'singbox-json' },
+  // The real User-Agent of each app, with its evidence, is pinned in
+  // tests/compat/userAgents.ts (convex/clientUserAgents.test.ts): a change
+  // here must keep every app there in its family and format.
+  //
+  // Apps whose User-Agent names other apps come first. Karing's may list the
+  // apps it can pass for (HiddifyNext, mihomo, sing-box, ...), Hiddify's ends
+  // `like ClashMeta v2ray sing-box`, NekoBox's `(Prefer ClashMeta Format)`,
+  // Husi's `(sing-box <ver>)`.
   { re: /karing/i, family: 'singbox', format: 'singbox-json' },
+  { re: /hiddify/i, family: 'hiddify', format: 'links' },
+  // NekoBox (Android, and NekoRay on desktop: `NekoBox/PC/...`): the panel
+  // serves it a link list, and its sing-box fork has no VLESS Encryption, so
+  // it takes the plain rule of the apps FCP does not tell apart.
+  { re: /^NekoBox\//i, family: 'other', format: 'links' },
+  // Husi reads link lists (the panel's answer to it) and its core speaks
+  // VLESS Encryption.
+  { re: /^husi\//i, family: 'xray-links', format: 'links' },
+  // Auto-capable clients. Keep the official-shell prefix list in step
+  // with SINGBOX_*_UA_RE in lib/backends/remnawaveUserAgent.ts (the sub-fetch
+  // rewrite): a shell the backend is served sing-box JSON for must classify as
+  // `singbox`. Since sing-box 1.14 a shell sends `SFA (sing-box <ver>; ...)`.
+  {
+    re: /^(?:SFA|SFI|SFM|SFT|SFL|SFW)(?:\/| \(sing-box)/i,
+    family: 'singbox',
+    format: 'singbox-json',
+  },
+  { re: /sing-?box/i, family: 'singbox', format: 'singbox-json' },
   {
     re: /(?:mihomo|clash[.-]?meta|clash[- ]?verge|flclash|clashx|stash|clash)/i,
     family: 'mihomo',
     format: 'clash-yaml',
   },
+  // The rest of the panel's Mihomo rule (remnawaveUserAgent.ts).
+  { re: /^(?:rabbit|flowvy|murge|prizrak-box)/i, family: 'mihomo', format: 'clash-yaml' },
   // Link-list clients with their own quirks.
   { re: /happ/i, family: 'happ', format: 'links' },
-  { re: /hiddify/i, family: 'hiddify', format: 'links' },
   { re: /streisand/i, family: 'streisand', format: 'links' },
   { re: /v2rayng/i, family: 'v2rayng', format: 'links' },
   // Anywhere (iOS): imports a plain link list and has no automatic group, so
@@ -38,8 +60,15 @@ const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: Subscriptio
   // SubscriptionFetcher.swift); `Anywhere/<version>` is taken too. Anchored
   // and whole: "anywhere" is an ordinary word inside other User-Agents.
   { re: /^Anywhere(?:\/|$)/i, family: 'xray-links', format: 'links' },
+  // Xray-cored link-list apps named by an ordinary word: anchored.
+  { re: /^(?:Throne|Exclave)\//i, family: 'xray-links', format: 'links' },
+  // Link-list apps NOT known to speak VLESS Encryption from a link: the plain
+  // rule of the apps FCP does not tell apart, so an encrypted-only rule on
+  // `xray-links` never reaches them (tests/compat/userAgents.ts says why for
+  // each). Before the broad Xray rule below, which some of them would match.
+  { re: /^(?:Shadowrocket|INCY|v2RayTun|FoXray|Loon)\//i, family: 'other', format: 'links' },
   {
-    re: /(?:v2ray|xray|nekobox|nekoray|shadowrocket|v2box|foxray|fair|loon)/i,
+    re: /(?:v2ray|xray|nekoray|shadowrocket|v2box|foxray|fair|loon)/i,
     family: 'xray-links',
     format: 'links',
   },

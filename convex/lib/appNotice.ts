@@ -7,7 +7,7 @@
  * same format whose only entries are inert ones named with the notice:
  *
  *   ⚠ App too old for FreeSocks
- *   Install FlClash or Mihomo Party
+ *   Install FlClash or Clash Party
  *   Help: your FreeSocks account page
  *
  * The body decides, never the User-Agent alone: a body holding any entry is
@@ -39,6 +39,10 @@ import {
   type SubscriptionFormat,
 } from './edges/clientFamilies';
 import { formatSupported, RENDER_FORMATS, type ListenerProto } from './edges/protocols';
+import {
+  normalizeSubscriptionUserAgent,
+  remnawaveDefaultResponse,
+} from './backends/remnawaveUserAgent';
 import { carriesNoEntry } from './edges/render';
 import { decodeLinkList } from './edges/render/links';
 import { encodeBase64 } from './edges/render/base64';
@@ -72,21 +76,15 @@ const FORMAT_OF_FAMILY: Record<AppNoticeFamily, SubscriptionFormat> = {
 };
 
 /**
- * The panel's rule for the Mihomo template (Remnawave's default response
- * rules): a Clash-named User-Agent it does NOT match gets the legacy CLASH
- * template, which has no VLESS.
- */
-const PANEL_MIHOMO_UA =
-  /^(?:flclash|rabbit|flowvy|murge|mihomo|prizrak-box|koala-clash|clash(?:-verge|-nyanpasu|x meta|[-.]?meta))/i;
-
-/**
  * A legacy Clash core (Clash for Windows, ClashX, the original Clash for
  * Android, `clash`, `Clash/<ver>`): what the panel serves its legacy CLASH
- * template. Read with the body, never alone.
+ * template (Remnawave's default response rules: a Clash-named User-Agent its
+ * Mihomo rule does not take), judged on the User-Agent FCP sends the panel,
+ * after its rewrites (FlClash on Windows sends `clash/v<ver> clash-verge …`
+ * and is no legacy core). Read with the body, never alone.
  */
 export function legacyClashCore(ua: string): boolean {
-  const t = ua.trim();
-  return /^clash/i.test(t) && !PANEL_MIHOMO_UA.test(t);
+  return remnawaveDefaultResponse(normalizeSubscriptionUserAgent(ua.trim())) === 'CLASH';
 }
 
 /**

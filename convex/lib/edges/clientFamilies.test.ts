@@ -16,7 +16,8 @@ describe('classifyClient', () => {
     ['HiddifyNext/2.0', 'hiddify', 'links'],
     ['Streisand/1.5', 'streisand', 'links'],
     ['v2rayNG/1.9', 'v2rayng', 'links'],
-    ['Shadowrocket/2.2', 'xray-links', 'links'],
+    // Not known to read VLESS Encryption from a link: the plain rule (tests/compat/userAgents.ts).
+    ['Shadowrocket/2.2', 'other', 'links'],
     ['Anywhere/1.0', 'xray-links', 'links'],
     // What the app's subscription fetch really sends.
     ['Anywhere', 'xray-links', 'links'],

@@ -653,6 +653,7 @@ export type MessageKey =
   | "setup.android"
   | "setup.clientDesc.anywhere"
   | "setup.clientDesc.clash"
+  | "setup.clientDesc.clashMetaForAndroid"
   | "setup.clientDesc.flclash"
   | "setup.clientDesc.hiddify"
   | "setup.clientDesc.karing"

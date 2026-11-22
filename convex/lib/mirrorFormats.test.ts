@@ -3,7 +3,7 @@ import { sha256Hex } from './crypto';
 import { DEFAULT_CLIENTS } from './clientCatalog';
 import { legacyClashCore } from './appNotice';
 import { classifyClient } from './edges/clientFamilies';
-import { normalizeSubscriptionUserAgent } from './backends/remnawave';
+import { normalizeSubscriptionUserAgent } from './backends/remnawaveUserAgent';
 import {
   MIRROR_FETCH_UA,
   mirrorFamily,
@@ -29,7 +29,8 @@ describe('mirror formats', () => {
       v2rayNG: 'links',
       Clash: 'clash',
       FlClash: 'clash',
-      'Mihomo Party': 'clash',
+      'Clash Meta for Android': 'clash',
+      'Clash Party': 'clash',
       Shadowrocket: 'links',
       Outline: 'links',
     });

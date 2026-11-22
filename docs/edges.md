@@ -1247,7 +1247,7 @@ body's own format whose only entries are inert, named with what to do (`convex/l
 `convex/appNotices.ts`):
 
     ⚠ App too old for FreeSocks          (sing-box: ⚠ App can't use this connection mode)
-    Install FlClash or Mihomo Party
+    Install FlClash or Clash Party
     Help: your FreeSocks account page     (sing-box: Or switch mode on your FreeSocks account page)
 
 - **When.** The body decides, never the User-Agent alone: a body holding any entry is never

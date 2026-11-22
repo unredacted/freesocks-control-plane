@@ -24,8 +24,8 @@ export const mirrorFormatValidator = v.union(
 /**
  * The User-Agent each format's body is fetched with. `links` sends none (the
  * backend's default, what every mirror held before). The others are an app of
- * that format the backend recognizes (lib/backends/remnawave.ts and
- * lib/appNotice.ts `PANEL_MIHOMO_UA`): a current Mihomo, never a legacy
+ * that format the backend recognizes (lib/backends/remnawaveUserAgent.ts, the
+ * panel's default rules): a current Mihomo, never a legacy
  * Clash core (its template has no VLESS), and the official sing-box app in the
  * canonical form the main link rewrites the other shells to.
  */

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { normalizeSubscriptionUserAgent } from './remnawaveUserAgent';
 import {
-  normalizeSubscriptionUserAgent,
   remnawaveBulkUpdateTrafficLimit,
   remnawaveDeleteDevice,
   remnawaveDeleteUser,
@@ -466,6 +466,22 @@ describe('normalizeSubscriptionUserAgent', () => {
       'SFA/1.14.0 (sing-box 1.14.0)',
     );
     expect(normalizeSubscriptionUserAgent('SingBox pro')).toBe('SFA/1.12.0 (sing-box 1.12.0)');
+  });
+
+  test('names FlClash on Windows and Linux, ClashX Meta and Everywhere the way the Mihomo rule takes them', () => {
+    expect(normalizeSubscriptionUserAgent('clash/v0.9.4 clash-verge Platform/windows')).toBe(
+      'FlClash/v0.9.4 clash-verge Platform/windows',
+    );
+    expect(normalizeSubscriptionUserAgent('fl_clash/v0.9.4 clash-verge Platform/linux')).toBe(
+      'FlClash/v0.9.4 clash-verge Platform/linux',
+    );
+    expect(
+      normalizeSubscriptionUserAgent('ClashX%20Meta/1 CFNetwork/1568.300.101 Darwin/24.4.0'),
+    ).toBe('ClashX Meta/1 CFNetwork/1568.300.101 Darwin/24.4.0');
+    expect(normalizeSubscriptionUserAgent('Everywhere/1.0 Clash/1.11.0')).toBe('mihomo/1.19.34');
+    // A legacy core keeps its own name: the panel's CLASH template is its answer.
+    for (const ua of ['clash', 'Clash/1.18.0', 'clash/v1.18.0', 'ClashX/1.118.0'])
+      expect(normalizeSubscriptionUserAgent(ua)).toBe(ua);
   });
 
   test('leaves recognized sing-box clients and every other UA untouched', () => {

@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**235 of 842 strings are missing** (the app currently shows English for
+**236 of 843 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -668,7 +668,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(8 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(9 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -716,6 +716,7 @@ review.
 | `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | Мощное настольное приложение для продвинутых пользователей. Импорт ручной, а ссылки с шифрованием "none" могут потребовать ручной правки. Если это звучит сложно, выберите Hiddify. |
 | `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | Clash Verge - популярное настольное приложение с мощными правилами маршрутизации. Некоторые версии не принимают ссылки подписки VLESS; если импорт не срабатывает, используйте Hiddify или v2rayN. |
 | `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | Аккуратное кроссплатформенное приложение семейства Clash. Импорт вставкой ссылки подписки (импорта в одно нажатие нет). |
+| `setup.clientDesc.clashMetaForAndroid` | The Android app from the team behind the Clash (mihomo) core. Imports with one tap. | ⚠️ **MISSING** |
 | `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | Дружелюбное настольное приложение на ядре Clash (mihomo). Вставьте ссылку подписки для импорта. |
 | `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | Продвинутый настольный клиент, соблюдающий лимит устройств вашего плана, с хорошей поддержкой Linux. Настройка ручная. |
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | Платное приложение для iOS с закрытым кодом, популярное и надёжное. Имеет смысл, если оно у вас уже есть; приложения с открытым кодом выше делают то же самое бесплатно. |

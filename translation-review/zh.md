@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**235 of 842 strings are missing** (the app currently shows English for
+**236 of 843 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -668,7 +668,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(8 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(9 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -716,6 +716,7 @@ review.
 | `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | 面向进阶用户的强大桌面应用。导入需要手动操作，使用“none”加密的链接可能还需手动调整。如果觉得麻烦，建议用 Hiddify。 |
 | `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | Clash Verge 是一款流行的桌面应用，路由规则强大。部分版本不支持 VLESS 订阅链接；如果无法导入，请改用 Hiddify 或 v2rayN。 |
 | `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | 简洁的跨平台 Clash 系应用。通过粘贴订阅链接导入（无一键导入）。 |
+| `setup.clientDesc.clashMetaForAndroid` | The Android app from the team behind the Clash (mihomo) core. Imports with one tap. | ⚠️ **MISSING** |
 | `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | 界面友好的 Clash（mihomo）内核桌面应用。粘贴订阅链接即可导入。 |
 | `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | 进阶桌面客户端，能遵守你套餐的设备限制，Linux 支持良好。需要手动设置。 |
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | 一款付费、闭源的 iOS 应用，流行且可靠。如果你已购买，值得使用；上面的开源应用可以免费完成同样的工作。 |

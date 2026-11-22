@@ -132,7 +132,9 @@ const ENGINE_OF: Record<string, Pick<PqApp, 'engine' | 'engineLabel'>> = {
   v2rayN: { engine: 'xray' },
   Clash: { engine: 'mihomo' },
   FlClash: { engine: 'mihomo' },
-  'Mihomo Party': { engine: 'mihomo' },
+  'Clash Meta for Android': { engine: 'mihomo' },
+  // Mihomo Party's new name (the catalog renamed it).
+  'Clash Party': { engine: 'mihomo' },
   Throne: { engine: 'unverified' },
   Shadowrocket: { engine: 'unverified' },
 };

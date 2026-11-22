@@ -18,6 +18,8 @@
  */
 import { z } from 'zod';
 import { fetchBackendProbe } from '../urlSafety';
+// The panel's User-Agent rules and FCP's rewrites of the app UAs it misreads.
+import { normalizeSubscriptionUserAgent } from './remnawaveUserAgent';
 import type {
   BackendDevice,
   FleetStats,
@@ -1450,32 +1452,6 @@ export async function remnawaveDeleteUser(
     if (err instanceof RemnawaveApiError && err.meta?.status === 404) return;
     throw err;
   }
-}
-
-/**
- * Remnawave picks the subscription FORMAT by User-Agent, keying on the client
- * app's UA prefix. Probed live against the production backend (2026-08-30):
- * "SFA/…" → sing-box JSON, but the newer official sing-box shells fall through
- * to the base64 default — which sing-box then fails to import ("decode config:
- * invalid character 'd'…", base64 of vless://). Until the backend recognizes
- * them, rewrite a UA that IS sing-box but lacks a recognized prefix to a
- * canonical SFA one, carrying the core version through (the backend may pick the
- * legacy vs modern template by it). Deliberately narrow — only UAs that START
- * with "SFL/" / "SFW/", the official desktop shells' "SFL (sing-box ..." /
- * "SFW (sing-box ..." form (sing-box-for-desktop `src/main/userAgent.ts`: the
- * app name is SFL on Linux, SFW elsewhere), or "sing-box" — so sing-box-CORED
- * third-party apps with their own backend templates (Karing, Happ, …) are never
- * touched. `lib/edges/clientFamilies.ts` keeps the same shell list.
- */
-const SINGBOX_RECOGNIZED_UA_RE = /^SF[AIMT]\//;
-const SINGBOX_UNRECOGNIZED_UA_RE = /^(?:SF[LW](?:\/|\s+\(sing-box\s)|sing-?box)/i;
-export function normalizeSubscriptionUserAgent(ua: string | undefined): string | undefined {
-  if (!ua || SINGBOX_RECOGNIZED_UA_RE.test(ua) || !SINGBOX_UNRECOGNIZED_UA_RE.test(ua)) return ua;
-  const ver =
-    /sing-?box[/ ]v?(\d+(?:\.\d+){1,2})/i.exec(ua)?.[1] ??
-    /^SF[LW]\/v?(\d+(?:\.\d+){1,2})/i.exec(ua)?.[1] ??
-    '1.12.0';
-  return `SFA/${ver} (sing-box ${ver})`;
 }
 
 export async function remnawaveFetchSubscription(
