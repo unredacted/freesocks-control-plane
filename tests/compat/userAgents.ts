@@ -543,8 +543,10 @@ export const appUserAgents: AppUserAgent[] = [
   {
     app: 'INCY',
     userAgents: ['INCY/2.5.1/ios CFNetwork/1568.300.101 Darwin/24.4.0', 'INCY/2.7.3/android'],
-    family: 'xray-links',
+    family: 'other',
     format: 'links',
+    other:
+      'Closed source; its Xray-numbered core is not confirmed to read VLESS Encryption from a link, so it takes the plain rule until someone has seen it work.',
     evidence: [
       { kind: 'docs', url: 'https://docs.incy.cc/en/subscription-format/' },
       // A server log quoting it (the CFNetwork tail and the Android form are illustrative).
@@ -556,8 +558,10 @@ export const appUserAgents: AppUserAgent[] = [
   {
     app: 'v2RayTun',
     userAgents: ['v2raytun/android', 'v2raytun/ios'],
-    family: 'xray-links',
+    family: 'other',
     format: 'links',
+    other:
+      'Closed source; its Xray-core version and whether it reads VLESS Encryption from a link are unconfirmed, so it takes the plain rule until someone has seen it work.',
     evidence: [
       {
         kind: 'unconfirmed',
@@ -657,8 +661,10 @@ export const appUserAgents: AppUserAgent[] = [
     app: 'Shadowrocket',
     catalog: 'Shadowrocket',
     userAgents: ['Shadowrocket/2592 CFNetwork/1568.300.101 Darwin/24.4.0'],
-    family: 'xray-links',
+    family: 'other',
     format: 'links',
+    other:
+      'Closed source with conflicting reports: its release notes claim VLESS Encryption since 2.2.78, while other panels hold it back because it imports such an entry as plain VLESS and fails without an error. Plain until someone has seen it work.',
     evidence: [
       {
         kind: 'unconfirmed',
@@ -686,8 +692,10 @@ export const appUserAgents: AppUserAgent[] = [
   {
     app: 'FoXray',
     userAgents: ['FoXray/24.10.1'],
-    family: 'xray-links',
+    family: 'other',
     format: 'links',
+    other:
+      'Last seen on Xray 24.9.30, before VLESS Encryption: an encrypted entry would not connect.',
     evidence: [
       {
         kind: 'unconfirmed',
@@ -700,8 +708,10 @@ export const appUserAgents: AppUserAgent[] = [
   {
     app: 'Loon',
     userAgents: ['Loon/3.5.3'],
-    family: 'xray-links',
+    family: 'other',
     format: 'links',
+    other:
+      'Its own core, and its manual lists no VLESS `encryption`: an encrypted entry would not connect.',
     evidence: [
       {
         kind: 'unconfirmed',

@@ -61,7 +61,12 @@ const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: Subscriptio
   // and whole: "anywhere" is an ordinary word inside other User-Agents.
   { re: /^Anywhere(?:\/|$)/i, family: 'xray-links', format: 'links' },
   // Xray-cored link-list apps named by an ordinary word: anchored.
-  { re: /^(?:Throne|Exclave|INCY)\//i, family: 'xray-links', format: 'links' },
+  { re: /^(?:Throne|Exclave)\//i, family: 'xray-links', format: 'links' },
+  // Link-list apps NOT known to speak VLESS Encryption from a link: the plain
+  // rule of the apps FCP does not tell apart, so an encrypted-only rule on
+  // `xray-links` never reaches them (tests/compat/userAgents.ts says why for
+  // each). Before the broad Xray rule below, which some of them would match.
+  { re: /^(?:Shadowrocket|INCY|v2RayTun|FoXray|Loon)\//i, family: 'other', format: 'links' },
   {
     re: /(?:v2ray|xray|nekoray|shadowrocket|v2box|foxray|fair|loon)/i,
     family: 'xray-links',
