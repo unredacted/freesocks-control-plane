@@ -51,6 +51,40 @@ export function twinRoute(twin: SetupTwin): { path: string; port: number } {
   return { path: twin.path, port: twin.port };
 }
 
+/** A route the node role was handed (its path, to a loopback port). */
+export interface ServedRoute {
+  path: string;
+  port: number;
+}
+
+/**
+ * The routes FCP hands a node's role today: the node's own, then its mode's
+ * twin's while the mode has one (not being taken away).
+ */
+export function desiredRoutes(
+  own: readonly ServedRoute[],
+  twin: SetupTwin | null | undefined,
+): ServedRoute[] {
+  const out = own.map((r) => ({ path: r.path, port: r.port }));
+  if (twin && !twin.detaching) {
+    const t = twinRoute(twin);
+    if (!out.some((r) => r.path === t.path || r.port === t.port)) out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Routes a node's role was handed on its last run that FCP no longer hands
+ * out (a twin taken off the mode since): its front server still sends that
+ * path to that loopback port until the role runs again.
+ */
+export function staleRoutes(
+  served: readonly ServedRoute[] | undefined,
+  desired: readonly ServedRoute[],
+): ServedRoute[] {
+  return (served ?? []).filter((r) => !desired.some((d) => d.path === r.path && d.port === r.port));
+}
+
 /**
  * Why a node cannot be checked on its mode's twin right now, as a code word,
  * or null. Judged on every run: a twin that stops being checkable while it

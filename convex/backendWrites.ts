@@ -53,7 +53,12 @@ import { patchOp } from './lib/backend/patchOpArgs';
 import { currentNodeName } from './lib/backend/nodeAliases';
 import { PROFILE_DEFAULTS, generateObfsPassword } from './lib/backend/profileTemplate';
 import { generateHysteriaCertificate } from './lib/backend/hysteriaCert';
-import { addressTransportsOf, addressesOf, closeForSharedChange } from './nodeIntents';
+import {
+  addressTransportsOf,
+  addressesOf,
+  closeForSharedChange,
+  staleRoutesOf,
+} from './nodeIntents';
 import { HOST_REMARK_MAX, RELAY_REMARK_MAX } from './lib/backend/hostRemark';
 import { assertClaimable, claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
@@ -1076,6 +1081,27 @@ export async function claimProfilePatch(
           'servers.tag_taken',
           `A transport is already tagged ${op.inboundTag} on this backend`,
         );
+      // A loopback transport behind the nodes' front servers: none may take a
+      // port or a path a node's front server still routes from a role run
+      // whose route FCP no longer hands out (a twin taken away since). That
+      // path would reach the new transport before anyone asked for it.
+      const t = op.template as { port?: unknown; path?: unknown };
+      if (typeof t.port === 'number' || typeof t.path === 'string') {
+        const intents = await ctx.db
+          .query('panelNodeIntents')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .collect();
+        for (const intent of intents) {
+          const left = (await staleRoutesOf(ctx, intent)).find(
+            (r) => r.port === t.port || r.path === t.path,
+          );
+          if (left)
+            refuse(
+              'servers.route_still_served',
+              `${intent.name}'s front server still sends ${left.path} to port ${left.port} from an earlier role run. Run the node role there first`,
+            );
+        }
+      }
       continue;
     }
     const uuid = a.inboundUuids[op.inboundTag];

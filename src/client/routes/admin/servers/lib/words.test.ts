@@ -1037,10 +1037,18 @@ describe('nodeTwinWords', () => {
 
   test('no front carries it: who adds the route, and the route itself', () => {
     const failed = { ...base, code: 'servers.node_twin_check_failed' };
-    expect(nodeTwinWords(failed)).toEqual({
+    // Not known to have been handed the route (or known not): run the role.
+    for (const routeServed of [undefined, null, false])
+      expect(nodeTwinWords({ ...failed, routeServed })).toEqual({
+        dot: 'red',
+        sentence:
+          'No front carries it yet. Run the node role on this node so its front server gets the route /ws-e to 127.0.0.1:8444. It is checked again every few minutes.',
+      });
+    // Handed on its last run: no point in running the role again.
+    expect(nodeTwinWords({ ...failed, routeServed: true })).toEqual({
       dot: 'red',
       sentence:
-        'No front carries it yet. Run the node role on this node so its front server gets the route /ws-e to 127.0.0.1:8444. It is checked again every few minutes.',
+        'No front carries it yet, though the node role was handed the route /ws-e to 127.0.0.1:8444 on its last run. It is checked again every few minutes.',
     });
     expect(nodeTwinWords({ ...failed, routeBy: 'operator' })).toEqual({
       dot: 'amber',
