@@ -171,7 +171,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Reads share links, sing-box JSON, Clash YAML and Xray JSON; the panel serves links. Its sing-box fork has VLESS Encryption from app 5.5.5 (2026-11-04): FCP reads the version from this User-Agent and serves an older Hiddify the plain entry (`encryptionCapable`, convex/lib/edges/clientFamilies.ts).',
+      'Reads share links, sing-box JSON, Clash YAML and Xray JSON; the panel serves links. Its sing-box fork has VLESS Encryption from app 5.5.5 (2026-11-04): FCP reads the version from this User-Agent and serves an older Hiddify the plain entry (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
   },
   {
     app: 'Karing',
@@ -205,7 +205,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Reads links and sing-box JSON (no Clash YAML); the panel serves links. sing-box 1.15 alpha with its own VLESS fork that has `encryption`. The core version token comes from the Go module version.',
+      'Reads links and sing-box JSON (no Clash YAML); the panel serves links. sing-box 1.15 alpha with its own VLESS fork that has `encryption` (experimental in 0.14.2 pre-releases; FCP serves the plain entry below 0.15.0 (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts)). The core version token comes from the Go module version.',
   },
   {
     app: 'NekoBox (Android) and NekoRay (desktop, archived)',
@@ -483,7 +483,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Links and Xray JSON. Xray-core 2026-10-31 build: VLESS Encryption (`encryption=` read from the link).',
+      'Links and Xray JSON. Xray-core 2026-10-31 build: VLESS Encryption (`encryption=` read from the link). From 1.10.21, the first on the Xray wire of v25.8.31; an older one is served plain (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
   },
   {
     app: 'v2rayN',
@@ -502,7 +502,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Links, Xray JSON, sing-box JSON and Clash YAML; the panel serves links. Ships the latest Xray-core: VLESS Encryption.',
+      'Links, Xray JSON, sing-box JSON and Clash YAML; the panel serves links. Ships the latest Xray-core: VLESS Encryption, kept on import from 7.14.1; FCP serves the plain entry below 7.14.6, the first built on Xray v25.8.31 (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
   },
   {
     app: 'Throne (successor of NekoRay)',
@@ -521,7 +521,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Links, Clash YAML, sing-box JSON and Xray JSON; the panel serves links. A VLESS link with `encryption` goes to its Xray-core fork. Was `other` (plain) before 2026-11-21.',
+      'Links, Clash YAML, sing-box JSON and Xray JSON; the panel serves links. A VLESS link with `encryption` goes to its Xray-core fork, from 1.1.0; an older one is served plain (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts). Was `other` (plain) before 2026-11-21.',
   },
   {
     app: 'Exclave',
@@ -539,7 +539,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Links, Clash YAML, sing-box and Xray JSON; the panel serves links. Its v2ray-core v5 fork reads `mlkem768x25519plus` from the link.',
+      'Links, Clash YAML, sing-box and Xray JSON; the panel serves links. Its v2ray-core v5 fork reads `mlkem768x25519plus` from the link, on the current wire from 0.16.2; an older one is served plain (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
   },
   {
     app: 'INCY',
@@ -607,7 +607,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Links (no vmess), Clash YAML and its own AJSON; the panel serves links. Its own Swift core reads `encryption=mlkem768x25519plus...` from a link. No tags: main at App Store 2.6.',
+      'Links (no vmess), Clash YAML and its own AJSON; the panel serves links. Its own Swift core reads `encryption=mlkem768x25519plus...` from a link (from 1.10), and only on iOS/macOS/tvOS 26, while the app installs on iOS 18. Its User-Agent shows neither, so FCP hands it both entries whatever the rule of its family (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts). No tags: main at App Store 2.6.',
   },
   {
     app: 'Everywhere',
@@ -641,7 +641,7 @@ export const appUserAgents: AppUserAgent[] = [
       },
     ],
     notes:
-      'Links and Xray JSON; the panel serves links. Xray 26.10.31: VLESS Encryption in the core, from a link unconfirmed.',
+      'Links and Xray JSON; the panel serves links. Xray 26.10.31: VLESS Encryption in the core, from a link unconfirmed. No floor: its versions differ by platform (Android 3.3.0 was the first on Xray 25.9.11, iOS unknown) and nothing shows when its link parser began passing `encryption=`.',
   },
   {
     app: 'Streisand',
@@ -656,7 +656,7 @@ export const appUserAgents: AppUserAgent[] = [
       },
     ],
     notes:
-      'Links and Xray JSON; the panel serves links. Xray-numbered core 26.11.09: VLESS Encryption in the core, from a link unconfirmed.',
+      'Links and Xray JSON; the panel serves links. Xray-numbered core 26.11.09: VLESS Encryption in the core, from a link unconfirmed. Plain below 1.6.62, its first core at v25.8.31 (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
   },
   {
     app: 'Shadowrocket',
@@ -688,7 +688,8 @@ export const appUserAgents: AppUserAgent[] = [
         url: 'https://github.com/hiddify/HiddifyPanel/blob/9f811a25aeac8df9c9995983ff4d8d036cd0ace2/hiddifypanel/hutils/flask.py#L160-L196',
       },
     ],
-    notes: 'Links and its own JSON. Xray-core 26.7.28: VLESS Encryption in the core.',
+    notes:
+      'Links and its own JSON. Xray-core 26.7.28: VLESS Encryption in the core. Plain below 9.8.8, its first core after Xray 25.7.26 (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
   },
   {
     app: 'FoXray',

@@ -465,7 +465,7 @@ export async function deliverBody(
         subscriptionId: sub.subscriptionId,
         family,
         nodeName: node ?? undefined,
-        ...(client.encryptionCapable === false ? { encryptionCapable: false } : {}),
+        ...(client.encryptionCap ? { encryptionCap: client.encryptionCap } : {}),
       });
       if (decision.kind === 'unavailable') return refuse(decision.reason);
       let body = fetched.content;
@@ -569,7 +569,7 @@ export async function deliverBody(
         subscriptionId: sub.subscriptionId,
         family,
         nodeName: node ?? undefined,
-        ...(client.encryptionCapable === false ? { encryptionCapable: false } : {}),
+        ...(client.encryptionCap ? { encryptionCap: client.encryptionCap } : {}),
       });
       if (decision.kind === 'unavailable') return refuse(decision.reason);
       if (decision.kind === 'render') {

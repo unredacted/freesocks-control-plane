@@ -6,6 +6,7 @@
  */
 import { RENDER_CLIENT_FAMILIES, type RenderClientFamily } from '../edgeConfig';
 import { formatSupported, type ListenerProto, type RenderFormat } from './protocols';
+import type { EncryptionCap } from '../../../src/shared/encryptionRule';
 
 export type SubscriptionFormat = 'links' | 'singbox-json' | 'clash-yaml';
 
@@ -14,45 +15,214 @@ export interface ClientClassification {
   /** The format this family USUALLY receives; the body decides in the end. */
   expectedFormat: SubscriptionFormat;
   /**
-   * `false` when the app's version, read from its User-Agent, is known NOT to
-   * speak VLESS Encryption (or no version can be read where it decides): the
-   * request is served the plain rule whatever its family's rule says
-   * (`encryptionFloorOf`). Absent = the family's rule decides.
+   * The most this app may be handed whatever its family's rule says
+   * (`ENCRYPTION_FLOORS`): `plain` for a version known not to speak VLESS
+   * Encryption, `prefer` where its User-Agent cannot tell. Absent = the
+   * family's rule decides.
    */
-  encryptionCapable?: false;
+  encryptionCap?: EncryptionCap;
 }
 
-/** A dotted version, compared part by part. */
-function versionAtLeast(have: readonly number[], floor: readonly number[]): boolean {
-  for (let i = 0; i < floor.length; i++) {
+/**
+ * The first version of each app that speaks VLESS Encryption from a
+ * subscription, read from the version its subscription fetch puts in its
+ * User-Agent: that version and every later one get their family's rule, an
+ * earlier one the plain rule. The model for every app: one row per app (the
+ * first whose `match` matches decides), each with its evidence here and the
+ * app's User-Agent in tests/compat/userAgents.ts. An app with no row follows
+ * its family's rule.
+ *
+ * A floor is only ever a limit: a row never hands an app more than its
+ * family's rule. Where a release is inferred rather than confirmed, the floor
+ * is the later candidate.
+ */
+export interface EncryptionFloor {
+  /** The app, as tests/compat/userAgents.ts names it. */
+  app: string;
+  /** Recognises the app's User-Agent. */
+  match: RegExp;
+  /**
+   * Captures the version's parts (up to three; a missing part counts as 0)
+   * and names the first that speaks it. Absent: the app sends no version.
+   */
+  version?: { re: RegExp; floor: readonly [number, ...number[]] };
+  /**
+   * What a User-Agent of this app with no readable version gets: its family's
+   * rule, at most both entries (`prefer`), or the plain entry.
+   */
+  noVersion: 'family' | EncryptionCap;
+}
+
+const semver = (prefix: string) => new RegExp(`^${prefix}\\/v?(\\d+)\\.(\\d+)\\.(\\d+)`, 'i');
+
+export const ENCRYPTION_FLOORS: readonly EncryptionFloor[] = [
+  // Its link converter reads `encryption=` and its sing-box fork speaks the
+  // layer from app 5.5.5 (2026-11-04); earlier apps import the entry as plain
+  // VLESS. Sends `HiddifyNext/<version> (<platform>) like ClashMeta v2ray sing-box`.
+  {
+    app: 'Hiddify',
+    match: /hiddify/i,
+    version: { re: /hiddify(?:next)?\/v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i, floor: [5, 5, 5] },
+    noVersion: 'plain',
+  },
+
+  // --- Mihomo-based apps ----------------------------------------------------
+  // The first release that bundled Mihomo >= 1.19.13, the core that added
+  // VLESS Encryption (2025-08-27). FCP's client strings carry no padding,
+  // which 1.19.13 already parses.
+  {
+    app: 'Clash Verge Rev',
+    match: /^clash-verge\//i,
+    // v2.4.1 (2025-08-30): "Mihomo(Meta) 内核升级至 v1.19.13".
+    version: { re: semver('clash-verge'), floor: [2, 4, 1] },
+    noVersion: 'family',
+  },
+  {
+    app: 'FlClash',
+    // `FlClash/`, `clash/` on Windows, `fl_clash/` on Linux, then `clash-verge Platform/<os>`.
+    match: /^(?:FlClash|fl_clash|clash)\/v\S* clash-verge Platform\//i,
+    // v0.8.88 (2025-09-23): its core submodule is Mihomo 1.19.13 plus one commit.
+    version: { re: semver('(?:FlClash|fl_clash|clash)'), floor: [0, 8, 88] },
+    noVersion: 'family',
+  },
+  {
+    app: 'Clash Meta for Android',
+    match: /^ClashMetaForAndroid\//i,
+    // v2.11.16 (2025-08-27): its core submodule is Mihomo v1.19.13.
+    version: { re: semver('ClashMetaForAndroid'), floor: [2, 11, 16] },
+    noVersion: 'family',
+  },
+  {
+    app: 'Clash Party',
+    match: /^mihomo\.party\//i,
+    // v1.8.6 (2025-08-31): "Mihomo(Meta)内核更新至 v1.19.13".
+    version: { re: semver('mihomo\\.party'), floor: [1, 8, 6] },
+    noVersion: 'family',
+  },
+  {
+    app: 'Prizrak-Box',
+    match: /^prizrak-box\//i,
+    // v1.0.17 (2025-09-01, then Pandora-Box): its Mihomo fork has VLESS Encryption.
+    version: { re: semver('prizrak-box'), floor: [1, 0, 17] },
+    noVersion: 'family',
+  },
+  {
+    app: 'Mihomo',
+    // The core's own fetches (`clash.meta/v<version>`), and `mihomo/<version>`.
+    match: /^(?:clash\.meta|mihomo)\//i,
+    // v1.19.13 (2025-08-27): "support vless encryption". Alpha builds
+    // (`alpha-<sha>`) carry no version and follow the family.
+    version: { re: semver('(?:clash\\.meta|mihomo)'), floor: [1, 19, 13] },
+    noVersion: 'family',
+  },
+
+  // --- Xray-based apps ------------------------------------------------------
+  // Xray-core added VLESS Encryption in v25.8.29 (XTLS/Xray-core#5067) and
+  // changed its wire two days later in v25.8.31 (1-RTT padding), which the
+  // first version cannot speak: an app's floor is the first release that both
+  // reads `encryption=` from a link and bundles a core at v25.8.31 or later.
+  {
+    app: 'v2rayNG',
+    match: /^v2rayNG\//i,
+    // 1.10.21 (2025-09-01): Xray v25.8.31. 1.10.20 bundled v25.8.29. Its link
+    // parser already read `encryption=` (VlessFmt.kt).
+    version: { re: semver('v2rayNG'), floor: [1, 10, 21] },
+    noVersion: 'plain',
+  },
+  {
+    app: 'v2rayN',
+    match: /^v2rayN\//i,
+    // 7.14.1 (2025-08-17, 2dust/v2rayN#7782) stopped resetting `encryption`
+    // to none on import; its core is pulled at build time, so the floor is the
+    // first release built after Xray v25.8.31: 7.14.6 (2025-09-03).
+    version: { re: semver('v2rayN'), floor: [7, 14, 6] },
+    noVersion: 'plain',
+  },
+  {
+    app: 'Throne',
+    match: /^Throne\//i,
+    // 1.1.0 (2026-03-07): a link with `encryption` goes to its Xray v25.12.8
+    // outbound. Its User-Agent drops the pre-release tag, so 1.1.0-beta.1 and
+    // beta.2 (which dropped the field) read as 1.1.0 too.
+    version: { re: semver('Throne'), floor: [1, 1, 0] },
+    noVersion: 'plain',
+  },
+  {
+    app: 'Exclave',
+    match: /^Exclave\//i,
+    // 0.16.2 (2025-09-01): "Sync VLESS encryption incompatible breaking
+    // changes". 0.16.1 spoke the first wire.
+    version: { re: semver('Exclave'), floor: [0, 16, 2] },
+    noVersion: 'plain',
+  },
+  {
+    app: 'Husi',
+    match: /^husi\//i,
+    // v0.14.2-alpha (2025-11-09) enabled the link field as experimental and
+    // v0.14.2-rc fixed it; the first stable release after is v0.15.0 (2025-12-05).
+    version: { re: semver('husi'), floor: [0, 15, 0] },
+    noVersion: 'plain',
+  },
+  {
+    app: 'V2Box',
+    match: /^V2Box\//i,
+    // 9.8.8 (2026-02-22) "Bump Xray-Core 26.1.23"; through 9.8.7 its notes
+    // name Xray 25.7.26. Inferred from the core: no note names the layer.
+    version: { re: semver('V2Box'), floor: [9, 8, 8] },
+    noVersion: 'plain',
+  },
+  {
+    app: 'Streisand',
+    match: /^Streisand(?:\/|$)/i,
+    // 1.6.62 (2025-09-04) "Updated core to v25.8.31". Inferred from the core.
+    version: { re: semver('Streisand'), floor: [1, 6, 62] },
+    noVersion: 'family',
+  },
+  {
+    app: 'Anywhere',
+    match: /^Anywhere(?:\/|$)/i,
+    // It sends no version (`Anywhere`; builds before 1.1(84) a fixed
+    // `Anywhere/1.0`), it reads the field from 1.10 (2026-05-11), and it
+    // installs on iOS 18 but refuses the layer below iOS 26
+    // (ProxyClient+VLESS.swift), which its User-Agent does not show either:
+    // both entries, so an older phone connects on the plain one.
+    noVersion: 'prefer',
+  },
+];
+
+/** A dotted version, compared part by part (a missing part is 0). */
+export function versionAtLeast(have: readonly number[], floor: readonly number[]): boolean {
+  for (let i = 0; i < Math.max(have.length, floor.length); i++) {
     const h = have[i] ?? 0;
-    if (h !== floor[i]) return h > floor[i]!;
+    const f = floor[i] ?? 0;
+    if (h !== f) return h > f;
   }
   return true;
 }
 
-/**
- * The first version of an app that speaks VLESS Encryption, where it differs
- * by version within a family. Hiddify: its link converter reads `encryption=`
- * and its sing-box fork speaks the layer from app 5.5.5 (2026-11-04; earlier
- * apps import the entry as plain VLESS). Its subscription fetch sends
- * `HiddifyNext/<version> (<platform>) like ClashMeta v2ray sing-box`.
- */
-const ENCRYPTION_FLOORS: Array<{ re: RegExp; floor: readonly number[] }> = [
-  { re: /hiddify(?:next)?\/(\d+)\.(\d+)(?:\.(\d+))?/i, floor: [5, 5, 5] },
-];
+/** The floor row that decides this User-Agent, if any. */
+export function encryptionFloorOf(ua: string): EncryptionFloor | undefined {
+  return ENCRYPTION_FLOORS.find((f) => f.match.test(ua));
+}
 
-/** Whether this User-Agent's app version is below its family's VLESS Encryption floor. */
-function belowEncryptionFloor(ua: string, family: RenderClientFamily): boolean {
-  if (family !== 'hiddify') return false;
-  for (const f of ENCRYPTION_FLOORS) {
-    const m = f.re.exec(ua);
-    // No readable version: not known to speak it.
-    if (!m) return true;
-    const have = [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)];
-    return !versionAtLeast(have, f.floor);
-  }
-  return false;
+/** The version read from this User-Agent by its row, if it has one. */
+export function encryptionVersionOf(row: EncryptionFloor, ua: string): number[] | undefined {
+  const m = row.version?.re.exec(ua);
+  return m
+    ? m
+        .slice(1)
+        .filter((x) => x !== undefined)
+        .map(Number)
+    : undefined;
+}
+
+/** The most this User-Agent's app may be handed (absent = its family's rule). */
+export function encryptionCapOf(ua: string): EncryptionCap | undefined {
+  const row = encryptionFloorOf(ua);
+  if (!row) return undefined;
+  const have = encryptionVersionOf(row, ua);
+  if (!have || !row.version) return row.noVersion === 'family' ? undefined : row.noVersion;
+  return versionAtLeast(have, row.version.floor) ? undefined : 'plain';
 }
 
 const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: SubscriptionFormat }> = [
@@ -117,12 +287,10 @@ const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: Subscriptio
 export function classifyClient(userAgent: string | undefined | null): ClientClassification {
   const ua = (userAgent ?? '').trim();
   for (const r of RULES) {
-    if (r.re.test(ua))
-      return {
-        family: r.family,
-        expectedFormat: r.format,
-        ...(belowEncryptionFloor(ua, r.family) ? { encryptionCapable: false as const } : {}),
-      };
+    if (r.re.test(ua)) {
+      const cap = encryptionCapOf(ua);
+      return { family: r.family, expectedFormat: r.format, ...(cap ? { encryptionCap: cap } : {}) };
+    }
   }
   return { family: 'other', expectedFormat: 'links' };
 }

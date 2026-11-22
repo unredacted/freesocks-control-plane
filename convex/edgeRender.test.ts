@@ -511,7 +511,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect((await pool())[0].sniPick).toBe('hrw1');
   });
 
-  test('decideForSubscription: an app version that cannot speak VLESS Encryption gets the plain rule', async () => {
+  test('decideForSubscription: an app capped by its version gets the lower of its cap and its family rule', async () => {
     stubPanel();
     const { t, subId } = await seed();
     // The Hiddify family is encrypted-only here.
@@ -522,20 +522,21 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
         JSON.stringify({ ...defaultClientRule('hiddify'), encryption: 'only' }),
       ),
     );
-    const ruleOf = async (encryptionCapable?: boolean) => {
+    const ruleOf = async (encryptionCap?: 'prefer' | 'plain') => {
       const d = await t.query(internal.edgeRender.decideForSubscription, {
         subscriptionId: subId,
         family: 'hiddify',
-        ...(encryptionCapable === undefined ? {} : { encryptionCapable }),
+        ...(encryptionCap === undefined ? {} : { encryptionCap }),
       });
       expect(d.kind).toBe('render');
       return d.kind === 'render' ? d.context.rule : null;
     };
     expect((await ruleOf())?.encryption).toBe('only');
-    expect((await ruleOf(false))?.encryption).toBe('plain');
+    expect((await ruleOf('plain'))?.encryption).toBe('plain');
+    expect((await ruleOf('prefer'))?.encryption).toBe('prefer');
     // Everything else of the family's rule stands.
     const { encryption: _a, ...rest } = (await ruleOf())!;
-    const { encryption: _b, ...restOld } = (await ruleOf(false))!;
+    const { encryption: _b, ...restOld } = (await ruleOf('plain'))!;
     void _a;
     void _b;
     expect(restOld).toEqual(rest);

@@ -18,6 +18,7 @@ import { verificationListenersOf } from './lib/edges/verificationContext';
 import { twinRemarksOf } from './lib/edges/listenerEncryption';
 import { servableEdges } from './lib/backend/nodeTwin';
 import { ENTRY_NAME_SEP, encryptedName } from '../src/shared/entryNames';
+import { capEncryptionRule } from '../src/shared/encryptionRule';
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -642,8 +643,8 @@ export const decideForSubscription = internalQuery({
     subscriptionId: v.id('subscriptions'),
     family: familyValidator,
     nodeName: v.optional(v.string()),
-    /** False: the app's version cannot speak VLESS Encryption (clientFamilies.ts `encryptionCapable`). */
-    encryptionCapable: v.optional(v.boolean()),
+    /** The most the app may be handed, from its User-Agent (clientFamilies.ts `encryptionCap`). */
+    encryptionCap: v.optional(v.union(v.literal('prefer'), v.literal('plain'))),
   },
   handler: async (ctx, a): Promise<SubscriptionRenderDecision> => {
     const sub = await ctx.db.get(a.subscriptionId);
@@ -673,10 +674,12 @@ export const decideForSubscription = internalQuery({
       return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };
     const family = a.family as RenderClientFamily;
     const familyRule = effectiveRule(cfg.render, cfg.render.clients[family]);
-    // An app version below its family's VLESS Encryption floor gets the plain
-    // entry whatever the family's rule (lib/edges/clientFamilies.ts).
-    const rule =
-      a.encryptionCapable === false ? { ...familyRule, encryption: 'plain' as const } : familyRule;
+    // An app version below its VLESS Encryption floor, or one whose User-Agent
+    // cannot tell, is capped whatever its family's rule (lib/edges/clientFamilies.ts).
+    const rule = {
+      ...familyRule,
+      encryption: capEncryptionRule(familyRule.encryption, a.encryptionCap),
+    };
     // A family whose rule is off used to pass the backend body through; under
     // edge-required delivery there is no passthrough, so it is unavailable
     // (its own reason, so the refusal counter tells it apart from a switch-off).

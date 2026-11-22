@@ -2,7 +2,13 @@ import { describe, expect, test } from 'vitest';
 import { appUserAgents, evidenceUrl } from '../tests/compat/userAgents';
 import { clients } from '../tests/compat/manifest';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
-import { classifyClient, type SubscriptionFormat } from './lib/edges/clientFamilies';
+import {
+  ENCRYPTION_FLOORS,
+  classifyClient,
+  encryptionFloorOf,
+  encryptionVersionOf,
+  type SubscriptionFormat,
+} from './lib/edges/clientFamilies';
 import {
   normalizeSubscriptionUserAgent,
   remnawaveDefaultResponse,
@@ -100,5 +106,20 @@ describe('the client catalog', () => {
         `${client.name}: none of ${client.userAgents.join(', ')} is a real User-Agent`,
       ).toBe(true);
     }
+  });
+});
+
+describe('every VLESS Encryption floor reads the User-Agent its app really sends', () => {
+  test.each(ENCRYPTION_FLOORS.map((f) => [f.app, f] as const))('%s', (_name, f) => {
+    const app = appUserAgents.find((a) => a.app === f.app || a.app.startsWith(`${f.app} `));
+    expect(app, `${f.app} is not in tests/compat/userAgents.ts`).toBeDefined();
+    // The row decides for the app's own User-Agents (a User-Agent it sends in
+    // another app's name, like Prizrak-Box's `clash-verge/v2.3.0`, is that app's)...
+    const own = app!.userAgents.filter((ua) => encryptionFloorOf(ua) === f);
+    expect(own.length, `no User-Agent of ${f.app} reaches its row`).toBeGreaterThan(0);
+    // ...and, where the app sends a version, reads it from every one of them.
+    if (f.version)
+      for (const ua of own)
+        expect(encryptionVersionOf(f, ua), `no version read from ${ua}`).toBeDefined();
   });
 });

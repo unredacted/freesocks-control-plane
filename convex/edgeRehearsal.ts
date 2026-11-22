@@ -43,6 +43,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
+import { capEncryptionRule } from '../src/shared/encryptionRule';
 import { classifyClient } from './lib/edges/clientFamilies';
 import { cohortKeyOf, type Cohort } from './lib/edges/cohorts';
 import {
@@ -498,8 +499,8 @@ async function rehearseBody(
     rule: {
       ...c.rules[family],
       enabled: true,
-      // An app version below its family's VLESS Encryption floor: plain (clientFamilies.ts).
-      ...(client.encryptionCapable === false ? { encryption: 'plain' as const } : {}),
+      // An app capped by its version (clientFamilies.ts `ENCRYPTION_FLOORS`).
+      encryption: capEncryptionRule(c.rules[family].encryption, client.encryptionCap),
     },
     preferDistinctProviders: c.preferDistinctProviders,
     ...(c.edgePick ? { edgePick: c.edgePick } : {}),
