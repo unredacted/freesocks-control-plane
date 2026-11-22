@@ -109,12 +109,26 @@ bun run selfhost:env       # writes .env.local so the CLI can reach the backend
 
 # 2. Give the backend its settings (once)
 for k in SESSION_SIGNING_KEY ADMIN_SESSION_SIGNING_KEY ADMIN_BOOTSTRAP_SECRET IP_HASH_SALT ACCOUNT_ID_PEPPER; do
-  bunx convex env set "$k" "$(openssl rand -hex 32)"
+  printf '%s' "$(openssl rand -hex 32)" | bunx convex env set "$k"
 done
 bunx convex env set ENVIRONMENT development
 bunx convex env set CAP_DEV_BYPASS true            # skip the puzzle in local dev
 bunx convex env set WEBAUTHN_RP_ID localhost
 bunx convex env set WEBAUTHN_ORIGIN http://localhost:5173
+
+# Generate a local HPKE identity for sealed signup and first-admin enrollment.
+# The command appends only its public pins to .env.local.
+bun --no-env-file -e '
+  import { generateHpkeKeys } from "./scripts/gen-hpke-keys.mjs";
+  const keys = await generateHpkeKeys();
+  const result = Bun.spawnSync(
+    ["bunx", "convex", "env", "set", "FS_SERVER_HPKE_SK"],
+    { stdin: Buffer.from(keys.FS_SERVER_HPKE_SK), stdout: "ignore", stderr: "inherit" },
+  );
+  if (result.exitCode !== 0) process.exit(result.exitCode);
+  console.log("VITE_FS_SERVER_HPKE_PK=" + keys.VITE_FS_SERVER_HPKE_PK);
+  console.log("VITE_FS_SERVER_HPKE_KID=" + keys.VITE_FS_SERVER_HPKE_KID);
+' >> .env.local
 
 # 3. Run the backend code and the website (reloads on change)
 bun run dev
@@ -122,6 +136,9 @@ bun run dev
 # 4. In another terminal, load the default plans and settings (safe to repeat)
 bunx convex run seed:seedCutover '{}'
 ```
+
+This local setup uses static sealing. Follow the self-hosting runbook for signed
+epoch keys in deployed builds.
 
 Open the website at http://localhost:5173 and the Convex dashboard at http://localhost:6791.
 To create the first admin, go to `/admin` and enter your `ADMIN_BOOTSTRAP_SECRET`

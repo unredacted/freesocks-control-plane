@@ -185,11 +185,20 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build --
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 deployer  # expect "[deploy] OK"
 ```
 
-For the first upgrade to the volatile HPKE epoch store, stop `web` and `backup`
-first. Rerun the secrets bootstrap to add `HPKE_EPOCH_STORE_TOKEN`. Use a full
-stack build and startup so Compose attaches `backend` to the private network.
-Wait for the deployer to finish initializing the key store and scrubbing legacy
-seeds before accepting ingress or publishing backups.
+For the first upgrade to the volatile HPKE epoch store, rerun the secrets
+bootstrap to add `HPKE_EPOCH_STORE_TOKEN` and configure the backup signing
+key. Stop `web` and `backup` before recreating the backend on the new private
+network. Wait for the deployer before restarting ingress and backups.
+
+```sh
+bun run bootstrap
+docker compose -f docker-compose.stack.yml --env-file .env.beta stop web backup
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build --force-recreate backend hpke-epoch-store keygen deployer
+docker compose -f docker-compose.stack.yml --env-file .env.beta wait deployer
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build web backup
+```
+
+Continue to the last command only after `wait deployer` exits successfully.
 
 `--build` rebuilds both images from the pulled source; `--force-recreate web
 deployer` then recreates **both** containers — `web` restarts with the new SPA,
