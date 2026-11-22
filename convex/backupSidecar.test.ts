@@ -98,6 +98,18 @@ function run(env: Record<string, string>, opts: { fails?: number; oldDumps?: num
 }
 
 describe('docker/backup.sh', () => {
+  test('requires a producer signing key for local-only backups', () => {
+    const { res, heartbeat, dumps } = run({
+      BACKUP_ALLOW_LOCAL_ONLY: 'true',
+      BACKUP_SIGNING_KEY_FILE: '',
+      SLEEPS: '1',
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain('BACKUP_SIGNING_KEY_FILE');
+    expect(dumps()).toHaveLength(0);
+    expect(heartbeat()).toBe(false);
+  });
+
   test('fails startup when offsite storage requires an encryption recipient', () => {
     const { res, heartbeat } = run({
       S3_BUCKET: 'test-bucket',

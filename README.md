@@ -140,14 +140,13 @@ and a one-time job that deploys the code and loads the defaults. To set it up:
 1. Create the two settings files and fill in every secret that can be generated:
 
    ```bash
-   cp .env.beta.example .env.beta
-   cp .env.convex.example .env.convex
    bun run bootstrap
    ```
 
 2. Fill in the rest by hand. In `.env.beta`: your domain, an email for HTTPS certificates,
-   and offsite backup storage (`BACKUP_S3_*`, plus `BACKUP_AGE_PUBLIC_KEY` to encrypt the
-   backups). Accounts are anonymous and can't be rebuilt after a disk loss, so the backup
+   a producer key for backup signatures, and offsite storage with encryption
+   (`BACKUP_SIGNING_KEY_FILE`, `BACKUP_S3_*` and `BACKUP_AGE_PUBLIC_KEY`).
+   Follow the key setup in the [backup runbook](docs/beta-deploy.md). Accounts are anonymous and can't be rebuilt after a disk loss, so the backup
    service refuses to run without offsite storage unless you set
    `BACKUP_ALLOW_LOCAL_ONLY=true` on a throwaway server. In `.env.convex`: your passkey
    domain (`WEBAUTHN_*`) and any payment keys.

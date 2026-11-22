@@ -683,7 +683,7 @@ Backup coverage notes:
 grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
 restore drill below must have been run at least once.
 
-Configure a producer signing key before enabling offsite backups. Create a
+Configure a producer signing key before starting the backup service. Create a
 deployment-specific EC key under `umask 077` using
 `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out producer.pem`.
 Set `BACKUP_SIGNING_KEY_FILE` to its

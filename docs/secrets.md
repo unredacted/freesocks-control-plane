@@ -67,8 +67,8 @@ below the table):
 | `VITE_FS_MANIFEST_PK` / `_PK_PQ`       | `.env.beta` (public)                     | The manifest public keys the client verifies epoch keys against.        |
 
 Running the bootstrap **enables CDN-blinding** (body-sealing the account number +
-proxy URL from a compromised CDN). Not running it ships the SPA "dark" (plaintext
-dual-mode over TLS) — safe, just unsealed. To **rotate** the keypair: clear
+proxy URL from a compromised CDN). Signup and first-admin enrollment require
+a SPA build with the matching public pins. To **rotate** the keypair: clear
 `FS_SERVER_HPKE_SK` in `.env.convex` AND the `VITE_FS_*` pins in `.env.beta`, re-run
 the bootstrap, then rebuild `web` + redeploy. (Never edit one side alone — the
 bootstrap warns and refuses if the two drift.)

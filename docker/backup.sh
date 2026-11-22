@@ -50,8 +50,8 @@ if [ -n "${S3_BUCKET:-}" ] && [ -n "${S3_ENDPOINT:-}" ] && [ -z "${BACKUP_AGE_PU
 fi
 
 SIGNING_KEY_FILE="${BACKUP_SIGNING_KEY_FILE:-}"
-if [ -n "${S3_BUCKET:-}" ] && [ -n "${S3_ENDPOINT:-}" ] && [ ! -s "$SIGNING_KEY_FILE" ]; then
-  echo "[backup] FATAL: offsite dumps require a readable BACKUP_SIGNING_KEY_FILE" >&2
+if [ ! -s "$SIGNING_KEY_FILE" ] || [ ! -r "$SIGNING_KEY_FILE" ]; then
+  echo "[backup] FATAL: dumps require a readable BACKUP_SIGNING_KEY_FILE" >&2
   exit 1
 fi
 
@@ -118,13 +118,11 @@ backup_once() {
     fi
   fi
 
-  if [ -s "$SIGNING_KEY_FILE" ]; then
-    if ! openssl dgst -sha256 -sign "$SIGNING_KEY_FILE" -out "$file.sig.tmp" "$file" ||
-       ! mv -f "$file.sig.tmp" "$file.sig"; then
-      echo "[backup] ERROR: could not sign dump" >&2
-      rm -f "$file" "$file.sig.tmp"
-      return 1
-    fi
+  if ! openssl dgst -sha256 -sign "$SIGNING_KEY_FILE" -out "$file.sig.tmp" "$file" ||
+     ! mv -f "$file.sig.tmp" "$file.sig"; then
+    echo "[backup] ERROR: could not sign dump" >&2
+    rm -f "$file" "$file.sig.tmp"
+    return 1
   fi
 
   if [ -n "${S3_BUCKET:-}" ] && [ -n "${S3_ENDPOINT:-}" ]; then
