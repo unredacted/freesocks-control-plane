@@ -73,12 +73,16 @@ describe('quota carryover across re-issues (Review D-M3)', () => {
     await t.action(internal.account.regenerate, { userId });
 
     await t.run(async (ctx) => {
-      const subs = (await ctx.db.query('subscriptions').collect()).sort(
-        (a, b) => a._creationTime - b._creationTime,
-      );
-      expect(subs.map((s) => s.periodCarryBytes)).toEqual([undefined, GB, 2 * GB]);
+      const current = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      const subs = await ctx.db.query('subscriptions').collect();
+      const live = subs.find((s) => s._id === current)!;
+      const old = subs.filter((s) => s._id !== current);
+      // Two earlier keys of 1 GB each.
+      expect(live.periodCarryBytes).toBe(2 * GB);
+      expect(live.graceBaseUsedBytes).toBeUndefined();
+      expect(old.map((s) => s.periodCarryBytes ?? 0).sort()).toEqual([0, GB]);
       // Each superseded key records the usage its successor already counted.
-      expect(subs.map((s) => s.graceBaseUsedBytes)).toEqual([GB, GB, undefined]);
+      expect(old.map((s) => s.graceBaseUsedBytes)).toEqual([GB, GB]);
     });
   });
 
@@ -106,13 +110,12 @@ describe('quota carryover across re-issues (Review D-M3)', () => {
     await t.action(internal.account.regenerate, { userId });
     await t.action(internal.account.regenerate, { userId });
     const [oldId, currentId] = await t.run(async (ctx) => {
-      const subs = (await ctx.db.query('subscriptions').collect()).sort(
-        (a, b) => a._creationTime - b._creationTime,
-      );
+      const current = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      const old = (await ctx.db.query('subscriptions').collect()).find((s) => s._id !== current)!;
       // The old key had moved nothing when it was replaced; it then spent
       // 1 GB (what the mock reports) during the grace. Make the grace elapse.
-      await ctx.db.patch(subs[0]!._id, { graceBaseUsedBytes: 0, deletedAt: Date.now() - 1 });
-      return [subs[0]!._id, subs[1]!._id];
+      await ctx.db.patch(old._id, { graceBaseUsedBytes: 0, deletedAt: Date.now() - 60_000 });
+      return [old._id, current];
     });
 
     await t.action(internal.lifecycle.sweepTombstones, {});
