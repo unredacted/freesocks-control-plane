@@ -135,9 +135,14 @@ export function sealedRequiredResponse(): Response {
   );
 }
 
-export function sealed(handler: RawHandler) {
+export function sealed(
+  handler: RawHandler,
+  admit?: (ctx: ActionCtx, req: Request) => Promise<Response | null>,
+) {
   return httpAction(async (ctx, req): Promise<Response> => {
     try {
+      const refusal = await admit?.(ctx, req);
+      if (refusal) return refusal;
       return await sealedInner(ctx, req, handler);
     } catch (e) {
       // The wrapper reads the wire body itself (before the handler's readJson),

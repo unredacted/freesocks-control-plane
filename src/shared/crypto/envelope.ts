@@ -361,6 +361,8 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/admin/membership-codes': REVEAL,
   // A reveal-only client builds a query link. Mint only for clients using the sealed flow.
   'POST /api/v1/admin/admins/invite': SEAL_BOTH_REQUIRED,
+  'POST /api/admin/auth/register-bootstrap/options': { ...SEAL_REQ, required: true },
+  'POST /api/admin/auth/register-bootstrap/verify': { ...SEAL_REQ, required: true },
   'POST /api/admin/auth/register/options': { ...SEAL_REQ, required: true },
   'POST /api/admin/auth/register/verify': { ...SEAL_REQ, required: true },
   // Admin credential uploads (admin sends infra secrets). Dual-mode server keeps

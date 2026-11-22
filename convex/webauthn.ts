@@ -49,6 +49,13 @@ function webauthnConfig() {
 
 // --- bootstrap registration -------------------------------------------------
 
+function requireBootstrapSecret(bootstrapSecret: string) {
+  const secret = process.env.ADMIN_BOOTSTRAP_SECRET;
+  if (!secret || !timingSafeEqual(bootstrapSecret, secret)) {
+    throw new ConvexError({ code: 'auth.forbidden', message: 'Bootstrap secret required' });
+  }
+}
+
 export const registerBootstrapOptions = internalAction({
   args: {
     bootstrapSecret: v.string(),
@@ -59,10 +66,7 @@ export const registerBootstrapOptions = internalAction({
     ctx,
     { bootstrapSecret, username, displayName },
   ): Promise<{ options: PublicKeyCredentialCreationOptionsJSON; adminId: Id<'adminUsers'> }> => {
-    const secret = process.env.ADMIN_BOOTSTRAP_SECRET;
-    if (!secret || !timingSafeEqual(bootstrapSecret, secret)) {
-      throw new ConvexError({ code: 'auth.forbidden', message: 'Bootstrap secret required' });
-    }
+    requireBootstrapSecret(bootstrapSecret);
     if (await ctx.runQuery(internal.admins.hasActiveAdmin, {})) {
       throw new ConvexError({
         code: 'auth.forbidden',
@@ -102,11 +106,16 @@ export const registerBootstrapOptions = internalAction({
 
 export const registerBootstrapVerify = internalAction({
   args: {
+    bootstrapSecret: v.string(),
     adminId: v.id('adminUsers'),
     response: v.any(),
     deviceLabel: v.optional(v.string()),
   },
-  handler: async (ctx, { adminId, response, deviceLabel }): Promise<{ ok: true }> => {
+  handler: async (
+    ctx,
+    { bootstrapSecret, adminId, response, deviceLabel },
+  ): Promise<{ ok: true }> => {
+    requireBootstrapSecret(bootstrapSecret);
     // Defence in depth: a TOCTOU window exists between options→verify. Lock here
     // too so two parties racing through options can still only register one admin.
     if (await ctx.runQuery(internal.admins.hasActiveAdmin, {})) {

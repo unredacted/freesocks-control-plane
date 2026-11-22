@@ -2660,35 +2660,41 @@ http.route({
   }),
 });
 
+// Apply the bootstrap IP budget before opening either enrollment envelope.
+async function admitAdminBootstrap(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  if (!ip) {
+    return errorJson(
+      'auth.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'admin.register.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!rl.allowed) {
+    return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
+  return null;
+}
+
 http.route({
   path: '/api/admin/auth/register-bootstrap/options',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
-    const body = await readJson<{ username?: string; displayName?: string }>(req);
+  handler: sealed(async (ctx, req) => {
+    const body = await readJson<{
+      bootstrapSecret?: string;
+      username?: string;
+      displayName?: string;
+    }>(req);
     if (!body.username) return errorJson('validation', 'username required', 400);
-    // Per-IP throttle: this endpoint is an ONLINE ORACLE for the bootstrap
-    // secret (unlimited guesses otherwise) until the first credential exists.
-    // Fail closed like the other auth surfaces.
-    const ip = resolveClientIp(req);
-    if (!ip) {
-      return errorJson(
-        'auth.ip_unresolved',
-        'Unable to establish your network address. Try again later or contact support.',
-        503,
-      );
-    }
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'admin.register.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!rl.allowed) {
-      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
-        retryAfterMs: rl.retryAfterMs,
-      });
-    }
     try {
       const out = await ctx.runAction(internal.webauthn.registerBootstrapOptions, {
-        bootstrapSecret: req.headers.get('x-admin-bootstrap-token') ?? '',
+        bootstrapSecret: typeof body.bootstrapSecret === 'string' ? body.bootstrapSecret : '',
         username: body.username,
         displayName: body.displayName,
       });
@@ -2696,20 +2702,24 @@ http.route({
     } catch (err) {
       return publicAuthError(err);
     }
-  }),
+  }, admitAdminBootstrap),
 });
 
 http.route({
   path: '/api/admin/auth/register-bootstrap/verify',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
-    const body = await readJson<{ adminId?: string; response?: unknown; deviceLabel?: string }>(
-      req,
-    );
+  handler: sealed(async (ctx, req) => {
+    const body = await readJson<{
+      bootstrapSecret?: string;
+      adminId?: string;
+      response?: unknown;
+      deviceLabel?: string;
+    }>(req);
     if (!body.adminId || !body.response)
       return errorJson('validation', 'adminId and response required', 400);
     try {
       const out = await ctx.runAction(internal.webauthn.registerBootstrapVerify, {
+        bootstrapSecret: typeof body.bootstrapSecret === 'string' ? body.bootstrapSecret : '',
         adminId: body.adminId as never,
         response: body.response,
         deviceLabel: body.deviceLabel,
@@ -2718,7 +2728,7 @@ http.route({
     } catch (err) {
       return publicAuthError(err);
     }
-  }),
+  }, admitAdminBootstrap),
 });
 
 http.route({

@@ -105,9 +105,11 @@ first request once DNS resolves (`logs web`); the backend `data` + Postgres
 
 ## 3. Bootstrap the first admin passkey
 
-Open `https://beta.freesocks.org/admin` in a browser. While no passkey exists, the
-bootstrap wizard appears: paste the `ADMIN_BOOTSTRAP_SECRET`, then register a
-passkey. Bootstrap **locks forever** once any credential exists.
+Open `https://beta.freesocks.org/admin` from an operator-verified instance. The
+build needs the matching HPKE pins and a live signed epoch before enrollment.
+While no passkey exists, paste `ADMIN_BOOTSTRAP_SECRET` into the wizard and
+register a passkey. Both enrollment requests are sealed to the origin. Bootstrap
+locks once a credential exists.
 
 The `deployer` **prints the bootstrap secret at the end of a deploy only while
 no admin credential exists yet** (look for the `ADMIN_BOOTSTRAP_SECRET = …`
