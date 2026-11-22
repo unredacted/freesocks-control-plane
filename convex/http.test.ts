@@ -2341,6 +2341,24 @@ describe('analytics origin (POST /api/v1/telemetry + admin config)', () => {
     ).toBe(200);
   });
 
+  test('saving full-IP forwarding requires a signed-in admin', async () => {
+    const t = convexTest(schema, modules);
+    const token = await insertToken(t, {
+      scopes: ['admin:settings:write'],
+      subjectType: 'service',
+    });
+    const save = (headers: Record<string, string>) =>
+      t.fetch('/api/v1/admin/analytics', {
+        method: 'PATCH',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, forwardIp: true }),
+      });
+    expect((await save({ authorization: `Bearer ${token}` })).status).toBe(403);
+    expect((await t.query(internal.analytics.getConfig, {})).forwardIp).toBe(false);
+    expect((await save({ cookie: await adminCookie(t) })).status).toBe(200);
+    expect((await t.query(internal.analytics.getConfig, {})).forwardIp).toBe(true);
+  });
+
   test('PATCH sanitizes: http url → "", junk id → "", missing booleans → off', async () => {
     const t = convexTest(schema, modules);
     const write = await insertToken(t, {

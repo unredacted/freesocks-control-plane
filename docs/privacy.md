@@ -551,7 +551,8 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   route reads no cookie and resolves no member. The client's User-Agent is
   forwarded transiently (Umami drops UA-less events), CR/LF-stripped, and is
   never logged or audited.
-- **The visitor's IP does not leave FCP by default.** `analytics.forwardIp`
+- **The visitor's IP does not leave FCP by default.**
+  Saving full-IP forwarding or changing its destination requires a signed-in admin. `analytics.forwardIp`
   ships off: Umami then sees only the backend's egress IP (no geolocation;
   unique-visitor counts degrade to per-user-agent buckets — accepted). When an
   operator turns it on, the resolved client IP is sent **per request inside the

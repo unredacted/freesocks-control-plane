@@ -46,7 +46,7 @@ import { SETTINGS_DEFAULTS } from './appSettings';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
-import { sanitizeUmamiUrl } from './lib/analyticsConfig';
+import { sanitizeGeoMode, sanitizeUmamiUrl } from './lib/analyticsConfig';
 import {
   checkSiteImage,
   decodeBase64,
@@ -3850,6 +3850,10 @@ http.route({
       ipHeader?: string;
       geoMode?: string;
     }>(req);
+    const geoMode = sanitizeGeoMode(body.geoMode);
+    if (body.forwardIp === true && geoMode === 'full' && !admin.adminUserId) {
+      return errorJson('auth.forbidden', 'Forwarding visitor IPs requires an admin session', 403);
+    }
     // Hash the CLEANED url (what will actually be stored/used) — sanitize here
     // with the same function the mutation applies, so the hash matches.
     const cleanUrl = sanitizeUmamiUrl(typeof body.umamiUrl === 'string' ? body.umamiUrl : '');
@@ -3862,7 +3866,7 @@ http.route({
           websiteId: typeof body.websiteId === 'string' ? body.websiteId : '',
           forwardIp: body.forwardIp === true,
           ipHeader: typeof body.ipHeader === 'string' ? body.ipHeader : '',
-          geoMode: typeof body.geoMode === 'string' ? body.geoMode : 'full',
+          geoMode,
           umamiUrlHash: cleanUrl === '' ? '' : (await sha256Hex(cleanUrl)).slice(0, 8),
           actorAdminId: admin.adminUserId,
         }),
