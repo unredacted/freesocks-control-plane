@@ -45,7 +45,6 @@ import type {
   ObservedModeGroup,
   BackendTransport,
 } from './lib/backends/types';
-import { KeyNotCreated } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -125,7 +124,6 @@ export const issueUser = internalAction({
   args: {
     backend: backendId,
     spec: issueSpec,
-    member: v.optional(v.object({ userId: v.id('users'), tierId: v.id('tiers') })),
     // Pin issuance to ONE instance (Remnawave node placement resolves the
     // placement and its backend TOGETHER — a mode group UUID only exists on its own
     // backend, so the paired pick must not be re-rolled here). Unusable pin
@@ -140,32 +138,9 @@ export const issueUser = internalAction({
   },
   handler: async (
     ctx,
-    { backend, spec, pinServerId, ownCheck, member },
+    { backend, spec, pinServerId, ownCheck },
   ): Promise<IssuedUser & { backendServerId?: Id<'backendServers'> }> => {
-    const reserveMember = async (backendServerId?: Id<'backendServers'>) => {
-      if (member) {
-        await ctx.runMutation(internal.subscriptions.reserveMemberIssuance, {
-          ...member,
-          backendServerId,
-          requestedMetered: spec.trafficLimitBytes !== null,
-          username: spec.username,
-        });
-      }
-    };
-    const releaseMember = async () => {
-      if (member) {
-        await ctx
-          .runMutation(internal.subscriptions.releaseMemberIssuance, {
-            userId: member.userId,
-            username: spec.username,
-          })
-          .catch(() => {});
-      }
-    };
-    if (mockBackendEnabled()) {
-      await reserveMember();
-      return mockIssueUser(spec as IssueUserSpec);
-    }
+    if (mockBackendEnabled()) return mockIssueUser(spec as IssueUserSpec);
     let server: Doc<'backendServers'> | null;
     if (pinServerId) {
       const pinned = await ctx.runQuery(internal.backendServers.getById, { id: pinServerId });
@@ -191,7 +166,6 @@ export const issueUser = internalAction({
     // key: the issuance saga only compensates failures after `issueUser`
     // RETURNS (it needs the issued identity), so a post-create throw here is
     // compensated locally before rethrowing.
-    await reserveMember(server._id);
     let issued: IssuedUser | null = null;
     try {
       issued = await PROVIDERS[server.backend].issue(
@@ -206,7 +180,6 @@ export const issueUser = internalAction({
             server.config as BackendConfig,
             issued.backendUserId,
           );
-          await releaseMember();
         } catch {
           console.warn(
             `[backends] post-create compensation delete failed for ${server.backend} user — orphan backend account`,
@@ -222,10 +195,6 @@ export const issueUser = internalAction({
             /* the original error takes precedence */
           }
         }
-      }
-      if (err instanceof KeyNotCreated) {
-        await releaseMember();
-        throw err.cause;
       }
       throw err;
     }

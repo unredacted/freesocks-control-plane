@@ -41,7 +41,6 @@ async function world(
     preferredLocation?: string;
     steer?: boolean;
     bOnline?: boolean;
-    monthlyTrafficGb?: number;
   } = {},
 ) {
   const t = convexTest(schema, modules);
@@ -51,7 +50,7 @@ async function world(
       slug: 'free',
       name: 'Free',
       backend: 'remnawave',
-      monthlyTrafficGb: o.monthlyTrafficGb ?? 0,
+      monthlyTrafficGb: 50,
       deviceLimit: 1,
       hwidLimit: 1,
       hwidEnabled: false,
@@ -220,16 +219,6 @@ describe("the account page's one-time move", () => {
     );
     expect(audit).toHaveLength(1);
     expect(JSON.stringify(audit[0]!.payload ?? {})).not.toMatch(/IR|loc-b/);
-  });
-
-  test('a metered member gets no move offer and keeps the existing key', async () => {
-    const w = await world({ monthlyTrafficGb: 50 });
-    const before = await activeSub(w);
-    expect(await w.t.query(internal.countryExits.memberExit, { userId: w.userId })).toBeNull();
-    await expect(
-      w.t.action(internal.account.moveToCountryExit, { userId: w.userId }),
-    ).rejects.toThrow('subscription.metered_reissue');
-    expect(await activeSub(w)).toEqual(before);
   });
 
   test('nothing offered, and nothing moved, when the exit location is offline or the key is there', async () => {

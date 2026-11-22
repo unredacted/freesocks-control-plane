@@ -25,6 +25,7 @@ import { requiresPrivateDelivery } from '../src/shared/contracts/connectionModes
 import { boundedUsername } from './lib/backends/username';
 import { issueNewSubscription } from './lib/issuance';
 import {
+  applyUsageCarryover,
   computeExpireAtIso,
   resolveHwidLimit,
   resolveTrafficLimitBytes,
@@ -108,6 +109,37 @@ async function auditIfPlacementless(
 }
 
 const TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Quota carryover (Review D-M3): a re-issue mints a FRESH backend traffic
+ * counter while the superseded key keeps routing for the 24h tombstone grace,
+ * so every regenerate/switch used to multiply the member's effective quota
+ * (scripted churn compounded it by orders of magnitude). Read the old key's
+ * live usedTrafficBytes and shrink the new key's limit by it, so the member's
+ * period quota is preserved across the re-issue instead of reset.
+ *
+ * Best-effort: a backend blip (or an already-gone old key) must not block
+ * re-issue — there is usually nothing to carry then. A fully-spent quota
+ * carries as 1 byte, NOT 0: 0 means UNLIMITED to Remnawave (and 'blocked' to
+ * Outline), so 1 byte is the only value that reads as "spent" on both.
+ */
+async function carriedTrafficLimit(
+  ctx: ActionCtx,
+  oldSub: { backend: Backend; backendUserId: string } | null,
+  limitBytes: number | null,
+): Promise<number | null> {
+  if (limitBytes === null || !oldSub) return limitBytes;
+  try {
+    const state = await ctx.runAction(internal.backends.getUser, {
+      backend: oldSub.backend,
+      backendUserId: oldSub.backendUserId,
+    });
+    return applyUsageCarryover(limitBytes, state.usedTrafficBytes ?? 0);
+  } catch {
+    console.warn('[account] usage-carryover read failed; issuing at the full tier limit');
+    return limitBytes;
+  }
+}
 
 /**
  * Tombstone the superseded key (24h grace), with a bounded-retry backstop: a
@@ -805,6 +837,11 @@ export const regenerate = internalAction({
     const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
     if (!tier) throw new Error('tier not found');
 
+    // Record the location pick BEFORE issuing so the effective preference and
+    // the stored one can't diverge (and a failed issuance keeps the choice).
+    if (location !== undefined && location !== (user.preferredLocation ?? null)) {
+      await ctx.runMutation(internal.users.setPreferredLocation, { userId, location });
+    }
     const effectiveLocation = location !== undefined ? location : (user.preferredLocation ?? null);
 
     // Capture the OLD subscription BEFORE issuing (issueNewSubscription repoints
@@ -832,11 +869,14 @@ export const regenerate = internalAction({
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
-      tierId: tier._id,
       backend: tier.backend,
       spec: {
         username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-        trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+        trafficLimitBytes: await carriedTrafficLimit(
+          ctx,
+          oldSub,
+          resolveTrafficLimitBytes(tier, bonusGb),
+        ),
         trafficLimitStrategy: tier.trafficStrategy,
         // Member term, else the far-future sentinel (free keys never expire
         // backend-side; the usage-based idle sweep owns free reclaim).
@@ -859,10 +899,6 @@ export const regenerate = internalAction({
       carryCountryFromId: oldSub?._id,
       region,
     });
-    // Persist the location choice once the key has actually been issued.
-    if (location !== undefined && location !== (user.preferredLocation ?? null)) {
-      await ctx.runMutation(internal.users.setPreferredLocation, { userId, location });
-    }
     const regionApplied =
       region !== undefined &&
       (await ctx.runQuery(internal.memberCountry.keyChoice, {
@@ -989,11 +1025,14 @@ export const switchBackend = internalAction({
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
-      tierId: peerTier._id,
       backend: peerTier.backend,
       spec: {
         username: boundedUsername('freesocks-', peerTier.slug, randomHex(8)),
-        trafficLimitBytes: resolveTrafficLimitBytes(peerTier, bonusGb),
+        trafficLimitBytes: await carriedTrafficLimit(
+          ctx,
+          oldSub,
+          resolveTrafficLimitBytes(peerTier, bonusGb),
+        ),
         trafficLimitStrategy: peerTier.trafficStrategy,
         // Entitlement unchanged by a backend switch: keep the member's term
         // (free keys carry the no-expiry sentinel).
@@ -1185,11 +1224,14 @@ export const switchMode = internalAction({
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
       const issued = await issueNewSubscription(ctx, {
         userId,
-        tierId: tier._id,
         backend: tier.backend,
         spec: {
           username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-          trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+          trafficLimitBytes: await carriedTrafficLimit(
+            ctx,
+            oldSub,
+            resolveTrafficLimitBytes(tier, bonusGb),
+          ),
           trafficLimitStrategy: tier.trafficStrategy,
           expireAt: computeExpireAtIso(user.membershipExpiresAt),
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
@@ -1555,11 +1597,14 @@ export const switchServer = internalAction({
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
       const issued = await issueNewSubscription(ctx, {
         userId,
-        tierId: tier._id,
         backend: tier.backend,
         spec: {
           username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-          trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+          trafficLimitBytes: await carriedTrafficLimit(
+            ctx,
+            oldSub,
+            resolveTrafficLimitBytes(tier, bonusGb),
+          ),
           trafficLimitStrategy: tier.trafficStrategy,
           expireAt: computeExpireAtIso(user.membershipExpiresAt),
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
@@ -1804,9 +1849,6 @@ export const moveToCountryExit = internalAction({
     const modeId = user.connectionModeId ?? null;
     if (!(await canMoveWithExistingUrls(ctx, tier.backend, modeId, oldSub.backendPlacement)))
       return PRIVATE_MOVE_REQUIRES_NEW_KEY;
-    if (tier.monthlyTrafficGb > 0) {
-      throw new ConvexError({ code: 'subscription.metered_reissue' });
-    }
     const offer = await ctx.runQuery(internal.countryExits.memberExit, { userId });
     if (!offer) return nothing;
     if (await isEffectiveModeBlocked(ctx, tier.backend, modeId)) {
@@ -1846,11 +1888,14 @@ export const moveToCountryExit = internalAction({
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
-      tierId: tier._id,
       backend: tier.backend,
       spec: {
         username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-        trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+        trafficLimitBytes: await carriedTrafficLimit(
+          ctx,
+          oldSub,
+          resolveTrafficLimitBytes(tier, bonusGb),
+        ),
         trafficLimitStrategy: tier.trafficStrategy,
         expireAt: computeExpireAtIso(user.membershipExpiresAt),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),

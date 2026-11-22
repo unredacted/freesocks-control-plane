@@ -296,10 +296,7 @@ async function proveFront(t: T, edgeId: Id<'edges'>, hostname: string) {
   });
 }
 
-async function seed(
-  start: Place,
-  opts: { mirror?: boolean; provider?: boolean; monthlyTrafficGb?: number } = {},
-) {
+async function seed(start: Place, opts: { mirror?: boolean; provider?: boolean } = {}) {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const ws = await registerRelay(t, {
@@ -333,7 +330,7 @@ async function seed(
       slug: 'free',
       name: 'Free',
       backend: 'remnawave',
-      monthlyTrafficGb: opts.monthlyTrafficGb ?? 50,
+      monthlyTrafficGb: 50,
       deviceLimit: 1,
       hwidLimit: 1,
       hwidEnabled: false,
@@ -446,7 +443,7 @@ afterEach(() => {
 describe('entering Privacy with a fresh key', () => {
   test('server and location moves cannot use a stale private preference to move a public key', async () => {
     const panel = stubPanel('ws');
-    const { t, userId, subId } = await seed('ws', { mirror: true, monthlyTrafficGb: 0 });
+    const { t, userId, subId } = await seed('ws', { mirror: true });
     await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: MODE.p }));
     for (const result of [
       await t.action(internal.account.switchServer, { userId, reason: 'blocked' }),
@@ -464,7 +461,7 @@ describe('entering Privacy with a fresh key', () => {
   test('failed issuance leaves the Freedom subscription and its links usable', async () => {
     const panel = stubPanel('ws');
     panel.failIssue = true;
-    const { t, subId, userId } = await seed('ws', { mirror: true, monthlyTrafficGb: 0 });
+    const { t, subId, userId } = await seed('ws', { mirror: true });
     await expect(
       t.action(internal.account.switchMode, { userId, target: MODE.p }),
     ).rejects.toThrow();
@@ -478,7 +475,7 @@ describe('entering Privacy with a fresh key', () => {
 
   test('a backend switch into a private destination also retires existing links', async () => {
     stubPanel('ws');
-    const { t, subId, userId } = await seed('ws', { mirror: true, monthlyTrafficGb: 0 });
+    const { t, subId, userId } = await seed('ws', { mirror: true });
     await t.run(async (ctx) => {
       const user = (await ctx.db.get(userId))!;
       const tier = (await ctx.db.get(user.tierId))!;
@@ -505,7 +502,7 @@ describe('entering Privacy with a fresh key', () => {
     'retires links from a %s source and serves the owner over HPKE',
     async (sourceBackend) => {
       const panel = stubPanel('ws');
-      const { t, subId, userId } = await seed('ws', { mirror: true, monthlyTrafficGb: 0 });
+      const { t, subId, userId } = await seed('ws', { mirror: true });
       if (sourceBackend === 'outline')
         await t.run((ctx) => ctx.db.patch(subId, { backend: sourceBackend }));
       // The preference-only signup route must not retarget a live key.

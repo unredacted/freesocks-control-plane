@@ -150,7 +150,7 @@ export const memberExit = internalQuery({
     const user = await ctx.db.get(userId);
     if (!user) return null;
     const tier = await ctx.db.get(user.tierId);
-    if (!tier || tier.monthlyTrafficGb > 0) return null;
+    if (!tier) return null;
     return memberExitOf(ctx.db, user, tier.backend);
   },
 });

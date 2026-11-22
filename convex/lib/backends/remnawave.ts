@@ -52,13 +52,7 @@ import type {
   ProfilePatchPreview,
   ProfilePatchSendOptions,
 } from './types';
-import {
-  farFutureExpiryIso,
-  isCreateRejection,
-  isFarFutureExpiry,
-  KeyNotCreated,
-  SUBSCRIPTION_PASSTHROUGH_HEADERS,
-} from './types';
+import { farFutureExpiryIso, isFarFutureExpiry, SUBSCRIPTION_PASSTHROUGH_HEADERS } from './types';
 import { hostMapperJson } from '../backend/hostMapper';
 import {
   changeToken,
@@ -538,7 +532,7 @@ function toRemnawaveTag(tag: string | undefined): string | undefined {
  * username match can only be the user this attempt created. A definitive 4xx
  * (validation/auth/conflict) means nothing was created by us — no cleanup.
  */
-async function cleanupAmbiguousCreate(cfg: RemnawaveConfig, username: string): Promise<boolean> {
+async function cleanupAmbiguousCreate(cfg: RemnawaveConfig, username: string): Promise<void> {
   try {
     const found = await call(cfg, {
       method: 'GET',
@@ -547,14 +541,12 @@ async function cleanupAmbiguousCreate(cfg: RemnawaveConfig, username: string): P
     });
     await remnawaveDeleteUser(cfg, panelUserId(found));
     console.warn(`[remnawave] cleaned up user after ambiguous create failure (${username})`);
-    return true;
   } catch (cleanupErr) {
     console.warn(
       `[remnawave] orphan-cleanup failed after ambiguous create failure (${username}): ${
         cleanupErr instanceof Error ? cleanupErr.message : 'unknown'
       }`,
     );
-    return false;
   }
 }
 
@@ -603,15 +595,9 @@ export async function remnawaveIssueUser(
       schema: RemnawaveUser,
     });
   } catch (err) {
-    const code = err instanceof RemnawaveApiError ? err.meta?.status : undefined;
-    const status = typeof code === 'number' ? code : undefined;
-    if (isCreateRejection(status)) throw new KeyNotCreated(err);
-    if (
-      (status === undefined || status === 408 || status >= 500) &&
-      (await cleanupAmbiguousCreate(cfg, spec.username))
-    ) {
-      throw new KeyNotCreated(err);
-    }
+    const status = err instanceof RemnawaveApiError ? err.meta?.status : undefined;
+    if (typeof status !== 'number' || status >= 500)
+      await cleanupAmbiguousCreate(cfg, spec.username);
     throw err;
   }
   return {

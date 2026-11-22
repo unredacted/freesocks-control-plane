@@ -202,74 +202,6 @@ async function answerForNewKey(
   return family === 'freedom' ? region : null;
 }
 
-const memberIssuancePlan = v.object({
-  tierId: v.id('tiers'),
-  requestedMetered: v.boolean(),
-  username: v.string(),
-});
-
-async function meteredIssuancePolicy(
-  db: DatabaseReader,
-  userId: Id<'users'>,
-  plan: { tierId: Id<'tiers'>; requestedMetered: boolean },
-) {
-  const user = await db.get(userId);
-  const currentTier = user ? await db.get(user.tierId) : null;
-  const destinationTier = await db.get(plan.tierId);
-  if (!user || !currentTier || !destinationTier) throw new Error('Missing member issuance tier');
-  return {
-    user,
-    metered:
-      plan.requestedMetered ||
-      currentTier.monthlyTrafficGb > 0 ||
-      destinationTier.monthlyTrafficGb > 0,
-    changesBackend: currentTier.backend !== destinationTier.backend,
-  };
-}
-
-/**
- * A metered member gets one quota-bearing provider identity. A fresh identity
- * cannot inherit what a previous one has spent or can still spend. The current
- * pointer survives reclaim and retention; the index covers legacy rows.
- */
-export const reserveMemberIssuance = internalMutation({
-  args: {
-    userId: v.id('users'),
-    ...memberIssuancePlan.fields,
-    backendServerId: v.optional(v.id('backendServers')),
-  },
-  handler: async (ctx, { userId, backendServerId, ...plan }) => {
-    const { user, metered, changesBackend } = await meteredIssuancePolicy(ctx.db, userId, plan);
-    if (user.meteredKeyClaim !== undefined) {
-      throw new ConvexError({ code: 'subscription.metered_reissue' });
-    }
-    if (!metered) return null;
-    if (
-      changesBackend ||
-      user.currentSubscriptionId ||
-      (await ctx.db
-        .query('subscriptions')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .first())
-    ) {
-      throw new ConvexError({ code: 'subscription.metered_reissue' });
-    }
-    await ctx.db.patch(userId, { meteredKeyClaim: { username: plan.username, backendServerId } });
-    return null;
-  },
-});
-
-/** Release a first-issue reservation only if a confirmed cleanup preceded it. */
-export const releaseMemberIssuance = internalMutation({
-  args: { userId: v.id('users'), username: v.string() },
-  handler: async (ctx, { userId, username }) => {
-    const user = await ctx.db.get(userId);
-    if (user?.meteredKeyClaim?.username === username) {
-      await ctx.db.patch(userId, { meteredKeyClaim: undefined });
-    }
-  },
-});
-
 /** Persist a freshly-issued subscription. Returns its id. */
 export const insertSubscription = internalMutation({
   args: {
@@ -303,25 +235,8 @@ export const insertSubscription = internalMutation({
     // listed country or `ZZ`, already checked by the HTTP layer and checked
     // again here. Wins over a carried one. Stored only on a freedom-family key.
     region: v.optional(v.string()),
-    memberIssuance: v.optional(memberIssuancePlan),
   },
   handler: async (ctx, a) => {
-    // Tier changes can race a provider call. Require the same reservation at
-    // publication whenever the member or requested key is now metered.
-    if (a.memberIssuance) {
-      const { user, metered, changesBackend } = await meteredIssuancePolicy(
-        ctx.db,
-        a.userId,
-        a.memberIssuance,
-      );
-      const ownsClaim = user.meteredKeyClaim?.username === a.memberIssuance.username;
-      if (
-        (user.meteredKeyClaim !== undefined && !ownsClaim) ||
-        (metered && (!ownsClaim || changesBackend))
-      ) {
-        throw new ConvexError({ code: 'subscription.metered_reissue' });
-      }
-    }
     // The fronted-URL token: carried from the old row when requested, else a
     // fresh 128-bit mint. INVARIANT: at most one row per token — bySubToken
     // resolves with .unique(), so a carry VACATES the old row and inserts the
@@ -393,7 +308,6 @@ export const insertSubscription = internalMutation({
       carrySubTokenFromId: _carry,
       carryCountryFromId: _carryCountry,
       region: _region,
-      memberIssuance: _memberIssuance,
       ...rest
     } = a;
     const inserted = await ctx.db.insert('subscriptions', {
@@ -1367,23 +1281,15 @@ export const setCurrentSubscription = internalMutation({
     userId: v.id('users'),
     subscriptionId: v.id('subscriptions'),
     retireSubTokenFromId: v.optional(v.id('subscriptions')),
-    issuanceUsername: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, subscriptionId, retireSubTokenFromId, issuanceUsername }) => {
+  handler: async (ctx, { userId, subscriptionId, retireSubTokenFromId }) => {
     if (retireSubTokenFromId) {
       const old = await ctx.db.get(retireSubTokenFromId);
       if (old?.userId !== userId || old._id === subscriptionId)
         throw new Error('Invalid source for private subscription switch');
       await ctx.db.patch(old._id, { subToken: undefined, updatedAt: Date.now() });
     }
-    const user = issuanceUsername ? await ctx.db.get(userId) : null;
-    await ctx.db.patch(userId, {
-      currentSubscriptionId: subscriptionId,
-      updatedAt: Date.now(),
-      ...(issuanceUsername && user?.meteredKeyClaim?.username === issuanceUsername
-        ? { meteredKeyClaim: undefined }
-        : {}),
-    });
+    await ctx.db.patch(userId, { currentSubscriptionId: subscriptionId, updatedAt: Date.now() });
     return null;
   },
 });

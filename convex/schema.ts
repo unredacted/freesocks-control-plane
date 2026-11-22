@@ -695,11 +695,6 @@ export default defineSchema({
     legacySessionsRevoked: v.optional(v.boolean()),
     tierId: v.id('tiers'),
     currentSubscriptionId: v.optional(v.id('subscriptions')),
-    // A metered first issue reserves its sole provider identity before creation.
-    // The name identifies an ambiguous create for operator reconciliation.
-    meteredKeyClaim: v.optional(
-      v.object({ username: v.string(), backendServerId: v.optional(v.id('backendServers')) }),
-    ),
     status: userStatus,
     disabledReason: v.optional(v.string()),
     membershipExpiresAt: v.optional(v.number()),

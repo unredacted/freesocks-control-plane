@@ -82,7 +82,6 @@ describe('issueNewSubscription compensation', () => {
     const { ctx, calls } = stubCtx();
     const out = await issueNewSubscription(ctx, {
       userId: 'u1' as Id<'users'>,
-      tierId: 't1' as Id<'tiers'>,
       backend: 'remnawave',
       spec: SPEC,
     });
@@ -93,12 +92,7 @@ describe('issueNewSubscription compensation', () => {
   test('a repoint failure deletes the backend user, the local row, and hands back the keyCount', async () => {
     const { ctx, calls } = stubCtx({ failRepoint: true });
     await expect(
-      issueNewSubscription(ctx, {
-        userId: 'u1' as Id<'users'>,
-        tierId: 't1' as Id<'tiers'>,
-        backend: 'remnawave',
-        spec: SPEC,
-      }),
+      issueNewSubscription(ctx, { userId: 'u1' as Id<'users'>, backend: 'remnawave', spec: SPEC }),
     ).rejects.toThrow('db blip');
     expect(calls.map((c) => c.fn)).toEqual(['deleteUser', 'markDeleted', 'bump']);
     expect(calls.find((c) => c.fn === 'bump')?.args).toMatchObject({ id: 'srv-1', delta: -1 });
@@ -112,7 +106,6 @@ describe('issueNewSubscription compensation', () => {
     const { ctx, calls, deleteAttempts } = stubCtx({ failRepoint: true, deleteFailures: 3 });
     const saga = issueNewSubscription(ctx, {
       userId: 'u1' as Id<'users'>,
-      tierId: 't1' as Id<'tiers'>,
       backend: 'remnawave',
       spec: SPEC,
     });
@@ -135,7 +128,6 @@ describe('issueNewSubscription compensation', () => {
     const { ctx, calls, deleteAttempts } = stubCtx({ failRepoint: true, deleteFailures: 1 });
     const saga = issueNewSubscription(ctx, {
       userId: 'u1' as Id<'users'>,
-      tierId: 't1' as Id<'tiers'>,
       backend: 'remnawave',
       spec: SPEC,
     });
