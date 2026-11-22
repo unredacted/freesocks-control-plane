@@ -35,6 +35,10 @@ beforeAll(async () => {
   // The pins are read at module load, so bake them before the first import.
   vi.stubEnv('VITE_FS_SERVER_HPKE_PK', bytesToB64Url(pkBytes));
   vi.stubEnv('VITE_FS_SERVER_HPKE_KID', kid);
+  // A static-only build unless a test pins a manifest: a developer's
+  // .env.local pins would otherwise make every seal wait for a signed epoch.
+  vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  vi.stubEnv('VITE_FS_MANIFEST_PK_PQ', undefined);
   hpke = await import('./hpke');
   expect(hpke.sealingEnabled()).toBe(true);
 });
