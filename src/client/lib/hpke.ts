@@ -176,24 +176,41 @@ function isRevoked(kid: string): boolean {
   return _revokedKids.has(kid);
 }
 
-function applyRevocation(r: {
+interface SignedRevocation {
   version: number;
   revokedKids: string[];
   notAfter: number;
   sig: string;
   sigPq?: string;
-}) {
-  if (!MANIFEST_PK) return;
-  // Anti-rollback: never accept a version lower than the last we trusted.
-  if (r.version < _revVersion) return;
+}
+
+function applyRevocation(r: SignedRevocation): number | undefined {
+  if (
+    !MANIFEST_PK ||
+    !Number.isSafeInteger(r.version) ||
+    r.version < 0 ||
+    r.version < _revVersion ||
+    !Number.isFinite(r.notAfter) ||
+    r.notAfter <= Date.now() ||
+    !Array.isArray(r.revokedKids) ||
+    r.revokedKids.some((kid) => typeof kid !== 'string')
+  )
+    return;
   const ok = verifyManifestHybrid(
     revocationStatement({ version: r.version, notAfter: r.notAfter, revokedKids: r.revokedKids }),
     r.sig,
     r.sigPq,
   );
-  if (!ok) return; // tampered -> keep the persisted list (still fail-closed on known kids)
+  if (!ok) return;
+  const revoked = new Set(r.revokedKids);
+  if (r.version === _revVersion) {
+    if (revoked.size !== _revokedKids.size || [...revoked].some((kid) => !_revokedKids.has(kid)))
+      return;
+    return _revVersion;
+  }
   _revVersion = r.version;
-  _revokedKids = new Set(r.revokedKids);
+  _revokedKids = revoked;
+  if (_epoch && isRevoked(_epoch.kid)) _epoch = null;
   try {
     localStorage.setItem(
       REV_STORAGE_KEY,
@@ -202,6 +219,7 @@ function applyRevocation(r: {
   } catch {
     /* storage unavailable */
   }
+  return _revVersion;
 }
 
 /**
@@ -238,13 +256,7 @@ async function refreshEpoch(): Promise<void> {
         sig: string;
         sigPq?: string;
       } | null;
-      revocation?: {
-        version: number;
-        revokedKids: string[];
-        notAfter: number;
-        sig: string;
-        sigPq?: string;
-      } | null;
+      revocation?: SignedRevocation | null;
     };
     if (body.revocation) applyRevocation(body.revocation);
     const e = body.epoch;
@@ -256,11 +268,9 @@ async function refreshEpoch(): Promise<void> {
     );
     // Ignore a tampered, expired, or revoked epoch key -> fall back to static.
     if (!ok || e.notAfter <= Date.now() || isRevoked(e.kid)) return;
-    _epoch = {
-      kid: e.kid,
-      pub: await deserializePublicKey(b64UrlToBytes(e.publicKey)),
-      notAfter: e.notAfter,
-    };
+    const pub = await deserializePublicKey(b64UrlToBytes(e.publicKey));
+    if (isRevoked(e.kid)) return;
+    _epoch = { kid: e.kid, pub, notAfter: e.notAfter };
   } catch {
     // network/parse error -> keep whatever we have (or none); fall back to static.
   }
@@ -312,8 +322,8 @@ export interface ConnectionAttestation {
 /**
  * Live, READ-ONLY attestation check for the "Verify connection" backend + the
  * banner's active state: fetch the server-attested epoch key and verify the
- * manifest chain in-browser exactly as the seal path does, but WITHOUT mutating
- * the seal state machine (a pure diagnostic). `attested:false` with
+ * manifest chain in-browser. Apply authenticated revocations to the same state
+ * that gates sealing before reporting the key's status. `attested:false` with
  * `reachable:true` is the tell that a CDN may be tampering with the epoch
  * endpoint. The endpoint is `cache-control: max-age=60`, so this is cheap even
  * alongside the seal path's own fetch. Never throws.
@@ -335,30 +345,9 @@ export async function verifyConnection(): Promise<ConnectionAttestation> {
         sig: string;
         sigPq?: string;
       } | null;
-      revocation?: {
-        version: number;
-        revokedKids: string[];
-        notAfter: number;
-        sig: string;
-        sigPq?: string;
-      } | null;
+      revocation?: SignedRevocation | null;
     };
-    let revocationVersion: number | undefined;
-    const r = body.revocation;
-    if (
-      r &&
-      verifyManifestHybrid(
-        revocationStatement({
-          version: r.version,
-          notAfter: r.notAfter,
-          revokedKids: r.revokedKids,
-        }),
-        r.sig,
-        r.sigPq,
-      )
-    ) {
-      revocationVersion = r.version;
-    }
+    const revocationVersion = body.revocation ? applyRevocation(body.revocation) : undefined;
     const e = body.epoch;
     if (!e) return { reachable: true, attested: false, failure: 'absent', revocationVersion };
     // Order matters: report the TAMPER tells (bad signature, revoked kid) ahead of
@@ -439,6 +428,9 @@ export async function prepareOutbound(
     policy,
     bodyObj,
   });
+  if (policy.request === 'seal' && isRevoked(sealKid)) {
+    throw new Error('fcp_hpke_seal_key_revoked');
+  }
   const out: OutboundSeal = { policy, respEphPriv: prep.respEphPriv };
   if (policy.request === 'seal') {
     out.body = JSON.stringify(prep.body);

@@ -106,7 +106,8 @@ describe('keyRevocations store', () => {
       });
     await mk(1);
     await mk(3);
-    await mk(2);
+    await expect(mk(2)).rejects.toThrow(/versions must increase/);
+    await expect(mk(3)).rejects.toThrow(/versions must increase/);
     const cur = await t.query(internal.keyRevocations.current, {});
     expect(cur?.version).toBe(3);
     expect(cur?.revokedKids).toEqual(['kid-v3']);

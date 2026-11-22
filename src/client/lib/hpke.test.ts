@@ -16,6 +16,8 @@ import {
 } from '../../shared/crypto/envelope';
 import { serverOpenRequest, serverSealResponse } from '../../shared/crypto/channel';
 import { serializePublicKey, serverKeyPairFromSeed } from '../../shared/crypto/hpke';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { epochStatement, revocationStatement, signManifest } from '../../shared/crypto/manifest';
 
 // The status store is a Svelte-runes module; the seam only pokes it after opening
 // a sealed response, so a stub is all this test needs.
@@ -171,4 +173,45 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
       await hpke.prepareOutbound('/api/v1/account/passkey/revoke', 'POST', '{"id":"x"}'),
     ).toBeUndefined();
   });
+});
+
+test('connection attestation applies a signed revocation to the cached recipient', async () => {
+  const manifestSk = new Uint8Array(32).fill(11);
+  const publicKey = bytesToB64Url(await serializePublicKey(kp.publicKey));
+  const notAfter = Date.now() + 600_000;
+  const epoch = {
+    kid,
+    publicKey,
+    notAfter,
+    sig: bytesToB64Url(
+      signManifest(manifestSk, epochStatement({ kid, publicKeyB64: publicKey, notAfter })),
+    ),
+  };
+  const statement = { version: 1, revokedKids: [kid], notAfter };
+  const revocation = {
+    ...statement,
+    sig: bytesToB64Url(signManifest(manifestSk, revocationStatement(statement))),
+  };
+  vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
+  vi.resetModules();
+  const pinned = await import('./hpke');
+  const fetchKeys = vi.fn().mockImplementationOnce(() => Response.json({ epoch }));
+  fetchKeys.mockImplementation(() => Response.json({ epoch, revocation }));
+  vi.stubGlobal('fetch', fetchKeys);
+  try {
+    await expect(
+      pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
+    ).resolves.toBeDefined();
+    await expect(pinned.verifyConnection()).resolves.toMatchObject({
+      attested: false,
+      failure: 'revoked',
+      revocationVersion: 1,
+    });
+    await expect(
+      pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
+    ).rejects.toThrow();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  }
 });

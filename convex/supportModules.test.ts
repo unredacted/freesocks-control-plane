@@ -124,8 +124,8 @@ describe('keyRevocations', () => {
         manifestSig: `sig-${version}`,
       });
     await insert(3, ['kid-c']);
-    await insert(1, ['kid-a']);
-    await insert(2, ['kid-b']);
+    await expect(insert(1, ['kid-a'])).rejects.toThrow(/versions must increase/);
+    await expect(insert(2, ['kid-b'])).rejects.toThrow(/versions must increase/);
     const current = await t.query(internal.keyRevocations.current, {});
     expect(current?.version).toBe(3);
     expect(current?.revokedKids).toEqual(['kid-c']);
