@@ -705,6 +705,20 @@ gunzip -c "$DUMP" \
       psql -U convex -d freesocks_beta -v ON_ERROR_STOP=1
 ```
 
+### Before reopening access after a datastore restore
+
+Keep public ingress closed for both a SQL restore and a Convex
+`import --replace-all`. Stop `web` before the restore and use the loopback
+deployment endpoint from the host or the instance-admin deployer. Deploy the
+current recovery functions to the restored instance while ingress is closed.
+
+From that instance-admin Convex CLI, run
+`bunx convex run apiTokens:revokeRestoredTokens '{"cursor":null}'`. If the
+response has `isDone: false`, repeat with the returned `cursor` until it reports
+`isDone: true`. This invalidates all restored bearer tokens, including member
+tokens. Reissue only authorized tokens after completing recovery and before
+restarting the affected automation.
+
 Run a **restore drill** before launch and periodically after:
 `bash docker/restore-verify.sh` verifies the signature with `BACKUP_VERIFY_KEY_FILE` and restores the latest dump into a scratch DB,
 asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted
@@ -893,7 +907,7 @@ migrations have run: upgrades apply in-place DB migrations, Convex documents no
 downgrade path, and an older binary against a migrated database is undefined
 behavior. The only real rollback is restore-from-backup — `bunx convex import
 --replace-all` of the pre-upgrade export (via the same deployer recipe), or the
-pg_dump restore above. This is why the export step is mandatory, not advisory.
+pg_dump restore above. Follow the post-restore access checks before reopening ingress.
 
 One more drift hazard: the **dev stack** (`docker-compose.yml`) deliberately
 runs `:latest`, so local dev can be _ahead_ of beta/prod — behavior that works
