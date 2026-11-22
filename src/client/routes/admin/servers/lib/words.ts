@@ -496,6 +496,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.twin_same_route':
     'The twin needs a port and a path of its own. The node’s front server tells the two apart by them.',
   'servers.twin_in_use': 'A node still serves the encrypted twin. Turn it off there first.',
+  'servers.route_still_served':
+    'A node’s front server still routes that port or path from an earlier role run. Run the node role there first.',
   'servers.twin_already_served':
     'A node or an address already uses that transport. Take it off there first: a twin is checked before members get it.',
   'servers.node_twin_present': 'The node already serves the encrypted twin.',
@@ -1352,6 +1354,7 @@ export interface NodeTwinLike {
   code: string | null;
   route: { path: string; port: number } | null;
   routeBy: 'role' | 'operator';
+  routeServed?: boolean | null;
   fronts: { checked: number; published: number };
 }
 
@@ -1375,7 +1378,9 @@ export function nodeTwinWords(t: NodeTwinLike): { dot: Dot; sentence: string } {
           sentence:
             t.routeBy === 'operator'
               ? `No front carries it yet. No role runs this node: add the route ${route ?? 'for the twin'} to its front server. It is checked again every few minutes.`
-              : `No front carries it yet. Run the node role on this node so its front server gets the route ${route ?? 'for the twin'}. It is checked again every few minutes.`,
+              : t.routeServed === true
+                ? `No front carries it yet, though the node role was handed the route ${route ?? 'for the twin'} on its last run. It is checked again every few minutes.`
+                : `No front carries it yet. Run the node role on this node so its front server gets the route ${route ?? 'for the twin'}. It is checked again every few minutes.`,
         };
       if (t.code && !TWIN_WAITING.has(t.code))
         return { dot: 'red', sentence: `Not serving it yet: ${serverErrorWords(t.code)}` };

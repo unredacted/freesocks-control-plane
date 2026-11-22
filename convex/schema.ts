@@ -5087,6 +5087,12 @@ export default defineSchema({
     // and each front is checked on the twin's path; `serving`: the address is
     // on and the twin is handed out through the fronts that passed
     // (`relayListeners.encryptedTwin.edges`), bound to `evidence.revision`;
+    // The routes the node role was handed on its last run (the bootstrap
+    // answer's `ingress.routes`: path and loopback port), so FCP knows what the
+    // node's front server routes until the next run (a twin's route handed out
+    // and taken away since). Absent until a role run after this was added, and
+    // on a node no role runs.
+    servedRoutes: v.optional(v.array(v.object({ path: v.string(), port: v.number() }))),
     // `removing`: address off and gone, then the transport. `hostUuid` is the
     // one address FCP wrote for it. The node's own transport, address and
     // approval are never touched by any of it.

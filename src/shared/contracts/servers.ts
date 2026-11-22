@@ -805,6 +805,12 @@ export const NodeIntentView = z.object({
     )
     .default([]),
   /**
+   * Routes the node's front server still has from a role run whose route FCP
+   * no longer hands out (a twin taken off the mode since): the role must run
+   * again, and no new transport may take their port or path until it has.
+   */
+  staleRoutes: z.array(z.object({ path: z.string(), port: z.number() })).default([]),
+  /**
    * Its mode's ENCRYPTED TWIN on this node (docs/servers.md "A node serving
    * the encrypted twin"), or null. `route`: what the node's front server needs
    * (the twin's path to its loopback port), given by the node role or, on a
@@ -817,6 +823,11 @@ export const NodeIntentView = z.object({
       code: z.string().nullable(),
       route: z.object({ path: z.string(), port: z.number() }).nullable(),
       routeBy: z.enum(['role', 'operator']),
+      /**
+       * Whether the node role was handed the route on its last run; null when
+       * no role runs the node or its last run is from before this was known.
+       */
+      routeServed: z.boolean().nullable().default(null),
       fronts: z.object({ checked: z.number(), published: z.number() }),
       since: z.string(),
     })

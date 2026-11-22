@@ -12,6 +12,15 @@
  * core. Each transport sets `minClientVer` 1.8.1, as FCP's profile template
  * does, so the older core's default minimum is not what is tested.
  *
+ * It also proves the post-quantum key exchange each engine ends up with
+ * (docs/client-compatibility.md § "Post-quantum key exchange",
+ * tests/compat/pqMatrix.ts): through a tap in front of the cores
+ * (docker/compat/hello-tap.ts) that reads the TLS 1.3 Client and Server Hello
+ * of every connection, Mihomo with FCP's body and Xray-core from the backend's
+ * share link must end on X25519MLKEM768 and sing-box on X25519; and through a
+ * VLESS Encryption inbound, Xray-core and Mihomo connect on the encrypted
+ * entry and are refused without it, while sing-box cannot hold the entry.
+ *
  * It runs only under scripts/compat/reality-keyshare.sh (the `reality-key-share`
  * job in .github/workflows/client-compatibility.yml), which downloads the
  * engines, builds their image and always tears the containers down; without
@@ -25,6 +34,8 @@ import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import YAML from 'yaml';
+import { CLASSIC_GROUP, PQ_ENGINES, PQ_GROUP } from '../../tests/compat/pqMatrix';
+import { clientEncryption, generateVlessEncryption } from './backend/vlessEncryption';
 import { MIHOMO_YAML } from './backend/subscriptionTemplates/MIHOMO';
 import { finishMemberBody } from './subscriptionDelivery';
 
@@ -37,6 +48,7 @@ const SERVICES = [
   'compat-reality-xray-fleet',
   'compat-reality-xray-latest',
   'compat-reality-client',
+  'compat-pq-tap',
 ];
 
 /** Fixed in docker-compose.compat.yml. */
@@ -52,6 +64,30 @@ const PORTS = { raw: 443, xhttp: 8443 } as const;
 type Transport = keyof typeof PORTS;
 const XHTTP_PATH = '/kx';
 const LISTEN = 1080;
+
+/**
+ * The tap in front of both cores (docker/compat/hello-tap.ts) and its ports,
+ * fixed in docker-compose.compat.yml: an engine dialling the tap reaches the
+ * core behind the port, and the tap answers which groups each connection's
+ * handshake offered and picked.
+ */
+const TAP = {
+  address: '10.89.72.13',
+  ports: { fleet: { raw: 443, xhttp: 8443 }, latest: { raw: 9443, xhttp: 9843 } },
+} as const;
+/** Xray-core as a client, one container per release (started per test). */
+const XRAY_CLIENTS = {
+  fleet: { service: 'compat-pq-xray-client-fleet', address: '10.89.72.14' },
+  latest: { service: 'compat-pq-xray-client-latest', address: '10.89.72.15' },
+} as const;
+/**
+ * A VLESS Encryption inbound on both cores, over a plain WebSocket: the layer
+ * is what a CDN-fronted member's traffic relies on, whatever carries it. A
+ * fresh ML-KEM-768 seed per run; the client string is the one the backend
+ * derives for the entries it writes.
+ */
+const ENC = { port: 8090, path: '/wse', server: generateVlessEncryption().decryption };
+const ENC_CLIENT = clientEncryption(ENC.server)!;
 
 /**
  * What an engine says when the server hands it to the target, as it does a
@@ -109,6 +145,14 @@ function xrayConfig(): unknown {
           xhttpSettings: { path: XHTTP_PATH },
         },
       },
+      {
+        tag: 'vless-encryption',
+        listen: '0.0.0.0',
+        port: ENC.port,
+        protocol: 'vless',
+        settings: { clients: [{ id: ID }], decryption: ENC.server },
+        streamSettings: { network: 'ws', wsSettings: { path: ENC.path } },
+      },
     ],
     // Every tunnel ends at the page, whatever the client asked for.
     outbounds: [
@@ -128,8 +172,9 @@ function xrayConfig(): unknown {
  * The backend's Mihomo body for one core, as its Mihomo generator writes it for
  * a Host whose Mihomo override is not ticked (no `support-x25519mlkem768`).
  */
-function backendBody(core: Core): string {
-  const server = CORES[core].address;
+function backendBody(core: Core, via: 'direct' | 'tap' = 'direct'): string {
+  const server = via === 'tap' ? TAP.address : CORES[core].address;
+  const ports = via === 'tap' ? TAP.ports[core] : PORTS;
   const common = {
     type: 'vless',
     server,
@@ -144,7 +189,7 @@ function backendBody(core: Core): string {
     {
       name: 'raw',
       ...common,
-      port: PORTS.raw,
+      port: ports.raw,
       network: 'tcp',
       flow: 'xtls-rprx-vision',
       'packet-encoding': 'xudp',
@@ -152,7 +197,7 @@ function backendBody(core: Core): string {
     {
       name: 'xhttp',
       ...common,
-      port: PORTS.xhttp,
+      port: ports.xhttp,
       network: 'xhttp',
       'xhttp-opts': { path: XHTTP_PATH },
     },
@@ -166,7 +211,7 @@ function backendBody(core: Core): string {
 }
 
 /** A body's proxies in a sandbox config: a local listener, `pick` carrying every request. */
-function mihomoConfig(body: string, pick: Transport): string {
+function mihomoConfig(body: string, pick: string): string {
   const doc = YAML.parse(body) as { proxies: unknown[] };
   return YAML.stringify({
     'mixed-port': LISTEN,
@@ -184,7 +229,7 @@ function mihomoConfig(body: string, pick: Transport): string {
 }
 
 /** The entry the backend's sing-box generator writes for the raw transport. */
-function singboxConfig(core: Core): string {
+function singboxConfig(core: Core, via: 'direct' | 'tap' = 'direct'): string {
   return JSON.stringify({
     log: { level: 'info' },
     inbounds: [{ type: 'mixed', tag: 'in', listen: '127.0.0.1', listen_port: LISTEN }],
@@ -192,8 +237,8 @@ function singboxConfig(core: Core): string {
       {
         type: 'vless',
         tag: 'raw',
-        server: CORES[core].address,
-        server_port: PORTS.raw,
+        server: via === 'tap' ? TAP.address : CORES[core].address,
+        server_port: via === 'tap' ? TAP.ports[core].raw : PORTS.raw,
         uuid: ID,
         flow: 'xtls-rprx-vision',
         tls: {
@@ -205,6 +250,125 @@ function singboxConfig(core: Core): string {
       },
     ],
     route: { final: 'raw' },
+  });
+}
+
+/**
+ * The share links the backend writes for the two REALITY transports (the
+ * Host's `chrome` fingerprint, as FCP makes its Hosts), as FCP serves them: a
+ * base64 link list through `finishMemberBody`.
+ */
+function servedLinks(core: Core, via: 'direct' | 'tap'): Record<Transport, string> {
+  const server = via === 'tap' ? TAP.address : CORES[core].address;
+  const ports = via === 'tap' ? TAP.ports[core] : PORTS;
+  const query = (extra: Record<string, string>) =>
+    new URLSearchParams({
+      encryption: 'none',
+      security: 'reality',
+      sni: SERVER_NAME,
+      fp: 'chrome',
+      pbk: KEYS.public,
+      sid: SHORT_ID,
+      ...extra,
+    }).toString();
+  const links = [
+    `vless://${ID}@${server}:${ports.raw}?${query({ type: 'tcp', flow: 'xtls-rprx-vision', headerType: 'none' })}#raw`,
+    `vless://${ID}@${server}:${ports.xhttp}?${query({ type: 'xhttp', path: XHTTP_PATH, mode: 'auto' })}#xhttp`,
+  ];
+  const body = finishMemberBody(Buffer.from(links.join('\n')).toString('base64'), null);
+  const served = Buffer.from(body, 'base64').toString('utf8').split('\n').filter(Boolean);
+  const byName = (name: Transport) => served.find((l) => l.endsWith(`#${name}`));
+  const raw = byName('raw');
+  const xhttp = byName('xhttp');
+  if (!raw || !xhttp) throw new Error('the served link list lost an entry');
+  return { raw, xhttp };
+}
+
+/** A VLESS Encryption entry's share link (the twin), with the client string or without (plain). */
+function encryptedLink(encryption: string): string {
+  const q = new URLSearchParams({ encryption, security: 'none', type: 'ws', path: ENC.path });
+  return `vless://${ID}@${CORES.fleet.address}:${ENC.port}?${q.toString()}#twin`;
+}
+
+/** A share link's VLESS outbound, mapped the way the Xray apps (v2rayNG, v2rayN, Happ) map one. */
+function xrayOutbound(link: string): Record<string, unknown> {
+  const u = new URL(link);
+  const p = u.searchParams;
+  const network = p.get('type') === 'tcp' ? 'raw' : p.get('type')!;
+  const security = p.get('security') ?? 'none';
+  const stream: Record<string, unknown> = { network, security };
+  if (security === 'reality')
+    stream.realitySettings = {
+      serverName: p.get('sni'),
+      fingerprint: p.get('fp'),
+      publicKey: p.get('pbk'),
+      shortId: p.get('sid') ?? '',
+    };
+  if (network === 'xhttp')
+    stream.xhttpSettings = { path: p.get('path'), mode: p.get('mode') ?? 'auto' };
+  if (network === 'ws') stream.wsSettings = { path: p.get('path') };
+  const user: Record<string, unknown> = {
+    id: decodeURIComponent(u.username),
+    encryption: p.get('encryption') ?? 'none',
+  };
+  if (p.get('flow')) user.flow = p.get('flow');
+  return {
+    tag: 'proxy',
+    protocol: 'vless',
+    settings: { vnext: [{ address: u.hostname, port: Number(u.port), users: [user] }] },
+    streamSettings: stream,
+  };
+}
+
+function xrayClientConfig(link: string): string {
+  return JSON.stringify({
+    log: { loglevel: 'warning' },
+    inbounds: [
+      {
+        tag: 'in',
+        listen: '0.0.0.0',
+        port: LISTEN,
+        protocol: 'socks',
+        settings: { auth: 'noauth' },
+      },
+    ],
+    outbounds: [xrayOutbound(link)],
+  });
+}
+
+/** Mihomo's proxy for the encrypted entry (`encryption` set) or the plain one. */
+function mihomoEncryptedConfig(encryption: string | null): string {
+  const proxy: Record<string, unknown> = {
+    name: 'twin',
+    type: 'vless',
+    server: CORES.fleet.address,
+    port: ENC.port,
+    uuid: ID,
+    udp: true,
+    network: 'ws',
+    'ws-opts': { path: ENC.path },
+  };
+  if (encryption) proxy.encryption = encryption;
+  return mihomoConfig(YAML.stringify({ proxies: [proxy] }), 'twin');
+}
+
+/** sing-box's VLESS outbound carrying the encrypted entry's `encryption`. */
+function singboxEncryptedConfig(): string {
+  return JSON.stringify({
+    log: { level: 'info' },
+    inbounds: [{ type: 'mixed', tag: 'in', listen: '127.0.0.1', listen_port: LISTEN }],
+    outbounds: [
+      {
+        type: 'vless',
+        tag: 'twin',
+        server: CORES.fleet.address,
+        server_port: ENC.port,
+        uuid: ID,
+        encryption: ENC_CLIENT,
+        transport: { type: 'ws', path: ENC.path },
+      },
+    ],
+    route: { final: 'twin' },
   });
 }
 
@@ -235,8 +399,93 @@ const reaches = (address: string, port: number) =>
     `import socket; socket.create_connection(("${address}",${port}),2).close()`,
   ).status === 0;
 
+let xrayRunning = false;
 function stopEngines(): void {
   for (const binary of ['sing-box', 'mihomo']) inClient('pkill', '-x', binary);
+  if (xrayRunning)
+    for (const x of Object.values(XRAY_CLIENTS))
+      spawnSync('docker', [...COMPOSE, 'rm', '-sf', x.service], { timeout: 60_000 });
+  xrayRunning = false;
+}
+
+/** Start Xray-core `release` as a client of `link`, its SOCKS listener on its own address. */
+async function startXray(release: Core, link: string): Promise<void> {
+  stopEngines();
+  writeFileSync(`${WORK}/xray-client.json`, xrayClientConfig(link));
+  xrayRunning = true;
+  compose('up', '-d', '--force-recreate', XRAY_CLIENTS[release].service);
+  if (!(await until(() => reaches(XRAY_CLIENTS[release].address, LISTEN), 30_000, 250)))
+    throw new Error(`Xray-core ${release} never listened`);
+}
+
+/** Whether Xray-core `release` with `link` reaches the page (retried while it settles). */
+async function xrayConnects(release: Core, link: string): Promise<boolean> {
+  await startXray(release, link);
+  return until(() => fetchesPage(XRAY_CLIENTS[release].address), 30_000, 1500);
+}
+
+// --- the tap ---------------------------------------------------------------------------------------
+
+/** One connection's key exchange as the tap read it (docker/compat/tlsHello.ts `describeObservation`). */
+interface Hello {
+  port: number;
+  offered: string[];
+  shares: string[];
+  negotiated: string | null;
+  helloRetry: boolean;
+  tls13: boolean;
+}
+
+function tapHellos(): Hello[] {
+  const r = inClient(
+    'curl',
+    '--silent',
+    '--fail',
+    '--max-time',
+    '5',
+    `http://${TAP.address}:9000/hellos`,
+  );
+  if (r.status !== 0) throw new Error('the tap did not answer');
+  return JSON.parse(r.stdout) as Hello[];
+}
+function tapReset(): void {
+  const r = inClient(
+    'curl',
+    '--silent',
+    '--fail',
+    '-X',
+    'POST',
+    `http://${TAP.address}:9000/reset`,
+  );
+  if (r.status !== 0) throw new Error('the tap did not reset');
+}
+
+/**
+ * The key exchange of every connection an engine made to the tap's `port`
+ * while it fetched the page (`start` brings the engine up; nothing it says is
+ * printed). Throws when it never reached the page.
+ */
+async function keyExchanges(
+  start: () => Promise<void>,
+  listener: string,
+  port: number,
+): Promise<Hello[]> {
+  await start();
+  tapReset();
+  if (!(await until(() => fetchesPage(listener), 30_000, 1500)))
+    throw new Error('no page through the tap');
+  stopEngines();
+  const mine = tapHellos().filter((h) => h.port === port);
+  if (mine.length === 0) throw new Error('the tap saw no handshake');
+  return mine;
+}
+
+/** Every connection ended on `group`, and over TLS 1.3. */
+function expectAllNegotiated(hellos: Hello[], group: string, what: string): void {
+  for (const h of hellos) {
+    expect(h.tls13, `${what}: TLS 1.3`).toBe(true);
+    expect(h.negotiated, `${what}: picked`).toBe(group);
+  }
 }
 
 /**
@@ -264,7 +513,7 @@ async function startEngine(engine: Engine, config: string): Promise<void> {
 }
 
 /** One fetch of the page through the engine; true when the page answered through the tunnel. */
-function fetchesPage(): boolean {
+function fetchesPage(listener = '127.0.0.1'): boolean {
   const nonce = randomUUID();
   const r = inClient(
     'curl',
@@ -275,7 +524,7 @@ function fetchesPage(): boolean {
     '--noproxy',
     '',
     '--socks5-hostname',
-    `127.0.0.1:${LISTEN}`,
+    `${listener}:${LISTEN}`,
     `http://page.example/${nonce}`,
   );
   return r.status === 0 && r.stdout.trim() === `reality-page /${nonce}`;
@@ -289,7 +538,7 @@ function engineSaid(engine: Engine, words: string): boolean {
 /** Whether `engine` with `config` reaches the page (retried while it settles). */
 async function connects(engine: Engine, config: string): Promise<boolean> {
   await startEngine(engine, config);
-  return until(fetchesPage, 30_000, 1500);
+  return until(() => fetchesPage(), 30_000, 1500);
 }
 
 /**
@@ -314,9 +563,12 @@ describe.skipIf(!ENABLED)('REALITY key shares against real Xray-cores', () => {
     client = compose('ps', '-q', 'compat-reality-client').trim();
     if (!client) throw new Error('the client container did not start');
     for (const core of Object.values(CORES))
-      for (const port of Object.values(PORTS))
+      for (const port of [...Object.values(PORTS), ENC.port])
         if (!(await until(() => reaches(core.address, port), 60_000)))
           throw new Error(`${core.service} never accepted a connection on ${port}`);
+    for (const port of [9000, ...Object.values(TAP.ports).flatMap((p) => Object.values(p))])
+      if (!(await until(() => reaches(TAP.address, port), 60_000)))
+        throw new Error(`the tap never accepted a connection on ${port}`);
   }, 300_000);
 
   afterAll(() => {
@@ -371,4 +623,97 @@ describe.skipIf(!ENABLED)('REALITY key shares against real Xray-cores', () => {
   test('from v26.9.8 on, sing-box never gets in', async () => {
     expect(await refusal('singbox', singboxConfig('latest'))).toBe('refused');
   }, 120_000);
+
+  // --- the post-quantum key exchange (tests/compat/pqMatrix.ts) ------------------------------------
+  // Read off the wire by the tap: the group the core's Server Hello picked, for
+  // every connection the engine made while it fetched the page.
+
+  test('post-quantum: Mihomo with the body FCP serves ends on X25519MLKEM768, with the backend body on X25519', async () => {
+    for (const core of ['fleet', 'latest'] as const)
+      for (const pick of ['raw', 'xhttp'] as const) {
+        const served = finishMemberBody(backendBody(core, 'tap'), null);
+        const hellos = await keyExchanges(
+          () => startEngine('mihomo', mihomoConfig(served, pick)),
+          '127.0.0.1',
+          TAP.ports[core][pick],
+        );
+        expectAllNegotiated(hellos, PQ_ENGINES.mihomo.reality!, `Mihomo, ${core}, ${pick}`);
+        for (const h of hellos) expect(h.shares, `Mihomo, ${core}, ${pick}`).toContain(PQ_GROUP);
+      }
+    // Why FCP adds the key: the backend's own body (only the node image's
+    // core still lets it in) removes the share, and the key exchange is classic.
+    for (const pick of ['raw', 'xhttp'] as const) {
+      const hellos = await keyExchanges(
+        () => startEngine('mihomo', mihomoConfig(backendBody('fleet', 'tap'), pick)),
+        '127.0.0.1',
+        TAP.ports.fleet[pick],
+      );
+      expectAllNegotiated(hellos, CLASSIC_GROUP, `Mihomo, backend body, ${pick}`);
+      for (const h of hellos) expect(h.shares).not.toContain(PQ_GROUP);
+    }
+  }, 600_000);
+
+  test('post-quantum: Xray-core of both releases, from the share link, ends on X25519MLKEM768 on both cores', async () => {
+    for (const release of ['fleet', 'latest'] as const)
+      for (const core of ['fleet', 'latest'] as const)
+        for (const pick of ['raw', 'xhttp'] as const) {
+          const what = `Xray-core ${CORES[release].version} to ${CORES[core].version}, ${pick}`;
+          const hellos = await keyExchanges(
+            () => startXray(release, servedLinks(core, 'tap')[pick]),
+            XRAY_CLIENTS[release].address,
+            TAP.ports[core][pick],
+          );
+          expectAllNegotiated(hellos, PQ_ENGINES.xray.reality!, what);
+          for (const h of hellos) expect(h.shares, what).toContain(PQ_GROUP);
+        }
+  }, 900_000);
+
+  // The pinned no: when a sing-box release offers X25519MLKEM768 this fails,
+  // and the matrix, the docs and the hold on the node image's Xray move with it.
+  test("pinned: sing-box offers no post-quantum key share and ends on X25519 on the node image's core", async () => {
+    const hellos = await keyExchanges(
+      () => startEngine('singbox', singboxConfig('fleet', 'tap')),
+      '127.0.0.1',
+      TAP.ports.fleet.raw,
+    );
+    expectAllNegotiated(hellos, PQ_ENGINES.singbox.reality!, 'sing-box');
+    for (const h of hellos) expect(h.shares, 'sing-box').not.toContain(PQ_GROUP);
+  }, 120_000);
+
+  test('VLESS Encryption: Xray-core and Mihomo connect on the encrypted entry and are refused without it; sing-box cannot hold it', async () => {
+    /** No fetch gets through (two tries), the engine running. */
+    const refusedWith = async (start: () => Promise<void>, listener: string) => {
+      await start();
+      for (let i = 0; i < 2; i++) if (fetchesPage(listener)) return false;
+      return true;
+    };
+    expect(ENC_CLIENT.startsWith('mlkem768x25519plus.')).toBe(true);
+    for (const release of ['fleet', 'latest'] as const) {
+      const what = `Xray-core ${CORES[release].version}`;
+      expect(await xrayConnects(release, encryptedLink(ENC_CLIENT)), `${what}, encrypted`).toBe(
+        PQ_ENGINES.xray.vlessEncryption,
+      );
+      // The inbound refuses a client that does not speak the layer: the
+      // connection above went over it.
+      expect(
+        await refusedWith(
+          () => startXray(release, encryptedLink('none')),
+          XRAY_CLIENTS[release].address,
+        ),
+        `${what}, plain`,
+      ).toBe(true);
+    }
+    expect(await connects('mihomo', mihomoEncryptedConfig(ENC_CLIENT)), 'Mihomo, encrypted').toBe(
+      PQ_ENGINES.mihomo.vlessEncryption,
+    );
+    expect(
+      await refusedWith(() => startEngine('mihomo', mihomoEncryptedConfig(null)), '127.0.0.1'),
+      'Mihomo, plain',
+    ).toBe(true);
+    // The pinned no: sing-box's VLESS outbound has no `encryption`.
+    expect(PQ_ENGINES.singbox.vlessEncryption).toBe(false);
+    await expect(startEngine('singbox', singboxEncryptedConfig())).rejects.toThrow(
+      'singbox refused the configuration',
+    );
+  }, 600_000);
 });

@@ -85,9 +85,16 @@ jobs:
     # versions"). The pinned Mihomo and sing-box connect through the core the
     # node image runs and through a release past it, with the Mihomo body as the
     # backend writes it and as FCP serves it.
-    name: REALITY key share vs Xray-core
+    # It is also the post-quantum gate (docs/client-compatibility.md
+    # § "Post-quantum key exchange", tests/compat/pqMatrix.ts): a tap in front
+    # of both cores reads each handshake, and Mihomo (FCP's body) and Xray-core
+    # (both releases, from the share link) must end on X25519MLKEM768, sing-box
+    # on X25519 (the pinned no); Xray-core and Mihomo must connect through a
+    # VLESS Encryption inbound and be refused there without the layer, and
+    # sing-box must refuse the encrypted entry's configuration.
+    name: REALITY key share and post-quantum key exchange vs Xray-core
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -165,7 +172,9 @@ jobs:
     # operator nodes (every other TCP cell) through the real lifecycle against a
     # real panel and real nodes, then the pinned sing-box and Mihomo import the
     # served subscription and fetch a page only the nodes reach. Provider APIs
-    # are faked; see docs/client-compatibility.md "Edge connection".
+    # are faked; see docs/client-compatibility.md "Edge connection". The L4
+    # edge reads each REALITY handshake, so the served bodies' post-quantum key
+    # exchange is asserted here too (§ "Post-quantum key exchange").
     name: Member connects through an edge (supported matrix)
     runs-on: ubuntu-24.04
     timeout-minutes: 25

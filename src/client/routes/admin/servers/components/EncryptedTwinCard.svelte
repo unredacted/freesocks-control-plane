@@ -57,9 +57,19 @@
   }
 </script>
 
-{#if intent.twin || canAdd}
+{#if intent.twin || canAdd || intent.staleRoutes.length > 0}
   <section aria-labelledby={`${uid}-twin`} class="space-y-3">
     <h2 id={`${uid}-twin`} class="text-base font-semibold">Encrypted twin</h2>
+    {#each intent.staleRoutes as r (`${r.path}:${r.port}`)}
+      <p class="flex items-start gap-2 rounded-md border p-3 text-sm" role="status">
+        <StatusDot dot="amber" class="mt-1.5" />
+        <span>
+          The node’s front server still sends {r.path} to 127.0.0.1:{r.port} from an earlier role run,
+          and FCP no longer hands that route out. Run the node role on this node to take it away. Until
+          then no new transport can use that port or path.
+        </span>
+      </p>
+    {/each}
     {#if intent.twin && words}
       <div class="space-y-2 rounded-md border p-3 text-sm">
         <p class="flex items-start gap-2" role="status">
@@ -71,9 +81,11 @@
             Route on the node’s front server: {intent.twin.route.path} to 127.0.0.1:{intent.twin
               .route.port}.
             {#if intent.twin.state === 'activating'}
-              {intent.twin.routeBy === 'role'
-                ? 'The node role adds it on its next run.'
-                : 'No role runs this node, so it is added by hand.'}
+              {intent.twin.routeBy === 'operator'
+                ? 'No role runs this node, so it is added by hand.'
+                : intent.twin.routeServed === true
+                  ? 'The node role was handed it on its last run.'
+                  : 'Run the node role on this node to add it.'}
             {/if}
           </p>
         {/if}

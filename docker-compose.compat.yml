@@ -93,6 +93,41 @@ services:
         ipv4_address: 10.89.72.12
       compat-reality-origin:
         ipv4_address: 10.89.73.12
+  # The post-quantum key exchange (same test, docs/client-compatibility.md
+  # § "Post-quantum key exchange"): a plain TCP forwarder in front of both
+  # cores that reads each connection's TLS key exchange (the groups only), and
+  # Xray-core as a CLIENT of each release, started per test with the config
+  # the test just wrote (a share link mapped the way the Xray apps map one).
+  compat-pq-tap:
+    image: oven/bun:${FCP_COMPAT_BUN_VERSION:?read from packageManager by the run script}
+    environment:
+      # listen port = core:port (443/8443 the node image's core, 9443/9843 the later one)
+      - TAP_FORWARDS=443=10.89.72.11:443,8443=10.89.72.11:8443,9443=10.89.72.12:443,9843=10.89.72.12:8443
+    volumes:
+      - ./docker/compat/hello-tap.ts:/src/compat/hello-tap.ts:ro
+      - ./docker/compat/tlsHello.ts:/src/compat/tlsHello.ts:ro
+    command: [bun, /src/compat/hello-tap.ts]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.13
+  compat-pq-xray-client-fleet:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558
+    volumes:
+      - ./.cache/compat/reality/xray-client.json:/etc/xray/config.json:ro
+    command: [run, -c, /etc/xray/config.json]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.14
+  compat-pq-xray-client-latest:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.10.21@sha256:d5c3729dfeed7c412af17a63b941c48c76ba68afee5b6184fe4078f8fa8bedcc
+    volumes:
+      - ./.cache/compat/reality/xray-client.json:/etc/xray/config.json:ro
+    command: [run, -c, /etc/xray/config.json]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.15
   # FCP's own client check (scripts/compat/client-check.sh,
   # convex/lib/edges/clientCheck/clientCheck.integration.test.ts): the service
   # built from docker/edge-client-check/ checks through two cores of the fleet

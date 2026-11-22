@@ -230,6 +230,16 @@ const MIHOMO_SANDBOX = (port: number) => ({
   },
 });
 
+/** The share links of a served link-list body (base64 or plain), in order. */
+export function servedLinks(body: string): URL[] {
+  const text = body.includes('://') ? body : Buffer.from(body.trim(), 'base64').toString('utf8');
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => /^[a-z0-9]+:\/\//i.test(l))
+    .map((l) => new URL(l));
+}
+
 /** The proxies of a served body, in either format: what FCP rendered. */
 export function servedEntries(
   engine: Engine,
