@@ -63,11 +63,11 @@
     {#each intent.staleRoutes as r (`${r.path}:${r.port}`)}
       <p class="flex items-start gap-2 rounded-md border p-3 text-sm" role="status">
         <StatusDot dot="amber" class="mt-1.5" />
-        <span
-          >The node’s front server still sends {r.path} to 127.0.0.1:{r.port} from an earlier role run,
+        <span>
+          The node’s front server still sends {r.path} to 127.0.0.1:{r.port} from an earlier role run,
           and FCP no longer hands that route out. Run the node role on this node to take it away. Until
-          then no new transport can use that port or path.</span
-        >
+          then no new transport can use that port or path.
+        </span>
       </p>
     {/each}
     {#if intent.twin && words}
