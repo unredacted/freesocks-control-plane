@@ -212,7 +212,7 @@
     "createSub": "Get my key",
     "creating": "Creating your key…",
     "rotateTitle": "Change your account number?",
-    "rotateBody": "A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked.",
+    "rotateBody": "A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked. All passkeys on the account will be removed, and other sessions will be signed out.",
     "rotateConfirm": "Yes, change it",
     "rotating": "Rotating…",
     "rotateFailedTitle": "Could not change the account number",

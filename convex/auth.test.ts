@@ -295,6 +295,12 @@ describe('auth.rotateAccountId', () => {
   test('rotation revokes every session EXCEPT the caller’s keepSid', async () => {
     const t = convexTest(schema, modules);
     const { userId, accountId } = await seedUserWithAccount(t);
+    await t.mutation(internal.memberPasskeys.insertCredential, {
+      userId,
+      credentialId: 'old-passkey',
+      publicKey: 'fixture-key',
+      counter: 0,
+    });
     await t.run(async (ctx) => {
       await ctx.db.insert('sessions', {
         sid: 's-current',
@@ -318,6 +324,7 @@ describe('auth.rotateAccountId', () => {
     await t.run(async (ctx) => {
       const sids = (await ctx.db.query('sessions').collect()).map((s) => s.sid);
       expect(sids).toEqual(['s-current']);
+      expect(await ctx.db.query('memberPasskeyCredentials').collect()).toHaveLength(0);
     });
   });
 

@@ -58,6 +58,7 @@ export const setAccountId = internalMutation({
         : null;
       const user = session?.userId === userId ? await ctx.db.get(userId) : null;
       if (
+        !session ||
         !user ||
         user.status === 'deleted' ||
         (user.status === 'disabled' && user.disabledReason !== 'membership_lapsed')
@@ -67,6 +68,14 @@ export const setAccountId = internalMutation({
           message: 'Sign in again to manage account credentials.',
         });
       }
+      const passkeys = await ctx.db
+        .query('memberPasskeyCredentials')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect();
+      for (const passkey of passkeys) await ctx.db.delete(passkey._id);
+      // Keep only the session that completed recovery. It no longer depends on
+      // a passkey that was just removed.
+      await ctx.db.patch(session._id, { memberPasskeyId: null });
     }
     const existing = await ctx.db
       .query('users')

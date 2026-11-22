@@ -28,7 +28,8 @@ is the **only** member credential.
 >   (`users.accountIdHash` / `accountIdPrefix`).
 > - **Rotate**: `POST /api/v1/account/account-id/rotate`
 >   (`convex/auth.ts:rotateAccountId`): new number revealed once, old hash
->   overwritten, audited. Rotation and passkey management (list, enroll, revoke)
+>   overwritten, audited. Rotation removes existing passkeys and signs out other
+>   sessions. Rotation and passkey management (list, enroll, revoke)
 >   require a member session created within the last five minutes. Members with
 >   an older session can sign in again with their account number or an existing
 >   passkey. Delegated API tokens cannot manage these login credentials.

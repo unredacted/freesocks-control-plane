@@ -117,11 +117,15 @@ export const registerOptions = internalAction({
 export const registerVerify = internalAction({
   args: {
     userId: v.id('users'),
+    registrationSessionSid: v.string(),
     response: v.any(),
     deviceLabel: v.optional(v.string()),
     requestId: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, response, deviceLabel, requestId }): Promise<{ ok: true }> => {
+  handler: async (
+    ctx,
+    { userId, registrationSessionSid, response, deviceLabel, requestId },
+  ): Promise<{ ok: true }> => {
     const consumed = await ctx.runMutation(
       internal.memberPasskeys.consumeLatestRegistrationChallenge,
       { userId },
@@ -141,6 +145,7 @@ export const registerVerify = internalAction({
     const cred = verification.registrationInfo.credential;
     await ctx.runMutation(internal.memberPasskeys.insertCredential, {
       userId,
+      registrationSessionSid,
       credentialId: cred.id,
       publicKey: Buffer.from(cred.publicKey).toString('base64'),
       counter: cred.counter,

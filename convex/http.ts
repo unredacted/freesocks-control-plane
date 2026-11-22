@@ -2212,12 +2212,13 @@ http.route({
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, { recentSession: true });
-    if (!member) return recentMemberSessionRequired();
+    if (!member?.sid) return recentMemberSessionRequired();
     const body = await readJson<{ response?: unknown; deviceLabel?: string }>(req);
     if (!body.response) return errorJson('validation', 'response required', 400);
     try {
       await ctx.runAction(internal.memberWebauthn.registerVerify, {
         userId: member.userId,
+        registrationSessionSid: member.sid,
         response: body.response,
         deviceLabel: typeof body.deviceLabel === 'string' ? body.deviceLabel : undefined,
         requestId: newRequestId(),
