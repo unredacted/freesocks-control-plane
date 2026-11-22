@@ -202,24 +202,24 @@ export const openRequest = internalAction({
   handler: async (ctx, { method, path, wireBody }): Promise<{ plaintext: unknown }> => {
     const wire = wireBody as SealedWire;
     const envKid = wire?.fsSealed?.kid;
+    const revoked = await ctx.runQuery(internal.keyRevocations.current, {});
+    if (!envKid || revoked?.revokedKids.includes(envKid)) {
+      throw new Error('Unknown or revoked HPKE recipient');
+    }
     const { priv: staticPriv, kid: staticKid } = await serverContext();
-
     let priv = staticPriv;
-    let kid = staticKid;
-    if (envKid && envKid !== staticKid) {
-      // An epoch-sealed request: resolve the epoch private key by its kid. If the
-      // epoch is unknown/swept, open will fail cleanly (client refetches /config).
+    if (envKid !== staticKid) {
       const epoch = await ctx.runQuery(internal.keyEpochs.byKid, { kid: envKid });
-      if (epoch) priv = (await serverKeyPairFromSeed(b64UrlToBytes(epoch.seed))).privateKey;
-      kid = envKid;
+      if (!epoch) throw new Error('Unknown or expired HPKE recipient');
+      priv = (await serverKeyPairFromSeed(b64UrlToBytes(epoch.seed))).privateKey;
     }
 
     const plaintext = await serverOpenRequest({
       serverPriv: priv,
-      serverKid: kid,
+      serverKid: envKid,
       method,
       path,
-      wireBody: wire,
+      wireBody,
     });
     return { plaintext };
   },

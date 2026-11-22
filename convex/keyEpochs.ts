@@ -38,7 +38,7 @@ export const maybeRotate = internalMutation({
     if (!process.env.FS_MANIFEST_SK) return null;
     // Rotation-gap alarm: epochs EXIST but none is currently valid — at least
     // 3 consecutive rotates failed (10-min cadence, 30-min validity), and
-    // clients are silently falling back to the static key. (First-ever run,
+    // manifest-pinned clients cannot send sealed requests. (First-ever run,
     // zero rows, is fine: the rotate below mints the first epoch.)
     const now = Date.now();
     const latest = await ctx.db
@@ -49,7 +49,7 @@ export const maybeRotate = internalMutation({
     if (latest && latest.notAfter <= now) {
       console.warn(
         `[keyEpochs] no currently-valid epoch while FS_MANIFEST_SK is set — ` +
-          `rotation appears wedged; clients fall back to the static key`,
+          `rotation appears wedged; manifest-pinned clients cannot send sealed requests`,
       );
       await writeAuditLog(ctx, {
         actorType: 'system',

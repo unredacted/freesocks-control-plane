@@ -237,7 +237,7 @@ function applyRevocation(r: SignedRevocation): number | undefined {
  * per-IP `hpke.keys.fetch` policy lives. A per-browser cache saves nothing for many
  * distinct clients behind one carrier-grade NAT - only the shared CDN cache does -
  * so bypassing it trades a bounded, quiet staleness for 429s and a silent
- * static-key fallback exactly where censorship makes NAT sharing the norm.
+ * missing epoch exactly where censorship makes NAT sharing the norm.
  */
 function fetchKeys(): Promise<Response> {
   return fetch('/api/v1/hpke/keys', { credentials: 'omit' });
@@ -272,11 +272,11 @@ async function refreshEpoch(): Promise<void> {
     if (isRevoked(e.kid)) return;
     _epoch = { kid: e.kid, pub, notAfter: e.notAfter };
   } catch {
-    // network/parse error -> keep whatever we have (or none); fall back to static.
+    // Keep any still-valid epoch when the refresh is unavailable.
   }
 }
 
-/** The current verified epoch key, or null to fall back to the static key. */
+/** The current verified, unexpired epoch key, or null. */
 async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
   const fresh = () =>
     _epoch && _epoch.notAfter - EPOCH_MARGIN_MS > Date.now() && !isRevoked(_epoch.kid)
@@ -414,6 +414,10 @@ export async function prepareOutbound(
     if (ep) {
       sealPub = ep.pub;
       sealKid = ep.kid;
+    } else if (MANIFEST_PK) {
+      // A missing unauthenticated response cannot establish that the baked
+      // recipient is still trusted by this manifest.
+      throw new Error('A current server encryption key is unavailable. Try again shortly.');
     }
     // Fail closed: if even the chosen seal target is revoked (e.g. the static key
     // is compromised and no valid epoch key is available), refuse to send the

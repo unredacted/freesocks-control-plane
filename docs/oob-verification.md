@@ -108,14 +108,10 @@ failed, because only some failures mean someone swapped a key:
 | `stale`       | the endpoint answered but has no live epoch: none published, or the one served had expired | backend detail only                                                                             |
 | `unreachable` | the endpoint could not be reached                                                          | backend detail only                                                                             |
 
-`stale` and `unreachable` are quiet on purpose. In both the client keeps sealing to the
-manifest-**pinned static key** baked into the bundle, so nothing is sent unprotected and
-neither state is evidence of tampering: they mean epoch rotation is behind (check the
-`epoch-key-rotate` heartbeat and the `hpke.epoch_gap` audit action) or that a cache
-handed the client an old response. Escalating them to the loud bar was a real bug — it
-fired at users over a wedged cron and taught them to dismiss the one alarm that matters.
-Neither state hands an attacker anything new either: a CDN that wants the static-key
-fallback can already force it by simply blocking the endpoint (`unreachable`).
+A client with a pinned manifest waits for a valid signed epoch when sealing a
+request. If the endpoint is unavailable or all published epochs have expired,
+the browser reports the failure without sending the request. Builds configured
+with only a static recipient have no client-side epoch or revocation guarantee.
 
 `warn`, by contrast, is **sticky**: once a swapped or revoked key has been seen, only a
 later poll that positively attests clears it. Otherwise re-attesting would hand a caught

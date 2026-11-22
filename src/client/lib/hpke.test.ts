@@ -195,10 +195,15 @@ test('connection attestation applies a signed revocation to the cached recipient
   vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
   vi.resetModules();
   const pinned = await import('./hpke');
-  const fetchKeys = vi.fn().mockImplementationOnce(() => Response.json({ epoch }));
+  const fetchKeys = vi.fn();
   fetchKeys.mockImplementation(() => Response.json({ epoch, revocation }));
   vi.stubGlobal('fetch', fetchKeys);
   try {
+    fetchKeys.mockImplementationOnce(() => new Response(null, { status: 503 }));
+    await expect(
+      pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
+    ).rejects.toThrow(/encryption key is unavailable/);
+    fetchKeys.mockImplementationOnce(() => Response.json({ epoch }));
     await expect(
       pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
     ).resolves.toBeDefined();

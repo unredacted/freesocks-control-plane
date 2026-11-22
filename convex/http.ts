@@ -683,10 +683,11 @@ http.route({
 const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> => {
   const limited = await throttlePublicGet(ctx, req, 'hpke.keys.fetch');
   if (limited) return limited;
-  const [epoch, revocation] = await Promise.all([
+  const [candidate, revocation] = await Promise.all([
     ctx.runQuery(internal.keyEpochs.current, {}),
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
+  const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;
   return json(
     {
       epoch: epoch
