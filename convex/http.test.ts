@@ -162,6 +162,7 @@ describe('billing webhook config vs HMAC', () => {
     eventId: 'evt-1',
     supportId: 'FS-ZZZZ-ZZZZ',
     tierSlug: 'member',
+    issuedAtMs: Date.now(),
   });
 
   test('unset secret answers a distinct 503 webhook.not_configured', async () => {

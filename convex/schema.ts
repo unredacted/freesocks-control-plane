@@ -706,6 +706,7 @@ export default defineSchema({
     // Unset on pre-existing rows → the vest check falls back to
     // membershipExpiresAt.
     membershipPaidThroughAt: v.optional(v.number()),
+    lastGenericBillingEventAt: v.optional(v.number()),
     suspendedAt: v.optional(v.number()),
     // Account-number auth: store only a peppered keyed hash
     // (HMAC-SHA256(ACCOUNT_ID_PEPPER, number)) + a 4-digit plaintext prefix

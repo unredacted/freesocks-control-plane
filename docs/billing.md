@@ -14,8 +14,11 @@ redemption codes (`convex/membershipCodes.ts`). All three converge on the same
 core: `lifecycle.applyMembership`.
 
 The optional generic billing callback at `/api/webhooks/billing` accepts
-`eventId`, the member's non-secret `supportId`, `tierSlug`, and optional
-`expiresAtMs`. The sender signs the raw body with `WEBHOOK_SIGNING_SECRET`.
+`eventId`, the member's non-secret `supportId`, `tierSlug`, `issuedAtMs` (Unix
+milliseconds), and optional `expiresAtMs`. The sender signs the raw body with
+`WEBHOOK_SIGNING_SECRET`. The origin accepts events issued within the past 24
+hours, with one minute of future clock skew, and applies newer grants only.
+Keep the original issuance time when retrying a delivery.
 Migrate older senders to the support ID before enabling the callback on an
 updated deployment. Keep the member's account number out of billing payloads.
 

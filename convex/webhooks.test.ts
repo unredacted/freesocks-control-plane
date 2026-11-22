@@ -58,6 +58,9 @@ async function seedUserAndTiers(t: ReturnType<typeof convexTest>): Promise<{
   return { userId, supportId: minted.supportId, freeTierId, memberTierId };
 }
 
+const eventBody = (fields: Record<string, unknown>) =>
+  JSON.stringify({ issuedAtMs: Date.now(), ...fields });
+
 describe('webhooks.ingest', () => {
   beforeEach(() => {
     vi.stubEnv('WEBHOOK_SIGNING_SECRET', SECRET);
@@ -67,7 +70,7 @@ describe('webhooks.ingest', () => {
   test('a valid event applies the tier change', async () => {
     const t = convexTest(schema, modules);
     const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({
+    const body = eventBody({
       eventId: 'evt-1',
       supportId,
       tierSlug: 'member',
@@ -85,10 +88,28 @@ describe('webhooks.ingest', () => {
     });
   });
 
+  test('an old signed event is ignored even without a deduplication receipt', async () => {
+    const t = convexTest(schema, modules);
+    const { supportId, userId, freeTierId } = await seedUserAndTiers(t);
+    const rawBody = eventBody({
+      eventId: 'old-event',
+      supportId,
+      tierSlug: 'member',
+      issuedAtMs: Date.now() - 91 * 86_400_000,
+    });
+    const signature = await hmacSha256Hex(SECRET, rawBody);
+    expect(await t.action(internal.webhooks.ingest, { rawBody, signature })).toMatchObject({
+      applied: false,
+      reason: 'stale_event',
+    });
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.tierId).toBe(freeTierId);
+    expect(await t.run((ctx) => ctx.db.query('webhookEvents').collect())).toHaveLength(0);
+  });
+
   test('a replayed eventId is a deduped no-op', async () => {
     const t = convexTest(schema, modules);
     const { supportId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-dup', supportId, tierSlug: 'member' });
+    const body = eventBody({ eventId: 'evt-dup', supportId, tierSlug: 'member' });
     const signature = await hmacSha256Hex(SECRET, body);
 
     const first = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
@@ -100,7 +121,7 @@ describe('webhooks.ingest', () => {
   test('a non-number expiresAtMs is ACKed processed (no retry churn, no grant)', async () => {
     const t = convexTest(schema, modules);
     const { userId, supportId, freeTierId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({
+    const body = eventBody({
       eventId: 'evt-badexpiry',
       supportId,
       tierSlug: 'member',
@@ -126,7 +147,7 @@ describe('webhooks.ingest', () => {
     const t = convexTest(schema, modules);
     const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
     const seconds = Math.floor((Date.now() + 30 * 86_400_000) / 1000);
-    const body = JSON.stringify({
+    const body = eventBody({
       eventId: 'evt-seconds',
       supportId,
       tierSlug: 'member',
@@ -145,7 +166,7 @@ describe('webhooks.ingest', () => {
   test('a bad signature throws', async () => {
     const t = convexTest(schema, modules);
     const { supportId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-badsig', supportId, tierSlug: 'member' });
+    const body = eventBody({ eventId: 'evt-badsig', supportId, tierSlug: 'member' });
     await expect(
       t.action(internal.webhooks.ingest, { rawBody: body, signature: 'deadbeef' }),
     ).rejects.toThrow(/invalid signature/);
@@ -154,7 +175,7 @@ describe('webhooks.ingest', () => {
   test('an unknown supportId is ACKed as applied:false', async () => {
     const t = convexTest(schema, modules);
     await seedUserAndTiers(t);
-    const body = JSON.stringify({
+    const body = eventBody({
       eventId: 'evt-unknown',
       supportId: 'FS-ZZZZ-ZZZZ',
       tierSlug: 'member',
@@ -167,7 +188,7 @@ describe('webhooks.ingest', () => {
   test('the stored event payload omits the member support ID', async () => {
     const t = convexTest(schema, modules);
     const { supportId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-redact', supportId, tierSlug: 'member' });
+    const body = eventBody({ eventId: 'evt-redact', supportId, tierSlug: 'member' });
     const signature = await hmacSha256Hex(SECRET, body);
     await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     await t.run(async (ctx) => {
@@ -183,7 +204,7 @@ describe('webhooks.ingest', () => {
   test('an unknown tierSlug is ACKed as applied:false', async () => {
     const t = convexTest(schema, modules);
     const { supportId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({ eventId: 'evt-badtier', supportId, tierSlug: 'nope' });
+    const body = eventBody({ eventId: 'evt-badtier', supportId, tierSlug: 'nope' });
     const signature = await hmacSha256Hex(SECRET, body);
     const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     expect(res).toEqual({ ok: true, applied: false, reason: 'unknown_tier' });
@@ -195,7 +216,7 @@ describe('webhooks.ingest', () => {
   test('a failed grant leaves the event retryable; the retry applies exactly once', async () => {
     const t = convexTest(schema, modules);
     const { userId, supportId, memberTierId } = await seedUserAndTiers(t);
-    const body = JSON.stringify({
+    const body = eventBody({
       eventId: 'evt-retry',
       supportId,
       tierSlug: 'member',
@@ -265,7 +286,7 @@ describe('webhooks.ingest', () => {
         processedAt: Date.now(),
       });
     });
-    const body = JSON.stringify({ eventId: 'evt-legacy', supportId, tierSlug: 'member' });
+    const body = eventBody({ eventId: 'evt-legacy', supportId, tierSlug: 'member' });
     const signature = await hmacSha256Hex(SECRET, body);
     const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     expect(res).toEqual({ ok: true, duplicate: true, applied: false });
@@ -278,7 +299,7 @@ describe('webhooks.ingest', () => {
   test('unknown user/tier ACKs are marked processed (the sender must stop retrying)', async () => {
     const t = convexTest(schema, modules);
     await seedUserAndTiers(t);
-    const body = JSON.stringify({
+    const body = eventBody({
       eventId: 'evt-ack-processed',
       supportId: 'FS-ZZZZ-ZZZZ',
       tierSlug: 'member',
@@ -313,7 +334,7 @@ describe('webhooks.ingest', () => {
       });
       // Replay an OLD event (fresh eventId, as a post-retention replay would
       // be) whose original grant ended ~30 days out — EARLIER than current.
-      const body = JSON.stringify({
+      const body = eventBody({
         eventId: 'evt-stale',
         supportId,
         tierSlug: 'member',
@@ -346,7 +367,7 @@ describe('webhooks.ingest', () => {
         });
       });
       const laterExpiry = Date.now() + 40 * 86_400_000;
-      const body = JSON.stringify({
+      const body = eventBody({
         eventId: 'evt-renew',
         supportId,
         tierSlug: 'member',

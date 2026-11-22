@@ -6,7 +6,7 @@
  * provider-agnostic.
  *
  * Contract (POST /api/webhooks/billing, header `x-signature: <hex hmac-sha256>`):
- *   { eventId, supportId, tierSlug, expiresAtMs? }
+ *   { eventId, supportId, tierSlug, issuedAtMs, expiresAtMs? }
  * The signature is HMAC-SHA256(WEBHOOK_SIGNING_SECRET, rawBody). Unknown
  * user/tier is ACKed (200, applied:false) so the sender doesn't retry forever;
  * a replayed eventId is a no-op.
@@ -16,6 +16,20 @@ import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
 import { writeAuditLog } from './lib/audit';
+import { applyMembership } from './lifecycle';
+
+const BILLING_EVENT_MAX_AGE_MS = 86_400_000;
+const BILLING_EVENT_CLOCK_SKEW_MS = 60_000;
+
+function isCurrentBillingEvent(issuedAtMs: unknown): issuedAtMs is number {
+  const now = Date.now();
+  return (
+    typeof issuedAtMs === 'number' &&
+    Number.isSafeInteger(issuedAtMs) &&
+    issuedAtMs >= now - BILLING_EVENT_MAX_AGE_MS &&
+    issuedAtMs <= now + BILLING_EVENT_CLOCK_SKEW_MS
+  );
+}
 
 type IngestResult = { ok: true; duplicate?: boolean; applied: boolean; reason?: string };
 
@@ -42,13 +56,14 @@ export const ingest = internalAction({
       accountId?: unknown;
       tierSlug?: string;
       expiresAtMs?: number | null;
+      issuedAtMs?: number;
     };
     try {
       payload = JSON.parse(rawBody);
     } catch {
       throw new Error('invalid JSON body');
     }
-    const { eventId, supportId, tierSlug, expiresAtMs } = payload;
+    const { eventId, supportId, tierSlug, issuedAtMs, expiresAtMs } = payload;
     if (
       typeof eventId !== 'string' ||
       !eventId ||
@@ -59,6 +74,10 @@ export const ingest = internalAction({
       'accountId' in payload
     ) {
       throw new Error('eventId, supportId, and tierSlug required');
+    }
+
+    if (!isCurrentBillingEvent(issuedAtMs)) {
+      return { ok: true, applied: false, reason: 'stale_event' };
     }
 
     // Claim the eventId first: a `processed` replay never reapplies, but a
@@ -112,35 +131,53 @@ export const ingest = internalAction({
         return { ok: true, applied: false, reason: 'unknown_tier' };
       }
 
-      // Stale-replay guard (Review E-M2): the dedupe claim only covers the
-      // webhookEvents retention window (90d), and this generic seam has no
-      // order-level paid guard (unlike the processor rails) — so a captured,
-      // validly-signed body replayed AFTER the sweep would re-claim and
-      // re-apply the ORIGINAL expiry, regressing (even lapsing) a since-renewed
-      // member on every replay. Refuse any grant whose expiry is BELOW the
-      // member's current one: such an event carries no new information.
-      if (
-        expiryMs !== null &&
-        user.membershipExpiresAt != null &&
-        expiryMs < user.membershipExpiresAt
-      ) {
-        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
-        return { ok: true, applied: false, reason: 'stale_replay' };
-      }
-
-      await ctx.runMutation(internal.lifecycle.setMembership, {
+      const applied = await ctx.runMutation(internal.webhooks.applyLegacyGrant, {
         userId: user._id,
         tierId: tier._id,
         expiresAtMs: expiryMs,
-        reason: 'billing.webhook',
-        triggeredBy: 'webhook',
+        issuedAtMs,
+        eventId: dedupeId,
       });
-      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
-      return { ok: true, applied: true };
+      return applied ? { ok: true, applied } : { ok: true, applied, reason: 'stale_replay' };
     } catch (err) {
       await ctx.runMutation(internal.webhooks.markEventFailed, { eventId: dedupeId });
       throw err;
     }
+  },
+});
+
+/** Order grants and commit the receipt with the membership update. */
+export const applyLegacyGrant = internalMutation({
+  args: {
+    userId: v.id('users'),
+    tierId: v.id('tiers'),
+    expiresAtMs: v.union(v.number(), v.null()),
+    issuedAtMs: v.number(),
+    eventId: v.string(),
+  },
+  handler: async (ctx, a): Promise<boolean> => {
+    const user = await ctx.db.get(a.userId);
+    const applied = Boolean(
+      user &&
+      user.status !== 'deleted' &&
+      isCurrentBillingEvent(a.issuedAtMs) &&
+      a.issuedAtMs > (user.lastGenericBillingEventAt ?? 0) &&
+      (a.expiresAtMs === null ||
+        user.membershipExpiresAt == null ||
+        a.expiresAtMs >= user.membershipExpiresAt),
+    );
+    if (applied) {
+      await applyMembership(ctx, {
+        userId: a.userId,
+        tierId: a.tierId,
+        expiresAtMs: a.expiresAtMs,
+        reason: 'billing.webhook',
+        triggeredBy: 'webhook',
+      });
+      await ctx.db.patch(a.userId, { lastGenericBillingEventAt: a.issuedAtMs });
+    }
+    await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: a.eventId });
+    return applied;
   },
 });
 
