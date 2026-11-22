@@ -652,6 +652,30 @@ Operator sizing: one mode group per node, add them all to the mode's pool, and F
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for
 the multi-backend / Outline case.
 
+## Moving a metered key
+
+A member on a tier with a traffic cap can get a first key and use mode or node
+switches that retain the provider identity. The usage counter and limit stay
+on that identity. While the provider owns the meter, a new identity would
+start with a separate allowance.
+
+Cross-panel and cross-provider moves are temporarily unavailable for these
+members. The same rule applies to regeneration, country-exit moves and mode
+changes when they would create a fresh provider identity. An affected request
+returns `409 subscription.metered_reissue` and leaves the current key
+available. The restriction also covers an account whose old key was reclaimed,
+since removing the key provides no proof that its quota can be reissued.
+Members who need to replace a metered key should contact support. Unmetered
+plans retain the existing replacement behavior.
+
+A metered first issuance reserves the member's provider identity before the
+create call. An uncertain create keeps that reservation until reconciled so a
+retry cannot provision a second identity. For support investigations, the
+reservation records the selected panel and requested username in
+`users.meteredKeyClaim`. An instance operator can run the internal
+`subscriptions:releaseMemberIssuance` mutation with the member ID and that
+username after confirming the attempt left no key on that panel.
+
 ## Revoking a key with an open Hysteria connection
 
 FCP disables a key for a lapsed membership and an admin disable, and deletes one at the

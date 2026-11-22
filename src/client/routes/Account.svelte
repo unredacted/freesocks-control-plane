@@ -647,7 +647,10 @@
     !!backendEntry(config.data?.backends, data?.subscription?.backend)?.enabled,
   );
   let canSwitchBackend = $derived(
-    !!data?.subscription && currentBackendEnabled && switchTargets.length > 0,
+    !!data?.subscription &&
+      data.user.tier.monthlyTrafficGb <= 0 &&
+      currentBackendEnabled &&
+      switchTargets.length > 0,
   );
   // Only offer "switch server" when it can move THIS key: the backend has to
   // support it (Outline has neither placement nor node pinning), and the server

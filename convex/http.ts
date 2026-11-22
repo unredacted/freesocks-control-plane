@@ -144,6 +144,13 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
     err instanceof ConvexError && typeof (err.data as { code?: unknown })?.code === 'string'
       ? (err.data as { code: string }).code
       : null;
+  if (code === 'subscription.metered_reissue') {
+    return errorJson(
+      code,
+      'This change needs a new traffic quota counter. Contact support to replace a metered key.',
+      409,
+    );
+  }
   const msg = err instanceof Error ? err.message : String(err);
   if (code === 'backend.unavailable' || /No active .* instances/i.test(msg)) {
     return errorJson(

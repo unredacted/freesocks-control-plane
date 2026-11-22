@@ -11,7 +11,6 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import {
-  applyUsageCarryover,
   computeExpireAtIso,
   farFutureExpiryIso,
   gbToBytes,
@@ -64,17 +63,6 @@ describe('issuance spec helpers', () => {
     const clamped = Date.parse(computeExpireAtIso(past));
     expect(clamped).toBeGreaterThan(Date.now());
     expect(clamped).toBeLessThanOrEqual(Date.now() + 6 * 60_000);
-  });
-
-  test('applyUsageCarryover preserves the period quota; 0 is never emitted (Review D-M3)', () => {
-    const GB = 1024 ** 3;
-    expect(applyUsageCarryover(50 * GB, 10 * GB)).toBe(40 * GB);
-    // A fully-spent quota carries as 1 byte, NEVER 0 (0 = unlimited on
-    // Remnawave, blocked on Outline — 1 byte is "spent" on both).
-    expect(applyUsageCarryover(50 * GB, 50 * GB)).toBe(1);
-    expect(applyUsageCarryover(50 * GB, 999 * GB)).toBe(1);
-    // Garbage/negative usage can't inflate the limit.
-    expect(applyUsageCarryover(50 * GB, -5)).toBe(50 * GB);
   });
 });
 

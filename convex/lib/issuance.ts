@@ -35,6 +35,7 @@ export async function issueNewSubscription(
   ctx: ActionCtx,
   input: {
     userId: Id<'users'>;
+    tierId: Id<'tiers'>;
     backend: BackendId;
     spec: IssueUserSpec;
     // Pin to one instance — set when node placement resolved the (placement,
@@ -61,6 +62,7 @@ export async function issueNewSubscription(
   const issued = await ctx.runAction(internal.backends.issueUser, {
     backend: input.backend,
     spec: input.spec,
+    member: { userId: input.userId, tierId: input.tierId },
     pinServerId: input.pinServerId ?? undefined,
   });
   let subscriptionId: Id<'subscriptions'> | null = null;
@@ -89,11 +91,17 @@ export async function issueNewSubscription(
       carrySubTokenFromId: input.carrySubTokenFromId,
       carryCountryFromId: input.carryCountryFromId,
       region: input.region,
+      memberIssuance: {
+        tierId: input.tierId,
+        requestedMetered: input.spec.trafficLimitBytes !== null,
+        username: input.spec.username,
+      },
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,
       subscriptionId,
       retireSubTokenFromId: input.retireSubTokenFromId,
+      issuanceUsername: input.spec.username,
     });
     // Only now that the saga has committed: a carry brings the member's mirror
     // metadata onto this row, but not the S3 object, which still holds the OLD
@@ -141,6 +149,15 @@ export async function issueNewSubscription(
       } catch {
         /* retried below / audited after the loop */
       }
+    }
+    if (backendDeleted && !subscriptionId) {
+      // Nothing was published locally. The provider confirmed removal.
+      await ctx
+        .runMutation(internal.subscriptions.releaseMemberIssuance, {
+          userId: input.userId,
+          username: input.spec.username,
+        })
+        .catch(() => {});
     }
     if (subscriptionId) {
       try {

@@ -48,14 +48,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function world(o: { mode?: string; listed?: string[]; ask?: boolean } = {}) {
+async function world(
+  o: { mode?: string; listed?: string[]; ask?: boolean; monthlyTrafficGb?: number } = {},
+) {
   const t = convexTest(schema, modules);
   const ids = await t.run(async (ctx) => {
     const tierId = await ctx.db.insert('tiers', {
       slug: 'free',
       name: 'Free',
       backend: 'remnawave',
-      monthlyTrafficGb: 50,
+      monthlyTrafficGb: o.monthlyTrafficGb ?? 50,
       deviceLimit: 1,
       hwidLimit: 1,
       hwidEnabled: true,
@@ -268,7 +270,7 @@ describe('the first key carries the answer (regenerate region)', () => {
   });
 
   test('an answer given now wins over the one regenerate would carry', async () => {
-    const w = await world({ mode: 'freedom-ws' });
+    const w = await world({ mode: 'freedom-ws', monthlyTrafficGb: 0 });
     await sealedPost(w, REGEN, { confirm: true, region: 'IR' });
     await sealedPost(w, REGEN, { confirm: true, region: 'RU' });
     expect(await currentChoice(w.t, w.userId)).toBe('RU');
@@ -278,7 +280,11 @@ describe('the first key carries the answer (regenerate region)', () => {
   });
 
   test('the day limit holds: a fourth new country in a day is refused, nothing issued', async () => {
-    const w = await world({ mode: 'freedom-ws', listed: ['IR', 'RU', 'TR', 'CN'] });
+    const w = await world({
+      mode: 'freedom-ws',
+      monthlyTrafficGb: 0,
+      listed: ['IR', 'RU', 'TR', 'CN'],
+    });
     for (const c of ['IR', 'RU', 'TR'])
       expect((await sealedPost(w, REGEN, { confirm: true, region: c })).status).toBe(200);
     const before = await w.t.run((ctx) => ctx.db.query('subscriptions').collect());

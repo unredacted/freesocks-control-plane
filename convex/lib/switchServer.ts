@@ -102,7 +102,7 @@ export async function switchServerAvailable(
     if (groupHasOtherNode(stats, now, await otherPinTargetsOf(db, sub))) return true;
   }
 
-  if (canPlace) {
+  if (canPlace && tier.monthlyTrafficGb <= 0) {
     const target = await resolver.resolveTarget(db, modeId, {
       location: user.preferredLocation ?? null,
       excludePlacement: source,

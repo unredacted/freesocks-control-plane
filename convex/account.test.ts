@@ -29,6 +29,7 @@ async function seedTier(
     slug: string;
     backend: 'remnawave' | 'outline';
     isDefaultFree: boolean;
+    monthlyTrafficGb: number;
   }> = {},
 ): Promise<Id<'tiers'>> {
   return t.run((ctx) =>
@@ -36,7 +37,7 @@ async function seedTier(
       slug: over.slug ?? 'free',
       name: over.slug ?? 'Free',
       backend: over.backend ?? 'remnawave',
-      monthlyTrafficGb: 50,
+      monthlyTrafficGb: over.monthlyTrafficGb ?? 50,
       deviceLimit: 1,
       hwidLimit: 1,
       hwidEnabled: true,
@@ -80,7 +81,7 @@ describe('account.regenerate saga', () => {
 
   test('re-regenerate tombstones the old sub with ~24h grace; the new one is current', async () => {
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t);
+    const tierId = await seedTier(t, { monthlyTrafficGb: 0 });
     const userId = await seedUser(t, tierId);
 
     await t.action(internal.account.regenerate, { userId });
@@ -110,7 +111,7 @@ describe('account.regenerate saga', () => {
 
   test('a third regenerate cannot reset an existing tombstone grace clock', async () => {
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t);
+    const tierId = await seedTier(t, { monthlyTrafficGb: 0 });
     const userId = await seedUser(t, tierId);
 
     await t.action(internal.account.regenerate, { userId });
@@ -127,6 +128,127 @@ describe('account.regenerate saga', () => {
       expect(same!.deletedAt).toBe(firstTombstone.deletedAt);
     });
   });
+
+  test('the HTTP replacement guard keeps the metered key and its preference', async () => {
+    vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId, location: 'MCI' });
+    await t.mutation(internal.sessions.create, {
+      sid: 'sid-metered',
+      kind: 'member',
+      userId,
+      ttlMs: 3_600_000,
+    });
+    const cookie = `fs_session=${await signValue('sid-metered', 'test-sign')}`;
+    const response = await t.fetch('/api/v1/account/regenerate', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ confirm: true, location: 'auto' }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'subscription.metered_reissue' },
+    });
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(1);
+      expect(subs[0]?.state).toBe('active');
+      expect(await ctx.db.get(userId)).toMatchObject({
+        currentSubscriptionId: subs[0]?._id,
+        preferredLocation: 'MCI',
+      });
+    });
+  });
+
+  test('retention of a reclaimed metered key does not make the account eligible for first issuance', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      // The backend key was reclaimed and retention already removed its row.
+      await ctx.db.delete(user!.currentSubscriptionId!);
+    });
+    await expect(t.action(internal.account.regenerate, { userId })).rejects.toThrow(
+      'subscription.metered_reissue',
+    );
+  });
+
+  test('only one initial metered issuance can reserve a provider identity', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    const reserve = (username: string) =>
+      t.mutation(internal.subscriptions.reserveMemberIssuance, {
+        userId,
+        tierId,
+        requestedMetered: true,
+        username,
+      });
+    await reserve('first');
+    await expect(reserve('later')).rejects.toThrow('subscription.metered_reissue');
+    await t.mutation(internal.subscriptions.releaseMemberIssuance, { userId, username: 'later' });
+    await expect(reserve('later')).rejects.toThrow('subscription.metered_reissue');
+    await t.mutation(internal.subscriptions.releaseMemberIssuance, { userId, username: 'first' });
+    await reserve('later');
+  });
+
+  test.each([
+    { status: 403, keepClaim: false },
+    { status: 503, keepClaim: true },
+  ])(
+    'retains a first-issue reservation only when creation is uncertain ($status)',
+    async ({ status, keepClaim }) => {
+      vi.stubEnv('DEV_MOCK_BACKEND', '');
+      vi.stubEnv('ENVIRONMENT', 'production');
+      const t = convexTest(schema, modules);
+      const tierId = await seedTier(t);
+      const userId = await seedUser(t, tierId);
+      const backendServerId = await t.run((ctx) =>
+        ctx.db.insert('backendServers', {
+          backend: 'remnawave',
+          config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+          name: 'Panel',
+          slug: 'panel',
+          isActive: true,
+          priority: 0,
+          keyCount: 0,
+          updatedAt: Date.now(),
+        }),
+      );
+      const panel = vi.fn(
+        async (_input: string | URL, init?: RequestInit) =>
+          new Response(null, { status: init?.method === 'POST' ? status : 404 }),
+      );
+      vi.stubGlobal('fetch', panel);
+      try {
+        await expect(t.action(internal.account.regenerate, { userId })).rejects.toThrow(
+          String(status),
+        );
+        const member = await t.run((ctx) => ctx.db.get(userId));
+        if (keepClaim) {
+          expect(member?.meteredKeyClaim).toMatchObject({ backendServerId });
+          panel.mockClear();
+          await expect(t.action(internal.account.regenerate, { userId })).rejects.toThrow(
+            'subscription.metered_reissue',
+          );
+          expect(panel).not.toHaveBeenCalled();
+        } else {
+          expect(member?.meteredKeyClaim).toBeUndefined();
+          panel.mockClear();
+          await expect(t.action(internal.account.regenerate, { userId })).rejects.toThrow(
+            String(status),
+          );
+          expect(panel).toHaveBeenCalledOnce();
+        }
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   test('backend failure (no instances, mock off) leaves no local state behind', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
@@ -396,11 +518,13 @@ describe('account.switchBackend guards', () => {
       slug: 'member',
       backend: 'remnawave',
       isDefaultFree: false,
+      monthlyTrafficGb: 0,
     });
     const peerTier = await seedTier(t, {
       slug: 'member-outline',
       backend: 'outline',
       isDefaultFree: false,
+      monthlyTrafficGb: 0,
     });
     // Link the paid remnawave tier forward to its outline peer.
     await t.run((ctx) => ctx.db.patch(fromTier, { peerTierId: peerTier }));
@@ -427,11 +551,13 @@ describe('account.switchBackend guards', () => {
       slug: 'member',
       backend: 'remnawave',
       isDefaultFree: false,
+      monthlyTrafficGb: 0,
     });
     const peerTier = await seedTier(t, {
       slug: 'member-outline',
       backend: 'outline',
       isDefaultFree: false,
+      monthlyTrafficGb: 0,
     });
     // Link set ONLY on the outline side; switching FROM remnawave must still find it.
     await t.run((ctx) => ctx.db.patch(peerTier, { peerTierId: fromTier }));
@@ -458,11 +584,13 @@ describe('account.switchBackend guards', () => {
       slug: 'member',
       backend: 'remnawave',
       isDefaultFree: false,
+      monthlyTrafficGb: 0,
     });
     const peerTier = await seedTier(t, {
       slug: 'member-outline',
       backend: 'outline',
       isDefaultFree: false,
+      monthlyTrafficGb: 0,
     });
     // One shared string on both rows — no peerTierId anywhere.
     await t.run(async (ctx) => {
@@ -486,10 +614,39 @@ describe('account.switchBackend guards', () => {
     });
   });
 
-  test('a free user switches via the default-free peer tier', async () => {
+  test.each([
+    [50, 0],
+    [0, 50],
+  ])('refuses a switch between a %i GB plan and a %i GB plan', async (source, destination) => {
     const t = convexTest(schema, modules);
-    const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave' });
-    const peerTier = await seedTier(t, { slug: 'free-outline', backend: 'outline' });
+    const fromTier = await seedTier(t, { monthlyTrafficGb: source });
+    await seedTier(t, { slug: 'free-outline', backend: 'outline', monthlyTrafficGb: destination });
+    const userId = await seedUser(t, fromTier);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'outline.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.action(internal.account.regenerate, { userId });
+    await expect(
+      t.action(internal.account.switchBackend, { userId, target: 'outline' }),
+    ).rejects.toThrow('subscription.metered_reissue');
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(userId)).toMatchObject({ tierId: fromTier });
+      expect(await ctx.db.query('subscriptions').collect()).toHaveLength(1);
+    });
+  });
+
+  test('an unmetered free user switches via the default-free peer tier', async () => {
+    const t = convexTest(schema, modules);
+    const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave', monthlyTrafficGb: 0 });
+    const peerTier = await seedTier(t, {
+      slug: 'free-outline',
+      backend: 'outline',
+      monthlyTrafficGb: 0,
+    });
     const userId = await seedUser(t, fromTier);
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
@@ -916,7 +1073,7 @@ describe('account.switchMode saga', () => {
     const SQUAD = '11111111-2222-3333-4444-555555555555';
     const NEW_UUID = '550e8400-e29b-41d4-a716-446655440099';
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const tierId = await seedTier(t, { backend: 'remnawave', monthlyTrafficGb: 0 });
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
       await ctx.db.insert('modePlacements', {
@@ -1351,7 +1508,7 @@ describe('deleteSubscriptionEverywhere ordering (P1-5)', () => {
 describe('account.regenerate location preference', () => {
   test('a location arg persists as the preference; absent keeps it; null clears it', async () => {
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t);
+    const tierId = await seedTier(t, { monthlyTrafficGb: 0 });
     const userId = await seedUser(t, tierId);
 
     await t.action(internal.account.regenerate, { userId, location: 'MCI' });
@@ -1378,7 +1535,7 @@ describe('account.getNodeStatus', () => {
     t: ReturnType<typeof convexTest>,
     o: { placement?: string; online?: boolean; statsAgeMs?: number; serverHealthAgeMs?: number },
   ) {
-    const tierId = await seedTier(t);
+    const tierId = await seedTier(t, { monthlyTrafficGb: 0 });
     const userId = await seedUser(t, tierId);
     let serverId: Id<'backendServers'> | undefined;
     await t.run(async (ctx) => {
@@ -1515,8 +1672,8 @@ describe('mode gates on placement-less backends', () => {
 
   test('switch AWAY to outline with a blocked stored mode: allowed while outline has no modes, refused once it does', async () => {
     const t = convexTest(schema, modules);
-    const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave' });
-    await seedTier(t, { slug: 'free-outline', backend: 'outline' }); // default-free peer
+    const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave', monthlyTrafficGb: 0 });
+    await seedTier(t, { slug: 'free-outline', backend: 'outline', monthlyTrafficGb: 0 }); // default-free peer
     const userId = await seedUser(t, fromTier);
     await t.action(internal.account.regenerate, { userId }); // key minted BEFORE the mode breaks
     await t.run(async (ctx) => {
@@ -1962,7 +2119,7 @@ describe('account.switchServer', () => {
     });
   });
 
-  test("re-issues across backends when the member's own backend is a dead end", async () => {
+  test.each([0, 50])('cross-panel switch on a %i GB tier', async (monthlyTrafficGb) => {
     // One mode group on this backend, one node behind it — both cheap levers are out.
     // But the mode pool has a mode group on ANOTHER backend, which the same-backend lookup
     // deliberately hides (`onlyServerId` is a hard pin). Without the cross-backend
@@ -1970,7 +2127,7 @@ describe('account.switchServer', () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const tierId = await seedTier(t, { backend: 'remnawave', monthlyTrafficGb });
     const userId = await seedUser(t, tierId);
     const { instanceId } = await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
     const otherPanel = await t.run(async (ctx) => {
@@ -2013,29 +2170,40 @@ describe('account.switchServer', () => {
       return other;
     });
 
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              response: {
-                uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
-                shortUuid: 'newshort',
-                username: 'u2',
-                status: 'ACTIVE',
-                trafficLimitBytes: null,
-                trafficLimitStrategy: 'MONTH',
-                userTraffic: { usedTrafficBytes: 0 },
-                expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
-                hwidDeviceLimit: null,
-                subscriptionUrl: 'https://panel2.test/sub/newshort',
-              },
-            }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
-          ),
-      ),
+    const provider = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            response: {
+              uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+              shortUuid: 'newshort',
+              username: 'u2',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              userTraffic: { usedTrafficBytes: 0 },
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel2.test/sub/newshort',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
     );
+    vi.stubGlobal('fetch', provider);
+
+    if (monthlyTrafficGb > 0) {
+      expect(await t.query(internal.account.switchServerAvailable, { userId })).toBe(false);
+      await expect(switchServer(t, userId, 'blocked')).rejects.toThrow(
+        'subscription.metered_reissue',
+      );
+      expect(provider).not.toHaveBeenCalled();
+      await t.run(async (ctx) => {
+        const [current] = await ctx.db.query('subscriptions').collect();
+        expect(current).toMatchObject({ backendServerId: instanceId, state: 'active' });
+      });
+      return;
+    }
 
     const res = await switchServer(t, userId, 'blocked', {
       country: 'IR',
@@ -2064,7 +2232,7 @@ describe('account.switchServer', () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const tierId = await seedTier(t, { backend: 'remnawave', monthlyTrafficGb: 0 });
     const userId = await seedUser(t, tierId);
     await t.run((ctx) =>
       ctx.db.insert('modePlacements', {
@@ -2262,7 +2430,7 @@ describe('account.switchServer', () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const tierId = await seedTier(t, { backend: 'remnawave', monthlyTrafficGb: 0 });
     const userId = await seedUser(t, tierId);
     const { instanceId } = await seedKey(t, userId); // legacy: no placement
     await t.run(async (ctx) => {

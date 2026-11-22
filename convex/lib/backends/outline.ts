@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { fetchBackendProbe } from '../urlSafety';
 import type { IssuedUser, SubscriptionContent, UpdateUserPatch, UserState } from './types';
+import { isCreateRejection, KeyNotCreated } from './types';
 
 export interface OutlineServerConfig {
   apiUrl: string;
@@ -122,12 +123,29 @@ export async function outlineIssue(
       tls: true,
     };
   }
-  const key = await call(cfg, {
-    method: 'POST',
-    path: '/access-keys',
-    body: Object.keys(body).length > 0 ? body : undefined,
-    schema: OutlineAccessKey,
-  });
+  let key: OutlineAccessKey;
+  try {
+    key = await call(cfg, {
+      method: 'POST',
+      path: '/access-keys',
+      body: Object.keys(body).length > 0 ? body : undefined,
+      schema: OutlineAccessKey,
+    });
+  } catch (err) {
+    if (err instanceof OutlineApiError && isCreateRejection(err.meta.status)) {
+      throw new KeyNotCreated(err);
+    }
+    throw err;
+  }
+  const failAfterCreate = async (error: OutlineApiError): Promise<never> => {
+    try {
+      await outlineDelete(cfg, key.id);
+    } catch {
+      console.warn('[outline] self-delete failed after issuance error — orphan key');
+      throw error;
+    }
+    throw new KeyNotCreated(error);
+  };
   if (spec.trafficLimitBytes !== null && spec.trafficLimitBytes > 0) {
     // A failed limit must NOT issue an unlimited key. The issuance saga never
     // sees the key id while `issue` is in flight, so it CANNOT compensate —
@@ -135,12 +153,11 @@ export async function outlineIssue(
     try {
       await setDataLimit(cfg, key.id, spec.trafficLimitBytes);
     } catch (err) {
-      await outlineDelete(cfg, key.id).catch(() => {
-        console.warn('[outline] self-delete failed after setDataLimit failure — orphan key');
-      });
-      throw new OutlineApiError(
-        `Outline setDataLimit failed after key creation: ${err instanceof Error ? err.message : 'unknown'}`,
-        { path: '/access-keys/:id/data-limit' },
+      return failAfterCreate(
+        new OutlineApiError(
+          `Outline setDataLimit failed after key creation: ${err instanceof Error ? err.message : 'unknown'}`,
+          { path: '/access-keys/:id/data-limit' },
+        ),
       );
     }
   }
@@ -149,12 +166,11 @@ export async function outlineIssue(
     // deriving the URL from the fork's WSS response isn't implemented yet
     // (Bug 15). Fail clearly rather than issuing a key with an empty URL —
     // self-deleting first (same saga-blindness as above).
-    await outlineDelete(cfg, key.id).catch(() => {
-      console.warn('[outline] self-delete failed after missing-accessUrl rejection — orphan key');
-    });
-    throw new OutlineApiError(
-      'Outline key has no accessUrl; WSS/dynamic-config issuance is not supported yet',
-      { path: '/access-keys' },
+    return failAfterCreate(
+      new OutlineApiError(
+        'Outline key has no accessUrl; WSS/dynamic-config issuance is not supported yet',
+        { path: '/access-keys' },
+      ),
     );
   }
   return {

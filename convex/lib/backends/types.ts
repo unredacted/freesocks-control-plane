@@ -43,16 +43,17 @@ export function resolveTrafficLimitBytes(
 }
 
 /**
- * The new key's traffic limit after carrying the superseded key's used bytes
- * forward (Review D-M3): a re-issue mints a FRESH backend counter while the old
- * key routes for the 24h tombstone grace, so without the carryover every
- * regenerate/switch multiplied the member's effective quota. 0 is NEVER
- * returned: it means UNLIMITED to Remnawave (and 'blocked' to Outline), so a
- * fully-spent quota carries as 1 byte — the only value that reads as "spent"
- * on both backends.
+ * The provider refused creation or confirmed removal before publishing the key.
+ * Issuance can retry after this definitive outcome.
  */
-export function applyUsageCarryover(limitBytes: number, usedBytes: number): number {
-  return Math.max(1, limitBytes - Math.max(0, Math.floor(usedBytes)));
+export class KeyNotCreated extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
+}
+
+export function isCreateRejection(status: number | undefined): boolean {
+  return status !== undefined && [400, 401, 403, 404, 422].includes(status);
 }
 
 /** Backend-side "no expiry" sentinel horizon (~10 years). Remnawave requires a
