@@ -106,6 +106,37 @@ describe('webhooks.ingest', () => {
     expect(await t.run((ctx) => ctx.db.query('webhookEvents').collect())).toHaveLength(0);
   });
 
+  test('a stale event leaves an audit trace; a future-dated one is refused for retry', async () => {
+    const t = convexTest(schema, modules);
+    const { supportId, userId, freeTierId } = await seedUserAndTiers(t);
+    const stale = eventBody({
+      eventId: 'late-delivery',
+      supportId,
+      tierSlug: 'member',
+      issuedAtMs: Date.now() - 2 * 86_400_000,
+    });
+    await t.action(internal.webhooks.ingest, {
+      rawBody: stale,
+      signature: await hmacSha256Hex(SECRET, stale),
+    });
+    const audits = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audits.map((a) => a.action)).toContain('billing.webhook.stale_event');
+
+    const future = eventBody({
+      eventId: 'fast-clock',
+      supportId,
+      tierSlug: 'member',
+      issuedAtMs: Date.now() + 10 * 60_000,
+    });
+    await expect(
+      t.action(internal.webhooks.ingest, {
+        rawBody: future,
+        signature: await hmacSha256Hex(SECRET, future),
+      }),
+    ).rejects.toThrow(/future/);
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.tierId).toBe(freeTierId);
+  });
+
   test('a replayed eventId is a deduped no-op', async () => {
     const t = convexTest(schema, modules);
     const { supportId } = await seedUserAndTiers(t);

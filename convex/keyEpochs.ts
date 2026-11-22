@@ -41,7 +41,9 @@ export const maybeRotate = internalMutation({
       .withIndex('by_not_before', (q) => q.lte('notBefore', now))
       .order('desc')
       .first();
-    if (latest && latest.notAfter <= now) {
+    // The cron ticks every minute: alarm at the start of a gap, then hourly.
+    const gapMinutes = latest ? Math.floor((now - latest.notAfter) / 60_000) : -1;
+    if (latest && latest.notAfter <= now && gapMinutes % 60 === 0) {
       console.warn(
         `[keyEpochs] no currently-valid epoch while FS_MANIFEST_SK is set — ` +
           `rotation appears wedged; manifest-pinned clients cannot send sealed requests`,

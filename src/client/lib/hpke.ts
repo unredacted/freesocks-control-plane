@@ -240,7 +240,8 @@ function applyRevocation(r: SignedRevocation): number | undefined {
  * missing epoch exactly where censorship makes NAT sharing the norm.
  */
 function fetchKeys(): Promise<Response> {
-  return fetch('/api/v1/hpke/keys', { credentials: 'omit' });
+  // no-store: a refresh after a refused epoch must not reuse the browser's copy.
+  return fetch('/api/v1/hpke/keys', { credentials: 'omit', cache: 'no-store' });
 }
 
 async function refreshEpoch(): Promise<void> {

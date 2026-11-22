@@ -77,6 +77,19 @@ export const ingest = internalAction({
     }
 
     if (!isCurrentBillingEvent(issuedAtMs)) {
+      // Ahead of our clock: refuse (non-2xx) so the sender retries once the
+      // clocks agree, rather than dropping a paid grant.
+      if (typeof issuedAtMs === 'number' && issuedAtMs > Date.now()) {
+        throw new Error('billing event issued in the future');
+      }
+      // Too old to trust as fresh: ACK so the sender stops, but leave a trace
+      // for the operator to grant by hand if it was a real late delivery.
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'webhook',
+        action: 'billing.webhook.stale_event',
+        targetType: 'webhookEvent',
+        payload: { issuedAtMs: typeof issuedAtMs === 'number' ? issuedAtMs : null },
+      });
       return { ok: true, applied: false, reason: 'stale_event' };
     }
 

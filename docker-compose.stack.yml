@@ -237,8 +237,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      deployer:
-        condition: service_completed_successfully
 
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).

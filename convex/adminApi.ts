@@ -58,7 +58,6 @@ import { remnawaveApiUrl } from './lib/backends/remnawave';
 import { PROVIDERS, type BackendConfig, type RemnawaveServerConfig } from './lib/backends/registry';
 import { removalBlocker } from './serverAdmin';
 import {
-  BILLING_SECRET_KEYS,
   billingConfigWrites,
   billingSecretWrites,
   processorSecretStatus,
@@ -2017,10 +2016,8 @@ export const setBillingConfig = internalMutation({
         message: e instanceof Error ? e.message : 'invalid billing config',
       });
     }
-    if (
-      !actorAdminId &&
-      secretWrites.some(({ key }) => key !== BILLING_SECRET_KEYS.publicBaseUrl)
-    ) {
+    // publicBaseUrl included: it builds the IPN and post-payment redirect URLs.
+    if (!actorAdminId && secretWrites.length > 0) {
       throw new ConvexError({
         code: 'auth.forbidden',
         message: 'Changing processor credentials and endpoints requires an admin session',
