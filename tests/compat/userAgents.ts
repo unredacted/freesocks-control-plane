@@ -171,7 +171,7 @@ export const appUserAgents: AppUserAgent[] = [
       ),
     ],
     notes:
-      'Reads share links, sing-box JSON, Clash YAML and Xray JSON; the panel serves links. Its sing-box fork has VLESS Encryption from app 5.5.5 (2026-11-04): FCP reads the version from this User-Agent and serves an older Hiddify the plain entry (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
+      'Reads share links, sing-box JSON, Clash YAML and Xray JSON; the panel serves links. Its sing-box fork has VLESS Encryption from app 5.5.5 (2026-11-04; a 5.5.5-or-later build connected on an encrypted-only body, checked on a device 2026-11-22): FCP reads the version from this User-Agent and serves an older Hiddify the plain entry (`ENCRYPTION_FLOORS`, convex/lib/edges/clientFamilies.ts).',
   },
   {
     app: 'Karing',

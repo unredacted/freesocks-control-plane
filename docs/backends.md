@@ -998,7 +998,7 @@ family, "Encrypted connections"):
   app's floor is its first release on Mihomo 1.19.13; an Xray-based app's is its first that reads
   `encryption=` from a link on Xray v25.8.31 or later (v25.8.29 had the layer on a wire the next
   release changed). Hiddify: from app 5.5.5 (`HiddifyNext/5.5.5 (android) like ClashMeta v2ray
-sing-box`). Where a release is inferred, not confirmed, the floor is the later candidate. A
+sing-box`; checked on a device on an encrypted-only body). Where a release is inferred, not confirmed, the floor is the later candidate. A
   User-Agent with no readable version gets what its row says: plain where the app always sends
   one, its family's rule where newer builds send none (Mihomo alpha builds). Anywhere sends no
   version and refuses the layer below iOS 26 while installing on iOS 18, so it gets at most both
