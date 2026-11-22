@@ -19,9 +19,17 @@
  * the connection count per `address:port`: the proof that a member's session
  * came through THIS edge. The control port is reachable from the test runner
  * (edge network); members only ever dial a frontend.
+ *
+ * It also notes each connection's TLS key exchange on the way (docker/compat/tlsHello.ts:
+ * the groups of the Client Hello and the one the Server Hello picked, nothing
+ * else), still passing every byte untouched: `GET /hellos` answers them per
+ * frontend, which is how the gate proves which engine gets a post-quantum key
+ * exchange over REALITY (docs/client-compatibility.md § "Post-quantum key
+ * exchange").
  */
 import { createServer as createHttpServer } from 'node:http';
 import { createServer, connect, type Server, type Socket } from 'node:net';
+import { describeObservation, observeConnection, type HelloObservation } from '../compat/tlsHello';
 
 /** The forwarder's own client-network address: the frontend of a forward that names none. */
 const OWN_ADDRESS = process.env.EC_FORWARDER_ADDRESS ?? '203.0.113.21';
@@ -31,6 +39,8 @@ interface Forward {
   target: { host: string; port: number };
   connections: number;
   failed: number;
+  /** Every connection that said hello, live (filled in as its hellos pass), the last 200. */
+  hellos: HelloObservation[];
 }
 
 /** `address:port` -> what it forwards to. */
@@ -64,6 +74,17 @@ function pipe(client: Socket, port: number) {
     close();
   });
   client.on('error', close);
+  const { observation, fromClient, fromServer } = observeConnection();
+  let noted = false;
+  client.on('data', (d: Buffer) => {
+    fromClient.push(d);
+    if (!noted && observation.clientHellos.length > 0) {
+      noted = true;
+      f.hellos.push(observation);
+      if (f.hellos.length > 200) f.hellos.splice(0, f.hellos.length - 200);
+    }
+  });
+  upstream.on('data', (d: Buffer) => fromServer.push(d));
   client.pipe(upstream);
   upstream.pipe(client);
 }
@@ -73,7 +94,7 @@ async function listen(address: string, port: number, target: { host: string; por
   const existing = forwards.get(key);
   // Re-pointing a frontend (a fresh "provision" of the same address) keeps its counters.
   if (existing) existing.target = target;
-  else forwards.set(key, { target, connections: 0, failed: 0 });
+  else forwards.set(key, { target, connections: 0, failed: 0, hellos: [] });
   if (servers.has(port)) return;
   const server = createServer();
   server.on('connection', (socket) => pipe(socket, port));
@@ -98,6 +119,11 @@ createHttpServer(async (req, res) => {
         connections: f.connections,
         failed: f.failed,
       };
+    return json(res, 200, out);
+  }
+  if (req.method === 'GET' && req.url === '/hellos') {
+    const out: Record<string, ReturnType<typeof describeObservation>[]> = {};
+    for (const [key, f] of forwards) out[key] = f.hellos.map(describeObservation);
     return json(res, 200, out);
   }
   if (req.method === 'POST' && req.url === '/forwards') {
