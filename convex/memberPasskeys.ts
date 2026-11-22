@@ -103,18 +103,6 @@ export const credentialByCredentialId = internalQuery({
       .unique(),
 });
 
-export const bumpCredentialCounter = internalMutation({
-  args: { credentialId: v.string(), newCounter: v.number() },
-  handler: async (ctx, { credentialId, newCounter }) => {
-    const row = await ctx.db
-      .query('memberPasskeyCredentials')
-      .withIndex('by_credential_id', (q) => q.eq('credentialId', credentialId))
-      .unique();
-    if (row) await ctx.db.patch(row._id, { counter: newCounter, lastUsedAt: Date.now() });
-    return null;
-  },
-});
-
 // --- assertion challenges ----------------------------------------------------
 
 export const insertAuthChallenge = internalMutation({
@@ -186,6 +174,7 @@ export const revokeCredential = internalMutation({
     const id = ctx.db.normalizeId('memberPasskeyCredentials', credentialId);
     const cred = id ? await ctx.db.get(id) : null;
     if (!cred || cred.userId !== userId) return { ok: true as const, revoked: false };
+    await ctx.db.patch(userId, { legacySessionsRevoked: true });
     await ctx.db.delete(cred._id);
     await writeAuditLog(ctx, {
       actorType: 'member',

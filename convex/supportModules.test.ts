@@ -148,7 +148,7 @@ describe('memberPasskeys management', () => {
     );
   });
 
-  test('listCredentials masks secrets; credentialIdsByUser + counter bump work', async () => {
+  test('listCredentials masks secrets and passkey revocation ends the sessions it authorized', async () => {
     const t = convexTest(schema, modules);
     const userId = await seedUser(t);
     await t.mutation(internal.memberPasskeys.insertCredential, {
@@ -165,15 +165,38 @@ describe('memberPasskeys management', () => {
     expect(await t.query(internal.memberPasskeys.credentialIdsByUser, { userId })).toEqual([
       'cred-2',
     ]);
-    await t.mutation(internal.memberPasskeys.bumpCredentialCounter, {
-      credentialId: 'cred-2',
-      newCounter: 4,
-    });
     const cred = await t.query(internal.memberPasskeys.credentialByCredentialId, {
       credentialId: 'cred-2',
     });
-    expect(cred?.counter).toBe(4);
-    expect(cred?.lastUsedAt).toBeTypeOf('number');
+    const create = (sid: string) =>
+      t.mutation(internal.sessions.create, {
+        kind: 'member',
+        sid,
+        userId,
+        ttlMs: 60_000,
+        verifiedMemberPasskey: { id: cred!._id, previousCounter: 3, newCounter: 4 },
+      });
+    await create('passkey');
+    await t.mutation(internal.sessions.create, {
+      kind: 'member',
+      sid: 'account-number',
+      userId,
+      ttlMs: 60_000,
+    });
+    expect(
+      await t.query(internal.memberPasskeys.credentialByCredentialId, {
+        credentialId: 'cred-2',
+      }),
+    ).toMatchObject({ counter: 4, lastUsedAt: expect.any(Number) });
+    expect(await t.query(internal.sessions.bySid, { sid: 'passkey' })).not.toBeNull();
+
+    await t.mutation(internal.memberPasskeys.revokeCredential, {
+      credentialId: cred!._id,
+      userId,
+    });
+    expect(await t.query(internal.sessions.bySid, { sid: 'passkey' })).toBeNull();
+    expect(await t.query(internal.sessions.bySid, { sid: 'account-number' })).not.toBeNull();
+    await expect(create('new')).rejects.toThrow(/no longer authorized/);
   });
 
   test("revoke deletes only the caller's own credential (foreign is a silent no-op) and audits", async () => {

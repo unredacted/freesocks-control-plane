@@ -692,6 +692,7 @@ export default defineSchema({
     .index('by_active', ['isActive']),
 
   users: defineTable({
+    legacySessionsRevoked: v.optional(v.boolean()),
     tierId: v.id('tiers'),
     currentSubscriptionId: v.optional(v.id('subscriptions')),
     status: userStatus,
@@ -5716,6 +5717,7 @@ export default defineSchema({
     userId: v.optional(v.id('users')),
     adminUserId: v.optional(v.id('adminUsers')),
     adminPasskeyId: v.optional(v.id('passkeyCredentials')),
+    memberPasskeyId: v.optional(v.union(v.id('memberPasskeyCredentials'), v.null())),
     expiresAt: v.number(),
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),

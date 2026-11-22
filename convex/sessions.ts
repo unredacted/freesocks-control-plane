@@ -51,6 +51,13 @@ export const create = internalMutation({
     // The public per-session token (binds each PoP signature to this session).
     // Stored only when the session is PoP-bound (popPublicKey present).
     popSessionToken: v.optional(v.string()),
+    verifiedMemberPasskey: v.optional(
+      v.object({
+        id: v.id('memberPasskeyCredentials'),
+        previousCounter: v.number(),
+        newCounter: v.number(),
+      }),
+    ),
     verifiedAdminPasskey: v.optional(
       v.object({
         id: v.id('passkeyCredentials'),
@@ -71,6 +78,7 @@ export const create = internalMutation({
       popAlg,
       popSessionToken,
       verifiedAdminPasskey,
+      verifiedMemberPasskey,
     },
   ) => {
     // Verify the assertion's credential still exists and belongs to an active
@@ -92,6 +100,28 @@ export const create = internalMutation({
       }
       await ctx.db.patch(credential._id, {
         counter: verifiedAdminPasskey.newCounter,
+        lastUsedAt: Date.now(),
+      });
+    }
+    if (verifiedMemberPasskey) {
+      const credential = await ctx.db.get(verifiedMemberPasskey.id);
+      const user = userId ? await ctx.db.get(userId) : null;
+      if (
+        kind !== 'member' ||
+        !user ||
+        user.status === 'deleted' ||
+        (user.status === 'disabled' && user.disabledReason !== 'membership_lapsed') ||
+        !credential ||
+        credential.userId !== user._id ||
+        credential.counter !== verifiedMemberPasskey.previousCounter
+      ) {
+        throw new ConvexError({
+          code: 'auth.forbidden',
+          message: 'Passkey is no longer authorized',
+        });
+      }
+      await ctx.db.patch(credential._id, {
+        counter: verifiedMemberPasskey.newCounter,
         lastUsedAt: Date.now(),
       });
     }
@@ -124,6 +154,7 @@ export const create = internalMutation({
       adminUserId,
       expiresAt: Date.now() + ttlMs,
       adminPasskeyId: verifiedAdminPasskey?.id,
+      memberPasskeyId: kind === 'member' ? (verifiedMemberPasskey?.id ?? null) : undefined,
       ...(bound ? { popPublicKey, popAlg: boundAlg, popSessionToken } : {}),
     });
     // Counter bump keyed on the row's own _creationTime (the reconcile journal
@@ -152,6 +183,18 @@ export const bySid = internalQuery({
         if (!credential || credential.adminUserId !== row.adminUserId) return null;
       } else if ((await ctx.db.get(row.adminUserId))?.legacySessionsRevoked) {
         // Earlier admin sessions lack credential provenance.
+        return null;
+      }
+    }
+    if (row.kind === 'member' && row.userId) {
+      if (row.memberPasskeyId) {
+        const credential = await ctx.db.get(row.memberPasskeyId);
+        if (!credential || credential.userId !== row.userId) return null;
+      } else if (
+        row.memberPasskeyId === undefined &&
+        (await ctx.db.get(row.userId))?.legacySessionsRevoked
+      ) {
+        // Older member sessions do not distinguish passkey and account-number login.
         return null;
       }
     }

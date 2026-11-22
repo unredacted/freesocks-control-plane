@@ -247,11 +247,6 @@ export const authenticateVerify = internalAction({
     if (!verification.verified)
       throw new ConvexError({ code: 'validation', message: 'Verification failed' });
 
-    await ctx.runMutation(internal.memberPasskeys.bumpCredentialCounter, {
-      credentialId: credRow.credentialId,
-      newCounter: verification.authenticationInfo.newCounter,
-    });
-
     const userId = credRow.userId as Id<'users'>;
     const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) throw new ConvexError({ code: 'validation', message: 'Verification failed' });
@@ -275,6 +270,11 @@ export const authenticateVerify = internalAction({
       kind: 'member',
       userId,
       ttlMs: MEMBER_TTL_MS,
+      verifiedMemberPasskey: {
+        id: credRow._id,
+        previousCounter: credRow.counter,
+        newCounter: verification.authenticationInfo.newCounter,
+      },
       popPublicKey,
       popAlg,
       popSessionToken,
