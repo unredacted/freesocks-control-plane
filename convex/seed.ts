@@ -797,6 +797,12 @@ export const seedCutover = internalAction({
     // Then count the keys per country for the Countries pages (the first
     // deploy that ships the counter builds it here; a daily cron keeps it).
     await ctx.scheduler.runAfter(60_000, internal.countryKeyCounts.reconcile, {});
+    // The fronted route's cached bodies move off the subscription rows into
+    // their own table (convex/subscriptionBodies.ts), page by page; once, a
+    // no-op afterwards. A rollback's pause is lifted first (going forward
+    // again after `subscriptionBodies:clearForRollback`).
+    await ctx.runMutation(internal.subscriptionBodies.resume, {});
+    await ctx.scheduler.runAfter(0, internal.subscriptionBodies.migrateLegacy, {});
     await ctx.runMutation(internal.ownExits.refresh, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
     // Backend servers keep their key count and health stamps in side tables

@@ -5,6 +5,7 @@
  * (DEV_MOCK_BACKEND + ENVIRONMENT=development) so issuance short-circuits with
  * no HTTP; the no-instances failure case runs with the mock OFF.
  */
+import { cacheBlob, setCacheBlob } from './lib/subscriptionBodies.testing';
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
@@ -862,13 +863,17 @@ describe('account.switchMode saga', () => {
         backendServerId: instanceId,
         subscriptionUrl: 'https://panel.test/sub/oldshort',
         subToken: 'tok-abc',
-        // A stale cached body that MUST be dropped on switch (same token).
-        subCache: JSON.stringify([{ ua: 'x', content: 'stale', contentType: 't', at: Date.now() }]),
         subscriptionMirrors: [],
         backendPlacement: 'old-squad',
         state: 'active',
         updatedAt: Date.now(),
       });
+      // A stale cached body that MUST be dropped on switch (same token).
+      await setCacheBlob(
+        ctx.db,
+        subId,
+        JSON.stringify([{ ua: 'x', content: 'stale', contentType: 't', at: Date.now() }]),
+      );
       // Currently on evade → switching to privacy is a real change.
       await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
     });
@@ -933,7 +938,7 @@ describe('account.switchMode saga', () => {
       expect(only.backendUserId).toBe('old-key-uuid'); // not a re-issue
       expect(only.subToken).toBe('tok-abc'); // fronted URL unchanged
       expect(only.backendPlacement).toBe(SQUAD); // re-pointed
-      expect(only.subCache).toBeUndefined(); // stale content cache dropped
+      expect(await cacheBlob(ctx.db, only._id)).toBeUndefined(); // stale content cache dropped
       expect(user!.currentSubscriptionId).toBe(only._id); // pointer unchanged
 
       const audit = (await ctx.db.query('auditLog').collect()).find(
@@ -1790,13 +1795,17 @@ describe('account.switchServer', () => {
         backendServerId: instanceId,
         subscriptionUrl: 'https://panel.test/sub/oldshort',
         subToken: 'tok-abc',
-        subCache: JSON.stringify([{ ua: 'x', content: 'stale', contentType: 't', at: Date.now() }]),
         subscriptionMirrors: [],
         ...(over.placement ? { backendPlacement: over.placement } : {}),
         ...(over.pinnedNode ? { pinnedNode: over.pinnedNode } : {}),
         state: 'active',
         updatedAt: Date.now(),
       });
+      await setCacheBlob(
+        ctx.db,
+        subId,
+        JSON.stringify([{ ua: 'x', content: 'stale', contentType: 't', at: Date.now() }]),
+      );
       await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
       return { subId, instanceId };
     });
@@ -1888,7 +1897,7 @@ describe('account.switchServer', () => {
       // The node pin is rotated too: the new mode group may still span nodes.
       expect(only.excludeNode).toBe('xray1');
       expect(only.pinnedNode).toBeUndefined();
-      expect(only.subCache).toBeUndefined();
+      expect(await cacheBlob(ctx.db, only._id)).toBeUndefined();
       // The member's connection mode is untouched — this is not a mode switch.
       expect((await ctx.db.get(userId))!.connectionModeId).toBe('freedom-ws');
     });
@@ -2004,7 +2013,7 @@ describe('account.switchServer', () => {
       // The pin is left exactly as it was — no phantom rotation.
       expect(sub.pinnedNode).toBe('xray1');
       expect(sub.excludeNode).toBeUndefined();
-      expect(sub.subCache).toBeTruthy();
+      expect(await cacheBlob(ctx.db, sub._id)).toBeTruthy();
     });
   });
 
@@ -2099,7 +2108,7 @@ describe('account.switchServer', () => {
       expect(subs).toHaveLength(1);
       expect(subs[0]!.state).toBe('active'); // the working key is untouched
       expect(subs[0]!.backendPlacement).toBe(SQUAD_A);
-      expect(subs[0]!.subCache).toBeTruthy(); // not even the cache was dropped
+      expect(await cacheBlob(ctx.db, subs[0]!._id)).toBeTruthy(); // not even the cache was dropped
     });
   });
 

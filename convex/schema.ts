@@ -865,12 +865,11 @@ export default defineSchema({
     // from THIS origin instead of the backend backend. Rotates per key by
     // construction (a new sub row = a new token). Minted in insertSubscription.
     subToken: v.optional(v.string()),
-    // Small in-front content cache for the fronted route — a JSON blob holding a
-    // BOUNDED per-UA list of {content, contentType, headers?, ua, at} entries (see
-    // convex/http.ts + subscriptions.writeContentCache). Bounded (no growth),
-    // dropped with the row, keyed by UA so multiple clients (phone + desktop)
-    // don't thrash and we never serve one client's format to another — on both the
-    // fresh-hit and stale-fallback paths. Never logged.
+    // RETIRED: the per-UA bodies moved to `subscriptionBodies` (below). Kept in
+    // the schema for one release only: the route still reads a row's old blob
+    // until `subscriptionBodies.migrateLegacy` (scheduled by seedCutover) has
+    // copied it across and cleared it, and the next release drops the field.
+    // Nothing writes it any more except to clear it. Never logged.
     subCache: v.optional(v.string()),
     // Opaque backend placement handle this key was issued into (Remnawave: the
     // internal-mode group UUID chosen by node-load placement). Persisted so tier
@@ -1061,6 +1060,29 @@ export default defineSchema({
     ])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
+
+  // The fronted route's in-front content cache (GET /api/v1/sub/<token>): one
+  // row per (key, User-Agent), at most SUB_CACHE_MAX per key, holding one
+  // serialized body entry ({v, content, contentType, headers?, ua, at, relay,
+  // region, lane, renderedEpoch, validUntil, render}; see convex/http.ts).
+  // Kept OUT of the subscriptions row so a delivery stamp, a country guess or
+  // any other patch to the key never rewrites (or re-reads) its bodies, and a
+  // body write never invalidates the cached reads of the key. Keyed by UA
+  // because the backend formats by UA: a body is only ever served to the UA it
+  // was fetched for. Read and written only on the content path; dropped with
+  // the key, on an in-place move and on a country change it no longer fits
+  // (lib/subscriptionBodies.ts). `region` mirrors the entry's stored country so
+  // that prune reads only the bodies that carry one. Never logged.
+  subscriptionBodies: defineTable({
+    subscriptionId: v.id('subscriptions'),
+    ua: v.string(),
+    at: v.number(),
+    region: v.optional(v.string()),
+    entry: v.string(),
+  })
+    .index('by_subscription_ua', ['subscriptionId', 'ua'])
+    // A country change reads only the bodies shaped for a country (most have none).
+    .index('by_subscription_region', ['subscriptionId', 'region']),
 
   // The mirror barrier (docs/servers.md "Node lifecycle"): one row per mirror
   // upload, opened BEFORE the object is written with the delivery token the

@@ -14,6 +14,7 @@
  * `node-p` (direct, `privacy-reality`). Fixtures use RFC 5737 addresses and
  * `*.example` names only.
  */
+import { withBodies } from './lib/subscriptionBodies.testing';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import YAML from 'yaml';
@@ -411,7 +412,8 @@ async function seed(start: Place, opts: { mirror?: boolean; provider?: boolean }
 }
 
 const get = (t: T, ua: string) => t.fetch('/api/v1/sub/tok_one', { headers: { 'user-agent': ua } });
-const row = (t: T, subId: Id<'subscriptions'>) => t.run((ctx) => ctx.db.get(subId));
+const row = (t: T, subId: Id<'subscriptions'>) =>
+  t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId)));
 
 /** Every client family is handed `place` and nothing of `left`. */
 async function expectServed(t: T, place: Place, left: Place, clients = CLIENTS) {

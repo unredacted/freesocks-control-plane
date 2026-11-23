@@ -297,8 +297,8 @@ function lastPathSegment(req: Request): string {
 // `max-age` a shared cache gets (lib/subscriptionEtag.ts).
 const SUBSCRIPTION_CACHE_TTL_MS = SUBSCRIPTION_MAX_AGE_SECONDS * 1000;
 
-// One entry in the serialized `subscriptions.subCache` blob (a bounded per-UA
-// list — see subscriptions.writeContentCache). Keyed by UA because Remnawave
+// One cached body (a `subscriptionBodies` row's `entry`; at most SUB_CACHE_MAX
+// UAs per key — see subscriptions.writeContentCache). Keyed by UA because Remnawave
 // formats the subscription by User-Agent — we must never serve one client's
 // format to another, on BOTH the fresh-hit and the stale-fallback paths. (Review #11.)
 interface SubCacheEntry {
@@ -476,17 +476,19 @@ function unavailableResponse(reason: string): Response {
   });
 }
 
-/** Parse the bounded per-UA subCache blob; tolerates a legacy single-entry blob. */
-function parseSubCache(blob: string | null | undefined): SubCacheEntry[] {
-  if (!blob) return [];
-  try {
-    const parsed = JSON.parse(blob) as unknown;
-    if (Array.isArray(parsed)) return parsed as SubCacheEntry[];
-    if (parsed && typeof parsed === 'object') return [parsed as SubCacheEntry];
-    return [];
-  } catch {
-    return [];
+/** The serialized cache entries a lookup returned (subscriptionBodies.forUa). */
+function parseEntries(raw: string[]): SubCacheEntry[] {
+  const out: SubCacheEntry[] = [];
+  for (const one of raw) {
+    try {
+      const parsed = JSON.parse(one) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+        out.push(parsed as SubCacheEntry);
+    } catch {
+      // not an entry: never served
+    }
   }
+  return out;
 }
 
 /**
@@ -1383,7 +1385,15 @@ http.route({
       }
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
-    const cached = hasHwid ? [] : servableEntries(parseSubCache(sub.subCache));
+    // This UA's cached body (subscriptionBodies): one indexed read, none at all
+    // for a device-bound request (never cached).
+    const cached = hasHwid
+      ? []
+      : servableEntries(
+          parseEntries(
+            await ctx.runQuery(internal.subscriptionBodies.forUa, { subscriptionId: sub._id, ua }),
+          ),
+        );
     // Edge-required delivery (docs/edges.md): the cache token for this key's
     // resolved place (`<bindingVersion>:<epoch>` while an origin covers it, null
     // otherwise), compared against the token stored on the entry. Only bodies

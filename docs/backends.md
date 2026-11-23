@@ -119,7 +119,7 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
 - **The FCP-fronted subscription URL** (`GET /api/v1/sub/<token>`, `convex/http.ts`) calls
   `internal.backends.fetchSubscriptionContent` to serve the member's config from our own origin
   instead of the backend backend URL. Public + unauthenticated (the opaque per-sub `subToken` is the
-  capability), with a short server-side TTL cache on `subscriptions.subCache` keyed by User-Agent
+  capability), with a short server-side TTL cache (`subscriptionBodies`, one row per key and User-Agent)
   (Remnawave formats config by UA). It forwards the caller's UA (with one sing-box normalization
   exception — see "Subscription formats" below) and re-emits the allowlisted
   `subscription-userinfo` / `profile-update-interval` headers `fetchContent` returns

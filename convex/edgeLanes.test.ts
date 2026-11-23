@@ -5,6 +5,7 @@
  * replacement budget beside the node's daily cap, the reconcile's fill and
  * retire, and the lane fence on cached bodies and delivery stamps.
  */
+import { cacheBlob } from './lib/subscriptionBodies.testing';
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
@@ -283,12 +284,12 @@ describe('the lane fence', () => {
       subscriptionId,
       entry: entry('trusted'),
     });
-    expect((await t.run((ctx) => ctx.db.get(subscriptionId)))!.subCache ?? null).toBeNull();
+    expect((await t.run((ctx) => cacheBlob(ctx.db, subscriptionId))) ?? null).toBeNull();
     await t.mutation(internal.subscriptions.writeContentCache, {
       subscriptionId,
       entry: entry('open'),
     });
-    expect((await t.run((ctx) => ctx.db.get(subscriptionId)))!.subCache).toContain('"open"');
+    expect(await t.run((ctx) => cacheBlob(ctx.db, subscriptionId))).toContain('"open"');
     const render = { epoch: 1, family: 'other', listenerKeys: ['a'] };
     await t.mutation(internal.subscriptions.markDelivered, {
       subscriptionId,

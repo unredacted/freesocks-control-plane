@@ -41,6 +41,7 @@ import { memberFamilyOf, modesOfPlacement } from './lib/memberFamily';
 import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { memberLaneOfUser } from './edgeLanes';
 import { noteExposures } from './edgeTrust';
+import { dropBodies, parseEntry, storeBodies, type BodyEntry } from './lib/subscriptionBodies';
 import { mirrorFormatValidator } from './lib/mirrorFormats';
 import { carryPeriodEnd, keyTrafficLimit, liveCarryBytes } from './lib/quotaCarry';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
@@ -84,8 +85,8 @@ export const byBackendUserId = internalQuery({
 
 /**
  * Resolve a subscription by its opaque FCP-fronted token (the capability in
- * GET /api/v1/sub/<subToken>). Returns the full row (incl. the `subCache` blob)
- * or null. Internal — the row carries the live proxy key.
+ * GET /api/v1/sub/<subToken>). Returns the full row or null (the cached bodies
+ * are not on it: subscriptionBodies.forUa). Internal — the row carries the live proxy key.
  *
  * A `deleted` row resolves as NOT FOUND (Review D-#12): its backend user is
  * gone, so the route would otherwise fetch → backend 404 → answer a misleading
@@ -535,32 +536,15 @@ export const markMirrorRefreshed = internalMutation({
   },
 });
 
-// Bounded per-UA content cache (Review #11): keep the N most-recently-written UA
-// formats so multiple clients on one subscription (phone + desktop, distinct UAs)
-// don't evict each other into a refetch-on-every-request thrash. Small cap — a
-// short-TTL edge cache, not durable storage.
-const SUB_CACHE_MAX = 4;
-interface SubCacheEntry {
-  content: string;
-  contentType: string;
-  headers?: Record<string, string>;
-  ua: string;
-  at: number;
-  /** The stored country the body was shaped for (convex/memberCountry.ts). */
-  region?: string | null;
-  /** The account's address lane it was rendered for (convex/edgeLanes.ts). */
-  lane?: 'open' | 'trusted' | null;
-  // The route's further fields (format version, edge token, render epoch,
-  // validity) pass through untouched; see SubCacheEntry in convex/http.ts.
-}
-
 /**
- * Merge one freshly-fetched UA entry into the subscription's bounded per-UA
- * content cache for the fronted route (a serialized list of
- * {content, contentType, headers?, ua, at} — see convex/http.ts). Serializable
+ * Merge one freshly-fetched UA entry into the key's bounded per-UA content
+ * cache for the fronted route (`subscriptionBodies`, lib/subscriptionBodies.ts;
+ * the entry's shape is SubCacheEntry in convex/http.ts). Serializable
  * read-merge-write so concurrent distinct-UA writes don't clobber each other;
  * replaces this UA's slot and keeps the most-recent SUB_CACHE_MAX (bounded — no
- * row growth). Migrates a legacy single-entry blob transparently.
+ * growth). Moves the key's old `subCache` blob across, if it still has one.
+ * Writes nothing to the subscription row otherwise, so the key's cached reads
+ * stay valid.
  */
 export const writeContentCache = internalMutation({
   args: {
@@ -572,12 +556,8 @@ export const writeContentCache = internalMutation({
   handler: async (ctx, { subscriptionId, entry, deliveryRev }) => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub || sub.state === 'deleted' || !revCurrent(sub, deliveryRev)) return;
-    let incoming: SubCacheEntry;
-    try {
-      incoming = JSON.parse(entry) as SubCacheEntry;
-    } catch {
-      return;
-    }
+    const incoming = parseEntry(entry);
+    if (!incoming) return;
     // Where the member connects from (convex/memberCountry.ts): a body shaped
     // for a country is kept only while that is the row's stored country, so a
     // request that read an older one (a switch, "Somewhere else", a new guess,
@@ -591,26 +571,10 @@ export const writeContentCache = internalMutation({
     // the lane the account had when the request read it is kept only while it
     // still has that lane; an entry for another lane is dropped.
     const lane = await memberLaneOfUser(ctx.db, sub.userId, Date.now());
-    const allowed = (e: SubCacheEntry) =>
+    const allowed = (e: BodyEntry) =>
       (e.region == null || e.region === stored) && (e.lane ?? null) === lane;
     if (!allowed(incoming)) return;
-    let existing: SubCacheEntry[] = [];
-    if (sub.subCache) {
-      try {
-        const parsed = JSON.parse(sub.subCache) as unknown;
-        existing = Array.isArray(parsed)
-          ? (parsed as SubCacheEntry[])
-          : parsed && typeof parsed === 'object'
-            ? [parsed as SubCacheEntry] // migrate a legacy single-entry blob
-            : [];
-      } catch {
-        existing = [];
-      }
-    }
-    const merged = [incoming, ...existing.filter((e) => e.ua !== incoming.ua && allowed(e))]
-      .sort((a, b) => b.at - a.at)
-      .slice(0, SUB_CACHE_MAX);
-    await ctx.db.patch(subscriptionId, { subCache: JSON.stringify(merged) });
+    await storeBodies(ctx, sub, { incoming: { entry: incoming, raw: entry }, allowed });
   },
 });
 
@@ -637,7 +601,7 @@ export const recordPinnedNode = internalMutation({
  * stay): a mode or server switch landed on the backend, or its node pin was
  * rotated. Everything stored about what it carried before goes, so the next
  * fetch renders afresh for the new placement and node:
- *  - the per-UA bodies (`subCache`) and the pin: the route reads its cache
+ *  - the per-UA bodies (`subscriptionBodies`) and the pin: the route reads its cache
  *    token at the STORED pin, so a body of the old node would still match it;
  *  - the render snapshot and epoch (the old origin's edges and epoch);
  *  - the mirror content hash, and the mirrors are re-rendered now when
@@ -653,6 +617,7 @@ export async function invalidateDelivery(
   sub: Doc<'subscriptions'>,
   opts: { excludePin?: boolean; refreshMirrors: boolean },
 ): Promise<string | null> {
+  await dropBodies(ctx, sub._id);
   await ctx.db.patch(sub._id, {
     subCache: undefined,
     pinnedNode: undefined,
@@ -1225,6 +1190,8 @@ export const markSubscriptionDeleted = internalMutation({
     const dying = await ctx.db.get(subscriptionId);
     // The key no longer counts for its country (lib/countryKeyCounts.ts).
     await bumpCountryKeysForRow(ctx, dying, null);
+    // Its cached bodies go now (they carry the country they were shaped for).
+    await dropBodies(ctx, subscriptionId);
     await ctx.db.patch(subscriptionId, {
       state: 'deleted',
       deletedAt: Date.now(),
@@ -1305,7 +1272,7 @@ export const setCurrentSubscription = internalMutation({
  * Re-point an EXISTING key to a new backend placement IN PLACE (a connection-mode
  * switch that PATCHes the Remnawave user's mode group rather than re-issuing). Updates
  * `backendPlacement` and DROPS the per-UA content cache: the fronted
- * `/api/v1/sub/<token>` keeps the SAME `subToken`, so a stale `subCache` would keep
+ * `/api/v1/sub/<token>` keeps the SAME `subToken`, so a stale cached body would keep
  * serving the OLD node's config for up to the cache TTL after the switch. `null`
  * clears the placement (mirrors insertSubscription's optional-field mapping). No
  * state/token change, so the member's saved URL keeps working.
@@ -1339,6 +1306,7 @@ export const setPlacementAndClearCache = internalMutation({
     const hysteriaGroups = before
       ? await hysteriaGroupsAfter(ctx.db, before.backend, before.hysteriaGroups, placement)
       : undefined;
+    await dropBodies(ctx, subscriptionId);
     await ctx.db.patch(subscriptionId, {
       ...(hysteriaGroups ? { hysteriaGroups } : {}),
       backendPlacement: placement ?? undefined,

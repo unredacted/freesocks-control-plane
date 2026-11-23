@@ -39,6 +39,7 @@ import { resolveDefaultFreeTier } from './tiers';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { forgetAccount } from './edgeTrust';
+import { dropBodies } from './lib/subscriptionBodies';
 import { keyTrafficLimit } from './lib/quotaCarry';
 
 // --- entitlement seam ------------------------------------------------------
@@ -1322,6 +1323,7 @@ export const deleteInactiveUser = internalMutation({
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect()) {
       await deleteCopiesOf(ctx, s._id);
+      await dropBodies(ctx, s._id);
       // A key still counted for a country leaves the count with its row
       // (lib/countryKeyCounts.ts).
       await bumpCountryKeysForRow(ctx, s, null);

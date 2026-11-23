@@ -9,6 +9,7 @@ import { internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { recordHeartbeat } from './cronHeartbeat';
+import { dropBodies } from './lib/subscriptionBodies';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -173,7 +174,11 @@ export const sweepDeletedSubscriptions = internalMutation({
       .query('subscriptions')
       .withIndex('by_state', (q) => q.eq('state', 'deleted').lt('deletedAt', cutoff))
       .take(page);
-    for (const r of rows) await ctx.db.delete(r._id);
+    for (const r of rows) {
+      // Defensive: markSubscriptionDeleted already dropped the key's bodies.
+      await dropBodies(ctx, r._id);
+      await ctx.db.delete(r._id);
+    }
     if (rows.length === page) {
       const n = rounds ?? 0;
       if (n >= MAX_DRAIN_ROUNDS)
