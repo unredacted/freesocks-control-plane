@@ -116,7 +116,13 @@ services:
       - APPLICATION_MAX_CONCURRENT_MUTATIONS=16
       - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=16
       - APPLICATION_MAX_CONCURRENT_QUERIES=16
-      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=16
+      # Every HTTP action holds one of these slots for its whole life (including
+      # while it awaits a query, mutation, fetch or Node action), so this caps
+      # in-flight HTTP requests and V8 actions together. 64 is the backend's own
+      # default; the old 16 (copied from upstream's example compose) let a few
+      # slow upstream calls queue every other request. Query/mutation limits are
+      # separate, so this adds no database concurrency.
+      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=${APPLICATION_MAX_CONCURRENT_V8_ACTIONS:-64}
       - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
       - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN}
       - DISABLE_BEACON=${DISABLE_BEACON:-true}

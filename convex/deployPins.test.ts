@@ -821,6 +821,13 @@ describe('stack isolation', () => {
     expect(read('../scripts/bootstrap-secrets.mjs')).toContain("['BACKUP_DB_PASSWORD', 24]");
   });
 
+  test('HTTP actions get the backend default of 64 V8 action slots', () => {
+    // HTTP actions count against this limit and hold a slot while they wait.
+    expect(envOf(services.backend).APPLICATION_MAX_CONCURRENT_V8_ACTIONS).toBe(
+      '${APPLICATION_MAX_CONCURRENT_V8_ACTIONS:-64}',
+    );
+  });
+
   test('the admin key file is written owner-only', () => {
     expect(String(services.keygen.command)).toMatch(/umask 077 .*chmod 600 \/keys\/admin_key/);
   });
