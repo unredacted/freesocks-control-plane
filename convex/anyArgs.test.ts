@@ -22,7 +22,6 @@ const ADMIN_JSON =
 const PROVIDER_SHAPE =
   'a provider-specific shape: the edge provider adapter parses and validates it (convex/lib/edges/providers/)';
 const WEBAUTHN = 'a WebAuthn response: @simplewebauthn/server verifies it';
-const SEALED = 'an HPKE envelope or its plaintext: the sealing layer opens and parses it';
 const COMPUTED =
   'a value FCP computed in the calling action; what is stored goes into typed schema fields, which Convex validates on write';
 
@@ -64,8 +63,6 @@ const ALLOWED: Record<string, string> = {
   'edgeTemplates:create.params': `${PROVIDER_SHAPE} (validateTemplateWrite)`,
   'edgeTemplates:update.params': `${PROVIDER_SHAPE} (validateTemplateWrite)`,
   'edgeTemplates:validate.params': `${PROVIDER_SHAPE} (validateTemplateWrite)`,
-  'lib/hpkeCrypto:openRequest.wireBody': SEALED,
-  'lib/hpkeCrypto:sealResponse.responseObj': SEALED,
   'memberWebauthn:registerVerify.response': WEBAUTHN,
   'memberWebauthn:authenticateVerify.response': WEBAUTHN,
   'revocationWatches:applyDecision.decision': COMPUTED,

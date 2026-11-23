@@ -94,6 +94,13 @@ they import, `src/shared` included) and requires each package to be listed with
 a reason. Before adding one, prefer a small hand-written client over an SDK, as
 the Gandi DNS adapter does.
 
+## Randomness
+
+Convex makes `crypto.getRandomValues` and `Math.random` deterministic inside
+queries and mutations. Anything that seals, generates keys or signs must run in
+an action or HTTP action. `convex/hpkeRuntimeBoundary.test.ts` fails if a module
+that registers a query or mutation can reach the HPKE or manifest code.
+
 ## Outbound URLs
 
 `checkInfraUrl` (`convex/lib/urlSafety.ts`) refuses loopback, link-local and
