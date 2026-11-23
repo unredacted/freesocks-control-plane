@@ -363,6 +363,7 @@ import type * as lib_edges_verificationContext from "../lib/edges/verificationCo
 import type * as lib_edges_verifyRung from "../lib/edges/verifyRung.js";
 import type * as lib_edges_websocketNode from "../lib/edges/websocketNode.js";
 import type * as lib_edges_withheld from "../lib/edges/withheld.js";
+import type * as lib_edges_withheldNotes from "../lib/edges/withheldNotes.js";
 import type * as lib_extraModeNodes from "../lib/extraModeNodes.js";
 import type * as lib_fleetStats from "../lib/fleetStats.js";
 import type * as lib_hpke from "../lib/hpke.js";
@@ -842,6 +843,7 @@ declare const fullApi: ApiFromModules<{
   "lib/edges/verifyRung": typeof lib_edges_verifyRung;
   "lib/edges/websocketNode": typeof lib_edges_websocketNode;
   "lib/edges/withheld": typeof lib_edges_withheld;
+  "lib/edges/withheldNotes": typeof lib_edges_withheldNotes;
   "lib/extraModeNodes": typeof lib_extraModeNodes;
   "lib/fleetStats": typeof lib_fleetStats;
   "lib/hpke": typeof lib_hpke;

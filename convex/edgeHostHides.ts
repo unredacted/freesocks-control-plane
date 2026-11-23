@@ -57,6 +57,7 @@ import { edgeAddressesOf } from './lib/edges/render';
 import { listenerRemark, listenersOf } from './relayListeners';
 import { nodeAddressesOf } from './nodeIntents';
 import { HOST_OP_TTL_MS, HOST_SETTLE_LOOKS, HOST_SETTLE_MS } from './hostOps';
+import { ownWithheldNote, writeWithheldNote } from './lib/edges/withheldNotes';
 
 /** Disable retries the reconcile pass issues for one Host before it counts as failed. */
 export const HIDE_MAX_ATTEMPTS = 6;
@@ -567,15 +568,24 @@ const MAX_WITHHELD_REMARKS = 20;
 export const noteWithheld = internalMutation({
   args: { relayId: v.id('relays'), count: v.number(), remarks: v.array(v.string()) },
   handler: async (ctx, { relayId, count, remarks }) => {
+    const now = Date.now();
+    // Many renders of one origin schedule this together when the minute turns
+    // (each throttles on what it read). Read the small note row first: the ones
+    // that lose the race see the winner's note and return having read only that
+    // row, never the `relays` row its other writers keep changing.
+    const own = await ownWithheldNote(ctx.db, relayId);
+    if (own && !withheldNoteDue(own.at, now)) return null;
     const relay = await ctx.db.get(relayId);
     if (!relay) return null;
-    const now = Date.now();
-    const prev = relay.withheldEntries;
+    const prev = own ?? relay.withheldEntries ?? null;
     if (prev && !withheldNoteDue(prev.at, now)) return null;
     const kept = [...new Set(remarks)].slice(0, MAX_WITHHELD_REMARKS);
     const ongoing = withheldFresh(prev, now);
-    await ctx.db.patch(relayId, {
-      withheldEntries: { at: now, since: ongoing ? prev.since : now, count, remarks: kept },
+    await writeWithheldNote(ctx, relayId, {
+      at: now,
+      since: ongoing && prev ? prev.since : now,
+      count,
+      remarks: kept,
     });
     if (!ongoing)
       await writeAuditLog(ctx, {
@@ -589,7 +599,11 @@ export const noteWithheld = internalMutation({
   },
 });
 
-/** Rollback (docs/edges.md "Deploy notes"): the older schema has no `withheldEntries`. */
+/**
+ * Rollback (docs/edges.md "Deploy notes"): an older schema has no
+ * `relayWithheldNotes` table (and the oldest no `withheldEntries`), so both are
+ * emptied before deploying it.
+ */
 export const clearWithheldForRollback = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -600,7 +614,13 @@ export const clearWithheldForRollback = internalMutation({
       await ctx.db.patch(relay._id, { withheldEntries: undefined });
       cleared++;
     }
-    return { cleared };
+    let notes = 0;
+    // one row per origin: as small as `relays`
+    for (const row of await ctx.db.query('relayWithheldNotes').collect()) {
+      await ctx.db.delete(row._id);
+      notes++;
+    }
+    return { cleared, notes };
   },
 });
 

@@ -15,6 +15,7 @@
 import { ownCodesOf } from './lib/edges/ownPools';
 import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
+import { withheldNoteOf } from './lib/edges/withheldNotes';
 import { twinRemarksOf } from './lib/edges/listenerEncryption';
 import { servableEdges } from './lib/backend/nodeTwin';
 import { ENTRY_NAME_SEP, encryptedName } from '../src/shared/entryNames';
@@ -753,7 +754,7 @@ export const decideForSubscription = internalQuery({
         deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
         // The node's own place leads every entry's name, as its direct names read.
         exit: await entryExitOf(ctx.db, sub.backendServerId),
-        withheldNotedAt: relay.withheldEntries?.at ?? null,
+        withheldNotedAt: (await withheldNoteOf(ctx.db, relay))?.at ?? null,
       },
     };
   },
