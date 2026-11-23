@@ -12,8 +12,6 @@ import { v } from 'convex/values';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { runWithCronOutcome } from './cronHeartbeat';
-import { MAX_LISTS } from './lib/edges/lists/facts';
 import { canonicalText, parseList, type ParsedList } from './lib/edges/lists/parse';
 import {
   commonSize,
@@ -30,11 +28,6 @@ const FETCH_MAX_BYTES = 16 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
 /** Names written per staging mutation (each is a short row; a batch stays small). */
 const NAMES_PER_STAGE = 1_000;
-/**
- * Lists started per cron pass: every one that is due (a pass only schedules
- * them; each read is its own action), so an hourly list is read every hour.
- */
-const FETCH_PER_PASS = MAX_LISTS;
 
 type Fetcher = (
   url: string,
@@ -257,27 +250,4 @@ export const ingest = internalAction({
         await ctx.runMutation(internal.countryLists.purgeUpload, { uploadId: a.uploadId });
     }
   },
-});
-
-/** Cron `country-lists` (hourly): fetch the lists whose source is due. */
-export const tick = internalAction({
-  args: {},
-  handler: async (ctx): Promise<void> =>
-    runWithCronOutcome(ctx, 'country-lists', async () => {
-      // Rows new since the last refresh (a sweep's finds, a family's new names) get their facts.
-      await ctx.runMutation(internal.countryListFacts.kick, {});
-      const due = await ctx.runQuery(internal.countryLists.dueForFetch, {
-        now: Date.now(),
-        limit: FETCH_PER_PASS,
-      });
-      for (const listId of due) {
-        try {
-          await ctx.runMutation(internal.countryLists.requestFetch, { listId });
-        } catch {
-          // Busy (an operator's fetch got there first): the next pass takes it.
-        }
-      }
-      // New edges and new addresses since the last pass get checked against the watched lists.
-      await ctx.runMutation(internal.countryListEdges.kick, {});
-    }),
 });

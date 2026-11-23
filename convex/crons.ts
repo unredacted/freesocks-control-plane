@@ -51,21 +51,14 @@ crons.daily(
 );
 
 // Drop expired session + rate-limit rows (the tables that replaced KV TTLs).
-crons.daily('session-sweep', { hourUTC: 3, minuteUTC: 15 }, internal.sessions.sweepExpired, {});
-crons.daily(
-  'rate-limit-sweep',
-  { hourUTC: 3, minuteUTC: 30 },
-  internal.rateLimits.sweepExpired,
-  {},
-);
+// HOURLY, not daily: each run drains at most 500 x 51 rows, and these tables
+// gain rows with request traffic (a once-a-day run caps them at ~25.5k/day).
+crons.hourly('session-sweep', { minuteUTC: 15 }, internal.sessions.sweepExpired, {});
+crons.hourly('rate-limit-sweep', { minuteUTC: 30 }, internal.rateLimits.sweepExpired, {});
 
-// Drop consumed PoP request nonces past their freshness window (Phase 2).
-crons.daily(
-  'replay-guard-sweep',
-  { hourUTC: 3, minuteUTC: 45 },
-  internal.replayGuard.sweepExpired,
-  {},
-);
+// Drop consumed PoP request nonces past their freshness window (Phase 2). One
+// row per PoP-signed request: one open /account tab alone writes ~4k a day.
+crons.hourly('replay-guard-sweep', { minuteUTC: 45 }, internal.replayGuard.sweepExpired, {});
 
 // Drop expired admin invite rows (multi-admin onboarding tokens).
 crons.daily(
@@ -182,10 +175,11 @@ crons.interval('billing-nowpayments-coins', { hours: 1 }, internal.billing.refre
 crons.interval('mirror-refresh', { hours: 6 }, internal.storage.refreshActiveMirrors, {});
 // The mirror barrier: an upload whose delivery policy moved while it was in
 // flight is re-rendered under the current one, or the object withdrawn.
-crons.interval('mirror-barrier-repair', { minutes: 5 }, internal.storage.repairMirrorUploads, {});
+// The gates (cronGates.ts) run in V8 and start the Node action only when due.
+crons.interval('mirror-barrier-repair', { minutes: 5 }, internal.cronGates.mirrorBarrierRepair, {});
 // Read mirror copies back through the URL each member holds and compare them
 // with what FCP wrote (a copy every ~6 h; one that found a problem sooner).
-crons.interval('mirror-verify', { minutes: 15 }, internal.storage.verifyMirrorCopies, {});
+crons.interval('mirror-verify', { minutes: 15 }, internal.cronGates.mirrorVerify, {});
 
 // Self-heal the maintained user-status counter (statusCounters.ts) that feeds the
 // /status health-gate — recomputes it exactly, correcting any missed transition bump.
@@ -220,7 +214,8 @@ crons.daily(
 // unknown, and look again at every open op. It never sends anything.
 // Server-name families: check due names against their family's target (rate-limited),
 // and start FCP's own test of sends that wait on a node (`edge.sni.autoConfirm`, off by default).
-crons.interval('sni-qualify', { minutes: 5 }, internal.sniQualifyOps.run, {});
+// Gated in V8 (cronGates.ts): the Node checks start only when a name is due.
+crons.interval('sni-qualify', { minutes: 5 }, internal.cronGates.sniQualify, {});
 // Attributed report counts are a short-lived hint: delete what left the window.
 crons.interval('sni-report-sweep', { hours: 24 }, internal.sniReports.sweep, {});
 // Checks of names from inside opted-in countries: sweep, then at most one batch
@@ -236,7 +231,7 @@ crons.interval('edge-networks', { hours: 1 }, internal.edgeNetworks.tick, {});
 // Country lists (docs/edges.md "Country lists"): fetch each list whose source
 // is due (dormant until `edge.lists.enabled`), and once a day fail crashed
 // staging, throw away versions nobody decided on and keep the rows bounded.
-crons.interval('country-lists', { hours: 1 }, internal.countryListOps.tick, {});
+crons.interval('country-lists', { hours: 1 }, internal.cronGates.countryLists, {});
 crons.daily('country-lists-sweep', { hourUTC: 5, minuteUTC: 50 }, internal.countryLists.sweep, {});
 
 crons.interval('backend-reconcile', { minutes: 5 }, internal.backendWrites.reconcile, {});

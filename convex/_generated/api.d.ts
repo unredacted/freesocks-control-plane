@@ -33,6 +33,7 @@ import type * as countryListFacts from "../countryListFacts.js";
 import type * as countryListFeeds from "../countryListFeeds.js";
 import type * as countryListOps from "../countryListOps.js";
 import type * as countryLists from "../countryLists.js";
+import type * as cronGates from "../cronGates.js";
 import type * as cronHeartbeat from "../cronHeartbeat.js";
 import type * as crons from "../crons.js";
 import type * as deliveryRefusals from "../deliveryRefusals.js";
@@ -252,6 +253,7 @@ declare const fullApi: ApiFromModules<{
   countryListFeeds: typeof countryListFeeds;
   countryListOps: typeof countryListOps;
   countryLists: typeof countryLists;
+  cronGates: typeof cronGates;
   cronHeartbeat: typeof cronHeartbeat;
   crons: typeof crons;
   deliveryRefusals: typeof deliveryRefusals;

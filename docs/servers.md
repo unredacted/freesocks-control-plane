@@ -1282,7 +1282,7 @@ mirror). FCP never starts a run by itself.
   as well as a refresh) opens a `mirrorUploads` obligation with the token its body was rendered
   under BEFORE the object is written, and settles it only when the token read after a successful
   upload is unchanged. An open obligation past its in-flight grace is repaired by the
-  `mirror-barrier-repair` cron (`storage.repairMirrorUploads`, every 5 min): the subscription's
+  `mirror-barrier-repair` cron (`storage.repairMirrorUploads`, every 5 min, started by a V8 gate only when an obligation is due): the subscription's
   mirror is re-rendered and re-uploaded under the current policy (the unavailable stub when its
   place is gated or edge-required with nothing to render), or a copy no subscription references
   is withdrawn. Which row a copy belongs to is asked of every live row of the key's account (a

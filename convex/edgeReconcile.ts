@@ -209,11 +209,14 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   const now = Date.now();
 
   // 0. Record the action runtime's Node version (dashboard; the deploy guard enforces the floor).
+  // Hourly, not every tick: reading it starts a Node action.
   try {
-    const info = await ctx.runAction(internal.edgeProviderOps.runtimeInfo, {});
-    await ctx.runMutation(internal.edgeReconcileMutations.recordRuntime, {
-      nodeVersion: info.nodeVersion,
-    });
+    if (await ctx.runQuery(internal.edgeReconcileMutations.runtimeCheckDue, { now })) {
+      const info = await ctx.runAction(internal.edgeProviderOps.runtimeInfo, {});
+      await ctx.runMutation(internal.edgeReconcileMutations.recordRuntime, {
+        nodeVersion: info.nodeVersion,
+      });
+    }
   } catch (err) {
     console.warn(`[edge-reconcile] runtimeInfo unavailable: ${errText(err)}`);
   }
