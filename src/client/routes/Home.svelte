@@ -306,7 +306,7 @@
         <p class="mt-6 flex items-start gap-2.5 text-base text-muted-foreground">
           <Heart class="mt-1 size-[18px] shrink-0 text-primary" aria-hidden="true" />
           <span>
-            {t('home.support.heroLine')}
+            <span class="block">{t('home.support.heroLine')}</span>
             <a
               class="link-brand text-foreground"
               href="/#support"
