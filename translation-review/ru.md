@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**236 of 843 strings are missing** (the app currently shows English for
+**239 of 846 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -23,7 +23,7 @@ review.
   ⚠️ MISSING have no translation yet.
 
 
-## `faq` — The landing-page FAQ (questions + answers).
+## `faq` — The landing-page FAQ (questions + answers). *(2 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -52,6 +52,8 @@ review.
 | `faq.q9.answer` | Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms. | Да. Вы можете оплатить криптовалютой - Bitcoin, или Monero и Zcash для максимальной конфиденциальности - без учетной записи, электронной почты или карты. Ваша подписка активируется автоматически после подтверждения платежа. |
 | `faq.q10.question` | Do you own your servers, or rent them? | У вас собственные серверы или арендованные? |
 | `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | Мы владеем своим оборудованием и обслуживаем его сами. Многие VPN-компании арендуют серверы в дата-центрах или у облачных провайдеров, и тогда машина, через которую проходит ваш трафик, оказывается в чужих руках - её могут заставить передать или просто незаметно скопировать всё, что на ней есть. Мы не готовы переступить эту черту, поэтому покупаем и обслуживаем собственное оборудование. Это дороже, и из-за этого мы растём медленнее, но только так обещания приватности на этой странице действительно что-то значат. |
+| `faq.q11.question` | My app says "encryption: none". Is my connection encrypted? | ⚠️ **MISSING** |
+| `faq.q11.answer` | Yes. Your app always encrypts the connection with TLS 1.3. The "encryption" field is for an optional extra layer inside that connection, and "none" only means that extra layer is off. Connections that pass through a CDN also come with entries that have it on, so the CDN cannot read what is inside; those show a long value starting with "mlkem768x25519plus". Most current apps also use a post-quantum key exchange, which protects recorded traffic from future quantum computers. | ⚠️ **MISSING** |
 
 ## `threat` — Miscellaneous strings.
 
@@ -772,7 +774,7 @@ review.
 | `mirrorSuggest.recommended` | Recommended | ⚠️ **MISSING** |
 | `mirrorSuggest.chooseHint` | Copy, download, the QR code and the app buttons below use the link you pick. Clash and sing-box apps read the mirror in their own format: use the link under each one below. | ⚠️ **MISSING** |
 
-## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(3 missing)*
+## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(4 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -780,6 +782,7 @@ review.
 | `rawconfig.title` | Your configuration | Ваша конфигурация |
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | Полная конфигурация вашего прокси, полученная по зашифрованному каналу - она никогда не проходит через CDN в открытом виде. Вставьте её в приложение вручную вместо ссылки-подписки. |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | Вставьте эти серверные записи в ваше прокси-приложение вручную. |
+| `rawconfig.encryptionNote` | Your app may show "encryption: none" on an entry. That is normal: the whole connection between your device and our server is encrypted with TLS 1.3. That field is for an extra layer this connection does not need. | ⚠️ **MISSING** |
 | `rawconfig.confirmTitle` | Show the raw configuration? | ⚠️ **MISSING** |
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |

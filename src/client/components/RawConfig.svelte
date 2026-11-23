@@ -146,6 +146,12 @@
           </Button>
         </div>
         <p class="text-sm text-muted-foreground/80">{t('rawconfig.addHint')}</p>
+        {#if prominent}
+          <!-- Privacy modes: members paste by hand and read the fields, and an
+               app printing the VLESS field ("encryption: none", the normal value
+               for REALITY) reads like an unencrypted connection. -->
+          <p class="text-sm text-muted-foreground/80">{t('rawconfig.encryptionNote')}</p>
+        {/if}
       {/if}
     </div>
   {/if}

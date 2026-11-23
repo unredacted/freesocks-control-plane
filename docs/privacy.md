@@ -520,6 +520,40 @@ Freedom XHTTP`, `profile-title`, `docs/backends.md`).
   guard again each time it is served, against the pins the backend serves then, so a
   certificate change never leaves an old pin in a member's hands.
 
+## 5d. Post-quantum status of Privacy mode
+
+What protects a Privacy-mode (`privacy-reality`) connection against a quantum computer, as of
+2026-11-22. It sits here because members ask, and because the honest answer depends on the app.
+
+- **Recorded traffic: post-quantum when the app asks for it.** REALITY is TLS 1.3 between the
+  app and the node. Its key exchange is the hybrid X25519MLKEM768 when the app's Client Hello
+  offers that key share: Xray-core apps on the chrome fingerprint, Mihomo (every Clash body FCP
+  hands out asks for it, `convex/lib/realityKeyShares.ts`), and Anywhere on iOS/macOS 26 or later.
+  sing-box never offers it (in every release so far), nor does Anywhere below 26; those
+  connections use X25519 alone. The node accepts either.
+- **Why the node does not require it.** Xray v26.9.8 and later refuse a REALITY Client Hello
+  without the hybrid share, with no switch. That would cut off every sing-box app and older
+  Anywhere on the configurations they already hold, and a Privacy configuration is pasted by
+  hand and never refreshes. So the node image stays on Xray 26.7.28 until sing-box sends the
+  share ([client-compatibility.md](client-compatibility.md) § "The X25519MLKEM768 key
+  share"). That bump is what makes Privacy
+  post-quantum for every app, with no change to delivery.
+- **Node authentication is classical.** The app verifies the node by its X25519 REALITY key.
+  Breaking it needs a quantum computer at the moment of connection; it does not open recorded
+  traffic. Xray's ML-DSA-65 REALITY option (`mldsa65Seed`, links `pqv=`) would make it
+  post-quantum without breaking apps that do not check it, but needs a REALITY target whose
+  certificate chain is about 3.5 kB or more, and only v2rayNG and Happ verify it. Not set.
+- **No VLESS Encryption on REALITY.** The encrypted twin (`docs/backends.md` § "VLESS
+  Encryption") exists for WebSocket behind a CDN, where the CDN would otherwise read the VLESS
+  stream. On REALITY it would add almost no post-quantum protection: every app that can speak
+  VLESS Encryption already offers the hybrid key share, and the apps that do not offer it cannot
+  speak VLESS Encryption either. It would need a second port per node and two lanes kept for
+  good (pasted configurations never refresh), so it is not built.
+- **"encryption: none" in apps.** Apps print the VLESS `encryption` field, which is `none` on
+  every REALITY entry. That is the extra layer above, not the connection. The Privacy raw
+  configuration says so under the copy button (`rawconfig.encryptionNote`) and the FAQ answers
+  it for every mode (`faq.q11`).
+
 ## 6. Analytics (optional self-hosted Umami origin)
 
 FCP can report **anonymous pageview counts** to an operator-run
