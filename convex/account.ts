@@ -2387,6 +2387,69 @@ export const relocationNeeded = internalQuery({
   },
 });
 
+/**
+ * One page of the members whose live key sits on `serverId` while their tier
+ * may no longer use it (an admin narrowed the instance's tiers). Index range
+ * only, so the page stays inside the read limit however many keys are there.
+ */
+export const serverKeysToRelocate = internalQuery({
+  args: { serverId: v.id('backendServers'), cursor: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    { serverId, cursor },
+  ): Promise<{ userIds: Id<'users'>[]; cursor: string; isDone: boolean }> => {
+    const server = await ctx.db.get(serverId);
+    const page = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_backend_server_state', (q) =>
+        q.eq('backendServerId', serverId).eq('state', 'active'),
+      )
+      .paginate({ numItems: RELOCATE_PAGE, cursor });
+    const userIds: Id<'users'>[] = [];
+    if (server) {
+      for (const sub of page.page) {
+        const user = await ctx.db.get(sub.userId);
+        if (user?.status === 'active' && !serverAllowsTier(server, user.tierId))
+          userIds.push(user._id);
+      }
+    }
+    return { userIds, cursor: page.continueCursor, isDone: page.isDone };
+  },
+});
+
+const RELOCATE_PAGE = 100;
+// Spacing between scheduled moves, so narrowing a busy instance re-issues
+// keys at a steady pace rather than all at once.
+const RELOCATE_SPACING_MS = 2_000;
+
+/**
+ * After an admin narrows an instance's tiers (adminApi.updateBackendServer):
+ * schedule `relocateForTier` for every member whose key is left there, a page
+ * at a time, spaced out. Each move rechecks on its own and keeps the link.
+ */
+export const relocateServerKeys = internalAction({
+  args: { serverId: v.id('backendServers'), cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { serverId, cursor }): Promise<null> => {
+    const page = await ctx.runQuery(internal.account.serverKeysToRelocate, {
+      serverId,
+      cursor: cursor ?? null,
+    });
+    let i = 0;
+    for (const userId of page.userIds) {
+      await ctx.scheduler.runAfter(i++ * RELOCATE_SPACING_MS, internal.account.relocateForTier, {
+        userId,
+      });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(i * RELOCATE_SPACING_MS, internal.account.relocateServerKeys, {
+        serverId,
+        cursor: page.cursor,
+      });
+    }
+    return null;
+  },
+});
+
 const RELOCATE_MAX_ATTEMPTS = 5;
 const RELOCATE_RETRY_MS = 5 * 60_000;
 

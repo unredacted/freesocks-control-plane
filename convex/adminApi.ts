@@ -513,6 +513,19 @@ export const deleteTier = internalMutation({
         message: 'Cannot delete a tier that still has membership codes. Revoke them first.',
       });
     }
+    // A backend limited to this tier would be left with a list naming no tier
+    // (open to nobody), and dropping the id instead could open it to everyone.
+    // The admin decides: refuse while any backend lists it. The table is the
+    // small instance pool, never traffic-scaled.
+    const gated = (await ctx.db.query('backendServers').collect()).find((s) =>
+      (s.allowedTierIds ?? []).includes(id),
+    );
+    if (gated) {
+      throw new ConvexError({
+        code: 'tier.in_use',
+        message: `Cannot delete a tier that backend "${gated.name}" is limited to. Change who can use that location first.`,
+      });
+    }
     await ctx.db.delete(id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -1625,9 +1638,20 @@ export const updateBackendServer = internalMutation({
     // null or [] opens the instance to every tier again.
     if (patch.allowedTierIds !== undefined)
       fields.allowedTierIds = await checkAllowedTiers(ctx.db, patch.allowedTierIds);
+    // A narrower list strands the keys of the tiers it drops: move them now
+    // (keeping their links) rather than at each member's next tier change.
+    const before = existing.allowedTierIds ?? [];
+    const after = fields.allowedTierIds ?? []; // [] = every tier
+    const narrowed =
+      patch.allowedTierIds !== undefined &&
+      after.length > 0 &&
+      (before.length === 0 || before.some((t) => !after.includes(t)));
 
     fields.config = mergeBackendServerConfig(existing.config, patch);
     await ctx.db.patch(id, fields);
+    if (narrowed) {
+      await ctx.scheduler.runAfter(0, internal.account.relocateServerKeys, { serverId: id });
+    }
     // The node's position orders steered members' addresses (latency ordering).
     if (positionMoved(existing, coords)) await nodePositionMoved(ctx, id);
     await writeAuditLog(ctx, {

@@ -478,7 +478,9 @@ export async function resolvePlacementTarget(
     // exists on ITS backend — a (mode group, wrong-backend) pair mints a key that can't
     // route. Signal the caller to FAIL LOUDLY instead (503, retryable); a
     // single-backend deploy keeps the fail-soft (the pair can't mismatch).
-    if (servers.length > 1)
+    // Counted over EVERY active backend, not the tier's: one allowed backend
+    // among several still lets an unattributed group belong to another one.
+    if (activeServers.length > 1)
       return { placement: null, serverId: null, unattributedMultiPanel: true };
     // UNKNOWN is not the same as KNOWN-UNUSABLE. The fail-soft below exists for
     // mode groups we could not attribute at all; a mode group we DID attribute, to a backend

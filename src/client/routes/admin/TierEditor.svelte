@@ -95,6 +95,10 @@
     })(tier),
   );
 
+  // Set once the admin changes "Can switch location" by hand; until then it
+  // follows "Default free tier" (free = keeps its first location).
+  let switchTouched = $state(false);
+
   // Card features live beside the draft: sent only once touched, so saving an
   // unrelated field never freezes the built-in defaults into a stored list.
   // `featuresReset` = save "back to the defaults" (null).
@@ -373,14 +377,24 @@
       <label class="flex items-center gap-3 text-sm">
         <Checkbox
           checked={draft.isDefaultFree}
-          onCheckedChange={(v) => (draft = { ...draft, isDefaultFree: v === true })}
+          onCheckedChange={(v) =>
+            (draft = {
+              ...draft,
+              isDefaultFree: v === true,
+              // A free tier keeps its first location by default: follow the
+              // flag until the admin sets "Can switch location" themselves.
+              ...(switchTouched ? {} : { canSwitchLocation: v !== true }),
+            })}
         />
         <span>Default free tier for its backend (new sign-ups land here)</span>
       </label>
       <label class="flex items-start gap-3 text-sm">
         <Checkbox
           checked={draft.canSwitchLocation}
-          onCheckedChange={(v) => (draft = { ...draft, canSwitchLocation: v === true })}
+          onCheckedChange={(v) => {
+            switchTouched = true;
+            draft = { ...draft, canSwitchLocation: v === true };
+          }}
           class="mt-0.5"
         />
         <span>

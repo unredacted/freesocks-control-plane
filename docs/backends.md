@@ -638,8 +638,12 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   the key at the member's pick (cleared to Automatic when the tier cannot use it),
   keeping the link (audit `subscription.relocate_for_tier`). A held lock or a location
   with no room retries 5 times, 5 minutes apart, then audits
-  `subscription.relocate_failed` and leaves the key. Narrowing a location's tiers in
-  the CMS moves existing keys only at their next tier push, not at once.
+  `subscription.relocate_failed` and leaves the key. Narrowing an instance's tiers in
+  the CMS (dropping a tier, or limiting an open instance) schedules
+  `account.relocateServerKeys`, which pages the instance's active keys
+  (`by_backend_server_state`, 100 a page) and schedules `relocateForTier` for each
+  member left there, 2 seconds apart. A tier an instance lists cannot be deleted
+  (`tier.in_use`): dropping the id could open the instance to everyone.
 - **Member node status:** `GET /api/v1/account/node-status` reports the online
   bit of the mode group behind the member's key (refreshed on demand, at most once per
   instance per minute via a serializable stampede guard; instance-health fallback

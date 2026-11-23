@@ -450,7 +450,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   by default, `tiers.canSwitchLocation`); a tier without it keeps its first key's
   location and gets a membership note with "Switch server instead". "Switch server" now
   stays within the key's location. A key left on a location its tier lost is moved off
-  at the next tier push (`account.relocateForTier`). **Live (dormant until an instance
+  at the next tier push, or at once when an admin narrows the location
+  (`account.relocateForTier`). **Live (dormant until an instance
   lists tiers).**
 - **Account-page location globe** (`KeyLocationGlobe.svelte`, beside the Access Pass):
   a small cobe globe (`cobe`, a dynamically-imported chunk) showing every

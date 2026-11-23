@@ -357,3 +357,57 @@ describe('a key left where its tier may no longer go', () => {
     }
   });
 });
+
+describe('review fixes', () => {
+  test('an unattributed group on a multi-panel deploy still fails loudly with one panel allowed', async () => {
+    const w = await world();
+    // A third group the stats cron has not seen: it could live on either panel.
+    await w.t.run(async (ctx) => {
+      const row = (await ctx.db.query('modePlacements').collect())[0]!;
+      await ctx.db.patch(row._id, {
+        config: JSON.stringify({ squadUuids: ['22222222-2222-3333-4444-00000000000d'] }),
+      });
+    });
+    const target = await w.t.run((ctx) =>
+      resolvePlacementTarget(ctx.db, 'freedom-ws', { tierId: w.free }),
+    );
+    expect(target).toEqual({ placement: null, serverId: null, unattributedMultiPanel: true });
+  });
+
+  test('narrowing a backend to members moves the keys of other tiers off it', async () => {
+    vi.useFakeTimers();
+    try {
+      const w = await world({ keyAt: 'CHI' });
+      // Chicago starts open to everyone, so the free key there is legitimate.
+      await w.t.run((ctx) => ctx.db.patch(w.chi, { allowedTierIds: undefined }));
+      await w.t.mutation(internal.adminApi.updateBackendServer, {
+        id: w.chi,
+        allowedTierIds: [w.member],
+      });
+      await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+      const fresh = await activeSub(w);
+      expect(fresh._id).not.toBe(w.subId);
+      expect(fresh.backendPlacement).toBe(SQUAD_MCI);
+      expect(fresh.subToken).toBe('tok-abc');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('widening a backend schedules nothing', async () => {
+    const w = await world({ member: true, keyAt: 'CHI' });
+    await w.t.mutation(internal.adminApi.updateBackendServer, {
+      id: w.chi,
+      allowedTierIds: [w.member, w.free],
+    });
+    const scheduled = await w.t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.filter((f) => f.name.includes('relocateServerKeys'))).toHaveLength(0);
+  });
+
+  test('a tier a backend is limited to cannot be deleted', async () => {
+    const w = await world();
+    await expect(w.t.mutation(internal.adminApi.deleteTier, { id: w.member })).rejects.toThrow(
+      /limited to/,
+    );
+  });
+});
