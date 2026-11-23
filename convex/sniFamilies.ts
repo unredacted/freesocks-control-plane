@@ -1021,6 +1021,24 @@ export const setCountry = internalMutation({
 const QUALIFY_SCAN_CAP = 1000;
 
 /** The oldest-checked names that are due, with their family's target. */
+/**
+ * Whether `dueForQualification` has any name to walk: the feature is on and some
+ * name was last checked before the requalify cutoff. The V8 cron gate
+ * (cronGates.ts) asks this first, so an idle tick never starts the Node
+ * qualification action. Names the walk would only defer still count as due, so
+ * the Node pass can move them out of the head of the queue as before.
+ */
+export async function hasDueQualification(db: QueryCtx['db'], now: number): Promise<boolean> {
+  const cfg = await resolveSniConfig(db);
+  if (!cfg.enabled) return false;
+  const cutoff = now - cfg.requalifyHours * 3_600_000;
+  const first = await db
+    .query('sniNames')
+    .withIndex('by_checked', (q) => q.lt('checkedAt', cutoff))
+    .first();
+  return first !== null;
+}
+
 export const dueForQualification = internalQuery({
   args: {},
   handler: async (ctx) => {

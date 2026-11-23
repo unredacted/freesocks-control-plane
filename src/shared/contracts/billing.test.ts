@@ -64,3 +64,30 @@ describe('BillingConfigView deploy-skew defaults', () => {
     }
   });
 });
+
+describe('direct checkout contracts', () => {
+  test('an older backend (no direct block / field) parses as hosted', async () => {
+    const { CheckoutResponse, OrderStatusResponse } = await import('./billing');
+    expect(
+      CheckoutResponse.parse({ redirectUrl: 'https://pay.example/i/1', orderRef: 'abc' }).direct,
+    ).toBe(false);
+    expect(
+      OrderStatusResponse.parse({ status: 'pending', membershipExpiresAt: null }).payment,
+    ).toBeNull();
+  });
+
+  test('a payment must have a method and an https fallback', async () => {
+    const { OrderPayment } = await import('./billing');
+    const base = {
+      processor: 'nowpayments',
+      methods: [
+        { id: 'btc', unit: 'BTC', network: 'Bitcoin', address: 'bc1q', amount: '0.1', qr: 'bc1q' },
+      ],
+      expiresAt: null,
+      hostedUrl: 'https://nowpayments.io/payment/?iid=1',
+    };
+    expect(OrderPayment.safeParse(base).success).toBe(true);
+    expect(OrderPayment.safeParse({ ...base, methods: [] }).success).toBe(false);
+    expect(OrderPayment.safeParse({ ...base, hostedUrl: 'http://x.example' }).success).toBe(false);
+  });
+});

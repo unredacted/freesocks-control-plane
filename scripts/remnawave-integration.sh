@@ -39,9 +39,13 @@ if ! BOOT="$(bun scripts/remnawave-test-bootstrap.mjs)"; then
   "${COMPOSE[@]}" logs --tail=40 rw-test-backend >&2 || true
   exit 1
 fi
-set -a
-eval "$BOOT"
-set +a
+REMNAWAVE_TEST_URL="$(printf '%s\n' "$BOOT" | sed -n 's/^REMNAWAVE_TEST_URL=//p')"
+REMNAWAVE_TEST_TOKEN="$(printf '%s\n' "$BOOT" | sed -n 's/^REMNAWAVE_TEST_TOKEN=//p')"
+if [[ -z "$REMNAWAVE_TEST_URL" || -z "$REMNAWAVE_TEST_TOKEN" ]]; then
+  echo '[integration] bootstrap did not return a URL and API token' >&2
+  exit 1
+fi
+export REMNAWAVE_TEST_URL REMNAWAVE_TEST_TOKEN
 echo "[integration] panel ready at ${REMNAWAVE_TEST_URL}"
 
 echo "[integration] running the provider integration test"

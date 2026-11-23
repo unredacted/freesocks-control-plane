@@ -20,7 +20,7 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
 ## A member's mirror
 
 - **Asking.** `POST /api/v1/mirror/request` (sealed both ways) runs `storage.provisionMirror`:
-  the next active provider the member has not tried (country-matched first, the country used
+  a delegated token needs both `account:write` and `subscription:read`. The next active provider the member has not tried (country-matched first, the country used
   once and never stored), up to `mirror.maxPerUser` (default 3). The country that picks the host
   is, in order: the member's answer sent with the request (`region`, saved to the key first, see
   below), a host hint (`countryCode`, for a key with no country), "global" (`countryCode: null`),
@@ -206,7 +206,8 @@ its first check), `fetch_failed`, `upload_failed`, `provider_missing`, `url_unre
   holds) are read with a plain GET about every six hours (a new copy at the next run) and their
   combined hash compared with `objectHash`; any one missing is `missing` (even while another format's read fails), and each read stops at 4
   MiB (a larger answer is not the object). Another body or
-  nothing at all gets the object rewritten once and read back right after; if that read finds the
+  nothing at all gets the object rewritten once and read back right after (one driver per run,
+  two keys at a time: `storage.rewriteVerified`); if that read finds the
   same, the URL itself is the problem (not publicly readable, wrong public URL, a cache keeping an
   old body) and the copy is `failing` (`url_unreadable` / `url_stale`) until a read matches again.
   Only a copy awaiting that one confirmation is read again soon (`recheckAt`); a URL that keeps

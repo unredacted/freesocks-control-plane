@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**236 of 843 strings are missing** (the app currently shows English for
+**238 of 845 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -23,7 +23,7 @@ review.
   ⚠️ MISSING have no translation yet.
 
 
-## `faq` — The landing-page FAQ (questions + answers).
+## `faq` — The landing-page FAQ (questions + answers). *(2 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -52,6 +52,8 @@ review.
 | `faq.q9.answer` | Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms. | 是的。您可以使用加密货币支付--比特币，或使用门罗币 (Monero) 或 Zcash 以最大程度保护您的隐私--无需注册账户、邮箱或银行卡。付款确认后，您的会员资格将自动激活。 |
 | `faq.q10.question` | Do you own your servers, or rent them? | 你们的服务器是自有的还是租用的？ |
 | `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | 我们的硬件为自有并自行运营。许多 VPN 公司从数据中心或云服务商租用服务器，这意味着你流量经过的机器掌握在他人手中--他们可能被迫交出机器，或悄悄复制上面的内容。这是我们不愿跨越的底线，所以我们自己购买并运营设备。这成本更高、发展更慢，但只有这样，本页上的隐私承诺才有真正的意义。 |
+| `faq.q11.question` | My app says "encryption: none". Is my connection encrypted? | ⚠️ **MISSING** |
+| `faq.q11.answer` | Yes. Your app always encrypts the connection with TLS 1.3. The "encryption" field is for an optional extra layer inside that connection, and "none" only means that extra layer is off. On REALITY and Hysteria connections the TLS runs from your app to our server, so the extra layer is not needed. On connections that pass through a CDN, the TLS ends at the CDN: apps that support the extra layer get an entry with it on (a long value starting with "mlkem768x25519plus"), so the CDN cannot read what is inside, while an entry that shows "none" there is readable by the CDN. Many current apps also use a post-quantum key exchange, which protects recorded traffic from future quantum computers. | ⚠️ **MISSING** |
 
 ## `threat` — Miscellaneous strings.
 

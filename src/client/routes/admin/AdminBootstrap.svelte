@@ -1,5 +1,7 @@
 <script lang="ts">
   import { startRegistration } from '@simplewebauthn/browser';
+  import { z } from 'zod';
+  import { apiClient } from '../../lib/api';
   import {
     Card,
     CardHeader,
@@ -35,37 +37,28 @@
     busy = true;
     error = null;
     try {
-      const headers = {
-        'content-type': 'application/json',
-        'x-admin-bootstrap-token': bootstrap,
-      };
-      const optsRes = await fetch('/api/admin/auth/register-bootstrap/options', {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({ username, displayName: displayName || username }),
-      });
-      if (!optsRes.ok) {
-        const body = (await optsRes.json().catch(() => ({}))) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? `Options failed (${optsRes.status})`);
-      }
-      const { options, adminId } = (await optsRes.json()) as {
-        options: Parameters<typeof startRegistration>[0]['optionsJSON'];
-        adminId: string;
-      };
-
+      const { options, adminId } = await apiClient.post(
+        '/api/admin/auth/register-bootstrap/options',
+        { bootstrapSecret: bootstrap, username, displayName: displayName || username },
+        z.object({
+          adminId: z.string(),
+          options: z.custom<Parameters<typeof startRegistration>[0]['optionsJSON']>(
+            (value) => typeof value === 'object' && value !== null && 'challenge' in value,
+          ),
+        }),
+      );
       const reg = await startRegistration({ optionsJSON: options });
-
-      const verifyRes = await fetch('/api/admin/auth/register-bootstrap/verify', {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({ adminId, response: reg, deviceLabel: deviceLabel || 'unnamed' }),
-      });
-      if (!verifyRes.ok) {
-        const body = (await verifyRes.json().catch(() => ({}))) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? `Verification failed (${verifyRes.status})`);
-      }
+      await apiClient.post(
+        '/api/admin/auth/register-bootstrap/verify',
+        {
+          bootstrapSecret: bootstrap,
+          adminId,
+          response: reg,
+          deviceLabel: deviceLabel || 'unnamed',
+        },
+        z.object({ ok: z.literal(true) }),
+      );
+      bootstrap = '';
       done = true;
       onComplete();
     } catch (err) {

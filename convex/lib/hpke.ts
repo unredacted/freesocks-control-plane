@@ -135,9 +135,14 @@ export function sealedRequiredResponse(): Response {
   );
 }
 
-export function sealed(handler: RawHandler) {
+export function sealed(
+  handler: RawHandler,
+  admit?: (ctx: ActionCtx, req: Request) => Promise<Response | null>,
+) {
   return httpAction(async (ctx, req): Promise<Response> => {
     try {
+      const refusal = await admit?.(ctx, req);
+      if (refusal) return refusal;
       return await sealedInner(ctx, req, handler);
     } catch (e) {
       // The wrapper reads the wire body itself (before the handler's readJson),
@@ -212,6 +217,13 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
         path,
         wireBody: wire,
       });
+      if ('unavailable' in opened) {
+        return errorJson(
+          'hpke.key_unavailable',
+          'The server encryption key changed. Please try again shortly.',
+          503,
+        );
+      }
       bodyObj = (opened.plaintext ?? {}) as Record<string, unknown>;
     } else {
       bodyObj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};

@@ -8,7 +8,7 @@
  */
 import { resolveTierFeatures, type TierFeature } from '../src/shared/contracts/tierFeatures';
 import { query } from './_generated/server';
-import { resolveBillingConfig } from './lib/billingConfig';
+import { directEnabled, resolveBillingConfig, resolveDirectCoins } from './lib/billingConfig';
 import {
   readDonationState,
   readDonationHistory,
@@ -155,6 +155,10 @@ export const get = query({
     const mirrorsEnabled = firstMirror !== null;
     const { modes: modeProjection, catalog: modeCatalog } = publicModes;
 
+    // One appState read, only when direct NOWPayments is configured.
+    const directNowpayments =
+      directEnabled(billing, 'nowpayments') &&
+      (await resolveDirectCoins(ctx.db, billing)).length > 0;
     const currentBonusGb = billing.donation.enabled
       ? effectiveBonusGb(donationState, billing.donation, Date.now())
       : 0;
@@ -235,6 +239,14 @@ export const get = query({
         durations: billing.durations,
         cryptoMinMonths: billing.cryptoMinMonths,
         btcpayMinMonths: billing.btcpayMinMonths,
+        // Direct checkout: whether each crypto rail shows its payment details on
+        // our own page (NOWPayments: only once there is a coin to offer).
+        direct: {
+          // The coin list itself is GET /api/v1/billing/coins (it can run to
+          // hundreds of entries; only the crypto checkout needs it).
+          nowpayments: { enabled: directNowpayments },
+          btcpay: { enabled: directEnabled(billing, 'btcpay') },
+        },
         donation: {
           enabled: billing.donation.enabled,
           suggestedAmountsCents: billing.donation.suggestedAmountsCents,
