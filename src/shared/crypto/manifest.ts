@@ -15,8 +15,8 @@
  * The PUBLIC keys are baked into the bundle (`VITE_FS_MANIFEST_PK` +
  * `VITE_FS_MANIFEST_PK_PQ`); the SECRET keys (`FS_MANIFEST_SK` +
  * `FS_MANIFEST_SK_PQ`) live only in the Convex deployment env and sign inside the
- * "use node" action. Both schemes are pure-JS noble (no subtle/HKDF), so they run
- * in the browser, the node action, and the default isolate alike. They sign the
+ * key-management actions (convex/lib/hpkeCrypto.ts). Both schemes are pure-JS
+ * noble (no subtle/HKDF), so they run in the browser and any Convex runtime. They sign the
  * SAME canonical statement bytes (below), so the message format is unversioned;
  * the hybrid is about the signature SET, not the message.
  */

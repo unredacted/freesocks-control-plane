@@ -58,6 +58,7 @@ import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
 import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
 import { requestWasSealed, sealed, sealedRequiredResponse } from './lib/hpke';
+import { readLiveEpoch } from './lib/hpkeServer';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import { isBackendId, type BackendId } from './lib/backendIds';
 import { isSwitchServerReason } from '../src/shared/contracts/switchServerReasons';
@@ -691,9 +692,7 @@ const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> 
   // retry on 503 hpke.key_unavailable.
   const overBudget = (await throttlePublicGet(ctx, req, 'hpke.keys.fetch')) !== null;
   const [candidate, revocation] = await Promise.all([
-    overBudget
-      ? ctx.runQuery(internal.keyEpochs.current, {})
-      : ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {}),
+    overBudget ? ctx.runQuery(internal.keyEpochs.current, {}) : readLiveEpoch(ctx),
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
   const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;
@@ -896,6 +895,44 @@ http.route({
 
 // --- member auth ------------------------------------------------------------
 
+/**
+ * Login's per-IP gate, run by sealed() BEFORE the body is opened: a flood of
+ * sealed logins is refused without a decapsulation each (about 1 ms of V8 CPU,
+ * in the action slots every HTTP route shares), and before the outbound captcha
+ * verify (P1-2). Every attempt from the IP counts, malformed ones too.
+ */
+async function admitAccountLogin(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  // Fail closed (mirrors account-create): with no trustworthy client IP the
+  // per-IP throttle can't run and the per-(prefix,IP) backstop would degrade
+  // to a deployment-wide per-prefix bucket — one shared brute-force window
+  // AND a cross-user lockout lever. A proxy misconfig must answer 503, never
+  // silently weaken login throttling.
+  if (!ip) {
+    return errorJson(
+      'auth.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  // Same policy key + subject as before, so counters carry over. Not an
+  // oracle — the 429 depends only on the requester's own IP, never on account
+  // validity (those failures stay folded into the generic 'invalid').
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'account-login.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!rl.allowed) {
+    return errorJson(
+      'rate_limit.exceeded',
+      'Too many attempts from your network. Please wait a bit and try again.',
+      429,
+      { retryAfterMs: rl.retryAfterMs },
+    );
+  }
+  return null;
+}
+
 http.route({
   path: '/api/v1/auth/account-login',
   method: 'POST',
@@ -908,34 +945,13 @@ http.route({
     if (!body.accountId || !captchaToken) {
       return errorJson('validation', 'accountId and captchaToken are required', 400);
     }
+    // The IP check and the per-IP throttle already ran in admitAccountLogin.
     const ip = resolveClientIp(req);
-    // Fail closed (mirrors account-create): with no trustworthy client IP the
-    // per-IP throttle can't run and the per-(prefix,IP) backstop would degrade
-    // to a deployment-wide per-prefix bucket — one shared brute-force window
-    // AND a cross-user lockout lever. A proxy misconfig must answer 503, never
-    // silently weaken login throttling.
     if (!ip) {
       return errorJson(
         'auth.ip_unresolved',
         'Unable to establish your network address. Try again later or contact support.',
         503,
-      );
-    }
-    // Per-IP throttle BEFORE the outbound captcha verify (mirrors account-create,
-    // P1-2): without it, a login flood drives one Cap siteverify call per request.
-    // Same policy key + subject the action used before, so counters carry over.
-    // Not an oracle — the 429 depends only on the requester's own IP, never on
-    // account validity (those failures stay folded into the generic 'invalid').
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account-login.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!rl.allowed) {
-      return errorJson(
-        'rate_limit.exceeded',
-        'Too many attempts from your network. Please wait a bit and try again.',
-        429,
-        { retryAfterMs: rl.retryAfterMs },
       );
     }
     // PoP (Phase 2): the client folds its session public key into the (sealed)
@@ -970,7 +986,7 @@ http.route({
       200,
       { 'set-cookie': cookie },
     );
-  }),
+  }, admitAccountLogin),
 });
 
 http.route({

@@ -27,8 +27,8 @@ import { serializePublicKey, serverKeyPairFromSeed } from '../../src/shared/cryp
 import { clientOpenResponse, clientPrepareRequest } from '../../src/shared/crypto/channel';
 import type { Id } from '../_generated/dataModel';
 
-// convex-test resolves `ctx.runAction(internal.lib.hpkeCrypto…)` as
-// `<root>lib/hpkeCrypto` where <root> comes from the `_generated` key (`../`).
+// convex-test resolves a function under lib/ (e.g. `internal.lib.hpkeCrypto…`)
+// as `<root>lib/hpkeCrypto` where <root> comes from the `_generated` key (`../`).
 // Vite rewrites this directory's own matches to `./x.ts`, which that lookup
 // never finds, so re-root them under `../lib/`.
 const modules = Object.fromEntries(

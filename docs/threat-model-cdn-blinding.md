@@ -50,9 +50,15 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
 - **Suite (single, pinned, versioned, no negotiation):** KEM = **X-Wing** (X25519 + ML-KEM-768, the
   post-quantum hybrid, IND-CCA secure if **either** leg holds), KDF = HKDF-SHA256, AEAD =
   ChaCha20-Poly1305. `mode_base`. The client refuses any non-pinned suite.
-- **Runtime split (Phase 0 finding):** the Convex default V8 isolate lacks `crypto.subtle` HKDF, so
-  server seal/open runs in a `"use node"` action (`convex/lib/hpkeCrypto.ts`); the public
-  `httpAction`s delegate via `ctx.runAction`. The browser uses native WebCrypto.
+- **Runtime:** server seal/open runs inline in the sealed `httpAction`, in the default V8 runtime
+  (`convex/lib/hpkeServer.ts`), with no `ctx.runAction` hop. Phase 0 had put it in a `"use node"`
+  action because the isolate then lacked `crypto.subtle` HKDF; the pinned backend has it, and gate
+  G1 was re-run in V8 (`docs/hpke-phase0-spike.md` section 8). So the wire body, the plaintext and
+  the keys never cross a function boundary. The static keypair is rebuilt from `FS_SERVER_HPKE_SK`
+  once per isolate and kept for the isolate's lifetime (the same trust domain as the env, which
+  every function can read). Epoch private keys are never kept: each request re-checks the revoked
+  list and the epoch's lifetime and fetches the seed from the volatile store. The browser uses
+  native WebCrypto.
 - **Login request leg:** the client HPKE-seals the login body (the account number). It seals to the
   current **epoch key** when a manifest is pinned (Layer 3). Builds configured only with a
   static recipient seal to that static key. This defeats passive logging of the login. The membership-code redeem (`POST /api/v1/account/redeem-code`) seals
@@ -107,7 +113,7 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   proxy config / URLs, bearer codes and infra credentials; it is not applied to identifiers or
   single-use ceremonies.
 
-See `convex/lib/hpke.ts`, `convex/lib/hpkeCrypto.ts`, `src/shared/crypto/{envelope,hpke,channel}.ts`,
+See `convex/lib/hpke.ts`, `convex/lib/hpkeServer.ts`, `convex/lib/hpkeCrypto.ts`, `src/shared/crypto/{envelope,hpke,channel}.ts`,
 `src/client/lib/hpke.ts`.
 
 ### Layer 2: proof-of-possession sessions (Phase 2)
@@ -191,7 +197,7 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   (`VITE_FS_MANIFEST_PK`) and seals the login to it instead of the multi-day static key. Retired
   private seeds live only in a volatile sidecar and expire after the epoch grace period.
   The datastore and new backups contain only public epoch metadata. Manifest-pinned builds require a signed, unexpired epoch for sealed requests. See `convex/keyEpochs.ts`,
-  `rotateEpochKey` / `openRequest` in `convex/lib/hpkeCrypto.ts`.
+  `rotateEpochKey` in `convex/lib/hpkeCrypto.ts`, and `openSealedRequest` in `convex/lib/hpkeServer.ts`.
 - **Anti-rollback revoked-kid list.** A manifest-signed, monotonic-versioned list
   (`hpkeCrypto.signRevocation`, served alongside the epoch key). The client persists the last-seen
   version, rejects an older one, will not seal to a revoked kid, and fails closed on the login route

@@ -1,10 +1,10 @@
 // @vitest-environment node
 //
-// This module runs in the browser and in the Convex "use node" action, both of
-// which have full WebCrypto (including subtle HKDF). It does NOT run in the
-// Convex default isolate, so the node vitest environment is the faithful test
-// surface. (The isolate gap is a runtime property established in the Phase 0
-// spike, not a unit-test concern.)
+// This module runs in the browser and in the Convex default V8 runtime, both of
+// which have subtle HKDF (the isolate since the pinned backend; gate G1 re-run in
+// docs/hpke-phase0-spike.md section 8). The node vitest environment stands in
+// for both here; the runtime itself is a property of the backend image, not a
+// unit-test concern.
 import { describe, expect, test } from 'vitest';
 import { MlKem768 } from 'mlkem';
 import {

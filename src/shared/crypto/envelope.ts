@@ -1,10 +1,9 @@
 /**
  * Pure, runtime-agnostic HPKE envelope + canonicalization helpers for the
  * CDN-blinding channel. This module imports no crypto library and executes no
- * key-schedule crypto, so it is safe to import from the Convex default V8
- * isolate (which lacks subtle HKDF). The HPKE seal/open primitives that need
- * full WebCrypto live in ./hpke.ts and run only in the browser and the
- * "use node" server action.
+ * key-schedule crypto, so it is safe to import from anywhere. The HPKE
+ * seal/open primitives that need subtle HKDF live in ./hpke.ts and run in the
+ * browser and in the Convex default V8 runtime (convex/lib/hpkeServer.ts).
  *
  * Design: docs/hpke-phase0-spike.md and the threat model. The wire envelope is
  * `{ fsSealed: { v, suiteId?, kid?, enc?, responseNonce?, ct } }` with all byte
