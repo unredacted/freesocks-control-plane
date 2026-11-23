@@ -6,6 +6,7 @@
  * the cache hit/miss + User-Agent keying, header passthrough, 404, and the
  * account-view URL (fronted vs. fallback).
  */
+import { setCacheBlob, withBodies } from './lib/subscriptionBodies.testing';
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import YAML from 'yaml';
@@ -434,7 +435,7 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
     for (const name of names) for (const sni of SERVER_NAMES) expect(name).not.toContain(sni);
     for (const n of NODES) expect(lines.join('\n')).not.toContain(n.node);
     // A refresh (cache cleared) gives the same names.
-    await t.run((ctx) => ctx.db.patch(subId, { subCache: undefined }));
+    await t.run((ctx) => setCacheBlob(ctx.db, subId, undefined));
     expect(await served(t)).toEqual(lines);
   });
 
@@ -496,7 +497,7 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
         value: 'false',
         updatedAt: Date.now(),
       });
-      await ctx.db.patch(subId, { subCache: undefined });
+      await setCacheBlob(ctx.db, subId, undefined);
     });
     const raw = await served(t);
     const pinned = (await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode!;
@@ -567,7 +568,7 @@ describe('profile-title is the service name and the connection mode on every sub
         value: JSON.stringify('privacy-reality'),
         updatedAt: Date.now(),
       });
-      await ctx.db.patch(subId, { subCache: undefined });
+      await setCacheBlob(ctx.db, subId, undefined);
     });
     expect((await get(t)).headers.get('profile-title')).toBe(b64('FreeSocks · Freedom XHTTP'));
   });
@@ -579,9 +580,7 @@ describe('profile-title is the service name and the connection mode on every sub
     expect((await get(t)).headers.get('profile-title')).toBe(b64('FreeSocks · Freedom XHTTP'));
     await t.run(async (ctx) => {
       await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
-      await ctx.db.patch((await ctx.db.get(userId))!.currentSubscriptionId!, {
-        subCache: undefined,
-      });
+      await setCacheBlob(ctx.db, (await ctx.db.get(userId))!.currentSubscriptionId!, undefined);
     });
     expect((await get(t)).headers.get('profile-title')).toBe(b64('FreeSocks · Privacy REALITY'));
   });
@@ -592,10 +591,10 @@ describe('profile-title is the service name and the connection mode on every sub
     await get(t);
     // Age the cached body past its TTL, then take the backend down.
     await t.run(async (ctx) => {
-      const sub = (await ctx.db.get(subId))!;
+      const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
       const entries = JSON.parse(sub.subCache!) as Array<{ at: number }>;
       for (const e of entries) e.at -= 24 * 3600_000;
-      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
     });
     vi.stubGlobal(
       'fetch',
@@ -703,13 +702,13 @@ describe('the backend’s page URL never reaches the app', () => {
     // A body cached while the header still passed (before this change).
     const patchCache = (edit: (e: { at: number; headers?: Record<string, string> }) => void) =>
       t.run(async (ctx) => {
-        const sub = (await ctx.db.get(subId))!;
+        const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
         const entries = JSON.parse(sub.subCache!) as Array<{
           at: number;
           headers?: Record<string, string>;
         }>;
         for (const e of entries) edit(e);
-        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+        await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
       });
     await patchCache((e) => {
       e.headers = { ...e.headers, 'profile-web-page-url': PAGE_URL };
@@ -799,7 +798,7 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
         value: JSON.stringify('Example VPN'),
         updatedAt: Date.now(),
       });
-      await ctx.db.patch(subId, { subCache: undefined });
+      await setCacheBlob(ctx.db, subId, undefined);
     });
     expect((await served(t)).doc.rules).toEqual(['MATCH,Example VPN']);
 
@@ -809,7 +808,7 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
         value: 'false',
         updatedAt: Date.now(),
       });
-      await ctx.db.patch(subId, { subCache: undefined });
+      await setCacheBlob(ctx.db, subId, undefined);
     });
     const off = await served(t);
     expect(off.doc['proxy-groups'].map((g) => g.name)).toEqual(['→ Remnawave']);
@@ -824,10 +823,10 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
     // What a body cached before this change holds: the backend's group name.
     const patchCache = (edit: (e: { at: number; content: string }) => void) =>
       t.run(async (ctx) => {
-        const sub = (await ctx.db.get(subId))!;
+        const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
         const entries = JSON.parse(sub.subCache!) as Array<{ at: number; content: string }>;
         for (const e of entries) edit(e);
-        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+        await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
       });
     await patchCache((e) => {
       e.content = e.content
@@ -930,10 +929,10 @@ describe('GET /api/v1/sub/<token>: the REALITY key share Mihomo asks for', () =>
     // What a body cached before this change holds: the backend's own entry.
     const patchCache = (edit: (e: { at: number; content: string }) => void) =>
       t.run(async (ctx) => {
-        const sub = (await ctx.db.get(subId))!;
+        const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
         const entries = JSON.parse(sub.subCache!) as Array<{ at: number; content: string }>;
         for (const e of entries) edit(e);
-        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+        await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
       });
     await patchCache((e) => {
       e.content = e.content.replace(/^\s*support-x25519mlkem768: true\n/m, '');
@@ -1068,10 +1067,10 @@ describe('GET /api/v1/sub/<token>: Hysteria entries verify the node by pin, or g
   /** Ages every cached body past its TTL, then takes the backend down. */
   async function staleOnly(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
     await t.run(async (ctx) => {
-      const sub = (await ctx.db.get(subId))!;
+      const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
       const entries = JSON.parse(sub.subCache!) as Array<{ at: number }>;
       for (const e of entries) e.at -= 24 * 3600_000;
-      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
     });
     vi.stubGlobal(
       'fetch',
@@ -1227,10 +1226,10 @@ describe('GET /api/v1/sub/<token>: conditional requests', () => {
     t.fetch('/api/v1/sub/tok_abc', { headers: { ...UA, ...extra } });
   const ageCache = (t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>, ms: number) =>
     t.run(async (ctx) => {
-      const sub = (await ctx.db.get(subId))!;
+      const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
       const entries = JSON.parse(sub.subCache!) as Array<Record<string, unknown> & { at: number }>;
       for (const e of entries) e.at -= ms;
-      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
     });
 
   test('a weak tag on the miss, the same on a hit; a matching If-None-Match is a 304', async () => {
@@ -1347,18 +1346,18 @@ describe('GET /api/v1/sub/<token>: conditional requests', () => {
     await get(t);
     const legacy = async () =>
       t.run(async (ctx) => {
-        const sub = (await ctx.db.get(subId))!;
+        const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
         const entries = JSON.parse(sub.subCache!) as Array<Record<string, unknown>>;
         for (const e of entries) {
           delete e.v;
           delete e.validUntil;
         }
-        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+        await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
       });
     await legacy();
     await get(t); // within the TTL, yet the backend is asked
     expect(fetchCalls).toBe(2);
-    const fresh = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const fresh = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(JSON.parse(fresh.subCache!)[0]).toMatchObject({ v: 2, validUntil: null });
     await legacy();
     vi.stubGlobal(

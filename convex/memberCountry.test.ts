@@ -6,6 +6,7 @@
  * them made WHILE a request is fetching from the backend), the sweeps, the
  * carries, and the invariant: every stored copy equals the row's stored country.
  */
+import { withBodies } from './lib/subscriptionBodies.testing';
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
@@ -149,7 +150,7 @@ const fetchSub = (t: T, o: { country?: string; ip?: string; ua?: string } = {}) 
   });
 
 const row = (t: T, id: Id<'subscriptions'>) =>
-  t.run((ctx) => ctx.db.get(id)) as Promise<Doc<'subscriptions'>>;
+  t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(id))) as Promise<Doc<'subscriptions'>>;
 const regions = (sub: Doc<'subscriptions'>) =>
   (sub.subCache ? (JSON.parse(sub.subCache) as { region?: string | null }[]) : []).map(
     (e) => e.region ?? null,

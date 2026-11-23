@@ -49,6 +49,7 @@ import { OWN_EXITS_STATE_KEY } from './ownExits';
 import { invalidateCopies } from './mirrorCopies';
 import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { recordHeartbeat } from './cronHeartbeat';
+import { keepBodiesFor } from './lib/subscriptionBodies';
 
 const DAY = 86_400_000;
 const PAGE = 200;
@@ -91,7 +92,7 @@ function fieldsOf(sub: Doc<'subscriptions'>): CountryFields {
   };
 }
 
-/** The cached bodies that may stay: no region, or the row's stored country. */
+/** The old blob's bodies that may stay (until it is moved): no region, or the row's stored country. */
 function keptCache(blob: string | undefined, stored: string | null): string | undefined {
   if (!blob) return blob;
   let entries: unknown[];
@@ -183,6 +184,8 @@ export async function setStoredCountry(
     ...(bump ? { countryRev: (sub.countryRev ?? 0) + 1 } : {}),
   };
   await ctx.db.patch(sub._id, patch);
+  // The cached bodies are stored copies too (lib/subscriptionBodies.ts).
+  await keepBodiesFor(ctx, sub._id, storedAfter);
   // The per-country key counts move with the row (lib/countryKeyCounts.ts).
   await bumpCountryKeysForRow(ctx, sub, { ...sub, ...patch } as Doc<'subscriptions'>);
   // A mirror's body is rendered for the stored country (convex/storage.ts):

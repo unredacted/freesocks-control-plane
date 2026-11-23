@@ -70,6 +70,7 @@ import { defaultClientRule } from '../../convex/lib/edgeConfig';
 import { classifyClient } from '../../convex/lib/edges/clientFamilies';
 import { AUTO_GROUP_NAME, encryptedName } from '../../src/shared/entryNames';
 import YAML from 'yaml';
+import { setCacheBlob } from '../../convex/lib/subscriptionBodies.testing';
 import {
   ADDR,
   ENABLED,
@@ -867,10 +868,8 @@ async function bodyCarrying(
         const sub = (await ctx.db.query('subscriptions').collect()).find(
           (s) => s.subToken === token,
         )!;
-        await ctx.db.patch(sub._id, {
-          renderKey: randomBytes(32).toString('hex'),
-          subCache: undefined,
-        });
+        await ctx.db.patch(sub._id, { renderKey: randomBytes(32).toString('hex') });
+        await setCacheBlob(ctx.db, sub._id, undefined);
       });
     const res = await fetchSub(token, UA[engine]);
     expect(res.status, `subscription: ${res.headers.get('x-fcp-delivery') ?? ''}`).toBe(200);

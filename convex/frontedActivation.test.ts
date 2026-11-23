@@ -23,6 +23,7 @@
  * The node environment is needed for the node-runtime modules (ingress check,
  * front qualification, mirrors). Fixtures are RFC 5737 / `*.example` only.
  */
+import { cacheBlob } from './lib/subscriptionBodies.testing';
 import { registerRelay } from './lib/edges/testing/fixtures';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -1101,7 +1102,7 @@ describe("a live node's replacement stays a candidate until its commit", () => {
       expect(body).toContain(e1Address);
       expect(body).not.toContain(e2Address);
     }
-    const cache = (await t.run((c) => c.db.get(live.subId)))!.subCache ?? '';
+    const cache = (await t.run((c) => cacheBlob(c.db, live.subId))) ?? '';
     expect(cache).toContain(e1Address);
     expect(cache).not.toContain(e2Address);
     await t.action(internal.storage.refreshMirrorsForSubscription, {

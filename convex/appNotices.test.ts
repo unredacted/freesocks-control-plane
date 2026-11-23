@@ -8,6 +8,7 @@
  * counted beside the refusals, and leaves a throttled record the account view
  * shows for 7 days. Example names and RFC 5737 addresses only.
  */
+import { withBodies } from './lib/subscriptionBodies.testing';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import YAML from 'yaml';
@@ -142,7 +143,7 @@ async function seedEdge(listener = realityListener({ tlsNames: ['a.example'] }))
 
 const get = (t: T, ua: string) => t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': ua } });
 const rowOf = (t: T, subId: Id<'subscriptions'>) =>
-  t.run(async (ctx) => (await ctx.db.get(subId))!);
+  t.run(async (ctx) => (await withBodies(ctx.db, await ctx.db.get(subId)))!);
 const refusals = (t: T) => t.run((ctx) => readRefusals(ctx.db, Date.now()));
 
 /** Run what the route scheduled (the counter, the record) to the end. */

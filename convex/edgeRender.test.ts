@@ -7,6 +7,7 @@
  * origin covers. The cache token follows the binding's policy version and the
  * origin's publication epoch, and every render is snapshotted on the row.
  */
+import { setCacheBlob, withBodies } from './lib/subscriptionBodies.testing';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
@@ -194,11 +195,13 @@ const cacheOf = (sub: Doc<'subscriptions'>) => JSON.parse(sub.subCache!) as Cach
 
 async function expireCache(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
   await t.run(async (ctx) => {
-    const s = (await ctx.db.get(subId))!;
+    const s = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
     const entries = cacheOf(s);
-    await ctx.db.patch(subId, {
-      subCache: JSON.stringify(entries.map((e) => ({ ...e, at: e.at - 120_000 }))),
-    });
+    await setCacheBlob(
+      ctx.db,
+      subId,
+      JSON.stringify(entries.map((e) => ({ ...e, at: e.at - 120_000 }))),
+    );
   });
 }
 
@@ -225,7 +228,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     }
     expect(lines.some((l) => labelOf(l).startsWith(BACKUP))).toBe(false);
     // The sub got a render key; the cache entry carries the `<policyVersion>:<epoch>` token.
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
     expect(sub.renderKey).toMatch(/^[0-9a-f]{64}$/);
     const cache = cacheOf(sub);
@@ -287,7 +290,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(primaryAddr).not.toBe(backupAddr);
     expect([EDGE_A, EDGE_B]).toContain(primaryAddr);
     expect([EDGE_A, EDGE_B]).toContain(backupAddr);
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(new Set([sub.lastRender!.primaryEdgeId, sub.lastRender!.backupEdgeId])).toEqual(
       new Set([b.edgeId, (await t.run((ctx) => ctx.db.get(relayId)))!.publishedEdgeIds[0]]),
     );
@@ -348,7 +351,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     // No listener resolves in the body, so every edge is ineligible and the
     // pipeline judges the pool empty before any codec runs.
     expect(res.headers.get('x-fcp-delivery')).toBe('empty_pool');
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(sub.subCache).toBeUndefined();
     expect(sub.lastRender).toBeUndefined();
     expect(sub.lastRenderedEpoch).toBeUndefined();
@@ -389,7 +392,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(await res.text()).toBe(
       `${raw.slice(0, raw.indexOf('#'))}#${encodeURIComponent('FreeSocks · Direct')}`,
     );
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(sub.pinnedNode).toBe('node-nine');
     expect(cacheOf(sub)[0].relay).toBeNull();
     expect(sub.lastRender).toBeUndefined();
@@ -423,7 +426,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(first.status).toBe(200);
     expect(await first.text()).toBe(placeholder);
     expect(first.headers.get('cache-control')).toBe('private, no-store');
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(sub.pinnedNode).toBeUndefined();
     expect(sub.subCache).toBeUndefined();
     // The node goes live: its body is what the very next request gets (no 30 s placeholder).
@@ -494,7 +497,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(fetchCalls).toBe(1);
     await get(t);
     expect(fetchCalls).toBe(2);
-    expect(cacheOf((await t.run((ctx) => ctx.db.get(subId)))!)[0].relay).toBe(`2:${epoch}`);
+    expect(
+      cacheOf((await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!)[0].relay,
+    ).toBe(`2:${epoch}`);
   });
 
   test('the listener sni pick version reaches the renderer, and is absent by default', async () => {
@@ -621,7 +626,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(labelOf(lines[0])).toBe('⌛ Subscription expired');
     // Nothing was rendered for it (no snapshot, no rendered epoch), and it is
     // never cached: the account may be usable again on the next fetch.
-    const sub = (await expired.t.run((ctx) => ctx.db.get(expired.subId)))!;
+    const sub = (await expired.t.run(async (ctx) =>
+      withBodies(ctx.db, await ctx.db.get(expired.subId)),
+    ))!;
     expect(sub.lastRender).toBeUndefined();
     expect(sub.lastRenderedEpoch).toBeUndefined();
     expect(sub.subCache).toBeUndefined();
@@ -717,7 +724,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(qs.get('sni')).toBe(HOSTNAME);
     expect(qs.get('host')).toBe(HOSTNAME);
     expect(qs.get('path')).toBe('/ws');
-    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastRender).toMatchObject({
+    expect(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.lastRender,
+    ).toMatchObject({
       listenerKeys: ['w'],
       primaryEdgeId: edgeA,
     });
@@ -866,7 +875,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(baseOf('primary')).toEqual(new Set([PRIMARY]));
     expect(baseOf('backup')).toEqual(new Set([BACKUP]));
     // A report naming either connection lands on the edge whose address that name carries.
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     for (const [choice, base] of [
       ['primary', PRIMARY],
       ['backup', BACKUP],
@@ -963,9 +972,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(JSON.stringify(view)).not.toContain(EDGE_A);
     // The delivery stamped the epoch the body was rendered against.
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
-    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastRender!.epoch).toBe(
-      relay.publicationEpoch,
-    );
+    expect(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.lastRender!.epoch,
+    ).toBe(relay.publicationEpoch);
     // A rotation stamps lastRotatedAt but the epoch comparison is what counts
     // now: an unchanged epoch means the member already holds the current pool.
     await t.run((ctx) => ctx.db.patch(relayId, { lastRotatedAt: Date.now() + 1 }));
@@ -1032,13 +1041,15 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, subId } = await seed();
     await get(t); // a v2rayNG list: no auto group
-    const before = (await t.run((ctx) => ctx.db.get(subId)))!.lastRender!;
+    const before = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!
+      .lastRender!;
     expect(before.autoGroup).toBe(false);
     const labels = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(await t.action(internal.edgeRender.clearSnapshotAutoGroupForRollback, {})).toEqual({
       stripped: 1,
     });
-    const after = (await t.run((ctx) => ctx.db.get(subId)))!.lastRender!;
+    const after = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!
+      .lastRender!;
     expect(after).not.toHaveProperty('autoGroup');
     const { autoGroup, ...rest } = before;
     void autoGroup;
@@ -1109,7 +1120,7 @@ describe("edgeRender: server names for the member's country", () => {
     provenInCn(names);
     // The inferred country shaped this body: not cached, not shareable, kept nowhere.
     expect(res.headers.get('cache-control')).toBe('private, no-store');
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(sub.subCache ?? '[]').not.toContain('CN');
     expect(JSON.stringify(sub)).not.toContain('"CN"');
     expect(sub.sniRegion).toBeUndefined();
@@ -1122,7 +1133,9 @@ describe("edgeRender: server names for the member's country", () => {
     const res = await from(t);
     expect(sniOf(await res.text())).not.toContain('cn-blocked.example');
     expect(res.headers.get('cache-control')).toMatch(/^public/);
-    expect(cacheOf((await t.run((ctx) => ctx.db.get(subId)))!)).toHaveLength(1);
+    expect(
+      cacheOf((await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!),
+    ).toHaveLength(1);
     // A later request from a curated country is NOT served that cached body.
     const cn = await from(t, 'CN');
     expect(cn.headers.get('cache-control')).toBe('private, no-store');
@@ -1169,7 +1182,8 @@ describe("edgeRender: server names for the member's country", () => {
     stubPanel();
     vi.stubEnv('CF_FRONTED', 'true');
     const { t, subId } = await seedCountry();
-    const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    const userId = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!
+      .userId;
     // The choices are the censored-country list (here: the default one).
     expect(await t.query(internal.memberCountry.memberView, { userId })).toMatchObject({
       applies: true,
@@ -1184,13 +1198,17 @@ describe("edgeRender: server names for the member's country", () => {
     const res = await from(t, 'RU');
     provenInCn(sniOf(await res.text()));
     expect(res.headers.get('cache-control')).toMatch(/^public/);
-    const entries = JSON.parse((await t.run((ctx) => ctx.db.get(subId)))!.subCache!) as {
+    const entries = JSON.parse(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.subCache!,
+    ) as {
       region?: string;
     }[];
     expect(entries.map((e) => e.region)).toEqual(['CN']);
     // Back to automatic: the answer is gone from the row, and the CN body is not reused.
     await t.mutation(internal.memberCountry.setChoice, { userId, region: null });
-    expect((await t.run((ctx) => ctx.db.get(subId)))!.sniRegion).toBeUndefined();
+    expect(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.sniRegion,
+    ).toBeUndefined();
     const auto = await from(t);
     expect(auto.headers.get('cache-control')).toMatch(/^public/);
     expect(sniOf(await auto.text())).not.toContain('cn-blocked.example');
@@ -1202,7 +1220,9 @@ describe("edgeRender: server names for the member's country", () => {
     const { t, subId } = await seed();
     const res = await from(t, 'CN');
     expect(res.headers.get('cache-control')).toMatch(/^public/);
-    expect(cacheOf((await t.run((ctx) => ctx.db.get(subId)))!)).toHaveLength(1);
+    expect(
+      cacheOf((await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!),
+    ).toHaveLength(1);
   });
 });
 
@@ -1248,7 +1268,7 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     expect(primary).toHaveLength(2); // v4 + v6 of the one published edge
     expect(primary.map(labelOf)).toEqual([`${PRIMARY} · IPv4`, `${PRIMARY} · IPv6`]);
     expect(primary[0]).toContain(`@${EDGE_A}:443?`);
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(sub.pinnedNode).toBe(NODE);
     expect(sub.renderKey).toMatch(/^[0-9a-f]{64}$/);
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
@@ -1275,7 +1295,7 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
     expect(selector.default).toBe(AUTO_GROUP_NAME);
     expect(JSON.stringify(cfg)).not.toContain(JSON.stringify(TEMPLATE));
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(sub.pinnedNode).toBe(NODE);
     expect(sub.lastRender?.family).toBe('singbox');
   });
@@ -1290,7 +1310,9 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     expect(text).toContain(`${PRIMARY} · IPv4`);
     expect(text).toContain(AUTO_GROUP_NAME);
     expect(text).toContain(`server: ${EDGE_A}`);
-    expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+    expect(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.pinnedNode,
+    ).toBe(NODE);
   });
 
   test('empty pool: every family gets 503 empty_pool (nothing of the former edge, and no empty body)', async () => {
@@ -1309,7 +1331,7 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
       expect(text).not.toContain(TEMPLATE);
       expect(text).not.toContain(EDGE_A);
       // The pin was still recorded (the place is known), but nothing was cached.
-      const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+      const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
       expect(sub.pinnedNode).toBe(NODE);
       expect(sub.subCache).toBeUndefined();
     }
@@ -1355,10 +1377,10 @@ describe('edgeRender: conditional requests and freshness', () => {
     edit: (e: Record<string, unknown>) => void,
   ) =>
     t.run(async (ctx) => {
-      const sub = (await ctx.db.get(subId))!;
+      const sub = (await withBodies(ctx.db, await ctx.db.get(subId)))!;
       const entries = JSON.parse(sub.subCache!) as Array<Record<string, unknown>>;
       for (const e of entries) edit(e);
-      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      await setCacheBlob(ctx.db, subId, JSON.stringify(entries));
     });
   const setProofExpiry = (t: ReturnType<typeof convexTest>, edgeId: Id<'edges'>, at: number) =>
     t.run(async (ctx) => {
@@ -1451,7 +1473,7 @@ describe('edgeRender: conditional requests and freshness', () => {
     expect(first.status).toBe(200);
     expect(first.headers.get('cache-control')).toBe('public, max-age=30, must-revalidate');
     const proof = (await t.run((ctx) => ctx.db.get(edgeA)))!.frontQualification!;
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(JSON.parse(sub.subCache!)[0]).toMatchObject({ v: 2, validUntil: proof.expiresAt });
     // Five seconds of proof left: the next render says so, and so does its 304.
     await setProofExpiry(t, edgeA, Date.now() + 5_000);
@@ -1520,7 +1542,7 @@ describe('edgeRender: conditional requests and freshness', () => {
     const before = await (await get(t)).text();
     expect(before).toContain(`@${FRONT_A}:443?`);
     expect(before).toContain(`@${FRONT_B}:443?`);
-    await t.run((ctx) => ctx.db.patch(subId, { subCache: undefined }));
+    await t.run((ctx) => setCacheBlob(ctx.db, subId, undefined));
     // The route's first look at the clock (right after the next render) finds
     // two minutes gone: A's proof has lapsed meanwhile.
     __setSubscriptionClockForTests(() => {
@@ -1532,7 +1554,7 @@ describe('edgeRender: conditional requests and freshness', () => {
     const body = await res.text();
     expect(body).toContain(`@${FRONT_B}:443?`);
     expect(body).not.toContain(FRONT_A);
-    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const sub = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!;
     expect(JSON.parse(sub.subCache!)[0]).toMatchObject({ validUntil: T0 + 2 * 3_600_000 });
     expect(sub.lastRender).toMatchObject({ primaryEdgeId: edgeB });
   });
@@ -1550,7 +1572,8 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
   const SIGN_KEY = 'raw-view-sign';
   async function memberCookie(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
     vi.stubEnv('SESSION_SIGNING_KEY', SIGN_KEY);
-    const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    const userId = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!
+      .userId;
     const sid = `sid-raw-${Math.random().toString(36).slice(2)}`;
     await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
     return `fs_session=${await signValue(sid, SIGN_KEY)}`;
@@ -1581,7 +1604,9 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
     expect(content).not.toContain(ORIGIN);
     expect(content).not.toContain(`#${TEMPLATE}`);
     // Not stamped as a delivery: the browser is not the member's app.
-    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastDeliveredAt).toBeUndefined();
+    expect(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.lastDeliveredAt,
+    ).toBeUndefined();
     const viaSub = await subNoUa(t);
     expect(viaSub.status).toBe(200);
     expect(await viaSub.text()).toBe(content);
@@ -1753,7 +1778,9 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
     const { t, subId } = await seed({
       listeners: [realityListener({ tlsNames: NAMES, matchRule: { kind: 'address' } })],
     });
-    expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+    expect(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.pinnedNode,
+    ).toBe(NODE);
     const cookie = await memberCookie(t, subId);
     const res = await raw(t, cookie);
     expect(res.status).toBe(200);
@@ -1762,7 +1789,9 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
     expect(content).not.toContain(ORIGIN);
     expect(await (await subNoUa(t)).text()).toBe(content);
     // The pin is unchanged (the body reported none to record).
-    expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+    expect(
+      (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!.pinnedNode,
+    ).toBe(NODE);
   });
 });
 
@@ -1772,7 +1801,8 @@ describe('edgeRender: where a member connects from, at a place an origin covers'
   const CN_OK = ['cn-ok-1.example', 'cn-ok-2.example'];
   async function memberCookie(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
     vi.stubEnv('SESSION_SIGNING_KEY', SIGN_KEY);
-    const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    const userId = (await t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(subId))))!
+      .userId;
     const sid = `sid-c-${Math.random().toString(36).slice(2)}`;
     await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
     return `fs_session=${await signValue(sid, SIGN_KEY)}`;
@@ -1840,7 +1870,7 @@ describe('edgeRender: where a member connects from, at a place an origin covers'
       headers: { 'user-agent': ua, 'cf-ipcountry': country, 'cf-connecting-ip': '192.0.2.60' },
     });
   const row = (t: ReturnType<typeof convexTest>, id: Id<'subscriptions'>) =>
-    t.run((ctx) => ctx.db.get(id)) as Promise<Doc<'subscriptions'>>;
+    t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(id))) as Promise<Doc<'subscriptions'>>;
   const regions = (s: Doc<'subscriptions'>) =>
     (s.subCache ? (JSON.parse(s.subCache) as { region?: string | null }[]) : []).map(
       (e) => e.region ?? null,
@@ -2010,7 +2040,7 @@ describe('edgeRender: delivery by country', () => {
       },
     });
   const row = (t: ReturnType<typeof convexTest>, id: Id<'subscriptions'>) =>
-    t.run((ctx) => ctx.db.get(id)) as Promise<Doc<'subscriptions'>>;
+    t.run(async (ctx) => withBodies(ctx.db, await ctx.db.get(id))) as Promise<Doc<'subscriptions'>>;
 
   test('steer on: a member in IR gets the edge that is not blocked there, and the snapshot says so', async () => {
     const { t, subId, edgeA, edgeB } = await world();

@@ -14,6 +14,7 @@ import { defaultRouteFaults } from '../../convex/lib/backend/subscriptionTemplat
 import { clients } from './manifest';
 import { assertSubscription, subscriptionEntries } from './assertions';
 import { COMPAT_ENDPOINTS } from './fixture';
+import { cacheBlob, setCacheBlob } from '../../convex/lib/subscriptionBodies.testing';
 import { COMPAT_NODE, COMPAT_REMARK, docker, seedPanel, useTemplates } from './panel';
 import { routing, sandboxed, selectProxy } from './sandbox';
 
@@ -114,7 +115,7 @@ async function subscription(ua: string) {
 const clearSubCache = () =>
   t.run(async (ctx) => {
     const sub = await ctx.db.query('subscriptions').first();
-    await ctx.db.patch(sub!._id, { subCache: undefined });
+    await setCacheBlob(ctx.db, sub!._id, undefined);
   });
 
 /** Revalidate with the tag the last answer carried: nothing changed, so a 304 with no body. */
@@ -153,8 +154,8 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
     assertSubscription(first, 'singbox', COMPAT_ENDPOINTS);
     assertSubscription(await subscription(byFormat('mihomo')), 'mihomo', COMPAT_ENDPOINTS);
     assertSubscription(await subscription(byFormat('links')), 'links', COMPAT_ENDPOINTS);
-    const cache = await t.run(
-      async (ctx) => (await ctx.db.query('subscriptions').first())!.subCache,
+    const cache = await t.run(async (ctx) =>
+      cacheBlob(ctx.db, (await ctx.db.query('subscriptions').first())!._id),
     );
     expect(cache).toBeTruthy();
     expect((JSON.parse(cache!) as Array<{ ua: string }>).map((e) => e.ua)).toEqual(

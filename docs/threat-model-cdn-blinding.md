@@ -327,7 +327,7 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   during the mode switch allows those links and their holders to fetch the new configuration.
   Members can also reveal a new subscription link later through the warned account flow.
   The fronted token is an unguessable per-subscription capability, and a short server-side TTL cache
-  (`subscriptions.subCache`, keyed by User-Agent) fronts the backend. The account reveal-leg carries
+  (`subscriptionBodies`, keyed by key and User-Agent) fronts the backend. The account reveal-leg carries
   the RAW backend URL + the opaque `subToken` (both HPKE-sealed); the SPA builds the fronted
   `<origin>/api/v1/sub/<token>` URL client-side from its own origin (`subscriptionDisplayUrl`), so the
   capability is sealed in delivery and there's no deployment-origin env dependency — only the proxy

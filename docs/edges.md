@@ -8292,6 +8292,21 @@ lifecycle runs in that test and its rows appear here.
 
 ## Deploy notes
 
+**Cached subscription bodies in their own table** (2026-11-22) move the fronted route's per-UA
+bodies off the key's row (`subscriptions.subCache`, up to four full bodies) into
+`subscriptionBodies`, one row per key and User-Agent: a delivery stamp, a country guess or any
+other patch to the key no longer rewrites them, and a body written for one app no longer
+invalidates the cached reads of the key. Two deploys. The first adds the table and keeps the old
+field: the route still answers from a row's old blob until it is moved, the first body written
+for a key moves the rest of its blob, and `seedCutover` schedules
+`subscriptionBodies:migrateLegacy`, which moves every blob page by page and then records
+`migration:subscriptionBodies` in `appState` (once; a no-op afterwards). No env change, and no
+app fetches again because of the move. Check it finished before the second deploy: the flag is
+set and `bunx convex logs` shows no `migrateLegacy` error. The second deploy drops the field. To
+roll the first back, run `subscriptionBodies:clearForRollback` (no arguments) before deploying
+the older build: it empties the table (apps fetch afresh at their next poll) and clears the flag,
+so the move runs again when this build returns.
+
 **Tencent EdgeOne fronts** (2026-11-15, § "EdgeOne fronts") add a provider id (`edgeone`), its
 credentials, settings and placement schema variants, two pinned packages
 (`tencentcloud-sdk-nodejs-teo` 4.1.333, `tencentcloud-sdk-nodejs-common` 4.1.220; the Node floor

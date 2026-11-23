@@ -212,6 +212,7 @@ import type * as sniVantage from "../sniVantage.js";
 import type * as sniVantageOps from "../sniVantageOps.js";
 import type * as statusPage from "../statusPage.js";
 import type * as storage from "../storage.js";
+import type * as subscriptionBodies from "../subscriptionBodies.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as supportId from "../supportId.js";
 import type * as tiers from "../tiers.js";
@@ -431,6 +432,7 @@ declare const fullApi: ApiFromModules<{
   sniVantageOps: typeof sniVantageOps;
   statusPage: typeof statusPage;
   storage: typeof storage;
+  subscriptionBodies: typeof subscriptionBodies;
   subscriptions: typeof subscriptions;
   supportId: typeof supportId;
   tiers: typeof tiers;
