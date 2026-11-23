@@ -319,7 +319,8 @@ on our own origin instead. Admin → Billing → **Direct checkout**:
   The unit is the ticker minus that network's suffix (`usdttrc20` → `USDT`).
 - The member picker reads `GET /api/v1/billing/coins` (public, one cached read,
   `max-age=60`), not the public config: the list can run to hundreds. The first
-  six coins are buttons, the full list a native drop-down. Submit waits for the
+  pinned coins are buttons; every coin is in a searchable list (coin, ticker or
+  network, punctuation ignored: "usdt", "trc20" and "tron" all find USDT on Tron). Submit waits for the
   list, so a quick click never falls back to hosted by accident.
 - `billing.btcpay.directMethods`: BTCPay payment method ids shown, in order
   (default `BTC-CHAIN`, `BTC-LN`).
@@ -367,7 +368,9 @@ return page poll (GET /billing/order/<ref>, unchanged route) also returns `payme
   exists. Below the coin's minimum (NOWPayments' "less than minimal") →
   `billing.coin_minimum` ("pick another coin or a longer term"), nothing stored.
   A coin that needs a memo without `allowMemo` → `billing.invalid_coin`, logged.
-  Anything else (API error, unexpected coin, a payment for another `order_id`,
+  Anything else (API error, unexpected coin, a payment whose `order_id` is
+  missing or not ours (its IPNs find the order by `order_id`, so without it the
+  payment could never grant),
   malformed address/amount/expiry, no usable BTCPay method) → the order is stored
   as a normal hosted order and the member is redirected, logged
   `[billing] <rail> direct checkout (unavailable)`.
@@ -379,7 +382,9 @@ return page poll (GET /billing/order/<ref>, unchanged route) also returns `payme
   positive plain decimal string kept **exactly as the API spelled it** (NOWPayments
   JSON is parsed with a source-text reviver, so `0.00012000` is never re-spelled);
   the coin must be the one asked for; the expiry must be in the future (and within
-  30 days); a BTCPay link must be `bitcoin:` or `lightning:`.
+  30 days); a BTCPay link must be `bitcoin:` or `lightning:` AND pay exactly what
+  the page shows (`btcpay.ts:linkMatches`: same destination, and a BIP21 `amount`
+  equal to the shown amount), else the checkout falls back to hosted.
 - The network is named in the picker, next to the amount and in a warning line.
   A memo gets its own boxed warning and copy button.
 - The QR is drawn same-origin by the bundled `qrcode` package (CSP stays

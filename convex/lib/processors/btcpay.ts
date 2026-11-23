@@ -490,6 +490,22 @@ const DirectMethods = z.array(
 );
 
 /**
+ * Whether a QR payload pays exactly the shown destination + amount:
+ * `bitcoin:<address>?amount=<btc>` (amount optional; when present it must equal
+ * the shown amount) or `lightning:<bolt11>` (the invoice carries its amount).
+ * Addresses compare case-insensitively (bech32 and BOLT11 are often upper-cased
+ * in QR codes); amounts compare as numbers, so 0.00021 == 0.00021000.
+ */
+export function linkMatches(qr: string, address: string, amount: string): boolean {
+  if (qr === address) return true;
+  const m = /^(bitcoin|lightning):([^?]+)(?:\?(.*))?$/i.exec(qr);
+  if (!m || m[2]!.toLowerCase() !== address.toLowerCase()) return false;
+  if (m[1]!.toLowerCase() === 'lightning') return m[3] === undefined;
+  const linkAmount = new URLSearchParams(m[3] ?? '').get('amount');
+  return linkAmount === null || Number(linkAmount) === Number(amount);
+}
+
+/**
  * Direct checkout: read the invoice createCheckout just minted
  * (`GET …/invoices/{id}/payment-methods`, the `canviewinvoices` permission the
  * settle path already requires) and keep each allowlisted, ACTIVATED method's
@@ -545,9 +561,13 @@ export async function directPaymentMethods(
     if (!address || !amount || !unit) {
       throw new DirectPaymentError('unavailable', `BTCPay ${id}: incomplete payment method`);
     }
-    // A link BTCPay built (BIP21 with the amount, or lightning:<bolt11>), else the bare destination.
+    // A link BTCPay built (BIP21 with the amount, or lightning:<bolt11>), else
+    // the bare destination. The QR must pay exactly what the page shows, so the
+    // link is parsed and must name the same destination and amount.
     const qr = m.paymentLink ? cleanPaymentLink(m.paymentLink) : address;
-    if (!qr) throw new DirectPaymentError('unavailable', `BTCPay ${id}: unexpected payment link`);
+    if (!qr || !linkMatches(qr, address, amount)) {
+      throw new DirectPaymentError('unavailable', `BTCPay ${id}: payment link does not match`);
+    }
     methods.push({ id, unit: unit.toUpperCase(), network: '', address, amount, qr });
   }
   if (methods.length === 0) {

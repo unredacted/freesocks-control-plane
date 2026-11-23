@@ -914,8 +914,11 @@
               payment={order.data.payment}
               status={order.data.status}
               onRestart={() => {
-                activeTab = 'membership';
-                router.navigate('/account?tab=membership', { replace: true });
+                // Back to the form the buyer used: a gift was bought on the
+                // gifts tab, a membership or donation on the membership tab.
+                const tab = order.data?.kind === 'gift' ? 'gifts' : 'membership';
+                activeTab = tab;
+                router.navigate(`/account?tab=${tab}`, { replace: true });
               }}
             />
           {:else}

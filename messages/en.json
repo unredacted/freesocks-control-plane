@@ -1169,8 +1169,11 @@
     "lightning": "Lightning",
     "bitcoinOnchain": "Bitcoin (on-chain)",
     "allCoins": "All coins",
-    "allCoinsPlaceholder": "Other coins ({count})",
     "needsMemo": "needs memo",
-    "coinsLoading": "Loading coins…"
+    "coinsLoading": "Loading coins…",
+    "searchLabel": "Search coins",
+    "searchPlaceholder": "Search {count} coins by name or network",
+    "noMatch": "No coin matches. Try the coin's name, like USDT, or its network, like Tron.",
+    "pickedCoin": "Selected: {coin} on {network}"
   }
 }

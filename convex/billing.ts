@@ -1526,8 +1526,12 @@ export const checkDirectCoins = internalAction({
       ctx.runQuery(internal.billing.resolveSecrets, {}),
       ctx.runQuery(internal.billing.checkoutContext, {}),
     ]);
-    const cheapest = config.durations.find((d) => d.months >= config.cryptoMinMonths);
-    const cheapestCryptoCents = cheapest ? cheapest.amountCents : null;
+    // By PRICE, not by term: prices needn't rise with the term, and the coin
+    // minimum bites on the cheapest thing a crypto payer can buy.
+    const eligible = config.durations.filter((d) => d.months >= config.cryptoMinMonths);
+    const cheapestCryptoCents = eligible.length
+      ? Math.min(...eligible.map((d) => d.amountCents))
+      : null;
     const empty = { accountCoinCount: null, unnamedNetworks: [], coins: [] };
     if (!secrets.nowpayments.apiKey) {
       return { ok: false, error: 'API key not configured', cheapestCryptoCents, ...empty };

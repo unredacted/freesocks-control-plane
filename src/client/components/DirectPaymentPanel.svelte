@@ -79,8 +79,10 @@
         class="min-w-0 flex-1 break-all rounded-md border border-border bg-muted/40 px-2.5 py-2 text-sm {mono
           ? 'font-mono'
           : 'font-semibold tabular-nums'}"
-        dir="ltr">{value}</code
+        dir="ltr"
       >
+        {value}
+      </code>
       <Button
         variant="outline"
         size="icon"
@@ -203,7 +205,9 @@
       href={payment.hostedUrl}
       rel="noreferrer noopener"
       target="_blank"
-      class="underline hover:text-foreground">{t('direct.hostedFallbackLink')}</a
+      class="underline hover:text-foreground"
     >
+      {t('direct.hostedFallbackLink')}
+    </a>
   </p>
 </section>

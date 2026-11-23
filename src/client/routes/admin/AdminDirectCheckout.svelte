@@ -69,6 +69,19 @@
     const coin = direct.nowpayments.coins.find((c) => c.ticker === ticker);
     const out: string[] = [];
     if (row.enabledOnAccount === false) out.push('not switched on in the NOWPayments dashboard');
+    // List mode: the network text members see is the operator's, so compare it
+    // with the network NOWPayments actually uses for the ticker.
+    if (direct.nowpayments.source === 'list' && coin && row.network) {
+      if (!row.networkName) {
+        out.push(
+          `NOWPayments network code is "${row.network}"; make sure "${coin.network}" names that chain`,
+        );
+      } else if (!coin.network.toLowerCase().includes(row.networkName.toLowerCase())) {
+        out.push(
+          `NOWPayments sends this on ${row.networkName}, but members are told "${coin.network}"`,
+        );
+      }
+    }
     if (direct.nowpayments.source === 'list' && row.needsMemo && coin && !coin.allowMemo) {
       out.push('uses a memo: payments will be refused until "Memo OK" is ticked');
     }
@@ -127,9 +140,9 @@
     </label>
 
     <label class="block">
-      <span class="mb-1 block text-xs font-medium text-muted-foreground"
-        >Coins members can pick</span
-      >
+      <span class="mb-1 block text-xs font-medium text-muted-foreground">
+        Coins members can pick
+      </span>
       <select
         class="min-h-9 rounded-md border border-input bg-background px-2 text-sm"
         value={direct.nowpayments.source}
@@ -312,8 +325,9 @@
       </select>
     </label>
     <label class="block">
-      <span class="mb-1 block text-xs font-medium text-muted-foreground">Payment methods shown</span
-      >
+      <span class="mb-1 block text-xs font-medium text-muted-foreground">
+        Payment methods shown
+      </span>
       <Input
         class="min-h-9 font-mono"
         placeholder="BTC-CHAIN, BTC-LN"

@@ -222,7 +222,10 @@ export const CoinCheckResponse = z.object({
     z.object({
       ticker: z.string(),
       enabledOnAccount: z.boolean().nullable(),
+      /** NOWPayments' network code for the ticker, e.g. `trx`. */
       network: z.string().nullable(),
+      /** Our chain name for that code (e.g. `Tron`); null = a code we don't name. */
+      networkName: z.string().nullable().default(null),
       needsMemo: z.boolean().nullable(),
       /** Indicative minimum in the billing currency (no conversion leg). */
       minFiat: z.number().nullable(),

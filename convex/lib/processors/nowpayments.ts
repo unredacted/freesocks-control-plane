@@ -18,6 +18,7 @@ import {
   DirectPaymentError,
   type DirectPayment,
 } from '../directPayment';
+import { knownNetwork, networkName } from '../cryptoNetworks';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface NowPaymentsConfig {
@@ -496,8 +497,11 @@ export async function createInvoicePayment(
   if (body.payment_id == null || body.payment_id === '') fail('no payment_id');
   const payCurrency = typeof body.pay_currency === 'string' ? body.pay_currency.toLowerCase() : '';
   if (payCurrency !== args.coin.ticker) fail(`pay_currency ${payCurrency || 'missing'}`);
-  // The payment must belong to OUR order (it inherits the invoice's order_id).
-  if (body.order_id != null && body.order_id !== args.orderRef) fail('order_id mismatch');
+  // The payment must carry OUR order ref (inherited from the invoice). Its IPNs
+  // find the order by order_id, so a payment without it could be paid and never
+  // granted: missing is refused like a mismatch (the checkout falls back to hosted).
+  if (body.order_id !== args.orderRef)
+    fail(body.order_id == null ? 'no order_id' : 'order_id mismatch');
   const address = cleanToken(body.pay_address, 256) ?? fail('bad pay_address');
   const amount = cleanAmount(body.pay_amount) ?? fail('bad pay_amount');
   let memo: string | undefined;
@@ -538,6 +542,8 @@ export interface CoinCheck {
   enabledOnAccount: boolean | null;
   /** NOWPayments' own network code for the ticker, e.g. `trx`. */
   network: string | null;
+  /** Our chain name for that code (e.g. `Tron`), null when the code is unknown. */
+  networkName: string | null;
   /** NOWPayments uses a memo / destination tag for this coin. */
   needsMemo: boolean | null;
   /** The coin's minimum payment in the fiat currency (indicative: no conversion leg). */
@@ -641,14 +647,24 @@ export async function checkCoins(
         cfg,
         `/v1/min-amount?currency_from=${encodeURIComponent(ticker)}&currency_to=${encodeURIComponent(ticker)}&fiat_equivalent=${encodeURIComponent(fiat.toLowerCase())}`,
       );
+      // Only a real number (or numeric string) counts: Number(null) / Number('')
+      // would read as a zero minimum and hide the warning.
+      const rawMin =
+        min && typeof min === 'object' ? (min as Record<string, unknown>).fiat_equivalent : null;
       const fiatMin =
-        min && typeof min === 'object'
-          ? Number((min as Record<string, unknown>).fiat_equivalent)
-          : NaN;
+        typeof rawMin === 'number'
+          ? rawMin
+          : typeof rawMin === 'string' && rawMin.trim() !== ''
+            ? Number(rawMin)
+            : NaN;
       return {
         ticker,
         enabledOnAccount: enabledSet ? enabledSet.has(ticker) : null,
-        network: d && typeof d.network === 'string' ? d.network : null,
+        network: d && typeof d.network === 'string' ? d.network.toLowerCase() : null,
+        networkName:
+          d && typeof d.network === 'string' && knownNetwork(d.network)
+            ? networkName(d.network)
+            : null,
         needsMemo: d && typeof d.extra_id_exists === 'boolean' ? d.extra_id_exists : null,
         minFiat: Number.isFinite(fiatMin) ? fiatMin : null,
       };

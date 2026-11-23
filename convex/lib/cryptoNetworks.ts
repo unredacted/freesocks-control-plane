@@ -74,6 +74,11 @@ export function networkLabel(network: string, unit: string): string {
   return n.std && unit !== n.native ? `${n.name} (${n.std})` : n.name;
 }
 
+/** The bare chain name for a known code (e.g. `Tron`), else the upper-cased code. */
+export function networkName(network: string): string {
+  return NETWORKS[network.toLowerCase()]?.name ?? network.toUpperCase();
+}
+
 /** Whether the code is one this table names (the admin flags the rest). */
 export function knownNetwork(network: string): boolean {
   return network.toLowerCase() in NETWORKS;

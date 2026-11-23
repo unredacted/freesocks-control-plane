@@ -11,6 +11,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { hmacSha512Hex } from './lib/crypto';
 import { ConvexError } from 'convex/values';
+import { linkMatches } from './lib/processors/btcpay';
 
 const modules = import.meta.glob('./**/*.*s');
 const IPN_SECRET = 'test-ipn-secret';
@@ -88,6 +89,9 @@ const jsonRes = (body: unknown, status = 200) =>
     headers: { 'content-type': 'application/json' },
   });
 
+/** The order_id the last stubbed /v1/invoice was created with (the payment inherits it). */
+let invoiceOrderId: string | null = null;
+
 /** A NOWPayments API stub: /v1/invoice as today, /v1/invoice-payment as given. */
 function stubNowPayments(payment: (body: Record<string, unknown>) => Response) {
   const calls: Array<{ path: string; body: Record<string, unknown> | null }> = [];
@@ -96,6 +100,7 @@ function stubNowPayments(payment: (body: Record<string, unknown>) => Response) {
     const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : null;
     calls.push({ path, body });
     if (path === '/v1/invoice') {
+      invoiceOrderId = typeof body?.order_id === 'string' ? body.order_id : null;
       return jsonRes({ id: 'inv_9', invoice_url: 'https://nowpayments.io/payment/?iid=inv_9' });
     }
     if (path === '/v1/invoice-payment') return payment(body ?? {});
@@ -114,7 +119,7 @@ function paymentReply(over: Record<string, unknown> = {}, amountText = '14.03') 
     price_amount: 14,
     price_currency: 'usd',
     pay_currency: 'usdttrc20',
-    order_id: null as string | null,
+    order_id: invoiceOrderId,
     payin_extra_id: null as string | null,
     network: 'trx',
     expiration_estimate_date: new Date(Date.now() + 24 * HOUR).toISOString(),
@@ -158,7 +163,7 @@ describe('direct checkout: NOWPayments', () => {
     const { userId } = await seed(t);
     await direct(t);
     const { calls } = stubNowPayments((b) =>
-      jsonRes(paymentReply({ order_id: null, pay_currency: String(b.pay_currency) })),
+      jsonRes(paymentReply({ pay_currency: String(b.pay_currency) })),
     );
 
     const res = await t.action(internal.billing.createCheckout, {
@@ -395,6 +400,8 @@ describe('direct checkout: NOWPayments', () => {
     ['an API error', () => jsonRes({ message: 'boom' }, 500)],
     ['a different coin than asked', () => jsonRes(paymentReply({ pay_currency: 'usdterc20' }))],
     ['a payment for another order', () => jsonRes(paymentReply({ order_id: 'not-ours' }))],
+    // Its IPNs find the order by order_id: without it the payment could never grant.
+    ['a payment without our order id', () => jsonRes(paymentReply({ order_id: null }))],
     ['an address with spaces', () => jsonRes(paymentReply({ pay_address: 'T X Y' }))],
     [
       'an expiry in the past',
@@ -498,8 +505,11 @@ describe('direct checkout: coins from the NOWPayments account', () => {
   function stubAccount(merchantOk = true) {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string | URL) => {
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
         const path = new URL(String(url)).pathname;
+        const body = init?.body
+          ? (JSON.parse(init.body as string) as Record<string, unknown>)
+          : null;
         if (path === '/v1/merchant/coins') {
           return merchantOk
             ? jsonRes({ selectedCurrencies: ['BTC', 'usdttrc20', 'xrp', 'nonet', 'off'] })
@@ -517,6 +527,7 @@ describe('direct checkout: coins from the NOWPayments account', () => {
           });
         }
         if (path === '/v1/invoice') {
+          invoiceOrderId = typeof body?.order_id === 'string' ? body.order_id : null;
           return jsonRes({ id: 'inv_9', invoice_url: 'https://nowpayments.io/payment/?iid=inv_9' });
         }
         if (path === '/v1/invoice-payment') {
@@ -694,6 +705,22 @@ describe('direct checkout: BTCPay', () => {
     expect(res.redirectUrl).toBe('https://btcpay.test/i/bp_inv_1');
   });
 
+  test.each([
+    ['another address', { paymentLink: 'bitcoin:bc1qsomeoneelse?amount=0.00021' }],
+    ['another amount', { paymentLink: 'bitcoin:bc1qexampleaddress?amount=0.5' }],
+  ])('a payment link with %s falls back to the hosted page', async (_name, over) => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seed(t);
+    await settings(t, { 'billing.btcpay.enabled': true, 'billing.btcpay.checkoutStyle': 'direct' });
+    stubBtcpay([{ ...onchain, ...over }]);
+    const res = await t.action(internal.billing.createCheckout, {
+      userId,
+      processor: 'btcpay',
+      months: 3,
+    });
+    expect(res.direct).toBe(false);
+  });
+
   test('a payment link with another scheme is never encoded', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seed(t);
@@ -705,5 +732,78 @@ describe('direct checkout: BTCPay', () => {
       months: 3,
     });
     expect(res.direct).toBe(false);
+  });
+});
+
+describe('BTCPay QR link must pay what the page shows', () => {
+  test.each([
+    ['bc1qabc', 'bc1qabc', '0.1', true],
+    ['bitcoin:bc1qabc?amount=0.10000', 'bc1qabc', '0.1', true],
+    ['BITCOIN:BC1QABC?amount=0.1&lightning=lnbc1', 'bc1qabc', '0.1', true],
+    ['bitcoin:bc1qabc', 'bc1qabc', '0.1', true],
+    ['bitcoin:bc1qabc?amount=0.2', 'bc1qabc', '0.1', false],
+    ['bitcoin:bc1qother?amount=0.1', 'bc1qabc', '0.1', false],
+    ['lightning:LNBC1XYZ', 'lnbc1xyz', '0.1', true],
+    ['lightning:lnbc1other', 'lnbc1xyz', '0.1', false],
+  ])('%s vs %s / %s -> %s', (qr, address, amount, ok) => {
+    expect(linkMatches(qr, address, amount)).toBe(ok);
+  });
+});
+
+describe('admin coin check', () => {
+  beforeEach(() => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('compares minimums with the cheapest PRICE and keeps an unreadable minimum null', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    await settings(t, {
+      'billing.nowpayments.enabled': true,
+      'billing.nowpayments.coinSource': 'list',
+      // Prices don't rise with the term here: the 6-month term is the cheapest.
+      'billing.membership.durations': [
+        { months: 3, amountCents: 3000 },
+        { months: 6, amountCents: 1000 },
+      ],
+      'billing.nowpayments.directCoins': [
+        { ticker: 'btc', label: 'BTC', network: 'Bitcoin', allowMemo: false },
+        { ticker: 'usdttrc20', label: 'USDT', network: 'Ethereum', allowMemo: false },
+      ],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const u = new URL(String(url));
+        if (u.pathname === '/v1/merchant/coins')
+          return jsonRes({ selectedCurrencies: ['btc', 'usdttrc20'] });
+        if (u.pathname === '/v1/full-currencies') {
+          return jsonRes({
+            currencies: [
+              { code: 'BTC', network: 'btc', extra_id_exists: false },
+              { code: 'USDTTRC20', network: 'trx', extra_id_exists: false },
+            ],
+          });
+        }
+        if (u.pathname === '/v1/min-amount') {
+          return jsonRes({
+            fiat_equivalent: u.searchParams.get('currency_from') === 'btc' ? 12.5 : null,
+          });
+        }
+        return jsonRes({}, 404);
+      }),
+    );
+    const res = await t.action(internal.billing.checkDirectCoins, {});
+    expect(res.cheapestCryptoCents).toBe(1000);
+    const btc = res.coins.find((c) => c.ticker === 'btc');
+    const usdt = res.coins.find((c) => c.ticker === 'usdttrc20');
+    expect(btc).toMatchObject({ minFiat: 12.5, network: 'btc', networkName: 'Bitcoin' });
+    // null fiat_equivalent stays null (not a zero minimum); the network is
+    // reported so the admin can see "Ethereum" is the wrong label for it.
+    expect(usdt).toMatchObject({ minFiat: null, network: 'trx', networkName: 'Tron' });
   });
 });
