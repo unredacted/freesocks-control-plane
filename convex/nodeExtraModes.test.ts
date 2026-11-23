@@ -32,6 +32,7 @@ import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBa
 import { signValue } from './lib/cookies';
 import { generateHysteriaCertificate } from './lib/backend/hysteriaCert';
 import { NodeIntentView } from '../src/shared/contracts/servers';
+import { restartSent } from './nodeExtraModes';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -328,6 +329,38 @@ describe('a node serving Hysteria beside its own REALITY', () => {
     expect(restarts()).toHaveLength(1);
   });
 
+  test('a restart the backend refused is sent again, and the address waits for it', async () => {
+    const s = await seed();
+    const node = s.panel.nodes.find((n) => n.name === 'node-a')!;
+    const restarts = () =>
+      s.panel.writes.filter((w) => w.call === `POST /api/nodes/${node.uuid}/actions/restart`);
+    s.panel.refuseNodeActions = 1;
+    expect((await extraMode(s, 'add')).status).toBe(200);
+    expect(
+      (
+        await report(s, [
+          { port: 443, protocol: 'tcp' },
+          { port: 443, protocol: 'udp' },
+        ])
+      ).status,
+    ).toBe(200);
+    const refused = await until(
+      () => extraOf(s),
+      (x) => x?.code === 'servers.extra_mode_restart_failed',
+    );
+    // Not taken as loaded, its op let go, and its address never turned on.
+    expect(refused!.loadedFor).toBeUndefined();
+    expect(refused!.restartOp).toBeUndefined();
+    expect(hyHosts(s).every((h) => h.isDisabled)).toBe(true);
+    await s.t.action(internal.nodeExtraModes.run, { intentId: s.intentId });
+    const e = await until(
+      () => extraOf(s),
+      (x) => x?.state === 'serving',
+    );
+    expect(e).toMatchObject({ loadedFor: s.hyUuid });
+    expect(restarts()).toHaveLength(2);
+  });
+
   test('a new certificate closes only this mode, then it serves again under the new pin', async () => {
     const s = await seed();
     await bringToServing(s);
@@ -397,6 +430,8 @@ describe('a node serving Hysteria beside its own REALITY', () => {
       firewall: { port: 8443, protocol: 'udp', confirmedBy: 'role' },
     });
     expect(hyHosts(s)[0]!.isDisabled).toBe(true);
+    // The transport goes off the node: turning it on again needs a restart again.
+    expect(e!.loadedFor).toBeUndefined();
     // Listed for the firewall (still `serving` until the reconcile turns it off).
     expect(
       (await roleView(s)).firewall.ports.some((p) => p.port === 8443 && p.protocol === 'udp'),
@@ -458,6 +493,28 @@ describe('an extra mode taken away and asked for again', () => {
     expect(again).toMatchObject({ state: 'serving' });
     expect(again!.code).toBeUndefined();
     expect(hyHosts(s)).toHaveLength(1);
+  });
+});
+
+describe('where a node restart stands', () => {
+  test('sent once taken or maybe taken; pending while sending; failed when refused or gone', () => {
+    expect(restartSent({ request: 'acknowledged' })).toBe('sent');
+    expect(restartSent({ request: 'uncertain' })).toBe('sent');
+    expect(restartSent({ request: 'pending' })).toBe('pending');
+    expect(restartSent({ request: 'rejected_pre_mutation' })).toBe('failed');
+    expect(restartSent(null)).toBe('failed');
+    expect(
+      restartSent({
+        request: 'pending',
+        recovery: {
+          credentialsRevoked: true,
+          noInFlightExecutor: true,
+          queueDrained: true,
+          freshReadAt: 1,
+          at: 1,
+        },
+      }),
+    ).toBe('failed');
   });
 });
 
