@@ -727,7 +727,7 @@ describe('public GET throttles (WS5)', () => {
     );
   });
 
-  test('/api/v1/hpke/keys is per-IP rate limited past its policy', async () => {
+  test('/api/v1/hpke/keys past its per-IP policy still answers, from the datastore alone', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.rateLimits.setPolicy, {
       policyKey: 'hpke.keys.fetch',
@@ -736,8 +736,13 @@ describe('public GET throttles (WS5)', () => {
       enabled: true,
     });
     const headers = { 'x-forwarded-for': '203.0.113.78' };
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(200);
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(429);
+    const first = await t.fetch('/api/v1/hpke/keys', { headers });
+    expect(first.status).toBe(200);
+    expect(first.headers.get('x-fs-keys-throttled')).toBeNull();
+    const over = await t.fetch('/api/v1/hpke/keys', { headers });
+    expect(over.status).toBe(200);
+    expect(over.headers.get('x-fs-keys-throttled')).toBe('1');
+    expect(await over.json()).toEqual(await first.json());
   });
 
   test('the legacy /api/v1/e2ee/keys alias serves the same body and shares the policy bucket', async () => {
@@ -755,8 +760,9 @@ describe('public GET throttles (WS5)', () => {
       enabled: true,
     });
     const headers = { 'x-forwarded-for': '203.0.113.79' };
-    expect((await t.fetch('/api/v1/e2ee/keys', { headers })).status).toBe(200);
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(429);
+    await t.fetch('/api/v1/e2ee/keys', { headers });
+    const over = await t.fetch('/api/v1/hpke/keys', { headers });
+    expect(over.headers.get('x-fs-keys-throttled')).toBe('1');
   });
 });
 
