@@ -106,11 +106,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: 'Rebuild the mirror sync counter, drop orphaned ledger rows',
   },
-  { name: 'session-sweep', everyMs: DAY, description: 'Drop expired session rows' },
-  { name: 'rate-limit-sweep', everyMs: DAY, description: 'Drop expired rate-limit rows' },
+  { name: 'session-sweep', everyMs: HOUR, description: 'Drop expired session rows' },
+  { name: 'rate-limit-sweep', everyMs: HOUR, description: 'Drop expired rate-limit rows' },
   {
     name: 'replay-guard-sweep',
-    everyMs: DAY,
+    everyMs: HOUR,
     description: 'Drop consumed PoP nonces past their window',
   },
   { name: 'admin-invite-sweep', everyMs: DAY, description: 'Drop expired admin invite tokens' },
@@ -382,6 +382,17 @@ export const stampOutcome = internalMutation({
     await recordHeartbeatOutcome(ctx, name, error);
   },
 });
+
+/**
+ * A V8 gate (cronGates.ts) found nothing for its Node action to do: stamp the
+ * run the action would have stamped (the start, then a success), without
+ * starting it. When there IS work, the gate schedules the action instead and
+ * leaves both stamps to its `runWithCronOutcome`, so one tick is one run.
+ */
+export async function recordSkippedRun(ctx: MutationCtx, name: string): Promise<void> {
+  await recordHeartbeat(ctx, name);
+  await recordHeartbeatOutcome(ctx, name, null);
+}
 
 /**
  * Run an action-context cron job with BOTH stamps: the start-stamp (scheduler

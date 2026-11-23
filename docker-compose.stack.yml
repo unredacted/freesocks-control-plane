@@ -89,6 +89,14 @@ services:
       - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
       - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN}
       - DISABLE_BEACON=${DISABLE_BEACON:-true}
+      # How long Convex keeps every past revision of every document (its write
+      # log; reads "at an older timestamp" need it). Unset, the backend keeps 14
+      # days, and FCP rewrites some rows on nearly every request (rateLimits,
+      # replayGuard, subscriptions with their cached bodies), so that history is
+      # most of the Postgres database and of every pg_dump. 2 days matches the
+      # dev compose and upstream's sample. Nothing in FCP reads older than a
+      # paginated drain, which finishes in minutes.
+      - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
       - DO_NOT_REQUIRE_SSL=true
       - INSTANCE_NAME=${INSTANCE_NAME}
       - INSTANCE_SECRET=${INSTANCE_SECRET}
