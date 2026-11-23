@@ -23,6 +23,7 @@
  *    request inputs before anything is rendered, and the outcome carries the
  *    location it rendered with. The guess is written once, at `locateMember`.
  */
+import type { FunctionReturnType } from 'convex/server';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
@@ -64,14 +65,19 @@ export async function guardBody(
   ctx: ActionCtx,
   content: string,
   backendServerId: Id<'backendServers'> | null | undefined,
+  /** The pins when already read (convex/deliveryContext.ts); null reads them if needed. */
+  pins: { pinHex: string[]; spkiB64: string[] } | null = null,
 ): Promise<GuardOutcome> {
   const first = guardHysteria(content, { pinHex: [], spkiB64: [] });
   // Nothing Hysteria in it: as it was, no read.
   if (first.kind === 'kept' && first.dropped === 0) return first;
-  const pins = await ctx.runQuery(internal.subscriptions.hysteriaPinsFor, {
-    backendServerId: backendServerId ?? undefined,
-  });
-  return guardHysteria(content, pins);
+  return guardHysteria(
+    content,
+    pins ??
+      (await ctx.runQuery(internal.subscriptions.hysteriaPinsFor, {
+        backendServerId: backendServerId ?? undefined,
+      })),
+  );
 }
 
 /** The delivery projection of a subscription: what the decision reads from the row. */
@@ -144,6 +150,20 @@ export async function locateAt(
       nodeName: a.node ?? undefined,
     }),
   ]);
+  return locateFrom(a, place, country);
+}
+
+/** The member's country context (`memberCountry.contextFor`). */
+export type MemberCountryContext = FunctionReturnType<typeof internal.memberCountry.contextFor>;
+/** The place's render context (`edgeRender.renderContextFor`). */
+export type PlaceContext = FunctionReturnType<typeof internal.edgeRender.renderContextFor>;
+
+/** `locateAt` over contexts already read (convex/deliveryContext.ts). */
+export function locateFrom(
+  a: { node: string | null; fields: CountryFields; inferred: string | null },
+  place: PlaceContext,
+  country: MemberCountryContext,
+): MemberLocation {
   const located = memberWhere({
     family: country.family,
     sub: a.fields,
@@ -191,16 +211,7 @@ export async function locateMember(
     subscriptionId: sub.subscriptionId,
     nodeName: sub.pinnedNode ?? undefined,
   });
-  const ownExit = isOwnExit(resolveClientIp(req), country.ownExits);
-  if (nextGuess({ ...country, sub: fields, now: Date.now(), reading, ownExit }).kind !== 'none') {
-    const after = await ctx.runMutation(internal.memberCountry.noteSeenCountry, {
-      subscriptionId: sub.subscriptionId,
-      countryRev: sub.countryRev ?? 0,
-      country: reading,
-      ownExit,
-    });
-    if (after) fields = after;
-  }
+  fields = await noteReading(ctx, sub, req, reading, fields, country);
   return locateAt(ctx, {
     subscriptionId: sub.subscriptionId,
     backendServerId: sub.backendServerId,
@@ -208,6 +219,59 @@ export async function locateMember(
     fields,
     inferred: reading,
   });
+}
+
+/**
+ * `locateMember` over the contexts the route's delivery context already read
+ * (convex/deliveryContext.ts): the same reading and the same guess write, with
+ * no further query. The country context is read once: a guess this request
+ * writes moves the row's country fields (returned by the write), never the
+ * family, the settings or the own-exit set.
+ */
+export async function locateMemberWith(
+  ctx: ActionCtx,
+  sub: DeliverySubscription,
+  req: Request,
+  pre: { country: MemberCountryContext; place: PlaceContext },
+): Promise<MemberLocation> {
+  const reading = resolveCountry(req);
+  const fields = await noteReading(ctx, sub, req, reading, fieldsOfPlace(sub), pre.country);
+  return locateFrom({ node: sub.pinnedNode, fields, inferred: reading }, pre.place, pre.country);
+}
+
+function fieldsOfPlace(sub: DeliverySubscription): CountryFields {
+  return {
+    sniRegion: sub.sniRegion ?? null,
+    regionSeenCountry: sub.regionSeenCountry ?? null,
+    regionSeenFirstAt: sub.regionSeenFirstAt ?? null,
+    regionSeenAt: sub.regionSeenAt ?? null,
+    regionNextCountry: sub.regionNextCountry ?? null,
+    regionNextAt: sub.regionNextAt ?? null,
+  };
+}
+
+/**
+ * The request's CDN country may set or refresh the stored guess first
+ * (lib/memberCountry.ts `nextGuess`); returns the fields to locate with.
+ */
+async function noteReading(
+  ctx: ActionCtx,
+  sub: DeliverySubscription,
+  req: Request,
+  reading: string | null,
+  fields: CountryFields,
+  country: MemberCountryContext,
+): Promise<CountryFields> {
+  const ownExit = isOwnExit(resolveClientIp(req), country.ownExits);
+  if (nextGuess({ ...country, sub: fields, now: Date.now(), reading, ownExit }).kind === 'none')
+    return fields;
+  const after = await ctx.runMutation(internal.memberCountry.noteSeenCountry, {
+    subscriptionId: sub.subscriptionId,
+    countryRev: sub.countryRev ?? 0,
+    country: reading,
+    ownExit,
+  });
+  return after ?? fields;
 }
 
 export interface RenderSnapshot {

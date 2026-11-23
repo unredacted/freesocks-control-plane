@@ -580,23 +580,35 @@ export const epochFor = internalQuery({
  * could carry a name blocked there (lib/edges/sni/country.ts). A place no live
  * origin covers renders nothing, so it has no country logic either.
  */
+export interface PlaceRenderContext {
+  token: string | null;
+  curated: string[];
+  sensitive: boolean;
+  covered: boolean;
+}
+
+/** `renderContextFor` as a plain read (convex/deliveryContext.ts folds it into one query). */
+export async function renderContextOf(
+  ctx: QueryCtx,
+  backendServerId: Id<'backendServers'>,
+  nodeName: string | undefined,
+): Promise<PlaceRenderContext> {
+  const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
+  const { token, relay } = await epochTokenFor(ctx, policy, backendServerId);
+  if (!relay) return { token, curated: [], sensitive: false, covered: false };
+  const { curatedCountries } = await resolveSniConfig(ctx.db);
+  if (curatedCountries.length === 0)
+    return { token, curated: curatedCountries, sensitive: false, covered: true };
+  const listeners = await listenersOf(ctx, relay._id);
+  // A name on a preferred allowlist shapes a body by country like a mark does.
+  const sensitive = listeners.some((l) => l.sniPick === 'hrw1' && namesJudged(l.tlsNames));
+  return { token, curated: curatedCountries, sensitive, covered: true };
+}
+
 export const renderContextFor = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
-  handler: async (
-    ctx,
-    { backendServerId, nodeName },
-  ): Promise<{ token: string | null; curated: string[]; sensitive: boolean; covered: boolean }> => {
-    const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
-    const { token, relay } = await epochTokenFor(ctx, policy, backendServerId);
-    if (!relay) return { token, curated: [], sensitive: false, covered: false };
-    const { curatedCountries } = await resolveSniConfig(ctx.db);
-    if (curatedCountries.length === 0)
-      return { token, curated: curatedCountries, sensitive: false, covered: true };
-    const listeners = await listenersOf(ctx, relay._id);
-    // A name on a preferred allowlist shapes a body by country like a mark does.
-    const sensitive = listeners.some((l) => l.sniPick === 'hrw1' && namesJudged(l.tlsNames));
-    return { token, curated: curatedCountries, sensitive, covered: true };
-  },
+  handler: (ctx, { backendServerId, nodeName }): Promise<PlaceRenderContext> =>
+    renderContextOf(ctx, backendServerId, nodeName),
 });
 
 export interface SubscriptionRenderContext extends EdgeRenderContext {

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { SUB_CACHE_MAX, keepBodiesFor } from './lib/subscriptionBodies';
+import { SUB_CACHE_MAX, entriesForUa, keepBodiesFor } from './lib/subscriptionBodies';
 import { cacheBlob, setCacheBlob } from './lib/subscriptionBodies.testing';
 import { LEGACY_MOVED_KEY } from './subscriptionBodies';
 
@@ -86,7 +86,7 @@ const uasOf = async (t: T, id: Id<'subscriptions'>) => {
   return blob ? (JSON.parse(blob) as { ua: string }[]).map((e) => e.ua) : [];
 };
 const forUa = (t: T, subscriptionId: Id<'subscriptions'>, ua: string) =>
-  t.query(internal.subscriptionBodies.forUa, { subscriptionId, ua });
+  t.run((ctx) => entriesForUa(ctx.db, subscriptionId, ua));
 
 describe('the per-UA body table', () => {
   test('one row per UA, the newest SUB_CACHE_MAX kept, a UA replaces its own slot', async () => {

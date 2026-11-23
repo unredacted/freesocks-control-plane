@@ -41,6 +41,7 @@ import { memberFamilyOf, modesOfPlacement } from './lib/memberFamily';
 import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { memberLaneOfUser } from './edgeLanes';
 import { noteExposures } from './edgeTrust';
+import { needsStoredCountry, planDelivery, revCurrent } from './lib/deliveryStamp';
 import { dropBodies, parseEntry, storeBodies, type BodyEntry } from './lib/subscriptionBodies';
 import { mirrorFormatValidator } from './lib/mirrorFormats';
 import { carryPeriodEnd, keyTrafficLimit, liveCarryBytes } from './lib/quotaCarry';
@@ -86,7 +87,7 @@ export const byBackendUserId = internalQuery({
 /**
  * Resolve a subscription by its opaque FCP-fronted token (the capability in
  * GET /api/v1/sub/<subToken>). Returns the full row or null (the cached bodies
- * are not on it: subscriptionBodies.forUa). Internal — the row carries the live proxy key.
+ * are not on it: deliveryContext.forKey). Internal — the row carries the live proxy key.
  *
  * A `deleted` row resolves as NOT FOUND (Review D-#12): its backend user is
  * gone, so the route would otherwise fetch → backend 404 → answer a misleading
@@ -370,17 +371,6 @@ export const ensureRenderKey = internalMutation({
 // Delivery stamps are throttled so a polling client doesn't turn every cache hit
 // into a row write; `contentAt` (when the served body was generated) always
 // advances when newer content is delivered.
-const DELIVERY_STAMP_THROTTLE_MS = 60_000;
-
-/**
- * Whether a write from a request that read the row at `rev` may still land: the
- * key has not moved in place since (`invalidateDelivery`). An absent `rev` (a
- * caller that read no row first) always may.
- */
-function revCurrent(sub: Doc<'subscriptions'>, rev: number | undefined): boolean {
-  return rev === undefined || rev === (sub.deliveryRev ?? 0);
-}
-
 /**
  * Record a successful fronted delivery (GET /api/v1/sub/<token> returned 200):
  * `lastDeliveredAt` = now, `lastDeliveredContentAt` = when the served content
@@ -407,28 +397,6 @@ export const renderSnapshotValidator = v.object({
   backupTier: v.optional(v.number()),
 });
 
-/** Every field of a render snapshot that says what the member was handed (not when). */
-function sameSnapshot(
-  a: Omit<NonNullable<Doc<'subscriptions'>['lastRender']>, 'at'> | undefined,
-  b: Omit<NonNullable<Doc<'subscriptions'>['lastRender']>, 'at'>,
-): boolean {
-  return (
-    !!a &&
-    a.epoch === b.epoch &&
-    a.family === b.family &&
-    a.primaryEdgeId === b.primaryEdgeId &&
-    a.backupEdgeId === b.backupEdgeId &&
-    a.autoGroup === b.autoGroup &&
-    a.primaryTwin === b.primaryTwin &&
-    a.backupTwin === b.backupTwin &&
-    a.twinNames === b.twinNames &&
-    a.country === b.country &&
-    a.primaryTier === b.primaryTier &&
-    a.backupTier === b.backupTier &&
-    a.listenerKeys.join(',') === b.listenerKeys.join(',')
-  );
-}
-
 export const markDelivered = internalMutation({
   args: {
     subscriptionId: v.id('subscriptions'),
@@ -441,69 +409,32 @@ export const markDelivered = internalMutation({
     /** The account's address lane the request rendered (or found the body) under. */
     lane: v.optional(v.union(v.literal('open'), v.literal('trusted'), v.null())),
   },
-  handler: async (
-    ctx,
-    { subscriptionId, contentAt, renderedEpoch, render: given, deliveryRev, lane },
-  ) => {
+  handler: async (ctx, { subscriptionId, ...facts }) => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub) return null;
     const now = Date.now();
-    // Whatever else is kept, the account WAS handed these addresses: their
-    // first exposure is recorded (convex/edgeTrust.ts), stale revision, moved
-    // lane or not. Only when the snapshot differs from the stored one, so a
-    // poll that hands out the same pair writes nothing.
-    if (given && !sameSnapshot(sub.lastRender, given))
-      await noteExposures(ctx, sub.userId, [given.primaryEdgeId, given.backupEdgeId], now);
-    // A request that read the row before the key moved in place served what it
-    // carried THEN: the delivery is recorded, never its content time, epoch or
-    // snapshot (they describe a placement the key has left). The same for a
-    // body rendered under an address lane the account no longer has (the
-    // fence, convex/edgeLanes.ts).
-    const laneMoved =
-      lane !== undefined && lane !== (await memberLaneOfUser(ctx.db, sub.userId, now));
-    if (!revCurrent(sub, deliveryRev) || laneMoved) {
-      if (now - (sub.lastDeliveredAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS)
-        await ctx.db.patch(subscriptionId, { lastDeliveredAt: now });
-      return null;
-    }
-    // The snapshot is a stored copy of the member's country: one that names
-    // anything but the row's stored country NOW (a request that read an older
-    // state, a switch or "Somewhere else" in between) keeps only its plain
-    // delivery facts (convex/memberCountry.ts, the one invariant).
-    let render = given ?? null;
-    if (render?.country !== undefined && sub.state !== 'deleted') {
+    // What is due is decided by one pure plan (lib/deliveryStamp.ts), which the
+    // route also evaluates first so a poll with nothing due never calls here.
+    // Only the live reads it needs are made.
+    const laneNow =
+      facts.lane !== undefined ? await memberLaneOfUser(ctx.db, sub.userId, now) : undefined;
+    let stored: string | null | undefined;
+    if (needsStoredCountry(sub, facts)) {
       const [countryCfg, censored] = await Promise.all([
         resolveMemberCountryConfig(ctx.db),
         resolveCensoredCountries(ctx.db),
       ]);
-      if (render.country !== storedCountry(sub, countryCfg, censored.codes, now)) {
-        const { country, primaryTier, backupTier, ...plain } = render;
-        void country;
-        void primaryTier;
-        void backupTier;
-        render = plain;
-      }
+      stored = storedCountry(sub, countryCfg, censored.codes, now);
     }
-    if (sub.state === 'deleted') render = null;
-    const contentAdvanced = (sub.lastDeliveredContentAt ?? 0) < contentAt;
-    const epochChanged =
-      typeof renderedEpoch === 'number' && renderedEpoch !== sub.lastRenderedEpoch;
-    // Any change in what the member was handed (the edges, the listeners, the
-    // client family, the country or a tier) rewrites the snapshot, cache hit or not.
-    const snapshotChanged = !!render && !sameSnapshot(sub.lastRender, render);
-    const stale = now - (sub.lastDeliveredAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS;
-    // A rendered body was served (the evidence that this key's app no longer
-    // holds a raw body: convex/edgeFrontKeys.ts), on the same throttle.
-    const renderedDue = !!render && now - (sub.lastRenderedAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS;
-    if (!contentAdvanced && !epochChanged && !snapshotChanged && !stale && !renderedDue)
-      return null;
-    await ctx.db.patch(subscriptionId, {
-      lastDeliveredAt: now,
-      lastDeliveredContentAt: Math.max(sub.lastDeliveredContentAt ?? 0, contentAt),
-      ...(epochChanged ? { lastRenderedEpoch: renderedEpoch } : {}),
-      ...(render && snapshotChanged ? { lastRender: { ...render, at: now } } : {}),
-      ...(render ? { lastRenderedAt: now } : {}),
-    });
+    const plan = planDelivery(sub, facts, now, { laneNow, storedCountry: stored });
+    if (plan.noteExposures && facts.render)
+      await noteExposures(
+        ctx,
+        sub.userId,
+        [facts.render.primaryEdgeId, facts.render.backupEdgeId],
+        now,
+      );
+    if (plan.patch) await ctx.db.patch(subscriptionId, plan.patch);
     return null;
   },
 });
@@ -908,21 +839,26 @@ export const entryNamingFor = internalQuery({
  */
 export const hysteriaPinsFor = internalQuery({
   args: { backendServerId: v.optional(v.id('backendServers')) },
-  handler: async (ctx, { backendServerId }) => {
-    const pinHex: string[] = [];
-    const spkiB64: string[] = [];
-    if (!backendServerId) return { pinHex, spkiB64 };
-    for (const p of await ctx.db
-      .query('panelProfiles')
-      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-      .collect())
-      for (const i of p.inbounds) {
-        if (i.hysteriaAuth?.pinHex) pinHex.push(i.hysteriaAuth.pinHex);
-        if (i.hysteriaAuth?.spkiB64) spkiB64.push(i.hysteriaAuth.spkiB64);
-      }
-    return { pinHex, spkiB64 };
-  },
+  handler: (ctx, { backendServerId }) => hysteriaPinsOf(ctx.db, backendServerId),
 });
+
+export async function hysteriaPinsOf(
+  db: DatabaseReader,
+  backendServerId: Id<'backendServers'> | undefined,
+): Promise<{ pinHex: string[]; spkiB64: string[] }> {
+  const pinHex: string[] = [];
+  const spkiB64: string[] = [];
+  if (!backendServerId) return { pinHex, spkiB64 };
+  for (const p of await db
+    .query('panelProfiles')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect())
+    for (const i of p.inbounds) {
+      if (i.hysteriaAuth?.pinHex) pinHex.push(i.hysteriaAuth.pinHex);
+      if (i.hysteriaAuth?.spkiB64) spkiB64.push(i.hysteriaAuth.spkiB64);
+    }
+  return { pinHex, spkiB64 };
+}
 
 /** Append one freshly-provisioned mirror (opt-in flow), idempotent per provider.
  *  The cap is RE-CHECKED inside this serializable mutation (Review D-#8): the
@@ -1564,15 +1500,18 @@ export const remapBackendUserId = internalMutation({
  */
 export const responseHints = internalQuery({
   args: { subscriptionId: v.optional(v.id('subscriptions')) },
-  handler: async (
-    ctx,
-    { subscriptionId },
-  ): Promise<{ title: string; updateIntervalHours: number }> => {
-    const sub = subscriptionId ? await ctx.db.get(subscriptionId) : null;
-    const [title, updateIntervalHours] = await Promise.all([
-      resolveSubscriptionTitle(ctx.db, sub),
-      resolveUpdateIntervalHours(ctx.db),
-    ]);
-    return { title: profileTitleValue(title), updateIntervalHours };
-  },
+  handler: async (ctx, { subscriptionId }) =>
+    responseHintsOf(ctx.db, subscriptionId ? await ctx.db.get(subscriptionId) : null),
 });
+
+/** `responseHints` over a row already in hand (convex/deliveryContext.ts). */
+export async function responseHintsOf(
+  db: DatabaseReader,
+  sub: Doc<'subscriptions'> | null,
+): Promise<{ title: string; updateIntervalHours: number }> {
+  const [title, updateIntervalHours] = await Promise.all([
+    resolveSubscriptionTitle(db, sub),
+    resolveUpdateIntervalHours(db),
+  ]);
+  return { title: profileTitleValue(title), updateIntervalHours };
+}

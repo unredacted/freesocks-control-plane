@@ -1,7 +1,7 @@
 /**
- * The fronted route's per-UA body cache (lib/subscriptionBodies.ts): the read
- * the route makes, and the one-shot move of the old `subscriptions.subCache`
- * blobs into the table.
+ * The fronted route's per-UA body cache (lib/subscriptionBodies.ts; the
+ * route reads it through convex/deliveryContext.ts): the one-shot move of the
+ * old `subscriptions.subCache` blobs into the table, and its rollback.
  */
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -10,19 +10,9 @@ import {
   BODIES_PAUSED_KEY,
   SUB_CACHE_MAX,
   bodiesPaused,
-  entriesForUa,
   storeBodies,
 } from './lib/subscriptionBodies';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
-
-/**
- * The serialized entries that may answer this key for this UA (zero or one):
- * one indexed read, so a body written for another UA never invalidates it.
- */
-export const forUa = internalQuery({
-  args: { subscriptionId: v.id('subscriptions'), ua: v.string() },
-  handler: (ctx, { subscriptionId, ua }) => entriesForUa(ctx.db, subscriptionId, ua),
-});
 
 /** Set once every row's old blob has been moved; the move is then a no-op. */
 export const LEGACY_MOVED_KEY = 'migration:subscriptionBodies';
