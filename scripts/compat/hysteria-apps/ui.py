@@ -1,6 +1,9 @@
 """Find an element in an Android UI dump (uiautomator) and print its centre.
 
 ui.py <dump.xml> text <regex>      first element whose text or content-desc matches
+ui.py <dump.xml> label <regex>     first element whose visible text matches
+                                   (not its content-desc: an icon's description
+                                   can share a button's label)
 ui.py <dump.xml> id <resource-id>  first element with that resource-id
 ui.py <dump.xml> texts             every non-empty text, one per line
 ui.py <dump.xml> row <regex> <desc>  the button described <desc> in the row
@@ -44,6 +47,9 @@ if mode == 'row':
     sys.exit(1)
 for n in nodes:
     if mode == 'id' and n.get('resource-id') == want:
+        print(centre(n.get('bounds')))
+        sys.exit(0)
+    if mode == 'label' and re.search(want, n.get('text') or ''):
         print(centre(n.get('bounds')))
         sys.exit(0)
     if mode == 'text' and any(re.search(want, n.get(k) or '') for k in ('text', 'content-desc')):
