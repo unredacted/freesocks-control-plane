@@ -116,16 +116,34 @@ fresh() {
   adb shell appops set "$PKG" ACTIVATE_VPN allow
   adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 }
+# updates: how many subscription updates the app has logged as done (it logs
+# one only after it fetched the raw config and parsed entries from it).
+updates() { grep -c 'Subscription updated:' "$LOGCAT" 2>/dev/null || true; }
+# dns_on_device (beta): the device itself looks a fresh name up and fetches it
+# (toybox nc, inside the VPN the app runs), and the name was looked up by a
+# resolver that is not the runner's own.
+dns_on_device() {
+  local i n r
+  for i in 1 2 3; do
+    n=$(dns_name)
+    r=$(adb shell "printf 'GET /json HTTP/1.0\r\nHost: $n\r\nConnection: close\r\n\r\n' | nc -w 15 $n 80" |
+      tr -d '\r' | sed -n '/^{/,$p' | resolver_of)
+    not_own_resolver "$r" && return 0
+    sleep 2
+  done
+  return 1
+}
 declare -A ok=([rawImport]=false [import]=false [connection]=false [udp]=false
-  [refresh]=false [wrongPinRefused]=false [rogueRefused]=false)
+  [refresh]=false [wrongPinRefused]=false [rogueRefused]=false [dns]=false)
 
 adb install -r "$APK" >/dev/null
 fresh
 adb forward tcp:10808 tcp:10808 >/dev/null
-if [ "$HY_KIND" = fixture ]; then
-  adb logcat -c
-  adb logcat -v time 'com.v2ray.ang:V' 'AndroidRuntime:E' '*:S' >"$OUT/logcat.txt" 2>&1 </dev/null &
-fi
+# The app's own log: read for its updates; kept for the fixture only (on beta
+# it names the canary's URL).
+LOGCAT="$HY_WORK/logcat.txt"
+adb logcat -c
+adb logcat -v time 'com.v2ray.ang:V' 'AndroidRuntime:E' '*:S' >"$LOGCAT" 2>&1 </dev/null &
 launch
 snap first-run
 
@@ -140,6 +158,7 @@ has_all_names "$names" && ok[import]=true
 before=$(carried node)
 if start_udp && through_until 45 && carried_more "$before"; then
   ok[connection]=true
+  [ "$HY_KIND" = beta ] && dns_on_device && ok[dns]=true
   # UDP to the node dropped: nothing gets through.
   drop_udp
   stop_app
@@ -155,13 +174,16 @@ dump
 if tap_text '^More options$'; then
   sleep 1
   dump
+  was=$(updates)
   if tap_text '(?i)update subscription'; then
-    sleep 12
+    end=$((SECONDS + 45))
+    until [ "$(updates)" -gt "$was" ] || ((SECONDS > end)); do sleep 2; done
+    [ "$(updates)" -gt "$was" ] && updated=true || updated=false
     stop_app
     launch
     again="$HY_WORK/app-names-again.txt"
     names_on_screen "$again"
-    has_all_names "$again" && ok[refresh]=true
+    $updated && has_all_names "$again" && ok[refresh]=true
   fi
 fi
 snap refreshed
@@ -179,10 +201,24 @@ stop_app
 fresh
 launch
 import_sub "$HY_ROGUE_URL"
-start_udp && never && [ "$(carried rogue)" -eq 0 ] && ${ok[connection]} && ok[rogueRefused]=true
+refused=false
+start_udp && never && [ "$(carried rogue)" -eq 0 ] && ${ok[connection]} && refused=true
 stop_app
+# The control: with the rogue's own pin the app gets through it, so the
+# refusal above was the pin.
+if $refused; then
+  fresh
+  launch
+  import_sub "$HY_ROGUE_CONTROL_URL"
+  start_udp && rogue_control && ok[rogueRefused]=true
+  stop_app
+fi
+[ "$HY_KIND" = fixture ] && cp "$LOGCAT" "$OUT/logcat.txt"
 
 version=$(adb shell dumpsys package "$PKG" | sed -n 's/.*versionName=\([^ ]*\).*/\1/p' | head -1 | tr -d '\r')
 pairs=()
-for k in rawImport import connection udp refresh wrongPinRefused rogueRefused; do pairs+=("$k=${ok[$k]}"); done
+keys=(rawImport import connection udp refresh wrongPinRefused rogueRefused)
+# The DNS check needs the open internet beyond the node: beta only.
+[ "$HY_KIND" = beta ] && keys+=(dns)
+for k in "${keys[@]}"; do pairs+=("$k=${ok[$k]}"); done
 write_result "$OUT/result.json" v2rayNG "$version" "${pairs[@]}"

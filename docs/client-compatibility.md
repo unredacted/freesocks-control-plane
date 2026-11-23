@@ -385,9 +385,12 @@ The engines above are not the apps. `.github/workflows/client-app-hysteria.yml` 
 - **import**: the app takes the raw config through its own importer. v2rayNG uses `v2rayng://install-sub`. v2rayN has no URL scheme, so the subscription row its dialog writes is written while it is stopped, and its own updater fetches and parses the config. Every entry must be in the app, `· UDP` and `· Direct` among them;
 - **connection**: the `· UDP` entry is chosen and started as from the app's list, and a request through the app's own listener goes through the node;
 - **UDP**: with the runner's UDP to the node dropped, nothing gets through;
-- **refresh**: the app's own update keeps the same entries;
+- **refresh**: the app's own update runs (v2rayN writes a newer update time; v2rayNG logs a finished update) and keeps the same entries;
 - **wrong pin**: a copy with one character of the entry's pin changed is refused;
-- **rogue**: the entry with the node's pin, pointed at a local rogue with another certificate for the same name that would accept the member's password, is refused, and the rogue's access log carries nothing for the member.
+- **rogue**: the entry with the node's pin, pointed at a local rogue with another certificate for the same name that would accept the member's password, is refused, and the rogue's access log carries nothing for the member. A control with the rogue's own pin then gets through it and is logged, so the refusal is the pin, not a broken rogue;
+- **DNS** (beta only): a fresh name under a resolver echo (`<random>.edns.ip-api.com`, whose page names the resolver that looked it up) is looked up the way the app's traffic is: on Android by the device itself inside the app's VPN (toybox `nc`), on v2rayN through the app's HTTP proxy as a browser on the system proxy does. The resolver must be none of the runner's own.
+
+The UDP, wrong-pin and rogue checks count only after the same run proved the app connects, so an app that never started cannot pass them.
 
 It runs against two targets (`scripts/compat/hysteria-apps/fixture.ts`):
 
@@ -404,7 +407,7 @@ bun --no-env-file scripts/compat/evidence.ts --ci-result <app>/result.json \
   --backend-version <beta's panel version> --commit <the commit beta ran>
 ```
 
-(`--os "Ubuntu 24.04"` for v2rayN.) It records only a run against beta where every check passed, with the Hysteria block, and needs no confirmation. Commit it with the app's `hysteria2: true` in `DEFAULT_CLIENTS` (§ "Hysteria in the client catalog").
+(`--os "Ubuntu 24.04"` for v2rayN.) It records only a run against beta where every check passed, the DNS check included, with the Hysteria block, and needs no confirmation. Commit it with the app's `hysteria2: true` in `DEFAULT_CLIENTS` (§ "Hysteria in the client catalog").
 
 ### Hysteria on the backend
 

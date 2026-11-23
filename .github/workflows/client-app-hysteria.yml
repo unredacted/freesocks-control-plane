@@ -18,15 +18,33 @@ on:
     paths:
       - .github/workflows/client-app-hysteria.yml
       - docker-compose.compat-apps.yml
+      - docker-compose.compat.yml
+      - docker/compat/**
       - scripts/compat/hysteria-apps/**
       - tests/compat/hysteriaApps.ts
+      - tests/compat/manifest.ts
+      # What the fixture builds its server and raw configs from.
+      - convex/lib/backend/profileTemplate.ts
+      - convex/lib/backend/hysteriaCert.ts
+      - convex/lib/backend/hostMapper.ts
+      - convex/lib/hysteriaGuard.ts
+      - convex/lib/edges/testing/fakeBackend.ts
   push:
     branches: [main]
     paths:
       - .github/workflows/client-app-hysteria.yml
       - docker-compose.compat-apps.yml
+      - docker-compose.compat.yml
+      - docker/compat/**
       - scripts/compat/hysteria-apps/**
       - tests/compat/hysteriaApps.ts
+      - tests/compat/manifest.ts
+      # What the fixture builds its server and raw configs from.
+      - convex/lib/backend/profileTemplate.ts
+      - convex/lib/backend/hysteriaCert.ts
+      - convex/lib/backend/hostMapper.ts
+      - convex/lib/hysteriaGuard.ts
+      - convex/lib/edges/testing/fakeBackend.ts
   schedule:
     - cron: '23 9 * * 1'
   workflow_dispatch:

@@ -54,6 +54,8 @@ const CI_CHECKS = [
   'refresh',
   'wrongPinRefused',
   'rogueRefused',
+  // The DNS leak check: run only against beta, where it reaches the open internet.
+  'dns',
 ] as const;
 const ci = values['ci-result']
   ? (JSON.parse(await readFile(values['ci-result'], 'utf8')) as {

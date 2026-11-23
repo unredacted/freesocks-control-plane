@@ -9,7 +9,7 @@
  *   bun --no-env-file scripts/compat/hysteria-apps/fixture.ts carried <node|rogue>
  *
  * `up` writes a fresh certificate pair and password, starts the containers and
- * writes three raw configs (base64 link lists, as Privacy delivers them) under
+ * writes four raw configs (base64 link lists, as Privacy delivers them) under
  * .cache/compat/hysteria-apps/www, for `scripts/compat/hysteria-apps/serve.py`:
  *
  *  - `good`: a `· Direct` REALITY entry and the `· UDP` Hysteria entry for the
@@ -17,7 +17,9 @@
  *    FCP's rewrites applied, through FCP's delivery guard unchanged;
  *  - `wrongpin`: the same `· UDP` entry with one character of its pin changed;
  *  - `rogue`: the `· UDP` entry with the node's pin, pointed at the rogue
- *    (as a hijacked route would), which would accept the member's password.
+ *    (as a hijacked route would), which would accept the member's password;
+ *  - `rogue-control`: the same with the rogue's own pin, which must get
+ *    through, so a refusal of `rogue` is the pin and not a broken rogue.
  *
  * `carried` prints how many requests that server carried for the member (its
  * access log; nothing else is read or printed). The page behind the servers
@@ -195,12 +197,15 @@ function up(host: string): void {
     raw(hysteriaLink(password, host, NODE_PORT, { ...node, pinHex: flip(node.pinHex) })),
   );
   writeFileSync(`${WORK}/www/rogue`, raw(hysteriaLink(password, host, ROGUE_PORT, node)));
+  // The control: the rogue's own pin, so the app must get through it.
+  writeFileSync(`${WORK}/www/rogue-control`, raw(hysteriaLink(password, host, ROGUE_PORT, rogue)));
   writeTarget(
     {
       HY_KIND: 'fixture',
       HY_GOOD_URL: `http://${host}:4180/good`,
       HY_WRONGPIN_URL: `http://${host}:4180/wrongpin`,
       HY_ROGUE_URL: `http://${host}:4180/rogue`,
+      HY_ROGUE_CONTROL_URL: `http://${host}:4180/rogue-control`,
       HY_NODE_IP: '127.0.0.1',
       HY_NODE_PORT: String(NODE_PORT),
     },
@@ -257,12 +262,18 @@ async function beta(app: string, host: string): Promise<void> {
   );
   writeFileSync(`${WORK}/www/wrongpin`, raw(...lines.map((l) => (l === line ? wrong : l))));
   writeFileSync(`${WORK}/www/rogue`, raw(rogueEntry));
+  // The control: the rogue's own pin, so the app must get through it.
+  writeFileSync(
+    `${WORK}/www/rogue-control`,
+    raw(rogueEntry.replace(`pinSHA256=${pin}`, `pinSHA256=${rogue.pinHex}`)),
+  );
   writeTarget(
     {
       HY_KIND: 'beta',
       HY_GOOD_URL: target.url,
       HY_WRONGPIN_URL: `http://${host}:4180/wrongpin`,
       HY_ROGUE_URL: `http://${host}:4180/rogue`,
+      HY_ROGUE_CONTROL_URL: `http://${host}:4180/rogue-control`,
       HY_NODE_IP: nodeIp,
       HY_NODE_PORT: entry.port || '443',
     },

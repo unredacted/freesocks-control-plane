@@ -57,11 +57,12 @@ fetch_sub() {
   db profiles >"$2"
 }
 # refresh_sub <names file>: the same subscription due again, its servers kept.
+# Due means an update time of 0: the app's own fetch is what moves it.
 refresh_sub() {
   stop_app
+  db due
   local was
   was=$(db updated)
-  db due
   start_app
   wait_for 150 fetched_since "$was" || { echo 'v2rayN never refreshed the raw config'; return 1; }
   db profiles >"$1"
@@ -76,8 +77,20 @@ run_udp() {
   sleep 6
   snap running
 }
+# dns_through_app (beta): a browser on the system proxy hands the name to the
+# app (an HTTP proxy request), and the name is looked up beyond the node, by a
+# resolver that is not the runner's own.
+dns_through_app() {
+  local i r
+  for i in 1 2 3; do
+    r=$(curl --silent --max-time 15 -x "http://$LISTENER" "http://$(dns_name)/json" | resolver_of)
+    not_own_resolver "$r" && return 0
+    sleep 2
+  done
+  return 1
+}
 declare -A ok=([rawImport]=false [import]=false [connection]=false [udp]=false
-  [refresh]=false [wrongPinRefused]=false [rogueRefused]=false)
+  [refresh]=false [wrongPinRefused]=false [rogueRefused]=false [dns]=false)
 
 sudo apt-get install -y -qq "$PWD/$DEB" >/dev/null
 Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 </dev/null &
@@ -102,6 +115,7 @@ if fetch_sub "$HY_GOOD_URL" "$names"; then
   if run_udp && through_until 45 && carried_more "$before"; then
     ok[connection]=true
     snap connected
+    [ "$HY_KIND" = beta ] && dns_through_app && ok[dns]=true
     drop_udp
     run_udp
     never && ${ok[connection]} && ok[udp]=true
@@ -117,13 +131,22 @@ if fetch_sub "$HY_WRONGPIN_URL" "$HY_WORK/app-names-wrongpin.txt"; then
   run_udp && never && [ "$(carried node)" -eq "$before" ] && ${ok[connection]} && ok[wrongPinRefused]=true
 fi
 
+refused=false
 if fetch_sub "$HY_ROGUE_URL" "$HY_WORK/app-names-rogue.txt"; then
-  run_udp && never && [ "$(carried rogue)" -eq 0 ] && ${ok[connection]} && ok[rogueRefused]=true
+  run_udp && never && [ "$(carried rogue)" -eq 0 ] && ${ok[connection]} && refused=true
+fi
+# The control: with the rogue's own pin the app gets through it, so the
+# refusal above was the pin.
+if $refused && fetch_sub "$HY_ROGUE_CONTROL_URL" "$HY_WORK/app-names-control.txt"; then
+  run_udp && rogue_control && ok[rogueRefused]=true
 fi
 stop_app
 # The app's own logs, for a failed step (fixture data only).
 [ "$HY_KIND" = fixture ] && cp -r "$DATA/guiLogs" "$OUT/guiLogs" 2>/dev/null
 
 pairs=()
-for k in rawImport import connection udp refresh wrongPinRefused rogueRefused; do pairs+=("$k=${ok[$k]}"); done
+keys=(rawImport import connection udp refresh wrongPinRefused rogueRefused)
+# The DNS check needs the open internet beyond the node: beta only.
+[ "$HY_KIND" = beta ] && keys+=(dns)
+for k in "${keys[@]}"; do pairs+=("$k=${ok[$k]}"); done
 write_result "$OUT/result.json" v2rayN "$(dpkg-query -W -f '${Version}' v2rayn)" "${pairs[@]}"
