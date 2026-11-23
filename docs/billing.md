@@ -297,18 +297,25 @@ showed, which matches the ref prefix in Admin -> Billing -> Orders.
 3. Press **Register webhook**. With no webhook secret saved, it makes one (32
    random bytes, `telegram.secret.webhookSecret`) and saves it first. It then
    points Telegram at `/api/webhooks/telegram` with that secret and sets the
-   command menu in every language. Registering again reuses the secret. Neither
-   register nor remove drops pending updates: they may hold Stars payments not
-   yet granted. The card
-   shows whether Telegram reaches the webhook.
+   command menu in every language. Registering again reuses the secret. Register
+   first asks Telegram whose token it is (`getMe`) and refuses unless that is the
+   username typed on the card; it records the bot's id and that verified name
+   (`telegram.webhook.botId` / `.botUsername`). Neither register nor remove drops
+   pending updates: they may hold Stars payments not yet granted, so **Remove
+   waits** while Telegram still holds any. A token for a **different** bot is
+   refused while a webhook is registered (its queued payments would be answered
+   with the wrong token): Remove, save the new token, Register. A new token for
+   the same bot (a rotation) saves as usual. The card shows whether Telegram
+   reaches the webhook.
 
    `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` in the deployment env still
    work as fallbacks; a saved value wins.
 
 4. Turn on the methods, then **Shop open**. While the bot would answer as open
    (switched on, billing on, something to sell, and the webhook registered for
-   the bot whose token is saved; Remove or a new token hides it), the site shows
-   it (`publicConfig.telegram`): a footer link, a card in the Home page's support
+   the bot whose token is saved; Remove or a new token hides it), and only under
+   the name Telegram verified at Register (a changed username hides it until the
+   next Register), the site shows it (`publicConfig.telegram`): a footer link, a card in the Home page's support
    section, and a short version in the member's gift codes card
    (`TelegramShopCard.svelte`). The card names the exact @username (the one set
    on the admin card) as the only official bot, so buyers can tell it from a
@@ -319,7 +326,11 @@ showed, which matches the ref prefix in Admin -> Billing -> Orders.
 **Webhook.** `POST /api/webhooks/telegram` checks the
 `x-telegram-bot-api-secret-token` header against the webhook secret
 (constant time; 503 while none is set, 401 on a mismatch), caps the body at 64 KiB, and
-dedupes on `update_id` (`telegramUpdates`, ids only, swept after two days). It
+dedupes on `update_id` (`telegramUpdates`, ids only, swept after two days in
+pages that keep going until the backlog is gone). There is no per-IP limit:
+after the secret check every request is Telegram's, from a few shared
+addresses, so the bot limits per chat instead (never payments). Once a
+payment's update id is claimed, any failure releases it and answers 500. It
 answers 200 to everything else, except a Stars payment whose grant failed, which
 gets a 500 so Telegram redelivers it. Group chats are ignored (codes would be
 shown to the whole group).
@@ -785,7 +796,6 @@ the balance frequently, and treat the account as expendable.
   direct checkout also creates the payment on it).
 - `webhook.nowpayments.ip` — 120/min per IP (one payment fires several IPNs).
 - `webhook.btcpay.ip` — 120/min per IP (several invoice events per payment).
-- `webhook.telegram.ip` — 600/min per IP (Telegram sends from a few addresses).
 - `bot.telegram.chat` — 30/min per Telegram chat; `bot.telegram.checkout` — 6/hr
   per chat (new orders). The subject is a salted HMAC of the chat id.
 

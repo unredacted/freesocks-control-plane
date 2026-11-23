@@ -110,6 +110,22 @@ export const setConfig = internalMutation({
         message: 'Set the bot username before opening the shop',
       });
     }
+    // A token for a DIFFERENT bot while this one's webhook is registered:
+    // payments still queued for the old bot would arrive here and be answered
+    // with the new bot's token, which can't deliver or refund them. Remove
+    // the old webhook first (Remove waits until nothing is queued).
+    const newToken = writes.find((w) => w.key === TELEGRAM_SECRET_KEYS.botToken)?.value;
+    if (
+      typeof newToken === 'string' &&
+      cur.webhookBotId !== '' &&
+      botIdOf(newToken) !== cur.webhookBotId
+    ) {
+      throw new ConvexError({
+        code: 'validation',
+        message:
+          'That token is for a different bot. Remove the current webhook first, then save the new token and register again.',
+      });
+    }
     for (const w of writes) {
       await upsertSettingRow(ctx, w.key, JSON.stringify(w.value), actorAdminId);
     }
@@ -208,13 +224,36 @@ export const setWebhook = internalAction({
     if (!token) {
       throw new ConvexError({ code: 'validation', message: 'Save the bot token first' });
     }
+    let verifiedUsername = '';
     try {
       if (a.action === 'remove') {
+        // Updates Telegram still holds may be Stars payments; once the
+        // webhook is gone they would never reach us. Wait for them first.
+        const info = await tg.getWebhookInfo(token);
+        if (info.url !== '' && info.pending_update_count > 0) {
+          throw new ConvexError({
+            code: 'validation',
+            message: `Telegram still has ${info.pending_update_count} updates waiting for this bot (they may be payments). Wait until they arrive, then remove the webhook.`,
+          });
+        }
         await tg.deleteWebhook(token);
       } else {
         const view = await ctx.runQuery(internal.telegramAdmin.view, {});
         if (!view.webhookUrl) {
           throw new ConvexError({ code: 'validation', message: 'PUBLIC_BASE_URL is not set' });
+        }
+        // The site will name this bot as the official one: the username
+        // typed on the card must be the token's own.
+        const me = await tg.getMe(token);
+        verifiedUsername = me.username ?? '';
+        if (
+          !verifiedUsername ||
+          verifiedUsername.toLowerCase() !== view.botUsername.toLowerCase()
+        ) {
+          throw new ConvexError({
+            code: 'validation',
+            message: `The saved token belongs to @${verifiedUsername || 'unknown'}, not @${view.botUsername || 'unset'}. Fix the bot username or the token, then register again.`,
+          });
         }
         const secret =
           saved.webhookSecret ||
@@ -237,17 +276,22 @@ export const setWebhook = internalAction({
     await ctx.runMutation(internal.telegramAdmin.auditWebhook, {
       action: a.action,
       botId: a.action === 'register' ? botIdOf(token) : '',
+      botUsername: verifiedUsername,
       actorAdminId: a.actorAdminId,
     });
     return { ok: true };
   },
 });
 
-/** Record which bot the webhook now serves ('' after Remove), and audit it. */
+/**
+ * Record which bot the webhook now serves, and its @username as Telegram
+ * reported it ('' for both after Remove), and audit it.
+ */
 export const auditWebhook = internalMutation({
   args: {
     action: v.union(v.literal('register'), v.literal('remove')),
     botId: v.string(),
+    botUsername: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a): Promise<null> => {
@@ -255,6 +299,12 @@ export const auditWebhook = internalMutation({
       ctx,
       TELEGRAM_KEYS.webhookBotId,
       JSON.stringify(a.botId),
+      a.actorAdminId,
+    );
+    await upsertSettingRow(
+      ctx,
+      TELEGRAM_KEYS.webhookBotUsername,
+      JSON.stringify(a.botUsername),
       a.actorAdminId,
     );
     await writeAuditLog(ctx, {

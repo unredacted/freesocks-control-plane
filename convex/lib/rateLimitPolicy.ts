@@ -109,7 +109,6 @@ export const RATE_LIMIT_DEFAULTS = {
   // Telegram gift shop. Updates arrive from Telegram's own few addresses, so the
   // per-IP cap is wide; the real limits are per chat (subject = a salted HMAC of
   // the chat id, never the id): any update, and new orders.
-  'webhook.telegram.ip': { max: 600, windowMs: MINUTE, enabled: true },
   'bot.telegram.chat': { max: 30, windowMs: MINUTE, enabled: true },
   'bot.telegram.checkout': { max: 6, windowMs: HOUR, enabled: true },
   // Self-service membership checkout (per member): each call creates a hosted

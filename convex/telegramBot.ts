@@ -123,9 +123,12 @@ export const sweepUpdates = internalMutation({
       .withIndex('by_creation_time', (q) => q.lt('_creationTime', cutoff))
       .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
-    const n = rounds ?? 0;
-    if (rows.length === page && n < 50) {
-      await ctx.scheduler.runAfter(0, internal.telegramBot.sweepUpdates, { rounds: n + 1 });
+    // A full page means more may be due: keep draining until a short page.
+    // Every page deletes what it reads, so the chain always ends.
+    if (rows.length === page) {
+      await ctx.scheduler.runAfter(0, internal.telegramBot.sweepUpdates, {
+        rounds: (rounds ?? 0) + 1,
+      });
     }
     return { removed: rows.length };
   },
@@ -504,11 +507,16 @@ export const handleUpdate = internalAction({
       updateId: update.update_id,
     });
     if (!claim.fresh) return { handled: false };
-
-    const shop = await ctx.runQuery(internal.telegramBot.shopContext, {});
-    const open = shopOpen(shop.tg, shop.billing) && shop.tg.botUsername !== '';
+    // A payment must never be lost: once its update id is claimed, ANY
+    // failure releases the id and answers 500, so Telegram delivers it again.
+    const carriesPayment = !!(
+      update.message?.successful_payment || update.message?.refunded_payment
+    );
 
     try {
+      const shop = await ctx.runQuery(internal.telegramBot.shopContext, {});
+      const open = shopOpen(shop.tg, shop.billing) && shop.tg.botUsername !== '';
+
       // Telegram waits at most 10 seconds for this answer: no rate limit here.
       const pq = update.pre_checkout_query;
       if (pq) {
@@ -668,6 +676,10 @@ export const handleUpdate = internalAction({
       return { handled: true };
     } catch (err) {
       if (err instanceof PaymentRetry) throw new Error('telegram payment not applied; retry');
+      if (carriesPayment) {
+        await ctx.runMutation(internal.telegramBot.releaseUpdate, { updateId: update.update_id });
+        throw new Error('telegram payment not applied; retry');
+      }
       // A kind only: never the update, the chat or (from the API client) a URL.
       console.error(
         '[telegram] update failed:',

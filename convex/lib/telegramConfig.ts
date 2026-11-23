@@ -37,6 +37,11 @@ export interface TelegramConfig {
    * State, not a setting: only the webhook actions write it.
    */
   webhookBotId: string;
+  /**
+   * That bot's @username as Telegram reported it at Register (getMe), so the
+   * site never vouches for a typed name the token doesn't belong to.
+   */
+  webhookBotUsername: string;
 }
 
 export const TELEGRAM_KEYS = {
@@ -46,6 +51,7 @@ export const TELEGRAM_KEYS = {
   starsPrices: 'telegram.stars.prices',
   termsUrl: 'telegram.termsUrl',
   webhookBotId: 'telegram.webhook.botId',
+  webhookBotUsername: 'telegram.webhook.botUsername',
 } as const;
 
 /** Write-only credentials (DB first, then env). */
@@ -71,6 +77,7 @@ export const TELEGRAM_DEFAULTS: TelegramConfig = {
   starsPrices: [],
   termsUrl: '',
   webhookBotId: '',
+  webhookBotUsername: '',
 };
 
 /** Upper bound on a Stars price per code (Telegram caps one invoice at 10,000 Stars x quantity anyway). */
@@ -171,15 +178,23 @@ export async function resolveTelegramSecrets(db: DatabaseReader): Promise<Telegr
 
 export async function resolveTelegramConfig(db: DatabaseReader): Promise<TelegramConfig> {
   const read = (key: string) => readSetting(db, key);
-  const [enabled, botUsername, starsEnabled, starsPrices, termsUrl, webhookBotId] =
-    await Promise.all([
-      read(TELEGRAM_KEYS.enabled),
-      read(TELEGRAM_KEYS.botUsername),
-      read(TELEGRAM_KEYS.starsEnabled),
-      read(TELEGRAM_KEYS.starsPrices),
-      read(TELEGRAM_KEYS.termsUrl),
-      read(TELEGRAM_KEYS.webhookBotId),
-    ]);
+  const [
+    enabled,
+    botUsername,
+    starsEnabled,
+    starsPrices,
+    termsUrl,
+    webhookBotId,
+    webhookBotUsername,
+  ] = await Promise.all([
+    read(TELEGRAM_KEYS.enabled),
+    read(TELEGRAM_KEYS.botUsername),
+    read(TELEGRAM_KEYS.starsEnabled),
+    read(TELEGRAM_KEYS.starsPrices),
+    read(TELEGRAM_KEYS.termsUrl),
+    read(TELEGRAM_KEYS.webhookBotId),
+    read(TELEGRAM_KEYS.webhookBotUsername),
+  ]);
   return {
     enabled: enabled === true,
     botUsername: sanitizeBotUsername(botUsername),
@@ -188,7 +203,21 @@ export async function resolveTelegramConfig(db: DatabaseReader): Promise<Telegra
     termsUrl: sanitizeTermsUrl(termsUrl),
     webhookBotId:
       typeof webhookBotId === 'string' && /^\d{5,16}$/.test(webhookBotId) ? webhookBotId : '',
+    webhookBotUsername: sanitizeBotUsername(webhookBotUsername),
   };
+}
+
+/**
+ * The @username the site may name as the official bot, or null: only while
+ * the webhook was registered for the bot whose token is saved now, and the
+ * configured username is the one Telegram reported for it at Register.
+ */
+export function verifiedBotUsername(cfg: TelegramConfig, botToken: string): string | null {
+  const id = botIdOf(botToken);
+  if (!id || cfg.webhookBotId !== id || !cfg.webhookBotUsername) return null;
+  return cfg.botUsername.toLowerCase() === cfg.webhookBotUsername.toLowerCase()
+    ? cfg.webhookBotUsername
+    : null;
 }
 
 export interface TelegramConfigPatch {

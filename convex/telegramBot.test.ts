@@ -17,6 +17,14 @@ const CHAT = 918273645;
 
 type Call = { method: string; body: Record<string, unknown>; url: string };
 
+/** What the stubbed Telegram says about the bot and its webhook (tests change it). */
+const tgState = { username: 'FreeSocksShopBot', pending: 0, hookUrl: '' };
+beforeEach(() => {
+  tgState.username = 'FreeSocksShopBot';
+  tgState.pending = 0;
+  tgState.hookUrl = '';
+});
+
 /** `fail`: Bot API methods that fail once (Telegram answers an error). */
 function stubFetch(fail: string[] = []) {
   const calls: Call[] = [];
@@ -36,12 +44,16 @@ function stubFetch(fail: string[] = []) {
           { status: 502 },
         );
       }
+      if (method === 'setWebhook') tgState.hookUrl = String(body.url);
+      if (method === 'deleteWebhook') tgState.hookUrl = '';
       const result =
         method === 'sendMessage'
           ? { message_id: nextMessageId++ }
           : method === 'getMe'
-            ? { id: 1, username: 'FreeSocksShopBot' }
-            : true;
+            ? { id: 1, username: tgState.username }
+            : method === 'getWebhookInfo'
+              ? { url: tgState.hookUrl, pending_update_count: tgState.pending }
+              : true;
       return Response.json({ ok: true, result });
     }
     throw new Error(`unexpected fetch ${u}`);
@@ -418,16 +430,66 @@ describe('the public link', () => {
     expect(await link()).toBeNull();
     await t.mutation(internal.telegramAdmin.setConfig, { starsEnabled: true });
     expect(await link()).not.toBeNull();
+    // The configured name changes away from the token's own: hidden.
+    await t.mutation(internal.telegramAdmin.setConfig, { botUsername: 'SomeoneElsesBot' });
+    expect(await link()).toBeNull();
+    await t.mutation(internal.telegramAdmin.setConfig, { botUsername: 'FreeSocksShopBot' });
+    expect(await link()).not.toBeNull();
+    // Remove keeps the secret but stops Telegram calling us.
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'remove' });
+    expect(await link()).toBeNull();
     // A new token for another bot, not registered yet.
     await t.mutation(internal.telegramAdmin.setConfig, {
       botToken: '222222222:ANOTHER_bot_token_abcdefghijklmnopqrst',
     });
     expect(await link()).toBeNull();
     await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
-    expect(await link()).not.toBeNull();
-    // Remove keeps the secret but stops Telegram calling us.
+    expect(await link()).toEqual({ botUsername: 'FreeSocksShopBot' });
+  });
+});
+
+describe('changing bots safely', () => {
+  test('register refuses a username the token does not belong to', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    stubFetch();
+    tgState.username = 'AnImpostorBot';
+    await expect(
+      t.action(internal.telegramAdmin.setWebhook, { action: 'register' }),
+    ).rejects.toThrow(/belongs to @AnImpostorBot, not @FreeSocksShopBot/);
+    expect((await t.query(api.publicConfig.get, {})).telegram).toBeNull();
+  });
+
+  test("another bot's token waits until the current webhook is removed", async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    stubFetch();
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
+    const other = '222222222:ANOTHER_bot_token_abcdefghijklmnopqrst';
+    await expect(t.mutation(internal.telegramAdmin.setConfig, { botToken: other })).rejects.toThrow(
+      /different bot/,
+    );
+    // A new token for the SAME bot (a rotation) is fine.
+    await t.mutation(internal.telegramAdmin.setConfig, {
+      botToken: '123456789:ROTATED_token_abcdefghijklmnopqrstuv',
+    });
     await t.action(internal.telegramAdmin.setWebhook, { action: 'remove' });
-    expect(await link()).toBeNull();
+    await t.mutation(internal.telegramAdmin.setConfig, { botToken: other });
+  });
+
+  test('remove waits while Telegram still holds updates (they may be payments)', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { sent } = stubFetch();
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
+    tgState.pending = 3;
+    await expect(t.action(internal.telegramAdmin.setWebhook, { action: 'remove' })).rejects.toThrow(
+      /3 updates waiting/,
+    );
+    expect(sent('deleteWebhook')).toHaveLength(0);
+    tgState.pending = 0;
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'remove' });
+    expect(sent('deleteWebhook')).toHaveLength(1);
   });
 });
 
@@ -522,6 +584,22 @@ describe('update retention', () => {
     const res = await t.mutation(internal.telegramBot.sweepUpdates, {});
     vi.useRealTimers();
     expect(res.removed).toBe(1);
+  });
+
+  test('keeps draining a large backlog, whatever the page count', async () => {
+    const t = convexTest(schema, modules);
+    vi.useFakeTimers();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 1001; i++) await ctx.db.insert('telegramUpdates', { updateId: i });
+    });
+    vi.setSystemTime(Date.now() + 3 * 86_400_000);
+    // Deep into a long drain (the old cap stopped at 50 rounds).
+    await t.mutation(internal.telegramBot.sweepUpdates, { rounds: 99 });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query('telegramUpdates').collect()).toHaveLength(0);
+    });
   });
 });
 

@@ -3104,14 +3104,10 @@ http.route({
     if (Number.isFinite(declaredLen) && declaredLen > 64 * 1024) {
       return errorJson('webhook.too_large', 'Payload too large', 413);
     }
-    const ip = resolveClientIp(req);
-    if (ip) {
-      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-        policyKey: 'webhook.telegram.ip',
-        subject: await ipHashSubject(ip),
-      });
-      if (!rl.allowed) return errorJson('rate_limit.exceeded', 'Too many requests', 429);
-    }
+    // No per-IP limit: after the secret check every request is Telegram's,
+    // from a few shared addresses, so an IP bucket would let one busy chat
+    // hold back every buyer's payment. The bot limits per chat instead
+    // (payments and pre-checkout answers are never limited).
     const rawBody = await readBoundedBody(req, 64 * 1024);
     if (rawBody === null) return errorJson('webhook.too_large', 'Payload too large', 413);
     try {
