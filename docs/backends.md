@@ -607,6 +607,39 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
     (code/label/online/load-band only); a member may pick one when creating/regenerating a
     key (persisted as `users.preferredLocation`; 'auto' = least-loaded anywhere).
     The filter is **fail-soft**: a stale/offline location never blocks issuance.
+- **Tier-gated locations** (`convex/lib/locationAccess.ts`): a backend-server row may
+  list the tiers allowed a key there (`allowedTierIds`, Admin → Servers → Backends,
+  "Who can use this location"; absent or empty = every tier; the by-slug upsert never
+  touches it). Unlike the location pick this filter is **hard**: `resolvePlacementTarget`
+  (`tierId`), `backendServers.pickCandidatesForIssue` and a pinned `issueUser` all drop
+  an instance the member's tier is not on, so a members-only location never takes a
+  free key, and with no instance left for the tier nothing is issued
+  (`backend.unavailable`). The public catalog still lists such a location, with the
+  tier slugs it is open to (`publicConfig.locations[].tiers`, null = everyone), so the
+  home page, the picker and "Switch location" show it as **Members only** instead of
+  hiding it. A tier says whether its members may move their key between locations
+  (`tiers.canSwitchLocation`; absent = paid tiers yes, the default-free tier no;
+  account view `user.tier.canSwitchLocation`). Such a tier picks its first key's
+  location freely (among its own locations) and keeps it: the regenerate route
+  refuses a location change once a key exists (`location.switch_requires_membership`, 403) and a members-only pick (`location.members_only`, 403), both judged by
+  `account.locationChoiceCheck` before any rate-limit unit is spent.
+- **Member "Switch location":** `POST /api/v1/account/switch-location`
+  `{location, confirm:true}` (`account.switchLocation`, policy
+  `account.switch-location`, response sealed when sealing is on) re-issues the key at
+  that location carrying the sub token (the link does not change), and saves the
+  location as the member's pick only once the key is there. Refusals mint nothing:
+  `location.switch_requires_membership`, `location.members_only`, `location.same`,
+  `location.unavailable` (the soft narrowing would have landed elsewhere). Audited
+  `subscription.switch_location`.
+- **Keys left where their tier may not go:** `lifecycle.pushTierToBackend` (every tier
+  change: a lapsed membership's downgrade, an admin grant) asks
+  `account.relocationNeeded` and, when the key's instance no longer takes the tier,
+  schedules `account.relocateForTier`: under the member's issuance lock it re-issues
+  the key at the member's pick (cleared to Automatic when the tier cannot use it),
+  keeping the link (audit `subscription.relocate_for_tier`). A held lock or a location
+  with no room retries 5 times, 5 minutes apart, then audits
+  `subscription.relocate_failed` and leaves the key. Narrowing a location's tiers in
+  the CMS moves existing keys only at their next tier push, not at once.
 - **Member node status:** `GET /api/v1/account/node-status` reports the online
   bit of the mode group behind the member's key (refreshed on demand, at most once per
   instance per minute via a serializable stampede guard; instance-health fallback
@@ -618,7 +651,10 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   another mode group on the key's own backend (an in-place PATCH), another node of the
   key's current group (rotating the node pin; needs fresh stats showing more than one
   node AND a node on record, which only an app's fetch sets and every move clears), then
-  another mode group anywhere (a re-issue carrying the sub token). With none it refuses
+  another mode group anywhere (a re-issue carrying the sub token). It never changes the
+  key's **location**: the re-issue narrows to the location code of the key's server and
+  counts only a target there (`sameLocationProven`; an instance with no location set
+  keeps the old any-server behavior). "Switch location" is the other button. With none it refuses
   `server.no_alternative` and changes nothing: a mode whose pool is one group with one
   node can never switch. The account view projects `subscription.canSwitchServer`
   from the same conditions (`convex/lib/switchServer.ts`, read-only), and the SPA shows

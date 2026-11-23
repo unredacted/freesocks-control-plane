@@ -67,6 +67,7 @@
     isActive: true,
     priority: 100,
     expirationDaysAfterMembershipLapse: 90,
+    canSwitchLocation: true,
   };
 
   // Snapshot once at init (an open editor keeps its own copy; prop changes
@@ -375,6 +376,21 @@
           onCheckedChange={(v) => (draft = { ...draft, isDefaultFree: v === true })}
         />
         <span>Default free tier for its backend (new sign-ups land here)</span>
+      </label>
+      <label class="flex items-start gap-3 text-sm">
+        <Checkbox
+          checked={draft.canSwitchLocation}
+          onCheckedChange={(v) => (draft = { ...draft, canSwitchLocation: v === true })}
+          class="mt-0.5"
+        />
+        <span>
+          Can switch location
+          <span class="block text-xs text-muted-foreground">
+            Members on this tier get "Switch location" and can change location when they create a
+            new key. Without it they keep the location of their first key, and the button offers
+            membership instead. Which locations a tier can use is set on each backend.
+          </span>
+        </span>
       </label>
     </div>
 

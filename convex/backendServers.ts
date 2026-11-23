@@ -30,6 +30,7 @@ import {
 } from './lib/backends/remnawave';
 import { isNumericBackendUserId, scopedServerId, toStoredBackendUserId } from './lib/backendUserId';
 import { resolveLocations } from './lib/locations';
+import { serverAllowsTier } from './lib/locationAccess';
 import { fleetStatsValidator } from './lib/fleetStats';
 import {
   bumpServerKeyCount,
@@ -76,12 +77,16 @@ export const pickCandidatesForIssue = internalQuery({
     backend: backendId,
     poolIds: v.optional(v.array(v.id('backendServers'))),
     limit: v.optional(v.number()),
+    // The member's tier: instances that do not take it are out (HARD).
+    tierId: v.optional(v.id('tiers')),
   },
-  handler: async (ctx, { backend, poolIds, limit }) => {
-    let candidates = await ctx.db
-      .query('backendServers')
-      .withIndex('by_backend_active', (q) => q.eq('backend', backend).eq('isActive', true))
-      .collect();
+  handler: async (ctx, { backend, poolIds, limit, tierId }) => {
+    let candidates = (
+      await ctx.db
+        .query('backendServers')
+        .withIndex('by_backend_active', (q) => q.eq('backend', backend).eq('isActive', true))
+        .collect()
+    ).filter((s) => serverAllowsTier(s, tierId));
     if (poolIds && poolIds.length > 0) {
       const allow = new Set<string>(poolIds);
       candidates = candidates.filter((s) => allow.has(s._id));

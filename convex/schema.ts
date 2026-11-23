@@ -640,6 +640,12 @@ export default defineSchema({
     isActive: v.boolean(),
     priority: v.number(),
     expirationDaysAfterMembershipLapse: v.number(),
+    // May a member on this tier move their key to another location
+    // ("Switch location", or a location change on "Create a new key")?
+    // Absent = the default: paid tiers yes, the default-free tier no
+    // (lib/locationAccess.ts tierCanSwitchLocation). The first key's location
+    // is always the member's pick.
+    canSwitchLocation: v.optional(v.boolean()),
     // Plan-card feature lines (src/shared/contracts/tierFeatures.ts), in
     // order. Absent = the built-in defaults for the tier's kind; [] = none.
     features: v.optional(
@@ -1492,6 +1498,12 @@ export default defineSchema({
     // admin mutations (lat -90..90, lng -180..180).
     locationLat: v.optional(v.number()),
     locationLng: v.optional(v.number()),
+    // Which tiers may get a key on this instance (lib/locationAccess.ts).
+    // Absent or empty = every tier. A HARD issuance filter (unlike the soft
+    // location preference): a tier not listed is never placed here, and a key
+    // left here after a downgrade is moved off (account.relocateForTier).
+    // Edited in the CMS only; the by-slug upsert never touches it.
+    allowedTierIds: v.optional(v.array(v.id('tiers'))),
     isActive: v.boolean(),
     priority: v.number(),
     // Optional hard capacity cap: at keyCount >= maxKeys the instance is skipped

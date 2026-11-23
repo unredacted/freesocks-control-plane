@@ -19,6 +19,7 @@ import {
   parseCountryExits,
   type CountryExit,
 } from './lib/countryExits';
+import { locationOpenTo } from './lib/locationAccess';
 import { resolveLocations } from './lib/locations';
 import { liveChoice, type MemberFamily } from './lib/memberCountry';
 import { effectiveDefaultFor, resolveCatalogWithAvailability } from './lib/placement';
@@ -137,9 +138,12 @@ export async function memberExitOf(
   const server = serverId ? await db.get(serverId) : null;
   if (!server?.location || codes.includes(server.location)) return null;
   const catalog = await resolveLocations(db);
+  // Never offer a location the member's tier cannot be placed on.
+  const tier = await db.get(user.tierId);
   for (const code of codes) {
     const at = catalog.find((l) => l.code === code);
-    if (at?.online) return { country: choice, code, label: at.label };
+    if (at?.online && (!tier || locationOpenTo(at, tier.slug)))
+      return { country: choice, code, label: at.label };
   }
   return null;
 }

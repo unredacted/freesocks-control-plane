@@ -53,6 +53,19 @@ export function crossPanelMoveProven(
 }
 
 /**
+ * "Switch server" stays in the key's location; "Switch location" is the other
+ * button. A re-issue target counts only when it is at the same location code
+ * as the key's server now (or that location is unknown: an instance with no
+ * location set keeps the old any-server behavior).
+ */
+export function sameLocationProven(
+  ownLocation: string | null,
+  targetLocation: string | null | undefined,
+): boolean {
+  return ownLocation === null || targetLocation === ownLocation;
+}
+
+/**
  * Whether `account.switchServer` would move this member's key right now, read
  * without side effects. True also when the action would answer the retryable
  * `backend.placement_unresolved` (bring-up on a multi-backend deployment):
@@ -79,15 +92,16 @@ export async function switchServerAvailable(
   const resolver = resolverFor(tier.backend);
   const canPlace = canPlaceBackend && !(await resolver.effectiveGate(db, modeId)).blocked;
   let ownPanelId: string | null = null;
-  if (canPlaceBackend && sub.backendServerId) {
-    const server = await db.get(sub.backendServerId);
-    if (server?.isActive && server.backend === tier.backend) ownPanelId = server._id;
-  }
+  const ownServer = sub.backendServerId ? await db.get(sub.backendServerId) : null;
+  const ownLocation = ownServer?.location ?? null;
+  if (canPlaceBackend && ownServer?.isActive && ownServer.backend === tier.backend)
+    ownPanelId = ownServer._id;
 
   if (canPlace) {
     const { placement } = await resolver.resolveTarget(db, modeId, {
       onlyServerId: ownPanelId,
       excludePlacement: source,
+      tierId: tier._id,
     });
     if (inPlaceMoveProven(source, placement)) return true;
   }
@@ -104,10 +118,18 @@ export async function switchServerAvailable(
 
   if (canPlace) {
     const target = await resolver.resolveTarget(db, modeId, {
-      location: user.preferredLocation ?? null,
+      location: ownLocation ?? user.preferredLocation ?? null,
       excludePlacement: source,
+      tierId: tier._id,
     });
-    if (target.unattributedMultiPanel || crossPanelMoveProven(source, target, ownPanelId))
+    if (target.unattributedMultiPanel) return true;
+    const targetServer = target.serverId
+      ? await db.get(target.serverId as Doc<'backendServers'>['_id'])
+      : null;
+    if (
+      crossPanelMoveProven(source, target, ownPanelId) &&
+      sameLocationProven(ownLocation, targetServer?.location)
+    )
       return true;
   }
   return false;

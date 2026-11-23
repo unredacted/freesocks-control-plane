@@ -421,6 +421,12 @@ export const pushTierToBackend = internalAction({
       });
       // Push succeeded: clear any prior drift flag (no-op if it wasn't set).
       await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
+      // A tier change can leave the key on an instance the new tier may not use
+      // (a lapsed membership on a members-only location): move it, keeping the
+      // member's link (lib/locationAccess.ts).
+      if (await ctx.runQuery(internal.account.relocationNeeded, { userId })) {
+        await ctx.scheduler.runAfter(0, internal.account.relocateForTier, { userId });
+      }
     } catch (err) {
       if (n + 1 < PUSH_MAX_ATTEMPTS) {
         await ctx.scheduler.runAfter(

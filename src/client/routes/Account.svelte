@@ -60,6 +60,9 @@
   import { clearSessionKey, popUnavailable } from '../lib/pop';
   import { deviceLimitsShown } from '../lib/tiers';
   import LocationPicker from '../components/LocationPicker.svelte';
+  import SwitchLocationModal from '../components/SwitchLocationModal.svelte';
+  import { locationOpenTo, shortPlace } from '../lib/locations';
+  import MapPin from '@lucide/svelte/icons/map-pin';
   import {
     accountQuery,
     accountUsageQuery,
@@ -81,6 +84,7 @@
     ConnectionModeResponse,
     RefreshMembershipResponse,
     RegenerateResponse,
+    SwitchLocationResponse,
     SwitchServerResponse,
   } from '../../shared/contracts/account';
   import type { SwitchServerReason } from '../../shared/contracts/switchServerReasons';
@@ -108,11 +112,28 @@
   let pickedLocation = $state('auto');
   let locationSeeded = false;
   $effect(() => {
-    if (!locationSeeded && account.data) {
+    if (!locationSeeded && account.data && config.data) {
       locationSeeded = true;
-      pickedLocation = account.data.preferredLocation ?? 'auto';
+      const stored = account.data.preferredLocation;
+      const entry = stored ? locations.find((l) => l.code === stored) : undefined;
+      // A stored pick the tier can no longer use (a lapsed membership) reads as
+      // Automatic: the server would refuse it, and never places a key there.
+      pickedLocation =
+        entry && locationOpenTo(entry, account.data.user.tier.slug) ? entry.code : 'auto';
     }
   });
+  // The member's tier: which locations it may use, and whether it may move the
+  // key between them ("Switch location"; paid tiers by default).
+  let tierSlug = $derived(account.data?.user.tier.slug ?? null);
+  let canSwitchLocation = $derived(account.data?.user.tier.canSwitchLocation ?? false);
+  // "See membership" from the location controls: the Membership tab, or
+  // nothing when billing is off (the controls then show no button).
+  function openMembership() {
+    switchLocationOpen = false;
+    regenerateOpen = false;
+    activeTab = 'membership';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   // Convenience accessor: Svelte's narrowing reads better than account.data
   // sprinkled across the template.
@@ -173,6 +194,7 @@
   let regenerateOpen = $state(false);
   let switchBackendOpen = $state(false);
   let switchServerOpen = $state(false);
+  let switchLocationOpen = $state(false);
   // The member's stated reason for moving servers - required before confirming,
   // and reset per open so a previous answer is never resubmitted silently.
   let switchServerReason = $state<SwitchServerReason | null>(null);
@@ -355,7 +377,9 @@
         '/api/v1/account/regenerate',
         {
           confirm: true,
-          ...(locations.length >= 2
+          // A tier that keeps its first location sends no pick once it has a
+          // key (the server would refuse a change); the stored one applies.
+          ...(locations.length >= 2 && (canSwitchLocation || !account.data?.subscription)
             ? { location: pickedLocation === 'auto' ? null : pickedLocation }
             : {}),
         },
@@ -414,6 +438,34 @@
     onError: (err) => {
       liveMessage = t('switchServer.failed');
       toast.error(t('switchServer.failed'), { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Mutation: move this key to another location (members by default), keeping
+  // the subscription URL. The location becomes the stored pick.
+  const switchLocation = createMutation(() => ({
+    mutationFn: (code: string) =>
+      apiClient.post(
+        '/api/v1/account/switch-location',
+        { location: code, confirm: true },
+        SwitchLocationResponse,
+      ),
+    onSuccess: (_res, code) => {
+      switchLocationOpen = false;
+      pickedLocation = code;
+      void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
+      void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
+      void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
+      const label = locations.find((l) => l.code === code)?.label ?? code;
+      liveMessage = t('switchLocation.done', { location: label });
+      toast.success(t('switchLocation.done', { location: label }), {
+        description: t('switchServer.point1'),
+      });
+    },
+    onError: (err) => {
+      liveMessage = t('switchLocation.failed');
+      toast.error(t('switchLocation.failed'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -660,6 +712,18 @@
       !!backendEntry(config.data?.backends, data?.subscription?.backend)?.capabilities
         .switchServer &&
       data.subscription.canSwitchServer !== false,
+  );
+  // Where the key is served from now (live node status first, else the view).
+  let keyLocation = $derived(
+    nodeStatus.data?.node?.location ?? data?.subscription?.location ?? null,
+  );
+  // "Switch location" shows for every member once there is somewhere else to
+  // go and the key's backend can move keys at all; a tier that may not switch
+  // gets the membership note (and "Switch server instead") from the same button.
+  let showSwitchLocation = $derived(
+    !!data?.subscription &&
+      locations.length >= 2 &&
+      !!backendEntry(config.data?.backends, data?.subscription?.backend)?.capabilities.switchServer,
   );
 
   // In-app renew CTA target: point the expiry/lifecycle callouts at the Membership
@@ -1102,7 +1166,29 @@
                           <RefreshCw class="size-4" />
                           {switchServer.isPending
                             ? t('switchServer.working')
-                            : t('switchServer.action')}
+                            : keyLocLabel
+                              ? t('switchServer.actionIn', { location: shortPlace(keyLocLabel) })
+                              : t('switchServer.action')}
+                        </Button>
+                      {/if}
+                      {#if showSwitchLocation}
+                        <!-- Shown to every member: a tier that may not switch
+                             gets the membership note from the same dialog. -->
+                        <Button
+                          onclick={() => (switchLocationOpen = true)}
+                          disabled={regenerate.isPending ||
+                            switchServer.isPending ||
+                            switchLocation.isPending ||
+                            switchBackend.isPending ||
+                            actionsDisabled}
+                          variant="outline"
+                          size="sm"
+                          class="min-h-11"
+                        >
+                          <MapPin class="size-4" />
+                          {switchLocation.isPending
+                            ? t('switchLocation.working')
+                            : t('switchLocation.action')}
                         </Button>
                       {/if}
                       <Button
@@ -1180,9 +1266,9 @@
                           switchServerReason = null;
                           switchServerOpen = true;
                         }}
-                    onPickLocation={actionsDisabled || locations.length < 2
+                    onPickLocation={actionsDisabled || !showSwitchLocation
                       ? undefined
-                      : () => (regenerateOpen = true)}
+                      : () => (switchLocationOpen = true)}
                     onReportIssue={actionsDisabled
                       ? undefined
                       : () => {
@@ -1368,6 +1454,8 @@
                     bind:value={pickedLocation}
                     disabled={regenerate.isPending || persistingMode || actionsDisabled}
                     id="first-sub-location"
+                    tierSlug={data.user.tier.slug}
+                    onSeeMembership={billingEnabled ? openMembership : undefined}
                   />
                 </div>
               {/if}
@@ -1586,9 +1674,32 @@
         deviceCount={data.subscription.devices.length}
         {locations}
         bind:location={pickedLocation}
+        {tierSlug}
+        canChangeLocation={canSwitchLocation}
+        onSeeMembership={billingEnabled ? openMembership : undefined}
         onCancel={() => (regenerateOpen = false)}
         onConfirm={() => regenerate.mutate()}
         busy={regenerate.isPending}
+      />
+      <SwitchLocationModal
+        bind:open={switchLocationOpen}
+        {locations}
+        tierSlug={data.user.tier.slug}
+        canSwitch={canSwitchLocation}
+        currentCode={keyLocation?.code ?? null}
+        currentLabel={keyLocation?.label ?? null}
+        deviceCount={data.subscription.devices.length}
+        busy={switchLocation.isPending}
+        onCancel={() => (switchLocationOpen = false)}
+        onConfirm={(code) => switchLocation.mutate(code)}
+        onSeeMembership={billingEnabled ? openMembership : undefined}
+        onSwitchServer={canSwitchServer && !actionsDisabled
+          ? () => {
+              switchLocationOpen = false;
+              switchServerReason = null;
+              switchServerOpen = true;
+            }
+          : undefined}
       />
       <SwitchServerModal
         bind:open={switchServerOpen}
@@ -1596,6 +1707,8 @@
           data.subscription.location?.label ??
           nodeStatus.data?.node?.label ??
           null}
+        locationLabel={keyLocation?.label ?? null}
+        locationHint={showSwitchLocation && canSwitchLocation}
         deviceCount={data.subscription.devices.length}
         bind:reason={switchServerReason}
         telemetryContext={consentContext}

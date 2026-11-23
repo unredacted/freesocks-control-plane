@@ -440,6 +440,18 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   deep-links to `/status#loc-<code>` (`account.getNodeStatus` gained `load`); the
   location picker shows per-location load hints (`LocationEntry.load` on
   `publicConfig.locations`). **Live.**
+- **Tier-gated locations + "Switch location"** (`convex/lib/locationAccess.ts`;
+  docs/backends.md § "Node placement"): a backend instance may be limited to some tiers
+  (`backendServers.allowedTierIds`, a hard issuance filter); members-only locations stay
+  in `publicConfig.locations` (`tiers`) and read **Members only** on the home page's
+  "Where our servers are" section, in the location picker (a tap opens a membership note,
+  never a pick) and in the "Switch location" dialog. "Switch location" moves a key
+  between locations keeping its link (`POST /api/v1/account/switch-location`; paid tiers
+  by default, `tiers.canSwitchLocation`); a tier without it keeps its first key's
+  location and gets a membership note with "Switch server instead". "Switch server" now
+  stays within the key's location. A key left on a location its tier lost is moved off
+  at the next tier push (`account.relocateForTier`). **Live (dormant until an instance
+  lists tiers).**
 - **Account-page location globe** (`KeyLocationGlobe.svelte`, beside the Access Pass):
   a small cobe globe (`cobe`, a dynamically-imported chunk) showing every
   location that carries **map coordinates** as a dot, with the member's own key as the

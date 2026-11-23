@@ -16,10 +16,13 @@ import {
   internalMutation,
   internalQuery,
   type ActionCtx,
+  type DatabaseReader,
   type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
+import { resolveLocations } from './lib/locations';
+import { locationOpenTo, serverAllowsTier, tierCanSwitchLocation } from './lib/locationAccess';
 import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { requiresPrivateDelivery } from '../src/shared/contracts/connectionModes';
@@ -45,6 +48,7 @@ import {
   crossPanelMoveProven,
   groupHasOtherNode,
   inPlaceMoveProven,
+  sameLocationProven,
   switchServerAvailable as switchServerAvailableIn,
 } from './lib/switchServer';
 import { resolveAppSettings } from './appSettings';
@@ -226,7 +230,7 @@ async function tombstoneOldSub(
  */
 async function resolveIssueTarget(
   ctx: ActionCtx,
-  backend: Backend,
+  tier: { backend: Backend; _id: Id<'tiers'> },
   modeId: string | null,
   location: string | null,
   userId?: Id<'users'>,
@@ -236,6 +240,7 @@ async function resolveIssueTarget(
   extraPlacements: string[];
   serverId: Id<'backendServers'> | null;
 }> {
+  const backend = tier.backend;
   if (!capabilitiesOf(backend).placement)
     return { placement: null, extraPlacements: [], serverId: null };
   const exitLocations =
@@ -257,6 +262,8 @@ async function resolveIssueTarget(
     location,
     ...(exitLocations.length > 0 ? { exitLocations } : {}),
     rand: randBuf[0]! / 2 ** 32,
+    // Never a location the member's tier is not allowed on (lib/locationAccess.ts).
+    tierId: tier._id,
   });
   // Multi-backend + zero attributable mode groups: an unpinned issue would mint a
   // (mode group, wrong-backend) dead key — fail loudly (503, retryable once the stats
@@ -454,6 +461,13 @@ async function canMoveWithExistingUrls(
   );
 }
 
+const NO_ALTERNATIVE = {
+  ok: false as const,
+  code: 'server.no_alternative',
+  message: 'There is no other server available right now. Please try again later.',
+  status: 409,
+};
+
 const PRIVATE_MOVE_REQUIRES_NEW_KEY = {
   ok: false,
   code: 'mode.unavailable',
@@ -475,6 +489,8 @@ interface AccountView {
       // True when this member's tier enforces a device limit AND enforcement is
       // globally enabled — the SPA gates app compatibility only when true.
       deviceLimited: boolean;
+      // May move the key between locations (lib/locationAccess.ts).
+      canSwitchLocation: boolean;
     };
     membership: { expiresAt: string | null; isCurrent: boolean } | null;
     connectionModeId: string;
@@ -708,6 +724,7 @@ async function accountViewDataOf(
           deviceLimit: tier.deviceLimit,
           backend: tier.backend,
           deviceLimited,
+          canSwitchLocation: tierCanSwitchLocation(tier),
         },
         membership: user.membershipExpiresAt
           ? {
@@ -1032,7 +1049,7 @@ export const regenerate = internalAction({
     // answer given with it, else the request's (lib/countryExits.ts).
     const target = await resolveIssueTarget(
       ctx,
-      tier.backend,
+      tier,
       user.connectionModeId ?? null,
       effectiveLocation,
       userId,
@@ -1045,6 +1062,7 @@ export const regenerate = internalAction({
       periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: tier.backend,
+      tierId: tier._id,
       spec: {
         username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
         trafficLimitBytes: carry.trafficLimitBytes,
@@ -1180,7 +1198,7 @@ export const switchBackend = internalAction({
     // switch (Remnawave only).
     const issueTarget = await resolveIssueTarget(
       ctx,
-      peerTier.backend,
+      peerTier,
       user.connectionModeId ?? null,
       user.preferredLocation ?? null,
       userId,
@@ -1200,6 +1218,7 @@ export const switchBackend = internalAction({
       periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: peerTier.backend,
+      tierId: peerTier._id,
       spec: {
         username: boundedUsername('freesocks-', peerTier.slug, randomHex(8)),
         trafficLimitBytes: carry.trafficLimitBytes,
@@ -1386,7 +1405,7 @@ export const switchMode = internalAction({
     const reissue = async (): Promise<SwitchModeResult> => {
       const issueTarget = await resolveIssueTarget(
         ctx,
-        tier.backend,
+        tier,
         target,
         user.preferredLocation ?? null,
         userId,
@@ -1398,6 +1417,7 @@ export const switchMode = internalAction({
         periodCarryUntil: carry.periodCarryUntil,
         userId,
         backend: tier.backend,
+        tierId: tier._id,
         spec: {
           username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
           trafficLimitBytes: carry.trafficLimitBytes,
@@ -1469,6 +1489,7 @@ export const switchMode = internalAction({
         fallbackUnresolved,
       } = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
         backend: tier.backend,
+        tierId: tier._id,
         modeId: target,
         onlyServerId: pinServerId as Id<'backendServers'> | null,
       });
@@ -1704,6 +1725,22 @@ export const switchServer = internalAction({
       });
     };
 
+    // The location the key is served from now (null when its instance has none
+    // set, or is unknown): "Switch server" moves the key within it.
+    const ownServer = oldSub.backendServerId
+      ? await ctx.runQuery(internal.backendServers.getById, { id: oldSub.backendServerId })
+      : null;
+    const ownLocation = ownServer?.location ?? null;
+    const atOwnLocation = async (serverId: string | null): Promise<boolean> => {
+      if (ownLocation === null) return true;
+      const server = serverId
+        ? await ctx.runQuery(internal.backendServers.getById, {
+            id: serverId as Id<'backendServers'>,
+          })
+        : null;
+      return sameLocationProven(ownLocation, server?.location);
+    };
+
     // Where a re-issue would land: the mode's pool with NO backend pin, so it can
     // cross to another backend/location — the only lever that can, since a backend
     // owns its user records. Separate from `reissue` itself so the caller can ask
@@ -1720,17 +1757,20 @@ export const switchServer = internalAction({
       const rand = new Uint32Array(1);
       crypto.getRandomValues(rand);
       // A member on Automatic who chose a country: its exit locations first.
-      const exitLocations = user.preferredLocation
-        ? []
-        : await ctx.runQuery(internal.countryExits.forIssue, {
-            userId,
-            backend: tier.backend,
-            modeId,
-          });
+      // Not when the key's location is known: "Switch server" stays there.
+      const exitLocations =
+        user.preferredLocation || ownLocation
+          ? []
+          : await ctx.runQuery(internal.countryExits.forIssue, {
+              userId,
+              backend: tier.backend,
+              modeId,
+            });
       return ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
         backend: tier.backend,
+        tierId: tier._id,
         modeId,
-        location: user.preferredLocation ?? null,
+        location: ownLocation ?? user.preferredLocation ?? null,
         ...(exitLocations.length > 0 ? { exitLocations } : {}),
         excludePlacement: oldSub.backendPlacement ?? null,
         rand: rand[0]! / 2 ** 32,
@@ -1763,6 +1803,9 @@ export const switchServer = internalAction({
           status: 409,
         };
       }
+      // "Switch server" never changes the location ("Switch location" does):
+      // a pick the soft narrowing let fall elsewhere is no move at all.
+      if (!(await atOwnLocation(target.serverId))) return NO_ALTERNATIVE;
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
       const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
       const issued = await issueNewSubscription(ctx, {
@@ -1770,6 +1813,7 @@ export const switchServer = internalAction({
         periodCarryUntil: carry.periodCarryUntil,
         userId,
         backend: tier.backend,
+        tierId: tier._id,
         spec: {
           username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
           trafficLimitBytes: carry.trafficLimitBytes,
@@ -1830,6 +1874,7 @@ export const switchServer = internalAction({
         internal.connectionModes.resolveIssueTarget,
         {
           backend: tier.backend,
+          tierId: tier._id,
           modeId,
           onlyServerId: pinServerId as Id<'backendServers'> | null,
           excludePlacement: oldSub.backendPlacement ?? null,
@@ -1956,7 +2001,8 @@ export const switchServer = internalAction({
     // regenerate, after which its switches are provable the normal way.)
     if (
       crossPanel.unattributedMultiPanel ||
-      crossPanelMoveProven(knownSource, crossPanel, ownPanelId)
+      (crossPanelMoveProven(knownSource, crossPanel, ownPanelId) &&
+        (await atOwnLocation(crossPanel.serverId)))
     ) {
       return reissue(crossPanel);
     }
@@ -1980,12 +2026,7 @@ export const switchServer = internalAction({
     // Change nothing and say so — tombstoning a working key to land back on the
     // same server helps no one, and neither does claiming a move that didn't
     // happen.
-    return {
-      ok: false,
-      code: 'server.no_alternative',
-      message: 'There is no other server available right now. Please try again later.',
-      status: 409,
-    };
+    return NO_ALTERNATIVE;
   },
 });
 
@@ -2031,6 +2072,7 @@ export const moveToCountryExit = internalAction({
     crypto.getRandomValues(rand);
     const target = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
       backend: tier.backend,
+      tierId: tier._id,
       modeId,
       location: offer.code,
       rand: rand[0]! / 2 ** 32,
@@ -2060,6 +2102,7 @@ export const moveToCountryExit = internalAction({
       periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: tier.backend,
+      tierId: tier._id,
       spec: {
         username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
         trafficLimitBytes: carry.trafficLimitBytes,
@@ -2095,6 +2138,331 @@ export const moveToCountryExit = internalAction({
       inPlace: false,
       oldSubscriptionDeletedAt: tomb ? new Date(tomb.deletedAt).toISOString() : null,
     };
+  },
+});
+
+/**
+ * The member's location choice, judged without side effects (shared by the
+ * regenerate route and "Switch location"; lib/locationAccess.ts):
+ *  - a location the member's tier is not allowed on is refused
+ *    (`location.members_only`, 403): the SPA marks it "Members";
+ *  - a member holding a key on a tier that may not change location keeps
+ *    the stored preference (`location.switch_requires_membership`, 403). The
+ *    FIRST key's location is always the member's pick.
+ * `location` null = Automatic.
+ */
+export async function locationChoiceRefusal(
+  db: DatabaseReader,
+  user: Doc<'users'>,
+  tier: Doc<'tiers'>,
+  location: string | null,
+  hasKey: boolean,
+): Promise<{ code: string; message: string; status: number } | null> {
+  if (location !== null) {
+    const entry = (await resolveLocations(db)).find((l) => l.code === location);
+    if (!entry) return { code: 'validation', message: 'unknown location', status: 400 };
+    if (!locationOpenTo(entry, tier.slug))
+      return {
+        code: 'location.members_only',
+        message: 'This location is for members. Upgrade your membership to use it.',
+        status: 403,
+      };
+  }
+  if (hasKey && !tierCanSwitchLocation(tier) && location !== (user.preferredLocation ?? null))
+    return {
+      code: 'location.switch_requires_membership',
+      message: 'Changing your location is part of membership.',
+      status: 403,
+    };
+  return null;
+}
+
+export const locationChoiceCheck = internalQuery({
+  args: { userId: v.id('users'), location: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    { userId, location },
+  ): Promise<{ code: string; message: string; status: number } | null> => {
+    const user = await ctx.db.get(userId);
+    const tier = user ? await ctx.db.get(user.tierId) : null;
+    if (!user || !tier) return null;
+    const sub = await currentOrActiveSub(ctx.db, user);
+    return locationChoiceRefusal(ctx.db, user, tier, location, sub !== null);
+  },
+});
+
+/**
+ * Re-issue the member's key at `location` (null = Automatic), keeping their
+ * link: the move behind "Switch location" and the downgrade relocation. Mints
+ * nothing when the location cannot take the key now. The caller holds the
+ * issuance lock.
+ */
+async function reissueAtLocation(
+  ctx: ActionCtx,
+  args: {
+    user: Doc<'users'>;
+    tier: Doc<'tiers'>;
+    oldSub: Doc<'subscriptions'>;
+    location: string | null;
+    auditAction: 'subscription.switch_location' | 'subscription.relocate_for_tier';
+    actorType: 'member' | 'system';
+    requestId?: string;
+  },
+): Promise<SwitchServerResult> {
+  const { user, tier, oldSub, location, requestId } = args;
+  const userId = user._id;
+  const unavailable: SwitchServerResult = {
+    ok: false,
+    code: 'location.unavailable',
+    message: 'That location cannot take your key right now. Please try again later.',
+    status: 409,
+  };
+  if (oldSub.backend !== tier.backend || !capabilitiesOf(tier.backend).placement)
+    return unavailable;
+  const modeId = user.connectionModeId ?? null;
+  if (!(await canMoveWithExistingUrls(ctx, tier.backend, modeId, oldSub.backendPlacement)))
+    return PRIVATE_MOVE_REQUIRES_NEW_KEY;
+  if (await isEffectiveModeBlocked(ctx, tier.backend, modeId)) {
+    return { ok: false, code: 'mode.unavailable', message: MODE_UNAVAILABLE_MESSAGE, status: 400 };
+  }
+  const rand = new Uint32Array(1);
+  crypto.getRandomValues(rand);
+  const target = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+    backend: tier.backend,
+    tierId: tier._id,
+    modeId,
+    location,
+    rand: rand[0]! / 2 ** 32,
+  });
+  if (target.unattributedMultiPanel) {
+    return {
+      ok: false,
+      code: 'backend.placement_unresolved',
+      message: 'Node placement is still resolving. Please try again in a few minutes.',
+      status: 503,
+    };
+  }
+  if (!target.placement || target.fallbackUnresolved) return unavailable;
+  // The location narrowing is soft: a pick that fell elsewhere is no move.
+  if (location !== null) {
+    const server = target.serverId
+      ? await ctx.runQuery(internal.backendServers.getById, {
+          id: target.serverId as Id<'backendServers'>,
+        })
+      : null;
+    if (server?.location !== location) return unavailable;
+  }
+  const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+  const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+  const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
+  const issued = await issueNewSubscription(ctx, {
+    periodCarryBytes: carry.periodCarryBytes,
+    periodCarryUntil: carry.periodCarryUntil,
+    userId,
+    backend: tier.backend,
+    tierId: tier._id,
+    spec: {
+      username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
+      trafficLimitBytes: carry.trafficLimitBytes,
+      trafficLimitStrategy: tier.trafficStrategy,
+      expireAt: computeExpireAtIso(user.membershipExpiresAt),
+      hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
+      tag: tier.slug,
+      placement: target.placement,
+      extraPlacements: target.extraPlacements,
+    },
+    pinServerId: (target.serverId as Id<'backendServers'> | null) ?? undefined,
+    excludeNode: oldSub.pinnedNode ?? undefined,
+    // A move, not a rotation: the member keeps their saved link.
+    carrySubTokenFromId: oldSub._id,
+  });
+  const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId, carry.graceBaseUsedBytes);
+  if (tier.isDefaultFree) {
+    await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+  }
+  await ctx.runMutation(internal.audit.record, {
+    actorType: args.actorType,
+    ...(args.actorType === 'member' ? { actorId: userId } : {}),
+    action: args.auditAction,
+    targetType: 'subscription',
+    targetId: issued.subscriptionId,
+    requestId,
+  });
+  return {
+    ok: true,
+    ...(await memberFacing(ctx, issued.subscriptionId, issued)),
+    inPlace: false,
+    oldSubscriptionDeletedAt: tomb ? new Date(tomb.deletedAt).toISOString() : null,
+  };
+}
+
+/**
+ * "Switch location": move the member's key to another location, keeping
+ * their link, and save that location as their pick. Paid tiers only by
+ * default (tiers.canSwitchLocation), and never to a location their tier is
+ * not allowed on (lib/locationAccess.ts). "Switch server" is the same-location
+ * sibling.
+ */
+export const switchLocation = internalAction({
+  args: {
+    userId: v.id('users'),
+    location: v.string(),
+    requestId: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, location, requestId }): Promise<SwitchServerResult> => {
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
+    if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
+    const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
+    if (!tier) return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
+    if (!tierCanSwitchLocation(tier)) {
+      return {
+        ok: false,
+        code: 'location.switch_requires_membership',
+        message: 'Changing your location is part of membership.',
+        status: 403,
+      };
+    }
+    // The key-less check: the tier may switch, so only the location's own
+    // access is left to judge.
+    const refusal = await ctx.runQuery(internal.account.locationChoiceCheck, {
+      userId,
+      location,
+    });
+    if (refusal) return { ok: false, ...refusal };
+    const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    if (!oldSub) {
+      return {
+        ok: false,
+        code: 'server.no_subscription',
+        message: 'You have no active key to move.',
+        status: 409,
+      };
+    }
+    const current = oldSub.backendServerId
+      ? await ctx.runQuery(internal.backendServers.getById, { id: oldSub.backendServerId })
+      : null;
+    if (current?.location === location) {
+      return {
+        ok: false,
+        code: 'location.same',
+        message: 'Your key is already in this location.',
+        status: 409,
+      };
+    }
+    const result = await reissueAtLocation(ctx, {
+      user,
+      tier,
+      oldSub,
+      location,
+      auditAction: 'subscription.switch_location',
+      actorType: 'member',
+      requestId,
+    });
+    // Saved only once the key is there: a refused move keeps the old pick.
+    if (result.ok && (user.preferredLocation ?? null) !== location) {
+      await ctx.runMutation(internal.users.setPreferredLocation, { userId, location });
+    }
+    return result;
+  },
+});
+
+/**
+ * Whether the member's live key sits on an instance their tier is no longer
+ * allowed on (a lapsed membership on a members-only location, or an operator
+ * narrowing a location's tiers): lifecycle.pushTierToBackend schedules
+ * `relocateForTier` when it is.
+ */
+export const relocationNeeded = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<boolean> => {
+    const user = await ctx.db.get(userId);
+    if (!user || user.status !== 'active') return false;
+    const tier = await ctx.db.get(user.tierId);
+    if (!tier) return false;
+    const sub = await currentOrActiveSub(ctx.db, user);
+    if (!sub?.backendServerId || sub.backend !== tier.backend) return false;
+    if (!capabilitiesOf(sub.backend).placement) return false;
+    const server = await ctx.db.get(sub.backendServerId);
+    return server !== null && !serverAllowsTier(server, tier._id);
+  },
+});
+
+const RELOCATE_MAX_ATTEMPTS = 5;
+const RELOCATE_RETRY_MS = 5 * 60_000;
+
+/**
+ * Move a key off an instance its tier is no longer allowed on, keeping the
+ * member's link (their apps pick up the new server on their next refresh). A
+ * stored location pick the tier cannot use is cleared back to Automatic.
+ * Takes the issuance lock like a member action; a held lock or a location
+ * with no room retries a few times, then audits `subscription.relocate_failed`
+ * and leaves the key where it is.
+ */
+export const relocateForTier = internalAction({
+  args: { userId: v.id('users'), attempt: v.optional(v.number()) },
+  handler: async (ctx, { userId, attempt }): Promise<null> => {
+    const n = attempt ?? 0;
+    if (!(await ctx.runQuery(internal.account.relocationNeeded, { userId }))) return null;
+    const retry = async (reason: string) => {
+      if (n + 1 < RELOCATE_MAX_ATTEMPTS) {
+        await ctx.scheduler.runAfter(RELOCATE_RETRY_MS, internal.account.relocateForTier, {
+          userId,
+          attempt: n + 1,
+        });
+      } else {
+        await ctx.runMutation(internal.audit.record, {
+          actorType: 'system',
+          action: 'subscription.relocate_failed',
+          targetType: 'user',
+          targetId: userId,
+          payload: { reason },
+        });
+      }
+    };
+    const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, { userId });
+    if (!lock.acquired) {
+      await retry('locked');
+      return null;
+    }
+    try {
+      const user = await ctx.runQuery(internal.users.get, { id: userId });
+      const tier = user ? await ctx.runQuery(internal.tiers.get, { id: user.tierId }) : null;
+      const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, {
+        userId,
+      });
+      if (!user || !tier || !oldSub) return null;
+      let location = user.preferredLocation ?? null;
+      if (location !== null) {
+        const refusal = await ctx.runQuery(internal.account.locationChoiceCheck, {
+          userId,
+          location,
+        });
+        if (refusal) {
+          await ctx.runMutation(internal.users.setPreferredLocation, { userId, location: null });
+          location = null;
+        }
+      }
+      const result = await reissueAtLocation(ctx, {
+        user: { ...user, preferredLocation: location ?? undefined },
+        tier,
+        oldSub,
+        location,
+        auditAction: 'subscription.relocate_for_tier',
+        actorType: 'system',
+      });
+      if (!result.ok) await retry(result.code);
+    } catch (err) {
+      console.warn(
+        `[relocateForTier] failed: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}`,
+      );
+      await retry('error');
+    } finally {
+      await ctx.runMutation(internal.account.releaseIssuanceLock, {
+        userId,
+        token: lock.token!,
+      });
+    }
+    return null;
   },
 });
 

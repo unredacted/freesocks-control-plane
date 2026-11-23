@@ -3,6 +3,7 @@
   import * as Dialog from '@client/components/ui/dialog';
   import LocationPicker from './LocationPicker.svelte';
   import { t } from '../lib/i18n/index.svelte';
+  import type { PublicLocation } from '../lib/locations';
 
   interface Props {
     open: boolean;
@@ -14,8 +15,13 @@
     deviceCount: number;
     /** Node-location choices for the NEW key. The picker renders only with ≥2
      *  entries (otherwise there is no choice); `location` is 'auto' or a code. */
-    locations?: { code: string; label: string; online: boolean }[];
+    locations?: PublicLocation[];
     location?: string;
+    /** The member's tier slug (members-only locations read "Members"). */
+    tierSlug?: string | null;
+    /** False on a tier that keeps its first location: no picker, a note instead. */
+    canChangeLocation?: boolean;
+    onSeeMembership?: () => void;
     onCancel: () => void;
     onConfirm: () => void;
     busy: boolean;
@@ -28,6 +34,9 @@
     deviceCount,
     locations = [],
     location = $bindable('auto'),
+    tierSlug = null,
+    canChangeLocation = true,
+    onSeeMembership,
     onCancel,
     onConfirm,
     busy,
@@ -63,7 +72,18 @@
       {/if}
     </ul>
     {#if locations.length >= 2}
-      <LocationPicker {locations} bind:value={location} disabled={busy} id="regen-location" />
+      {#if canChangeLocation}
+        <LocationPicker
+          {locations}
+          bind:value={location}
+          disabled={busy}
+          id="regen-location"
+          {tierSlug}
+          {onSeeMembership}
+        />
+      {:else}
+        <p class="text-sm text-muted-foreground">{t('location.keepsFirst')}</p>
+      {/if}
     {/if}
     <!-- The gentler alternative: a member whose SERVER is the problem doesn't
          need a new URL at all - steer them to "Switch server" before they take

@@ -21,6 +21,10 @@
     /** Name/location of the server they're on now, when known - so the dialog can
      *  say what they are leaving rather than talking about "a server". */
     currentServer?: string | null;
+    /** The location the key stays in (its label), so the dialog can name it. */
+    locationLabel?: string | null;
+    /** Point at "Switch location" (only where that button is shown). */
+    locationHint?: boolean;
     /** Registered HWID devices. Drives the re-registration caveat, which only
      *  matters to someone who HAS devices registered. */
     deviceCount?: number;
@@ -38,6 +42,8 @@
   let {
     open = $bindable(),
     currentServer = null,
+    locationLabel = null,
+    locationHint = false,
     deviceCount = 0,
     reason = $bindable(),
     telemetryContext = undefined,
@@ -68,7 +74,11 @@
 <Dialog.Root bind:open {onOpenChange}>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
-      <Dialog.Title>{t('switchServer.title')}</Dialog.Title>
+      <Dialog.Title>
+        {locationLabel
+          ? t('switchServer.titleIn', { location: locationLabel })
+          : t('switchServer.title')}
+      </Dialog.Title>
       <Dialog.Description>
         {currentServer
           ? t('switchServer.bodyWithServer', { server: currentServer })
@@ -111,6 +121,9 @@
     <!-- The other tool, for the other problem: when the URL itself is the issue,
          switching servers won't help - point at "Create a new key" so members
          pick the right action instead of trying this one repeatedly. -->
+    {#if locationHint}
+      <p class="text-xs text-muted-foreground">{t('switchServer.vsLocation')}</p>
+    {/if}
     <p class="text-xs text-muted-foreground">{t('switchServer.vsNewKey')}</p>
 
     <Dialog.Footer>

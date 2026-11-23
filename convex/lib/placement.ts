@@ -61,6 +61,9 @@ export interface PlacementResolver {
       onlyServerId?: string | null;
       excludePlacement?: string | null;
       rand?: () => number;
+      /** The member's tier: instances that do not take it are never a target
+       *  (lib/locationAccess.ts). Absent = no tier filter. */
+      tierId?: string | null;
     },
   ): Promise<PlacementTarget>;
   /** Mode slugs with a pool bound on this backend (raw, no cross-mode fallback). */

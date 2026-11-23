@@ -715,6 +715,10 @@
             disabled={createSubscription.isPending}
             id="get-account-location"
             recommended={effectiveFamily === 'freedom' ? (answerSuggestion?.locations ?? []) : []}
+            tierSlug={account.data?.user.tier.slug ?? null}
+            onSeeMembership={billingEnabled && membershipTier(config.data)
+              ? revealPurchase
+              : undefined}
           />
         {/if}
 
