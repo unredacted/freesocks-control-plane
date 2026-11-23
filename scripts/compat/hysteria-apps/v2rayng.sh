@@ -135,17 +135,16 @@ delete_udp() {
     scroll_down
   done
   tap_at "$at"
-  # Its confirmation's button says Delete too, as the row's icon describes
-  # itself: the button is found by its visible text.
-  local end=$((SECONDS + 10))
-  until at=$(python3 "$DIR/ui.py" "$UI" label '^Delete$'); do
-    ((SECONDS > end)) && { echo 'no confirmation to delete'; snap no-confirm; return 1; }
-    sleep 1
-    dump
-  done
-  snap confirm-delete
-  tap_at "$at"
+  # A confirmation comes only with the app's own setting for it (off by
+  # default). Its button says Delete too, as the row's icon describes itself:
+  # it is found by its visible text. The list below shows whether it went.
   sleep 2
+  dump
+  if at=$(python3 "$DIR/ui.py" "$UI" label '^Delete$'); then
+    snap confirm-delete
+    tap_at "$at"
+    sleep 2
+  fi
   local left="$HY_WORK/app-names-deleted.txt"
   names_on_screen "$left"
   ! grep -q '· UDP$' "$left" || { echo 'the · UDP entry is still listed'; return 1; }
