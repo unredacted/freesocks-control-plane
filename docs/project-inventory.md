@@ -245,6 +245,9 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 
 - `tiers` are entitlement templates (traffic/device/hwid limits, `backend` discriminator,
   per-tier `expirationDaysAfterMembershipLapse`). Admin CRUD via `convex/adminApi.ts`.
+- **Speed limits** (`tiers.speedLimitMbps`, free 100 / member unlimited by default): **Stored
+  only**. No backend can apply a per-user speed cap, so nothing is sent or shown to members
+  (`docs/backends.md` § "Speed limits").
 - **`setMembership`** / `applyMembership` is the single entitlement seam: sets a user's tier +
   expiry (re-activating a lapsed user), records `tierHistory` + audit, and schedules a durable
   `pushTierToBackend` (event-driven, **not** a cron; retries with backoff + audits on final

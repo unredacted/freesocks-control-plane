@@ -656,6 +656,11 @@ export default defineSchema({
     description: v.optional(v.string()),
     backend: backendId,
     monthlyTrafficGb: v.number(),
+    // Per-user speed cap in Mbps; 0 = unlimited. Absent = never set: the deploy
+    // seed (seed.seedTierSpeedLimits) fills it once (default-free tiers 100,
+    // the rest 0) and never overwrites a stored value. Not enforced on any
+    // backend yet (capabilities.speedLimit); see docs/backends.md § "Speed limits".
+    speedLimitMbps: v.optional(v.number()),
     deviceLimit: v.number(),
     hwidLimit: v.number(),
     hwidEnabled: v.boolean(),
