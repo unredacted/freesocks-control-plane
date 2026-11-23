@@ -272,7 +272,7 @@
       </div>
       <div>
         <label class="text-xs text-muted-foreground mb-1 block" for="tier-speed">
-          Speed limit (Mbps, 0 = unlimited)
+          Speed limit (Mbps, 0 = unlimited): reserved, does nothing yet
         </label>
         <Input
           id="tier-speed"
@@ -282,8 +282,9 @@
           bind:value={draft.speedLimitMbps}
         />
         <p class="text-xs text-muted-foreground/80 mt-1 leading-snug">
-          Saved with the plan but not applied yet: neither Xray nor Outline can cap one key's speed.
-          Members are not shown it.
+          Reserved for a future feature. Saving a value changes nothing today: no key is slowed
+          down, nothing is sent to Xray or Outline (neither can cap one user's speed), and members
+          never see it.
         </p>
       </div>
       <div>

@@ -151,6 +151,8 @@ describe('seed', () => {
     }));
     expect(rows.free!.speedLimitMbps).toBe(DEFAULT_FREE_SPEED_LIMIT_MBPS);
     expect(rows.member!.speedLimitMbps).toBe(0);
+    // Filling the reserved field is not an edit: updatedAt stays put.
+    expect(rows.free!.updatedAt).toBe(0);
     // An operator's 0 on a free tier stays 0.
     expect(rows.edited!.speedLimitMbps).toBe(0);
 

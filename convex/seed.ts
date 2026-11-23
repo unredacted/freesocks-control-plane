@@ -114,9 +114,9 @@ export const seedTierSpeedLimits = internalMutation({
     let filled = 0;
     for (const t of await ctx.db.query('tiers').collect()) {
       if (t.speedLimitMbps !== undefined) continue;
+      // No updatedAt bump: this fills a reserved field, it is not an edit of the tier.
       await ctx.db.patch(t._id, {
         speedLimitMbps: t.isDefaultFree ? DEFAULT_FREE_SPEED_LIMIT_MBPS : 0,
-        updatedAt: Date.now(),
       });
       filled++;
     }

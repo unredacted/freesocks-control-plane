@@ -776,7 +776,7 @@ A stored value is never overwritten, so an operator's edit, including a 0 on a f
 tier, survives every later deploy. `resolveSpeedLimitMbps(tier)` in
 `lib/backends/types.ts` turns it into `number | null` (null = unlimited).
 
-**No backend can apply it yet, so it is stored and shown in Admin only.** The capability
+**Reserved for a future feature: it does nothing today.** No backend can apply it, so it is stored and shown in Admin only (labelled as reserved there). The capability
 flag `speedLimit` is `false` on both backends and nothing is sent at issuance, on the tier
 push (`lifecycle.pushTierToBackend`) or in `lifecycle.activeSubAndTier`. Members are not
 shown the cap. What was checked (2026-11):
