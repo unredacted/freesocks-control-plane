@@ -934,6 +934,7 @@ export const expireQuotaCarries = internalAction({
         const page: {
           rows: {
             subscriptionId: Id<'subscriptions'>;
+            userId: Id<'users'>;
             backend: BackendId;
             backendUserId: string;
             periodCarryUntil: number;
@@ -957,9 +958,19 @@ export const expireQuotaCarries = internalAction({
               restored++;
             }
           } catch {
-            // Retried hourly; after a week (a backend gone for good) the carry
-            // goes anyway, so the next tier push sends the full limit.
+            // Retried hourly for a week. After that the row leaves this index,
+            // but not silently: the carry is dropped and a tier push (bounded
+            // retry, audited when it gives up) sends the full limit.
             if (now - d.periodCarryUntil < CARRY_RESTORE_GIVE_UP_MS) continue;
+            await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+              subscriptionId: d.subscriptionId,
+            });
+            if (d.restoreLimitBytes !== null) {
+              await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, {
+                userId: d.userId,
+              });
+            }
+            continue;
           }
           await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
             subscriptionId: d.subscriptionId,

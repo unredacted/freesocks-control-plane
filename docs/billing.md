@@ -19,8 +19,9 @@ milliseconds), and optional `expiresAtMs`. The sender signs the raw body with
 `WEBHOOK_SIGNING_SECRET`. The origin accepts events issued within the past 24
 hours, with one minute of future clock skew, and applies newer grants only.
 An event dated further ahead is refused (400) so the sender retries once the
-clocks agree. An older one is acknowledged unapplied and audited as
-`billing.webhook.stale_event` for a manual grant. Keep the original issuance
+clocks agree. An older one is acknowledged unapplied and audited once as
+`billing.webhook.stale_event` for a manual grant (its eventId is claimed, so a
+replay is a silent duplicate). Events with the same issuance time all apply. Keep the original issuance
 time when retrying a delivery.
 Migrate older senders to the support ID before enabling the callback on an
 updated deployment. Keep the member's account number out of billing payloads.

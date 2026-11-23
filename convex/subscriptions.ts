@@ -1414,6 +1414,7 @@ export const findExpiredCarries = internalQuery({
       const tier = user ? await ctx.db.get(user.tierId) : null;
       rows.push({
         subscriptionId: row._id,
+        userId: row.userId,
         backend: row.backend,
         backendUserId: row.backendUserId,
         periodCarryUntil: row.periodCarryUntil!,

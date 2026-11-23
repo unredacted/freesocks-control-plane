@@ -676,8 +676,8 @@ carries what earlier keys spent in the same traffic period (`convex/lib/quotaCar
   is charged as new-period spend.
 - **A new period.** The hourly `quota-carry-expire` cron restores the full tier limit on keys
   whose `periodCarryUntil` has passed and drops the carry (index `by_period_carry_until`). It
-  pages past failed restores (retried hourly) and drops a carry it could not restore after a
-  week, so the next tier push sends the full limit. The
+  pages past failed restores (retried hourly); after a week it drops the carry and schedules a
+  tier push, whose bounded retry sends the full limit and audits if it gives up. The
   provider resets its own counter on its own schedule, so the two can be apart by the panel's
   timezone offset. An admin traffic reset drops the carry too.
 - **Best-effort.** A failed usage read issues at the full tier limit and a failed settlement
