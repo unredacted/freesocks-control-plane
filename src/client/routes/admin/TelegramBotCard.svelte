@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * Admin -> Billing: the Telegram gift shop. The bot sells gift codes only,
-   * to nobody in particular (no account, no chat kept), through Telegram Stars
-   * and/or the crypto rails. The bot token is write-only here (blank keeps the
+   * to nobody in particular (no account, no chat kept), for Telegram Stars only
+   * (Telegram's rule for digital goods in a bot). The bot token is write-only here (blank keeps the
    * saved one); Register webhook makes the webhook secret. The card shows only
    * whether each is set, and how the webhook stands at Telegram.
    */
@@ -36,7 +36,6 @@
   // Write-only: never filled from the server, cleared after a save.
   let botToken = $state('');
   let starsEnabled = $state(false);
-  let cryptoEnabled = $state(false);
   let termsUrl = $state('');
   // Stars per code, by months, as typed ('' = not sold for Stars).
   let stars = $state<Record<number, string>>({});
@@ -46,7 +45,6 @@
       enabled = view.enabled;
       botUsername = view.botUsername;
       starsEnabled = view.starsEnabled;
-      cryptoEnabled = view.cryptoEnabled;
       termsUrl = view.termsUrl;
       stars = Object.fromEntries(view.starsPrices.map((p) => [p.months, String(p.stars)]));
       init = true;
@@ -88,7 +86,6 @@
       enabled,
       botUsername: botUsername.trim(),
       starsEnabled,
-      cryptoEnabled,
       starsPrices,
       termsUrl: termsUrl.trim(),
       ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
@@ -109,8 +106,8 @@
     <p class="mt-1 text-sm text-muted-foreground">
       A Telegram bot that sells membership gift codes and nothing else. Buyers redeem a code in the
       app like any other. The bot never asks for an account number and keeps no chat: its orders
-      have no account, and their codes are linked to nobody. Prices for crypto are the membership
-      prices above; Stars prices are set here. Off by default.
+      have no account, and their codes are linked to nobody. Buyers pay in Telegram Stars only:
+      Telegram's rules allow nothing else for digital goods in a bot. Off by default.
     </p>
   </div>
 
@@ -176,16 +173,6 @@
       <Checkbox checked={enabled} onCheckedChange={(v) => (enabled = v === true)} />
       <span>Shop open</span>
     </label>
-    <label class="flex items-center gap-3">
-      <Checkbox checked={cryptoEnabled} onCheckedChange={(v) => (cryptoEnabled = v === true)} />
-      <span>Sell for crypto (the NOWPayments and BTCPay rails that are on above)</span>
-    </label>
-    {#if cryptoEnabled}
-      <p class="ml-7 text-xs text-amber-600">
-        Telegram's rules say a bot selling digital goods must take Telegram Stars only, and name
-        crypto and outside payment pages. Telegram can remove a bot that sells for crypto.
-      </p>
-    {/if}
     <label class="flex items-center gap-3">
       <Checkbox checked={starsEnabled} onCheckedChange={(v) => (starsEnabled = v === true)} />
       <span>Sell for Telegram Stars</span>

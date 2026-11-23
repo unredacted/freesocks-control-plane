@@ -241,49 +241,39 @@ refuses a userless gift that isn't from the bot.
 
 **Terms first.** After the buyer picks a length and a number of codes, the bot
 shows its terms of sale (the `bot.terms` text, plus a link to
-`telegram.termsUrl` when set) and shows the payment methods only after
-**I accept, continue**. `/terms` shows them at any time. `/paysupport` (and
+`telegram.termsUrl` when set) with the order's price, and sends the Stars
+invoice only after **I accept, pay**. `/terms` shows them at any time. `/paysupport` (and
 `/support`) points to `site.supportEmail`, or the site, and says Telegram's own
 support can't help with bot purchases. Telegram requires all three for payments.
 
-**Payment.** Two methods, each with its own switch (Admin -> Billing -> Telegram
-gift shop):
+**Payment: Telegram Stars only.** Telegram's rules say a bot selling digital
+goods takes Stars and nothing else (they name crypto and outside payment pages,
+and Telegram can remove a bot that breaks this), so the bot has no other method.
+The web checkout's crypto rails stay on the website. Stars orders are
+`processor: 'telegram_stars'`, currency `XTR`, whole Stars in `amountCents`.
+Prices per code are set per duration in the card (`telegram.stars.prices`); a
+duration with no Stars price isn't sold, and the bot only offers catalog
+durations while billing is on. The bot sends a Telegram invoice whose payload is
+the order ref, with a `start_parameter`, which makes it single-chat: a forwarded
+copy carries a link to the bot instead of a Pay button. Telegram's
+`pre_checkout_query` is answered yes only for a pending Stars order of exactly
+that amount (`billing.starsPreCheckout`). `successful_payment` goes through
+`billing.ingestStarsPayment`: the same claim (`telegram_stars:<charge id>`), mint
+and `applyEvent` path as a processor webhook, so it grants exactly once. A fresh
+payment that doesn't grant (a second payment on a paid order) is refunded at once
+with `refundStarPayment` (Telegram's rule for an order that can't be fulfilled);
+the payer's id comes from that update and is not stored. Telegram's later
+`refunded_payment` for it changes nothing, since it isn't the payment that paid
+the order. A `refunded_payment` for the paying payment audits
+`billing.refund_seen`; the codes stay valid (nothing links them to the order).
+Stars revenue is not in the revenue chart (a different currency). Stars are paid
+out through Telegram, outside FCP.
 
-- **Crypto** on the NOWPayments and BTCPay rails that are on in the billing form.
-  The bot calls `billing.createCheckout` with `channel: 'telegram'` and shows the
-  deposit details in the chat when the rail uses direct checkout (or the hosted
-  page link otherwise). The processor's success and cancel URLs are
-  `https://t.me/<bot>?start=o_<ref>`, which brings the buyer back to the bot's
-  payment check. Prices are the membership prices; the crypto minimum applies.
-  **Telegram's rules say a bot selling digital goods must take Stars only** (they
-  name crypto and outside payment pages, and Telegram can remove a bot that
-  breaks this), so the card warns when this switch is on.
-- **Telegram Stars** (`processor: 'telegram_stars'`, currency `XTR`, whole Stars in
-  `amountCents`). Prices per code are set per duration in the card
-  (`telegram.stars.prices`); a duration with no Stars price isn't sold for Stars.
-  The bot sends a Telegram invoice whose payload is the order ref, with a
-  `start_parameter`, which makes it single-chat: a forwarded copy carries a link
-  to the bot instead of a Pay button. Telegram's
-  `pre_checkout_query` is answered yes only for a pending Stars order of exactly
-  that amount (`billing.starsPreCheckout`). `successful_payment` goes through
-  `billing.ingestStarsPayment`: the same claim (`telegram_stars:<charge id>`),
-  mint and `applyEvent` path as a processor webhook, so it grants exactly once. A
-  fresh payment that doesn't grant (a second payment on a paid order) is refunded
-  at once with `refundStarPayment` (Telegram's rule for an order that can't be
-  fulfilled); the payer's id comes from that update and is not stored. Telegram's
-  later `refunded_payment` for it changes nothing, since it isn't the payment
-  that paid the order. A `refunded_payment` for the paying payment audits
-  `billing.refund_seen`; the codes stay valid (nothing links them to the order). Stars revenue is not in the revenue chart (a
-  different currency). Stars are paid out through Telegram, outside FCP.
-
-**Delivery is pull-only.** The bot keeps no chat, so it can't message a buyer
-later. A Stars buyer gets the codes in the same update as the payment. That
-delivery is claimed once per payment (`telegram_stars:<charge id>:delivery` in
-`webhookEvents`); if Telegram refuses the message, the claim stays retryable and
-the webhook answers 500, so Telegram redelivers the payment and the codes are
-sent again. A crypto buyer taps **Check payment**, which answers by editing that
-message (repeated taps never leave extra copies), or comes back through the
-return link. The codes
+**Delivery.** The bot keeps no chat, so it can't message a buyer later: the
+codes go out in the same update as the payment. That delivery is claimed once
+per payment (`telegram_stars:<charge id>:delivery` in `webhookEvents`); if
+Telegram refuses the message, the claim stays retryable and the webhook answers
+500, so Telegram redelivers the payment and the codes are sent again. The codes
 message has a **Saved, delete this message** button that clears the reveal and
 deletes the message from the chat. The `billing-gift-reveal-sweep` 24 h window
 applies; a buyer who missed it gives support the 8-character order ref the bot

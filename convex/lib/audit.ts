@@ -126,7 +126,6 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.telegram.change': [
     'enabled',
     'starsEnabled',
-    'cryptoEnabled',
     'starsPriceCount',
     'usernameChanged',
     'tokenChanged',

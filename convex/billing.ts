@@ -36,7 +36,6 @@ import {
   withinUnderpaymentTolerance,
 } from './lib/billingConfig';
 import { knownNetwork } from './lib/cryptoNetworks';
-import { sanitizeBotUsername } from './lib/telegramConfig';
 import { runWithCronOutcome } from './cronHeartbeat';
 import type {
   AccountCoinsCache,
@@ -110,16 +109,6 @@ function publicBaseUrl(secrets: ProcessorSecrets): string {
     });
   }
   return secrets.publicBaseUrl.replace(/\/$/, '');
-}
-
-/** A Telegram bot username exactly as BotFather allows it (no @, no spaces). */
-function isTelegramBotUsername(name: string | undefined | null): name is string {
-  return typeof name === 'string' && name !== '' && sanitizeBotUsername(name) === name;
-}
-
-/** The deep link that returns a Telegram buyer to the bot's payment check. */
-function telegramReturnUrl(botUsername: string, orderRef: string): string {
-  return `https://t.me/${botUsername}?start=o_${orderRef}`;
 }
 
 /** Mint `n` gift codes with the CSPRNG (actions only): plaintext + hash + prefix. */
@@ -348,14 +337,11 @@ export const insertOrder = internalMutation({
     quantity: v.number(),
     // Direct checkout: the payment details shown on our own page.
     directPayment: v.optional(directPaymentValidator),
-    // 'telegram' = a Telegram gift-shop order (userless gift).
-    channel: v.optional(v.literal('telegram')),
   },
   handler: async (ctx, a): Promise<Id<'billingOrders'>> => {
     const now = Date.now();
     const orderId = await ctx.db.insert('billingOrders', {
       processor: a.processor,
-      ...(a.channel ? { channel: a.channel } : {}),
       opaqueRef: a.opaqueRef,
       processorRef: a.processorRef,
       userId: a.userId,
@@ -384,7 +370,6 @@ export const insertOrder = internalMutation({
         donationCents: a.donationCents ?? 0,
         // Which checkout style ran (no payment details: they are payer-specific).
         direct: a.directPayment !== undefined,
-        channel: a.channel ?? 'web',
       },
     });
     return orderId;
@@ -417,11 +402,6 @@ export const createCheckout = internalAction({
     // admin's allowlist). Absent = hosted, which is also how an older SPA that
     // never sends it keeps working against a direct-style rail.
     payCurrency: v.optional(v.string()),
-    // The Telegram gift shop: a userless gift order whose return URL leads
-    // back into the bot (t.me/<botUsername>?start=o_<ref>). Never set by the
-    // public checkout route, which keeps refusing anonymous gifts.
-    channel: v.optional(v.literal('telegram')),
-    botUsername: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<{ redirectUrl: string; orderRef: string; direct: boolean }> => {
     const { config, tierId, directCoins } = await ctx.runQuery(
@@ -442,23 +422,7 @@ export const createCheckout = internalAction({
     }
 
     const kind = a.kind ?? 'self';
-    const telegram = a.channel === 'telegram';
-    if (telegram) {
-      // The bot sells gift codes and nothing else, to nobody in particular:
-      // no account, no donation add-on, and a return link back into the bot.
-      if (a.userId || kind !== 'gift' || (a.donationCents ?? 0) > 0) {
-        throw new ConvexError({
-          code: 'billing.invalid_order',
-          message: 'The Telegram shop sells gift codes only',
-        });
-      }
-      if (!isTelegramBotUsername(a.botUsername)) {
-        throw new ConvexError({
-          code: 'billing.unavailable',
-          message: 'The Telegram shop is not configured (no bot username)',
-        });
-      }
-    } else if (!a.userId && kind !== 'donation') {
+    if (!a.userId && kind !== 'donation') {
       // Belt-and-braces: the HTTP route already 401s unauthenticated
       // non-donation checkouts; a membership/gift order without a user to
       // grant to must never exist.
@@ -467,7 +431,7 @@ export const createCheckout = internalAction({
         message: 'Sign in to buy a membership',
       });
     }
-    const donationCents = telegram ? 0 : Math.max(0, Math.floor(a.donationCents ?? 0));
+    const donationCents = Math.max(0, Math.floor(a.donationCents ?? 0));
 
     // Resolve the charge amount, tier/duration, and label per kind. A donation-only
     // order carries no tier/duration; a membership may ride an optional donation.
@@ -567,9 +531,6 @@ export const createCheckout = internalAction({
     const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
     const base = publicBaseUrl(secrets);
     const opaqueRef = randomHex(16);
-    // A Telegram buyer goes back into the bot, whose /start o_<ref> runs the
-    // payment check (the bot stores no chat to message later).
-    const botReturn = telegram ? telegramReturnUrl(a.botUsername as string, opaqueRef) : null;
     const params: CheckoutParams = {
       orderRef: opaqueRef,
       amountCents,
@@ -578,9 +539,8 @@ export const createCheckout = internalAction({
       ipnUrl: `${base}/api/webhooks/${a.processor}`,
       // Anonymous donors have no /account to return to: they land on the
       // public /donate page, whose ?order= poll works without a session.
-      successUrl: botReturn ?? `${base}${a.userId ? '/account' : '/donate'}?order=${opaqueRef}`,
-      cancelUrl:
-        botReturn ?? `${base}${a.userId ? '/account' : '/donate'}?order=${opaqueRef}&cancel=1`,
+      successUrl: `${base}${a.userId ? '/account' : '/donate'}?order=${opaqueRef}`,
+      cancelUrl: `${base}${a.userId ? '/account' : '/donate'}?order=${opaqueRef}&cancel=1`,
     };
 
     // Create the invoice FIRST. On failure, nothing is persisted (no orphaned
@@ -657,7 +617,6 @@ export const createCheckout = internalAction({
       kind,
       quantity,
       directPayment,
-      ...(telegram ? { channel: 'telegram' as const } : {}),
     });
     // `redirectUrl` stays the hosted page even for a direct order: the SPA
     // offers it as a fallback, and an older SPA simply redirects as before.
@@ -1346,8 +1305,8 @@ export const grantOrderByAdmin = internalMutation({
  * Action wrapper: gift orders need their codes minted with the CSPRNG first.
  * The codes go ONLY to the buyer: grantOrder stores them in the order's
  * one-time reveal, which the buyer's /account opens on their next visit
- * (pendingGiftReveal), or which a Telegram buyer pulls with the bot's payment
- * check (botOrderStatus). The operator never sees them.
+ * (pendingGiftReveal), or which the Telegram bot sends after a Stars
+ * payment (botOrderStatus). The operator never sees them.
  */
 export const adminGrantOrder = internalAction({
   args: { orderId: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },
@@ -2018,8 +1977,6 @@ export type BotOrderStatus = {
   quantity: number;
   /** The one-time reveal: present while paid and not yet acknowledged. */
   giftCodes: string[];
-  /** Deposit details while a direct crypto order can still be paid. */
-  payment: DirectPaymentView | null;
 };
 
 /** A Telegram gift-shop order by its ref (null for any other order). */
@@ -2037,7 +1994,6 @@ export const botOrderStatus = internalQuery({
       months: Math.max(1, Math.round(order.durationDays / AVG_DAYS_PER_MONTH)),
       quantity: order.quantity ?? 1,
       giftCodes: order.status === 'paid' && !order.giftRevealAck ? (order.giftReveal ?? []) : [],
-      payment: directPaymentView(order),
     };
   },
 });

@@ -1,10 +1,10 @@
 /**
  * Pure helpers for the Telegram gift shop (convex/telegramBot.ts): language,
- * text, the stateless button protocol, and which payment methods a duration
- * can be bought with. No Convex or network access, so all of it is unit-tested.
+ * text, the stateless button protocol, and which durations are for sale (for
+ * Telegram Stars, the only way to pay in the bot). No Convex or network access, so all of it is unit-tested.
  *
  * STATELESS BY DESIGN: the bot keeps no per-chat session. Everything a step
- * needs (language, duration, quantity, payment method, coin, order ref)
+ * needs (language, duration, quantity, order ref)
  * travels in the button's callback_data, at most 64 bytes.
  */
 import {
@@ -78,21 +78,8 @@ export function durationLabel(locale: BotLocale, months: number): string {
     : trPlain(locale, 'durationMany', { months });
 }
 
-/** A catalog price in minor units, e.g. 1400 USD -> "$14.00". */
-export function formatFiat(minor: number, currency: string): string {
-  try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
-  } catch {
-    return `${(minor / 100).toFixed(2)} ${currency}`;
-  }
-}
-
 /** The quantities the bot offers (the billing core allows up to 50). */
 export const QUANTITIES = [1, 2, 3, 5, 10] as const;
-
-/** Payment methods: s = Telegram Stars, n = NOWPayments crypto, b = BTCPay Bitcoin. */
-export type PayMethod = 's' | 'n' | 'b';
-export const METHOD_PROCESSOR = { n: 'nowpayments', b: 'btcpay' } as const;
 
 // --- the button protocol ------------------------------------------------------
 
@@ -101,19 +88,16 @@ export type Action =
   | { k: 'langs' }
   | { k: 'lang'; lang: BotLocale }
   | { k: 'privacy' }
+  | { k: 'terms' }
   | { k: 'buy' }
   | { k: 'dur'; months: number }
+  /** Show the terms and the price for this order, with Accept and pay. */
   | { k: 'qty'; months: number; qty: number }
-  /** The buyer accepted the terms for this order: show how to pay. */
+  /** The buyer accepted the terms: create the order and send the Stars invoice. */
   | { k: 'accept'; months: number; qty: number }
-  | { k: 'terms' }
-  | { k: 'pay'; months: number; qty: number; method: PayMethod }
-  | { k: 'coin'; months: number; qty: number; ticker: string }
-  | { k: 'check'; ref: string }
   | { k: 'ack'; ref: string };
 
 const REF = /^[0-9a-f]{32}$/;
-const TICKER = /^[a-z0-9]{2,20}$/;
 
 function intIn(s: string | undefined, min: number, max: number): number | null {
   if (!s || !/^\d{1,3}$/.test(s)) return null;
@@ -132,6 +116,8 @@ export function encodeAction(lang: BotLocale, a: Action): string {
       return `l|${a.lang}`;
     case 'privacy':
       return `v|${lang}`;
+    case 'terms':
+      return `T|${lang}`;
     case 'buy':
       return `b|${lang}`;
     case 'dur':
@@ -140,14 +126,6 @@ export function encodeAction(lang: BotLocale, a: Action): string {
       return `q|${lang}|${a.months}|${a.qty}`;
     case 'accept':
       return `t|${lang}|${a.months}|${a.qty}`;
-    case 'terms':
-      return `T|${lang}`;
-    case 'pay':
-      return `p|${lang}|${a.months}|${a.qty}|${a.method}`;
-    case 'coin':
-      return `c|${lang}|${a.months}|${a.qty}|${a.ticker}`;
-    case 'check':
-      return `k|${lang}|${a.ref}`;
     case 'ack':
       return `a|${lang}|${a.ref}`;
   }
@@ -156,44 +134,31 @@ export function encodeAction(lang: BotLocale, a: Action): string {
 /** Parse callback_data strictly; anything unexpected is null (never trusted). */
 export function decodeAction(data: string | undefined): { lang: BotLocale; action: Action } | null {
   if (!data || data.length > 64) return null;
-  const [code, lang, f1, f2, f3, ...rest] = data.split('|');
-  if (rest.length > 0 || !lang || !isBotLocale(lang)) return null;
+  const [code, lang, f1, f2, f3] = data.split('|');
+  if (f3 !== undefined || !lang || !isBotLocale(lang)) return null;
   const months = intIn(f1, 1, MAX_DURATION_MONTHS);
   const qty = intIn(f2, 1, 50);
+  const bare = f1 === undefined;
   switch (code) {
     case 'm':
-      return f1 === undefined ? { lang, action: { k: 'menu' } } : null;
+      return bare ? { lang, action: { k: 'menu' } } : null;
     case 'L':
-      return f1 === undefined ? { lang, action: { k: 'langs' } } : null;
+      return bare ? { lang, action: { k: 'langs' } } : null;
     case 'l':
-      return f1 === undefined ? { lang, action: { k: 'lang', lang } } : null;
+      return bare ? { lang, action: { k: 'lang', lang } } : null;
     case 'v':
-      return f1 === undefined ? { lang, action: { k: 'privacy' } } : null;
+      return bare ? { lang, action: { k: 'privacy' } } : null;
+    case 'T':
+      return bare ? { lang, action: { k: 'terms' } } : null;
     case 'b':
-      return f1 === undefined ? { lang, action: { k: 'buy' } } : null;
+      return bare ? { lang, action: { k: 'buy' } } : null;
     case 'd':
       return months !== null && f2 === undefined ? { lang, action: { k: 'dur', months } } : null;
     case 'q':
-      return months !== null && qty !== null && f3 === undefined
-        ? { lang, action: { k: 'qty', months, qty } }
-        : null;
+      return months !== null && qty !== null ? { lang, action: { k: 'qty', months, qty } } : null;
     case 't':
-      return months !== null && qty !== null && f3 === undefined
+      return months !== null && qty !== null
         ? { lang, action: { k: 'accept', months, qty } }
-        : null;
-    case 'T':
-      return f1 === undefined ? { lang, action: { k: 'terms' } } : null;
-    case 'p':
-      return months !== null && qty !== null && (f3 === 's' || f3 === 'n' || f3 === 'b')
-        ? { lang, action: { k: 'pay', months, qty, method: f3 } }
-        : null;
-    case 'c':
-      return months !== null && qty !== null && f3 !== undefined && TICKER.test(f3)
-        ? { lang, action: { k: 'coin', months, qty, ticker: f3 } }
-        : null;
-    case 'k':
-      return f1 !== undefined && REF.test(f1) && f2 === undefined
-        ? { lang, action: { k: 'check', ref: f1 } }
         : null;
     case 'a':
       return f1 !== undefined && REF.test(f1) && f2 === undefined
@@ -204,100 +169,54 @@ export function decodeAction(data: string | undefined): { lang: BotLocale; actio
   }
 }
 
-/** `/start o_<ref>` (the processor's return link) -> the order ref, else null. */
-export function startOrderRef(param: string | undefined): string | null {
-  const m = /^o_([0-9a-f]{32})$/.exec(param ?? '');
-  return m ? m[1]! : null;
-}
-
-/** A bot command (`/buy`, `/start o_...`, `/buy@SomeBot`) -> name + argument. */
+/** A bot command (`/buy`, `/start`, `/buy@SomeBot`) -> name + argument. */
 export function parseCommand(text: string | undefined): { name: string; arg?: string } | null {
   const m = /^\/([a-z]+)(?:@[A-Za-z0-9_]+)?(?:\s+(\S+))?\s*$/.exec((text ?? '').trim());
   return m ? { name: m[1]!, ...(m[2] ? { arg: m[2] } : {}) } : null;
 }
 
-// --- what can be bought, and how --------------------------------------------
+// --- what can be bought ---------------------------------------------------------
+//
+// Telegram Stars only: Telegram's rules say a bot selling digital goods takes
+// Stars and nothing else (no crypto, no outside payment page).
 
 /** The slice of the billing config the shop needs (see telegramBot.shopContext). */
 export interface ShopBilling {
   enabled: boolean;
-  currency: string;
-  durations: { months: number; amountCents: number }[];
-  rails: { nowpayments: boolean; btcpay: boolean };
-  cryptoMinMonths: number;
-  btcpayMinMonths: number;
+  durations: { months: number }[];
 }
 
-export interface MethodOffer {
-  method: PayMethod;
-  /** Price for the whole order: Stars (whole) for 's', catalog minor units otherwise. */
-  amount: number;
+/** The ShopBilling slice of a resolved billing config. */
+export function toShopBilling(b: ShopBilling): ShopBilling {
+  return { enabled: b.enabled, durations: b.durations.map(({ months }) => ({ months })) };
 }
 
 export function starsPriceFor(prices: StarsPrice[], months: number): number | null {
   return prices.find((p) => p.months === months)?.stars ?? null;
 }
 
-/** The ways to pay for `qty` codes of `months`, in display order. */
-export function methodsFor(
+/** Stars for one code of `months`, or null when it isn't sold. */
+export function starsOffer(
   tg: TelegramConfig,
   billing: ShopBilling,
   months: number,
-  qty: number,
-): MethodOffer[] {
-  const duration = billing.durations.find((d) => d.months === months);
-  if (!billing.enabled || !duration) return [];
-  const out: MethodOffer[] = [];
-  const stars = starsPriceFor(tg.starsPrices, months);
-  if (tg.starsEnabled && stars !== null) out.push({ method: 's', amount: stars * qty });
-  if (tg.cryptoEnabled) {
-    const fiat = duration.amountCents * qty;
-    if (billing.rails.nowpayments && months >= billing.cryptoMinMonths) {
-      out.push({ method: 'n', amount: fiat });
-    }
-    if (billing.rails.btcpay && months >= billing.btcpayMinMonths) {
-      out.push({ method: 'b', amount: fiat });
-    }
-  }
-  return out;
+): number | null {
+  if (!tg.starsEnabled || !billing.enabled) return null;
+  if (!billing.durations.some((d) => d.months === months)) return null;
+  return starsPriceFor(tg.starsPrices, months);
 }
 
-/** Durations that at least one payment method can sell (any quantity). */
+/** Durations the shop sells, shortest first. */
 export function sellableDurations(tg: TelegramConfig, billing: ShopBilling): number[] {
   return billing.durations
     .map((d) => d.months)
-    .filter((m) => methodsFor(tg, billing, m, 1).length > 0)
+    .filter((m) => starsOffer(tg, billing, m) !== null)
     .sort((a, b) => a - b);
-}
-
-/** The ShopBilling slice of a resolved billing config. */
-export function toShopBilling(b: ShopBilling): ShopBilling {
-  return {
-    enabled: b.enabled,
-    currency: b.currency,
-    durations: b.durations.map(({ months, amountCents }) => ({ months, amountCents })),
-    rails: { nowpayments: b.rails.nowpayments, btcpay: b.rails.btcpay },
-    cryptoMinMonths: b.cryptoMinMonths,
-    btcpayMinMonths: b.btcpayMinMonths,
-  };
 }
 
 /** The shop is open: switched on, billing on, and something to sell. */
 export function shopOpen(tg: TelegramConfig, billing: ShopBilling): boolean {
-  return tg.enabled && billing.enabled && sellableDurations(tg, billing).length > 0;
-}
-
-/** The label of one payment method button, with the order's price. */
-export function methodLabel(locale: BotLocale, offer: MethodOffer, currency: string): string {
-  if (offer.method === 's') {
-    return trPlain(locale, 'payStars', {
-      amount: trPlain(locale, 'starsAmount', { stars: offer.amount }),
-    });
-  }
-  const amount = formatFiat(offer.amount, currency);
-  return offer.method === 'b'
-    ? trPlain(locale, 'payBitcoin', { amount })
-    : trPlain(locale, 'payCrypto', { amount });
+  return tg.enabled && sellableDurations(tg, billing).length > 0;
 }
 
 /** The short order reference shown to a buyer for support (the admin list shows the same prefix). */

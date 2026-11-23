@@ -5,12 +5,11 @@ import { BOT_MESSAGES, BOT_MESSAGES_EN } from './botMessages.generated';
 import {
   decodeAction,
   encodeAction,
-  methodsFor,
   parseCommand,
   pickLocale,
   sellableDurations,
   shopOpen,
-  startOrderRef,
+  starsOffer,
   tr,
   type Action,
   type ShopBilling,
@@ -30,9 +29,6 @@ describe('the button protocol', () => {
     { k: 'qty', months: 3, qty: 10 },
     { k: 'accept', months: 120, qty: 50 },
     { k: 'terms' },
-    { k: 'pay', months: 3, qty: 2, method: 's' },
-    { k: 'coin', months: 3, qty: 2, ticker: 'usdttrc20' },
-    { k: 'check', ref: REF },
     { k: 'ack', ref: REF },
   ];
 
@@ -56,11 +52,14 @@ describe('the button protocol', () => {
       'd|en|0',
       'd|en|121',
       'q|en|3|51',
-      'p|en|3|1|z',
-      'c|en|3|1|USDT',
-      'c|en|3|1|a;b',
-      `k|en|${REF.toUpperCase()}`,
-      `k|en|${REF}|x`,
+      't|en|3|1|x',
+      'T|en|1',
+      // The old crypto buttons no longer exist.
+      'p|en|3|1|s',
+      'c|en|3|1|usdttrc20',
+      `k|en|${REF}`,
+      `a|en|${REF.toUpperCase()}`,
+      `a|en|${REF}|x`,
       'a|en|short',
       `b|en|${'x'.repeat(70)}`,
     ]) {
@@ -68,13 +67,11 @@ describe('the button protocol', () => {
     }
   });
 
-  test('commands and the return deep link', () => {
+  test('commands', () => {
     expect(parseCommand('/buy')).toEqual({ name: 'buy' });
-    expect(parseCommand('/start@FreeSocksShopBot o_abc')).toEqual({ name: 'start', arg: 'o_abc' });
+    expect(parseCommand('/paysupport')).toEqual({ name: 'paysupport' });
+    expect(parseCommand('/start@FreeSocksShopBot buy')).toEqual({ name: 'start', arg: 'buy' });
     expect(parseCommand('hello')).toBeNull();
-    expect(startOrderRef(`o_${REF}`)).toBe(REF);
-    expect(startOrderRef('o_nope')).toBeNull();
-    expect(startOrderRef(undefined)).toBeNull();
   });
 });
 
@@ -113,54 +110,30 @@ describe('language and text', () => {
 });
 
 describe('what the shop sells', () => {
-  const billing: ShopBilling = {
-    enabled: true,
-    currency: 'USD',
-    durations: [
-      { months: 1, amountCents: 500 },
-      { months: 3, amountCents: 1400 },
-    ],
-    rails: { nowpayments: true, btcpay: true },
-    cryptoMinMonths: 3,
-    btcpayMinMonths: 1,
-  };
+  const billing: ShopBilling = { enabled: true, durations: [{ months: 1 }, { months: 3 }] };
   const cfg = (over: Partial<TelegramConfig>): TelegramConfig => ({
     ...TELEGRAM_DEFAULTS,
     enabled: true,
     botUsername: 'FreeSocksShopBot',
+    starsEnabled: true,
+    starsPrices: [{ months: 3, stars: 700 }],
     ...over,
   });
 
-  test('each method needs its switch, its rail and its minimum', () => {
-    const all = cfg({
-      starsEnabled: true,
-      cryptoEnabled: true,
-      starsPrices: [{ months: 1, stars: 250 }],
-    });
-    expect(methodsFor(all, billing, 1, 2)).toEqual([
-      { method: 's', amount: 500 },
-      { method: 'b', amount: 1000 },
-    ]);
-    expect(methodsFor(all, billing, 3, 1)).toEqual([
-      { method: 'n', amount: 1400 },
-      { method: 'b', amount: 1400 },
-    ]);
-    expect(methodsFor(cfg({ cryptoEnabled: true }), { ...billing, enabled: false }, 3, 1)).toEqual(
-      [],
-    );
-    expect(methodsFor(cfg({}), billing, 3, 1)).toEqual([]);
+  test('Stars only: a duration sells when it is in the catalog and has a Stars price', () => {
+    expect(starsOffer(cfg({}), billing, 3)).toBe(700);
+    expect(starsOffer(cfg({}), billing, 1)).toBeNull(); // no Stars price
+    expect(starsOffer(cfg({ starsPrices: [{ months: 6, stars: 1 }] }), billing, 6)).toBeNull();
+    expect(starsOffer(cfg({ starsEnabled: false }), billing, 3)).toBeNull();
+    expect(starsOffer(cfg({}), { ...billing, enabled: false }, 3)).toBeNull();
+    expect(sellableDurations(cfg({}), billing)).toEqual([3]);
   });
 
   test('the shop is open only with something to sell', () => {
-    expect(shopOpen(cfg({}), billing)).toBe(false);
-    expect(shopOpen(cfg({ cryptoEnabled: true }), billing)).toBe(true);
-    expect(shopOpen(cfg({ cryptoEnabled: true, enabled: false }), billing)).toBe(false);
-    expect(
-      sellableDurations(cfg({ cryptoEnabled: true }), {
-        ...billing,
-        rails: { nowpayments: true, btcpay: false },
-      }),
-    ).toEqual([3]);
+    expect(shopOpen(cfg({}), billing)).toBe(true);
+    expect(shopOpen(cfg({ enabled: false }), billing)).toBe(false);
+    expect(shopOpen(cfg({ starsPrices: [] }), billing)).toBe(false);
+    expect(shopOpen(cfg({}), { ...billing, enabled: false })).toBe(false);
   });
 });
 

@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**341 of 948 strings are missing** (the app currently shows English for
+**324 of 931 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -1111,7 +1111,7 @@ review.
 | `direct.noMatch` | No coin matches. Try the coin's name, like USDT, or its network, like Tron. | ⚠️ **MISSING** |
 | `direct.pickedCoin` | Selected: {coin} on {network} | ⚠️ **MISSING** |
 
-## `bot` — Miscellaneous strings. *(65 missing)*
+## `bot` — Miscellaneous strings. *(48 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -1124,27 +1124,10 @@ review.
 | `bot.chooseLanguage` | Choose a language. | ⚠️ **MISSING** |
 | `bot.chooseDuration` | How long should each code last? | ⚠️ **MISSING** |
 | `bot.chooseQuantity` | How many codes? | ⚠️ **MISSING** |
-| `bot.choosePayment` | How do you want to pay? | ⚠️ **MISSING** |
-| `bot.chooseCoin` | Which coin do you want to pay with? | ⚠️ **MISSING** |
 | `bot.durationOne` | 1 month | ⚠️ **MISSING** |
 | `bot.durationMany` | {months} months | ⚠️ **MISSING** |
 | `bot.starsAmount` | {stars} Stars | ⚠️ **MISSING** |
-| `bot.payStars` | Telegram Stars, {amount} | ⚠️ **MISSING** |
-| `bot.payCrypto` | Crypto, {amount} | ⚠️ **MISSING** |
-| `bot.payBitcoin` | Bitcoin, {amount} | ⚠️ **MISSING** |
 | `bot.orderSummary` | {quantity} x {duration} gift codes | ⚠️ **MISSING** |
-| `bot.payDirect` | Send exactly <code>{amount}</code> {unit} to this address:<br><br><code>{address}</code> | ⚠️ **MISSING** |
-| `bot.payNetwork` | Network: {network} | ⚠️ **MISSING** |
-| `bot.payMemo` | Memo or tag (required, or the payment is lost): <code>{memo}</code> | ⚠️ **MISSING** |
-| `bot.payExpires` | Pay before {expires} (UTC). | ⚠️ **MISSING** |
-| `bot.payAfter` | After paying, tap Check payment. Your codes appear here once the payment confirms, which can take a while for some coins. | ⚠️ **MISSING** |
-| `bot.payHosted` | Open the payment page to pay {amount}. When you finish you will come back here. If not, tap Check payment. | ⚠️ **MISSING** |
-| `bot.buttonOpenPayment` | Open payment page | ⚠️ **MISSING** |
-| `bot.buttonCheck` | Check payment | ⚠️ **MISSING** |
-| `bot.notPaidYet` | Not paid yet. If you just paid, wait a few minutes and check again. | ⚠️ **MISSING** |
-| `bot.confirming` | Payment seen. Waiting for confirmations, check again in a few minutes. | ⚠️ **MISSING** |
-| `bot.underpaid` | The payment arrived short of the price. Contact support and quote order {ref}. | ⚠️ **MISSING** |
-| `bot.expired` | This order expired. Start a new one with /buy. | ⚠️ **MISSING** |
 | `bot.failed` | This payment did not go through. Start a new one with /buy. | ⚠️ **MISSING** |
 | `bot.orderNotFound` | That order was not found. Start a new one with /buy. | ⚠️ **MISSING** |
 | `bot.codesTitle` | Your FreeSocks gift codes: | ⚠️ **MISSING** |
@@ -1152,26 +1135,25 @@ review.
 | `bot.buttonSaved` | Saved, delete this message | ⚠️ **MISSING** |
 | `bot.buttonRedeem` | Redeem on the website | ⚠️ **MISSING** |
 | `bot.codesGone` | These codes were already shown. If you lost them, contact support and quote order {ref}. | ⚠️ **MISSING** |
-| `bot.deleted` | Deleted. If the codes were shown in this chat more than once, delete the other copies too. Thank you for supporting FreeSocks. | ⚠️ **MISSING** |
+| `bot.deleted` | Deleted. Thank you for supporting FreeSocks. | ⚠️ **MISSING** |
 | `bot.orderRef` | Order {ref} | ⚠️ **MISSING** |
 | `bot.starsTitle` | FreeSocks gift codes | ⚠️ **MISSING** |
 | `bot.starsDescription` | {quantity} x {duration} of FreeSocks membership, as gift codes. | ⚠️ **MISSING** |
 | `bot.starsLabel` | Gift codes | ⚠️ **MISSING** |
 | `bot.starsRefused` | This order can no longer be paid. Start a new one with /buy. | ⚠️ **MISSING** |
-| `bot.privacy` | What this bot stores: for each message Telegram tells it your chat, your Telegram name and your app language. It keeps none of that. It stores only the order (length, number of codes, price and status) under a random reference. The codes are not linked to you or to any FreeSocks account.<br><br>Telegram keeps this chat on its own servers, so delete the codes message once you have saved the codes. Crypto payments go through our payment processor, Stars payments through Telegram. | ⚠️ **MISSING** |
+| `bot.privacy` | What this bot stores: for each message Telegram tells it your chat, your Telegram name and your app language. It keeps none of that. It stores only the order (length, number of codes, price and status) under a random reference. The codes are not linked to you or to any FreeSocks account.<br><br>Telegram keeps this chat on its own servers, so delete the codes message once you have saved the codes. Payments are made in Telegram Stars, through Telegram. | ⚠️ **MISSING** |
 | `bot.help` | /buy: buy gift codes<br>/terms: terms of sale<br>/paysupport: help with a payment<br>/language: change the language<br>/privacy: what this bot stores<br><br>Redeem codes in the app or on the website: Account, then Redeem a code. | ⚠️ **MISSING** |
 | `bot.rateLimited` | Too many requests. Wait a minute and try again. | ⚠️ **MISSING** |
 | `bot.error` | Something went wrong. Try again in a moment. | ⚠️ **MISSING** |
 | `bot.unknown` | Use the buttons, or send /buy to start. | ⚠️ **MISSING** |
-| `bot.unavailable` | This payment method is not available right now. Try another one. | ⚠️ **MISSING** |
-| `bot.belowMinimum` | This amount is below the minimum for that coin. Pick another coin or more codes. | ⚠️ **MISSING** |
+| `bot.unavailable` | This is not for sale right now. Start again with /buy. | ⚠️ **MISSING** |
 | `bot.commandBuy` | Buy gift codes | ⚠️ **MISSING** |
 | `bot.commandLanguage` | Change the language | ⚠️ **MISSING** |
 | `bot.commandPrivacy` | What this bot stores | ⚠️ **MISSING** |
 | `bot.commandHelp` | Help | ⚠️ **MISSING** |
-| `bot.buttonAccept` | I accept, continue | ⚠️ **MISSING** |
+| `bot.buttonAccept` | I accept, pay {amount} | ⚠️ **MISSING** |
 | `bot.buttonTerms` | Terms | ⚠️ **MISSING** |
-| `bot.termsAsk` | Before you pay, read the terms of sale below. Tap the button to accept them and continue. | ⚠️ **MISSING** |
+| `bot.termsAsk` | Before you pay, read the terms of sale below. The button accepts them and opens a Telegram Stars invoice. | ⚠️ **MISSING** |
 | `bot.terms` | Terms of sale<br><br>1. You are buying gift codes. Each code adds the stated length of FreeSocks membership to the account it is redeemed on.<br>2. Anyone who has a code can redeem it, once. Keep codes private until you use or give them.<br>3. Codes are shown in this chat as soon as the payment is confirmed. If we cannot deliver them, a Stars payment is refunded in full.<br>4. Codes that were delivered cannot be refunded or exchanged. For a payment problem, use /paysupport.<br>5. FreeSocks is provided as it is. Your network may limit how well it works. | ⚠️ **MISSING** |
 | `bot.termsMore` | Full terms: {url} | ⚠️ **MISSING** |
 | `bot.paySupport` | Payment problem? Write to {email} and quote your order reference (the 8 characters this bot showed you). Telegram support and @BotSupport cannot help with purchases made in this bot. | ⚠️ **MISSING** |
@@ -1180,3 +1162,4 @@ review.
 | `bot.starsRefundFailed` | We could not fulfil this order and will return your Stars. Use /paysupport and quote order {ref}. | ⚠️ **MISSING** |
 | `bot.commandTerms` | Terms of sale | ⚠️ **MISSING** |
 | `bot.commandPaySupport` | Help with a payment | ⚠️ **MISSING** |
+| `bot.orderPrice` | Price: {amount} | ⚠️ **MISSING** |

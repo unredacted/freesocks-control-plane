@@ -29,8 +29,6 @@ export interface TelegramConfig {
   /** Telegram Stars payments (still needs a Stars price for a duration). */
   starsEnabled: boolean;
   starsPrices: StarsPrice[];
-  /** Crypto on our own rails (NOWPayments / BTCPay; each also needs its billing rail on). */
-  cryptoEnabled: boolean;
   /** Full terms of sale the bot links ('' = the bot's own short terms only). */
   termsUrl: string;
 }
@@ -40,7 +38,6 @@ export const TELEGRAM_KEYS = {
   botUsername: 'telegram.botUsername',
   starsEnabled: 'telegram.stars.enabled',
   starsPrices: 'telegram.stars.prices',
-  cryptoEnabled: 'telegram.crypto.enabled',
   termsUrl: 'telegram.termsUrl',
 } as const;
 
@@ -60,13 +57,8 @@ export const TELEGRAM_DEFAULTS: TelegramConfig = {
   botUsername: '',
   starsEnabled: false,
   starsPrices: [],
-  cryptoEnabled: false,
   termsUrl: '',
 };
-
-/** The rails the bot may offer for crypto: the ones with a direct (in-chat) checkout. */
-export const TELEGRAM_CRYPTO_RAILS = ['nowpayments', 'btcpay'] as const;
-export type TelegramCryptoRail = (typeof TELEGRAM_CRYPTO_RAILS)[number];
 
 /** Upper bound on a Stars price per code (Telegram caps one invoice at 10,000 Stars x quantity anyway). */
 export const MAX_STARS_PER_CODE = 100_000;
@@ -166,21 +158,18 @@ export async function resolveTelegramSecrets(db: DatabaseReader): Promise<Telegr
 
 export async function resolveTelegramConfig(db: DatabaseReader): Promise<TelegramConfig> {
   const read = (key: string) => readSetting(db, key);
-  const [enabled, botUsername, starsEnabled, starsPrices, cryptoEnabled, termsUrl] =
-    await Promise.all([
-      read(TELEGRAM_KEYS.enabled),
-      read(TELEGRAM_KEYS.botUsername),
-      read(TELEGRAM_KEYS.starsEnabled),
-      read(TELEGRAM_KEYS.starsPrices),
-      read(TELEGRAM_KEYS.cryptoEnabled),
-      read(TELEGRAM_KEYS.termsUrl),
-    ]);
+  const [enabled, botUsername, starsEnabled, starsPrices, termsUrl] = await Promise.all([
+    read(TELEGRAM_KEYS.enabled),
+    read(TELEGRAM_KEYS.botUsername),
+    read(TELEGRAM_KEYS.starsEnabled),
+    read(TELEGRAM_KEYS.starsPrices),
+    read(TELEGRAM_KEYS.termsUrl),
+  ]);
   return {
     enabled: enabled === true,
     botUsername: sanitizeBotUsername(botUsername),
     starsEnabled: starsEnabled === true,
     starsPrices: sanitizeStarsPrices(starsPrices) ?? [],
-    cryptoEnabled: cryptoEnabled === true,
     termsUrl: sanitizeTermsUrl(termsUrl),
   };
 }
@@ -190,7 +179,6 @@ export interface TelegramConfigPatch {
   botUsername?: string;
   starsEnabled?: boolean;
   starsPrices?: unknown;
-  cryptoEnabled?: boolean;
   /** '' clears it. */
   termsUrl?: string;
   /** Write-only: undefined or blank leaves the saved token as it is. */
@@ -214,7 +202,6 @@ export function telegramConfigWrites(
   };
   bool('enabled', TELEGRAM_KEYS.enabled);
   bool('starsEnabled', TELEGRAM_KEYS.starsEnabled);
-  bool('cryptoEnabled', TELEGRAM_KEYS.cryptoEnabled);
   if (patch.botUsername !== undefined) {
     const raw = typeof patch.botUsername === 'string' ? patch.botUsername.trim() : null;
     if (raw === null) throw new Error('botUsername must be text');

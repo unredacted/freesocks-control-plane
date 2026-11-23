@@ -1,9 +1,8 @@
 /// <reference types="vite/client" />
 /**
- * The billing core's Telegram gift-shop orders: userless gift orders on the
- * hosted rails (channel 'telegram'), Telegram Stars orders, the bot's read and
- * ack by ref, and the privacy rule that a bot order's codes are bound to
- * nobody. The bot itself is tested in telegramBot.test.ts.
+ * The billing core's Telegram gift-shop orders: userless Telegram Stars gift
+ * orders (channel 'telegram'), the bot's read and ack by ref, and the privacy
+ * rule that a bot order's codes are bound to nobody. The bot itself is tested in telegramBot.test.ts.
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -88,7 +87,20 @@ async function payIpn(t: ReturnType<typeof convexTest>, orderRef: string, paymen
   });
 }
 
-describe('Telegram gift orders on the hosted rails', () => {
+async function starsBotOrder(t: ReturnType<typeof convexTest>, quantity = 2) {
+  return t.mutation(internal.billing.createStarsOrder, {
+    opaqueRef: randomRef(),
+    months: 3,
+    quantity,
+    starsPerCode: 700,
+  });
+}
+let refSeq = 0;
+function randomRef(): string {
+  return (refSeq++).toString(16).padStart(32, 'c');
+}
+
+describe('Telegram gift orders and the rest of billing', () => {
   beforeEach(() => {
     vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
     vi.stubEnv('NOWPAYMENTS_IPN_SECRET', IPN_SECRET);
@@ -98,63 +110,6 @@ describe('Telegram gift orders on the hosted rails', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
-  });
-
-  test('creates a userless gift order whose return link goes back into the bot', async () => {
-    const t = convexTest(schema, modules);
-    await seed(t);
-    const fetchMock = invoiceFetch();
-    vi.stubGlobal('fetch', fetchMock);
-
-    const res = await t.action(internal.billing.createCheckout, {
-      processor: 'nowpayments',
-      months: 3,
-      kind: 'gift',
-      quantity: 2,
-      channel: 'telegram',
-      botUsername: 'FreeSocksShopBot',
-    });
-    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
-    expect(body.success_url).toBe(`https://t.me/FreeSocksShopBot?start=o_${res.orderRef}`);
-    expect(body.cancel_url).toBe(`https://t.me/FreeSocksShopBot?start=o_${res.orderRef}`);
-    expect(body.price_amount).toBe(28);
-
-    await t.run(async (ctx) => {
-      const order = await ctx.db
-        .query('billingOrders')
-        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', res.orderRef))
-        .unique();
-      expect(order?.userId).toBeUndefined();
-      expect(order?.channel).toBe('telegram');
-      expect(order?.kind).toBe('gift');
-      expect(order?.quantity).toBe(2);
-      expect(order?.donationCents).toBe(0);
-    });
-  });
-
-  test('refuses anything but a plain gift, and a missing bot username', async () => {
-    const t = convexTest(schema, modules);
-    await seed(t);
-    vi.stubGlobal('fetch', invoiceFetch());
-    const base = { processor: 'nowpayments' as const, months: 3, channel: 'telegram' as const };
-    await expect(
-      t.action(internal.billing.createCheckout, {
-        ...base,
-        kind: 'self',
-        botUsername: 'FreeSocksShopBot',
-      }),
-    ).rejects.toThrow(/gift codes only/);
-    await expect(
-      t.action(internal.billing.createCheckout, {
-        ...base,
-        kind: 'gift',
-        donationCents: 500,
-        botUsername: 'FreeSocksShopBot',
-      }),
-    ).rejects.toThrow(/gift codes only/);
-    await expect(
-      t.action(internal.billing.createCheckout, { ...base, kind: 'gift', botUsername: 'x/y' }),
-    ).rejects.toThrow(/no bot username/);
   });
 
   test('an anonymous web gift is still refused', async () => {
@@ -171,25 +126,21 @@ describe('Telegram gift orders on the hosted rails', () => {
     ).rejects.toThrow(/Sign in/);
   });
 
-  test('a paid IPN mints codes bound to nobody; the bot reads them once, then they are gone', async () => {
+  test('a paid Stars order mints codes bound to nobody; the bot reads them once', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
-    vi.stubGlobal('fetch', invoiceFetch());
-    const { orderRef } = await t.action(internal.billing.createCheckout, {
-      processor: 'nowpayments',
-      months: 3,
-      kind: 'gift',
-      quantity: 2,
-      channel: 'telegram',
-      botUsername: 'FreeSocksShopBot',
-    });
-    vi.unstubAllGlobals();
-
+    const { orderRef, totalStars } = await starsBotOrder(t);
     const before = await t.query(internal.billing.botOrderStatus, { orderRef });
     expect(before?.status).toBe('pending');
     expect(before?.giftCodes).toEqual([]);
 
-    expect(await payIpn(t, orderRef)).toEqual({ ok: true, applied: true });
+    await t.action(internal.billing.ingestStarsPayment, {
+      orderRef,
+      chargeId: 'ch_nobody',
+      totalAmount: totalStars,
+      currency: 'XTR',
+      event: 'paid',
+    });
     const paid = await t.query(internal.billing.botOrderStatus, { orderRef });
     expect(paid?.status).toBe('paid');
     expect(paid?.months).toBe(3);
@@ -271,18 +222,10 @@ describe('Telegram gift orders on the hosted rails', () => {
     });
   });
 
-  test('an operator grant of a stuck bot order mints its codes for the buyer to pull', async () => {
+  test('an operator grant of a stuck bot order mints its codes, bound to nobody', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
-    vi.stubGlobal('fetch', invoiceFetch());
-    const { orderRef } = await t.action(internal.billing.createCheckout, {
-      processor: 'nowpayments',
-      months: 3,
-      kind: 'gift',
-      quantity: 1,
-      channel: 'telegram',
-      botUsername: 'FreeSocksShopBot',
-    });
+    const { orderRef } = await starsBotOrder(t, 1);
     const orderId = await t.run(async (ctx) => {
       const o = await ctx.db
         .query('billingOrders')
@@ -294,6 +237,10 @@ describe('Telegram gift orders on the hosted rails', () => {
     expect(res).toEqual({ granted: true, kind: 'gift' });
     const status = await t.query(internal.billing.botOrderStatus, { orderRef });
     expect(status?.giftCodes).toHaveLength(1);
+    await t.run(async (ctx) => {
+      const [code] = await ctx.db.query('redemptionCodes').collect();
+      expect(code?.purchasedByUserId).toBeUndefined();
+    });
   });
 });
 

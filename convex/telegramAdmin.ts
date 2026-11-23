@@ -32,7 +32,6 @@ export interface TelegramAdminView {
   botUsername: string;
   starsEnabled: boolean;
   starsPrices: StarsPrice[];
-  cryptoEnabled: boolean;
   tokenSet: boolean;
   secretSet: boolean;
   /** Where the webhook must point (null while PUBLIC_BASE_URL is unset). */
@@ -84,7 +83,6 @@ export const setConfig = internalMutation({
     botUsername: v.optional(v.string()),
     starsEnabled: v.optional(v.boolean()),
     starsPrices: v.optional(v.array(v.object({ months: v.number(), stars: v.number() }))),
-    cryptoEnabled: v.optional(v.boolean()),
     termsUrl: v.optional(v.string()),
     botToken: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
@@ -122,7 +120,6 @@ export const setConfig = internalMutation({
       payload: {
         enabled: next.enabled,
         starsEnabled: next.starsEnabled,
-        cryptoEnabled: next.cryptoEnabled,
         starsPriceCount: next.starsPrices.length,
         usernameChanged: next.botUsername !== cur.botUsername,
         tokenChanged: writes.some((w) => w.key === TELEGRAM_SECRET_KEYS.botToken),

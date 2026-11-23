@@ -9,26 +9,22 @@
  *   is its per-chat rate-limit row, keyed by a salted HMAC (swept like every
  *   rate-limit row). Update ids are kept two days for dedupe, nothing else.
  * - No per-chat state: every step's data rides in the button (lib/telegram/flow.ts).
- * - Delivery is pull-only: a crypto buyer taps "Check payment" (or returns
- *   through the processor's t.me deep link); a Stars buyer gets the codes in
- *   the same update as Telegram's successful_payment. The bot can't message
- *   anyone later, because it doesn't know who they are.
+ * - Payment is Telegram Stars only (Telegram's rule for digital goods in a
+ *   bot). The codes go out in the same update as Telegram's
+ *   successful_payment; the bot can't message anyone later, because it
+ *   doesn't know who they are.
  * - Nothing here logs a chat id or a message: errors log a kind only.
  *
  * Bot API calls go through lib/telegram/api.ts (the token is part of the URL,
  * so errors there never carry one). The token comes from telegramAdmin.secrets.
  */
-import { ConvexError, v } from 'convex/values';
+import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { hmacSha256Hex, randomHex } from './lib/crypto';
 import { recordHeartbeat } from './cronHeartbeat';
-import {
-  resolveBillingConfig,
-  resolveDirectCoins,
-  resolveProcessorSecrets,
-} from './lib/billingConfig';
+import { resolveBillingConfig, resolveProcessorSecrets } from './lib/billingConfig';
 import { resolveTelegramConfig, type TelegramConfig } from './lib/telegramConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
 import * as tg from './lib/telegram/api';
@@ -41,16 +37,12 @@ import {
   durationLabel,
   encodeAction,
   escapeHtml,
-  formatFiat,
-  methodLabel,
-  methodsFor,
   parseCommand,
   pickLocale,
   refPrefix,
   sellableDurations,
   shopOpen,
-  starsPriceFor,
-  startOrderRef,
+  starsOffer,
   toShopBilling,
   tr,
   trPlain,
@@ -69,8 +61,6 @@ const UPDATE_RETENTION_MS = 2 * DAY;
 export interface ShopContext {
   tg: TelegramConfig;
   billing: ShopBilling;
-  /** NOWPayments coins with a direct (in-chat) checkout; empty = hosted page only. */
-  coins: { ticker: string; label: string; network: string }[];
   /** The website, for links ('' when unset). */
   site: string;
   /** Where buyers write for payment help ('' when unset). */
@@ -86,18 +76,9 @@ export const shopContext = internalQuery({
       resolveProcessorSecrets(ctx.db),
       resolveSiteConfig(ctx.db),
     ]);
-    const coins =
-      billing.enabled && billing.rails.nowpayments
-        ? (await resolveDirectCoins(ctx.db, billing)).map(({ ticker, label, network }) => ({
-            ticker,
-            label,
-            network,
-          }))
-        : [];
     return {
       tg: tgConfig,
       billing: toShopBilling(billing),
-      coins,
       site: (secrets.publicBaseUrl ?? '').replace(/\/$/, ''),
       supportEmail: site.supportEmail,
     };
@@ -274,17 +255,25 @@ class Bot {
   }
 
   /**
-   * The terms of sale. With an order, the buyer must accept them (the button)
-   * before any payment method is shown: Telegram's rule for payments.
+   * The terms of sale. With an order they come with its price, and the only
+   * way on is the accept button, which opens the Stars invoice: Telegram's
+   * rule that buyers accept the terms before paying.
    */
   terms(order?: { months: number; qty: number }): Out {
     const parts: string[] = [];
+    let price: string | null = null;
     if (order) {
+      const perCode = starsOffer(this.shop.tg, this.shop.billing, order.months);
+      if (perCode === null) return { text: tr(this.lang, 'unavailable') };
+      price = trPlain(this.lang, 'starsAmount', { stars: perCode * order.qty });
       parts.push(
-        tr(this.lang, 'orderSummary', {
-          quantity: order.qty,
-          duration: durationLabel(this.lang, order.months),
-        }),
+        [
+          tr(this.lang, 'orderSummary', {
+            quantity: order.qty,
+            duration: durationLabel(this.lang, order.months),
+          }),
+          tr(this.lang, 'orderPrice', { amount: price }),
+        ].join('\n'),
         tr(this.lang, 'termsAsk'),
       );
     }
@@ -292,12 +281,18 @@ class Bot {
     if (this.shop.tg.termsUrl) {
       parts.push(tr(this.lang, 'termsMore', { url: this.shop.tg.termsUrl }));
     }
-    const keyboard: InlineKeyboard = order
-      ? [
-          [this.btn(trPlain(this.lang, 'buttonAccept'), { k: 'accept', ...order })],
-          [this.btn(trPlain(this.lang, 'buttonBack'), { k: 'dur', months: order.months })],
-        ]
-      : [[this.btn(trPlain(this.lang, 'buttonBack'), { k: 'menu' })]];
+    const keyboard: InlineKeyboard =
+      order && price
+        ? [
+            [
+              this.btn(trPlain(this.lang, 'buttonAccept', { amount: price }), {
+                k: 'accept',
+                ...order,
+              }),
+            ],
+            [this.btn(trPlain(this.lang, 'buttonBack'), { k: 'dur', months: order.months })],
+          ]
+        : [[this.btn(trPlain(this.lang, 'buttonBack'), { k: 'menu' })]];
     return { text: parts.join('\n\n'), keyboard };
   }
 
@@ -338,87 +333,7 @@ class Bot {
     };
   }
 
-  methods(months: number, qty: number): Out {
-    const offers = methodsFor(this.shop.tg, this.shop.billing, months, qty);
-    const rows = offers.map((o) => [
-      this.btn(methodLabel(this.lang, o, this.shop.billing.currency), {
-        k: 'pay',
-        months,
-        qty,
-        method: o.method,
-      }),
-    ]);
-    rows.push([this.btn(trPlain(this.lang, 'buttonBack'), { k: 'dur', months })]);
-    const summary = tr(this.lang, 'orderSummary', {
-      quantity: qty,
-      duration: durationLabel(this.lang, months),
-    });
-    return { text: `${summary}\n\n${tr(this.lang, 'choosePayment')}`, keyboard: rows };
-  }
-
-  coins(months: number, qty: number): Out {
-    const rows = this.shop.coins.slice(0, 24).map((c) => [
-      this.btn(`${c.label} (${c.network})`.slice(0, 60), {
-        k: 'coin',
-        months,
-        qty,
-        ticker: c.ticker,
-      }),
-    ]);
-    rows.push([this.btn(trPlain(this.lang, 'buttonBack'), { k: 'accept', months, qty })]);
-    return { text: tr(this.lang, 'chooseCoin'), keyboard: rows };
-  }
-
-  private checkRow(ref: string) {
-    return [this.btn(trPlain(this.lang, 'buttonCheck'), { k: 'check', ref })];
-  }
-
-  /** The payment step for a crypto order: deposit details, or the hosted page. */
-  payment(ref: string, status: BotOrderStatus, hostedUrl: string, fiat: number): Out {
-    const summary = tr(this.lang, 'orderSummary', {
-      quantity: status.quantity,
-      duration: durationLabel(this.lang, status.months),
-    });
-    const head = `${summary}\n${tr(this.lang, 'orderRef', { ref: refPrefix(ref) })}`;
-    const p = status.payment;
-    if (!p || p.methods.length === 0) {
-      return {
-        text: `${head}\n\n${tr(this.lang, 'payHosted', { amount: formatFiat(fiat, this.shop.billing.currency) })}`,
-        keyboard: [
-          [{ text: trPlain(this.lang, 'buttonOpenPayment'), url: hostedUrl }],
-          this.checkRow(ref),
-        ],
-      };
-    }
-    const blocks = p.methods.map((m) => {
-      const lines = [
-        tr(this.lang, 'payDirect', { amount: m.amount, unit: m.unit, address: m.address }),
-      ];
-      if (m.network) lines.push(tr(this.lang, 'payNetwork', { network: m.network }));
-      if (m.memo) lines.push(tr(this.lang, 'payMemo', { memo: m.memo }));
-      return lines.join('\n');
-    });
-    const tail: string[] = [];
-    if (p.expiresAt) {
-      tail.push(
-        tr(this.lang, 'payExpires', { expires: p.expiresAt.slice(0, 16).replace('T', ' ') }),
-      );
-    }
-    tail.push(tr(this.lang, 'payAfter'));
-    return {
-      text: [head, ...blocks, tail.join('\n')].join('\n\n'),
-      keyboard: [
-        [{ text: trPlain(this.lang, 'buttonOpenPayment'), url: p.hostedUrl }],
-        this.checkRow(ref),
-      ],
-    };
-  }
-
-  /**
-   * The codes, with the delete button. A Check tap turns its own message into
-   * the codes (so repeated taps never leave extra copies); otherwise it is a
-   * new message, which the delete button removes on its own.
-   */
+  /** The codes, with the delete button. A new message, so it can be deleted alone. */
   codes(ref: string, status: BotOrderStatus): Out {
     const codes = status.giftCodes.map((c) => `<code>${escapeHtml(c)}</code>`).join('\n');
     const keyboard: InlineKeyboard = [
@@ -441,40 +356,19 @@ class Bot {
   }
 
   /**
-   * Where an order stands, as the buyer sees it; paid + unseen codes are shown.
-   * From a Check button the answer replaces that message, so tapping again
-   * never piles up copies. Throws if Telegram refuses the message.
+   * Send a paid order's codes (or say they were already shown). Throws if
+   * Telegram refuses the message, so the payment is redelivered.
    */
-  async check(ref: string): Promise<void> {
+  async deliver(ref: string): Promise<void> {
     const status = await this.ctx.runQuery(internal.billing.botOrderStatus, { orderRef: ref });
     if (!status) {
-      await this.show({ text: tr(this.lang, 'orderNotFound') });
-      return;
-    }
-    const r = { ref: refPrefix(ref) };
-    switch (status.status) {
-      case 'paid':
-        await this.show(
-          status.giftCodes.length > 0
-            ? this.codes(ref, status)
-            : { text: tr(this.lang, 'codesGone', r) },
-        );
-        return;
-      case 'pending':
-        await this.show({ text: tr(this.lang, 'notPaidYet'), keyboard: [this.checkRow(ref)] });
-        return;
-      case 'confirming':
-        await this.show({ text: tr(this.lang, 'confirming'), keyboard: [this.checkRow(ref)] });
-        return;
-      case 'underpaid':
-        await this.show({ text: tr(this.lang, 'underpaid', r) });
-        return;
-      case 'expired':
-        await this.show({ text: tr(this.lang, 'expired') });
-        return;
-      case 'failed':
-        await this.show({ text: tr(this.lang, 'failed') });
-        return;
+      await this.send({ text: tr(this.lang, 'orderNotFound') });
+    } else if (status.status !== 'paid') {
+      await this.send({ text: tr(this.lang, 'failed') });
+    } else if (status.giftCodes.length > 0) {
+      await this.send(this.codes(ref, status));
+    } else {
+      await this.send({ text: tr(this.lang, 'codesGone', { ref: refPrefix(ref) }) });
     }
   }
 
@@ -487,18 +381,11 @@ class Bot {
     await this.send({ text: tr(this.lang, 'deleted') });
   }
 
-  /** Create the order for a chosen method (and coin), then show how to pay. */
-  async pay(months: number, qty: number, method: 's' | 'n' | 'b', ticker?: string): Promise<void> {
-    const offer = methodsFor(this.shop.tg, this.shop.billing, months, qty).find(
-      (o) => o.method === method,
-    );
-    if (!offer) {
+  /** The buyer accepted the terms: create the order and send its Stars invoice. */
+  async buy(months: number, qty: number): Promise<void> {
+    const perCode = starsOffer(this.shop.tg, this.shop.billing, months);
+    if (perCode === null) {
       await this.show({ text: tr(this.lang, 'unavailable') });
-      return;
-    }
-    // Crypto with a coin list: pick the coin first (no order exists yet).
-    if (method === 'n' && !ticker && this.shop.coins.length > 0) {
-      await this.show(this.coins(months, qty));
       return;
     }
     const limit = await this.ctx.runMutation(internal.rateLimits.enforce, {
@@ -509,51 +396,20 @@ class Bot {
       await this.send({ text: tr(this.lang, 'rateLimited') });
       return;
     }
-
-    if (method === 's') {
-      const perCode = starsPriceFor(this.shop.tg.starsPrices, months);
-      if (perCode === null) {
-        await this.show({ text: tr(this.lang, 'unavailable') });
-        return;
-      }
-      const { orderRef, totalStars } = await this.ctx.runMutation(
-        internal.billing.createStarsOrder,
-        { opaqueRef: randomHex(16), months, quantity: qty, starsPerCode: perCode },
-      );
-      const duration = durationLabel(this.lang, months);
-      await tg.sendStarsInvoice(this.token, this.chatId, {
-        title: trPlain(this.lang, 'starsTitle'),
-        description: trPlain(this.lang, 'starsDescription', { quantity: qty, duration }),
-        payload: orderRef,
-        label: trPlain(this.lang, 'starsLabel'),
-        stars: totalStars,
-      });
-      return;
-    }
-
-    let res: { redirectUrl: string; orderRef: string; direct: boolean };
-    try {
-      res = await this.ctx.runAction(internal.billing.createCheckout, {
-        processor: method === 'b' ? 'btcpay' : 'nowpayments',
-        months,
-        kind: 'gift',
-        quantity: qty,
-        channel: 'telegram',
-        botUsername: this.shop.tg.botUsername,
-        ...(ticker ? { payCurrency: ticker } : {}),
-      });
-    } catch (err) {
-      const code = err instanceof ConvexError ? (err.data as { code?: string }).code : undefined;
-      await this.send({
-        text: tr(this.lang, code === 'billing.coin_minimum' ? 'belowMinimum' : 'unavailable'),
-      });
-      return;
-    }
-    const status = await this.ctx.runQuery(internal.billing.botOrderStatus, {
-      orderRef: res.orderRef,
+    const { orderRef, totalStars } = await this.ctx.runMutation(internal.billing.createStarsOrder, {
+      opaqueRef: randomHex(16),
+      months,
+      quantity: qty,
+      starsPerCode: perCode,
     });
-    if (!status) throw new Error('order vanished after checkout');
-    await this.show(this.payment(res.orderRef, status, res.redirectUrl, offer.amount));
+    const duration = durationLabel(this.lang, months);
+    await tg.sendStarsInvoice(this.token, this.chatId, {
+      title: trPlain(this.lang, 'starsTitle'),
+      description: trPlain(this.lang, 'starsDescription', { quantity: qty, duration }),
+      payload: orderRef,
+      label: trPlain(this.lang, 'starsLabel'),
+      stars: totalStars,
+    });
   }
 }
 
@@ -680,7 +536,7 @@ export const handleUpdate = internalAction({
           });
           if (delivery.proceed) {
             try {
-              await bot.check(p.invoice_payload);
+              await bot.deliver(p.invoice_payload);
               await ctx.runMutation(internal.webhooks.markEventProcessed, {
                 eventId: deliveryId,
               });
@@ -714,17 +570,14 @@ export const handleUpdate = internalAction({
         if (!decoded) return { handled: true };
         const bot = new Bot(ctx, token, shop, chatId, lang, cq.message?.message_id);
         const a = decoded.action;
-        // Checking or clearing an order, privacy and language work even while
-        // the shop is closed; everything that sells needs it open.
-        const sells = !['check', 'ack', 'privacy', 'langs', 'terms'].includes(a.k);
+        // Clearing codes, privacy, terms and language work even while the
+        // shop is closed; everything that sells needs it open.
+        const sells = !['ack', 'privacy', 'langs', 'terms'].includes(a.k);
         if (sells && !open) {
           await bot.show(bot.closed());
           return { handled: true };
         }
         switch (a.k) {
-          case 'check':
-            await bot.check(a.ref);
-            break;
           case 'ack':
             await bot.ack(a.ref, cq.message?.message_id);
             break;
@@ -751,13 +604,7 @@ export const handleUpdate = internalAction({
             await bot.show(bot.terms({ months: a.months, qty: a.qty }));
             break;
           case 'accept':
-            await bot.show(bot.methods(a.months, a.qty));
-            break;
-          case 'pay':
-            await bot.pay(a.months, a.qty, a.method);
-            break;
-          case 'coin':
-            await bot.pay(a.months, a.qty, 'n', a.ticker);
+            await bot.buy(a.months, a.qty);
             break;
         }
         return { handled: true };
@@ -765,9 +612,7 @@ export const handleUpdate = internalAction({
 
       const cmd = parseCommand(update.message?.text);
       const bot = new Bot(ctx, token, shop, chatId, lang);
-      const ref = cmd?.name === 'start' ? startOrderRef(cmd.arg) : null;
-      if (ref) await bot.check(ref);
-      else if (cmd?.name === 'privacy') await bot.send(bot.privacy());
+      if (cmd?.name === 'privacy') await bot.send(bot.privacy());
       else if (cmd?.name === 'terms') await bot.send(bot.terms());
       else if (cmd?.name === 'paysupport' || cmd?.name === 'support') {
         await bot.send(bot.support());

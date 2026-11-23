@@ -1,21 +1,19 @@
 /// <reference types="vite/client" />
 /**
  * The Telegram gift shop end to end: the webhook route (secret header, size
- * cap, dedupe), the Stars and crypto flows through the real billing core, the
+ * cap, dedupe), the Stars flow through the real billing core, the
  * shop and rail switches, and the privacy rule that no table keeps the chat.
- * Telegram's Bot API and NOWPayments are a fetch stub.
+ * Telegram's Bot API is a fetch stub.
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { api, internal } from './_generated/api';
-import { hmacSha512Hex } from './lib/crypto';
 
 const modules = import.meta.glob('./**/*.*s');
 const TOKEN = '123456789:SECRET_bot_token_abcdefghijklmnopqrstuv';
 const SECRET = 'hook-secret_123';
 const CHAT = 918273645;
-const IPN_SECRET = 'test-ipn-secret';
 
 type Call = { method: string; body: Record<string, unknown>; url: string };
 
@@ -43,9 +41,6 @@ function stubFetch(fail: string[] = []) {
             : true;
       return Response.json({ ok: true, result });
     }
-    if (u.includes('nowpayments') && u.endsWith('/v1/invoice')) {
-      return Response.json({ id: 'inv_tg', invoice_url: 'https://pay.example/i/inv_tg' });
-    }
     throw new Error(`unexpected fetch ${u}`);
   });
   vi.stubGlobal('fetch', fn);
@@ -54,7 +49,7 @@ function stubFetch(fail: string[] = []) {
 
 async function seed(
   t: ReturnType<typeof convexTest>,
-  opts: { shop?: boolean; stars?: boolean; crypto?: boolean } = {},
+  opts: { shop?: boolean; stars?: boolean } = {},
 ) {
   await t.run(async (ctx) => {
     const base = {
@@ -87,7 +82,6 @@ async function seed(
     await put('telegram.botUsername', 'FreeSocksShopBot');
     await put('telegram.stars.enabled', opts.stars ?? true);
     await put('telegram.stars.prices', [{ months: 3, stars: 700 }]);
-    await put('telegram.crypto.enabled', opts.crypto ?? true);
   });
 }
 
@@ -134,9 +128,6 @@ beforeEach(() => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', SECRET);
   vi.stubEnv('IP_HASH_SALT', 'salt');
   vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
-  vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
-  vi.stubEnv('NOWPAYMENTS_IPN_SECRET', IPN_SECRET);
-  vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api-sandbox.nowpayments.io');
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -196,49 +187,46 @@ describe('the shop', () => {
     await seed(t, { shop: false });
     const { sent } = stubFetch();
     await post(t, message('/buy'));
-    await post(t, button('p|en|3|1|s'));
+    await post(t, button('t|en|3|1'));
     expect(String(sent('sendMessage')[0]?.body.text)).toMatch(/closed/);
     await t.run(async (ctx) => {
       expect(await ctx.db.query('billingOrders').collect()).toHaveLength(0);
     });
   });
 
-  test('walks start, duration, quantity and shows only switched-on methods', async () => {
+  test('walks start, duration, quantity, terms, then the Stars invoice', async () => {
     const t = convexTest(schema, modules);
-    await seed(t, { stars: false });
+    await seed(t);
     const { sent, calls } = stubFetch();
     await post(t, message('/start'));
     expect(String(sent('sendMessage')[0]?.body.text)).toMatch(/gift codes/);
     await post(t, button('b|en'));
     const durations = calls.at(-1)!;
     expect(durations.method).toBe('editMessageText');
-    // Only 3 and 12 months exist; 12 has no Stars price but crypto sells it.
+    // 3 and 12 months are in the catalog; only 3 has a Stars price.
     const kb = (durations.body.reply_markup as { inline_keyboard: { text: string }[][] })
       .inline_keyboard;
-    expect(kb.flat().map((b) => b.text)).toEqual(['3 months', '12 months', 'Back']);
+    expect(kb.flat().map((b) => b.text)).toEqual(['3 months', 'Back']);
     await post(t, button('q|en|3|2'));
-    // The terms come first; the methods only after Accept.
+    // The terms and the price come first; the invoice only after Accept.
     const terms = calls.at(-1)!;
+    expect(String(terms.body.text)).toMatch(/Price: 1400 Stars/);
     expect(String(terms.body.text)).toMatch(/Terms of sale/);
     const termsKb = (
       terms.body.reply_markup as { inline_keyboard: { text: string }[][] }
     ).inline_keyboard.flat();
-    expect(termsKb.map((b) => b.text)).toEqual(['I accept, continue', 'Back']);
+    expect(termsKb.map((b) => b.text)).toEqual(['I accept, pay 1400 Stars', 'Back']);
+    expect(sent('sendInvoice')).toHaveLength(0);
     await post(t, button('t|en|3|2'));
-    const methods = (
-      calls.at(-1)!.body.reply_markup as { inline_keyboard: { text: string }[][] }
-    ).inline_keyboard
-      .flat()
-      .map((b) => b.text);
-    expect(methods).toEqual(['Crypto, $28.00', 'Back']);
+    expect(sent('sendInvoice')[0]!.body.prices).toEqual([{ label: 'Gift codes', amount: 1400 }]);
   });
 
   test('a forged button is ignored', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const { sent, calls } = stubFetch();
-    await post(t, button('p|en|3|999|s'));
-    await post(t, button('k|en|not-a-ref'));
+    await post(t, button('t|en|3|999'));
+    await post(t, button('p|en|3|1|n')); // the old crypto button
     expect(calls.map((c) => c.method)).toEqual(['answerCallbackQuery', 'answerCallbackQuery']);
     expect(sent('sendMessage')).toHaveLength(0);
   });
@@ -249,7 +237,7 @@ describe('Telegram Stars', () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const { sent } = stubFetch();
-    await post(t, button('p|en|3|2|s'));
+    await post(t, button('t|en|3|2'));
     const invoice = sent('sendInvoice')[0]!.body;
     expect(invoice.currency).toBe('XTR');
     expect(invoice.provider_token).toBe('');
@@ -296,7 +284,7 @@ describe('Telegram Stars', () => {
   });
 
   async function starsOrder(t: ReturnType<typeof convexTest>, sent: (m: string) => Call[]) {
-    await post(t, button('p|en|3|1|s'));
+    await post(t, button('t|en|3|1'));
     return String(sent('sendInvoice').at(-1)!.body.payload);
   }
   const starsPaid = (ref: string, chargeId: string, refunded = false) =>
@@ -389,11 +377,8 @@ describe('the public link', () => {
     expect((await t.query(api.publicConfig.get, {})).telegram).toEqual({
       botUsername: 'FreeSocksShopBot',
     });
-    // Nothing to sell (no Stars, no crypto): the bot says closed, the site stays quiet.
-    await t.mutation(internal.telegramAdmin.setConfig, {
-      starsEnabled: false,
-      cryptoEnabled: false,
-    });
+    // Nothing to sell: the bot says closed, the site stays quiet.
+    await t.mutation(internal.telegramAdmin.setConfig, { starsEnabled: false });
     expect((await t.query(api.publicConfig.get, {})).telegram).toBeNull();
     await t.mutation(internal.telegramAdmin.setConfig, { starsEnabled: true });
     // No webhook secret: Telegram cannot reach the bot.
@@ -402,50 +387,25 @@ describe('the public link', () => {
   });
 });
 
-describe('crypto', () => {
-  async function payIpn(t: ReturnType<typeof convexTest>, orderRef: string) {
-    const payload = {
-      payment_status: 'finished',
-      payment_id: 4242,
-      order_id: orderRef,
-      price_amount: 14,
-      price_currency: 'usd',
-      actually_paid: 1,
-      pay_amount: 1,
-    };
-    const sorted = JSON.stringify(payload, Object.keys(payload).sort());
-    await t.action(internal.billing.ingestEvent, {
-      processor: 'nowpayments',
-      rawBody: JSON.stringify(payload),
-      signature: await hmacSha512Hex(IPN_SECRET, sorted),
-    });
-  }
-
-  test('hosted page, check, codes, saved-and-deleted; nothing keeps the chat', async () => {
+describe('the codes message', () => {
+  test('saved-and-deleted, then gone; nothing keeps the chat', async () => {
     const t = convexTest(schema, modules);
-    await seed(t, { stars: false });
-    const { sent, calls } = stubFetch();
-    await post(t, button('p|en|3|1|n'));
-    const pay = calls.at(-1)!;
-    const kb = (
-      pay.body.reply_markup as {
-        inline_keyboard: { text: string; url?: string; callback_data?: string }[][];
-      }
-    ).inline_keyboard.flat();
-    expect(kb[0]).toMatchObject({ text: 'Open payment page', url: 'https://pay.example/i/inv_tg' });
-    const check = kb[1]!.callback_data!;
-    const ref = check.split('|')[2]!;
-
-    await post(t, button(check));
-    expect(String(calls.at(-1)!.body.text)).toMatch(/Not paid yet/);
-    // Check answers in place: tapping it never piles up messages.
-    const before = sent('sendMessage').length;
-    await post(t, button(check));
-    expect(sent('sendMessage')).toHaveLength(before);
-
-    await payIpn(t, ref);
-    // The buyer comes back through the processor's return link.
-    await post(t, message(`/start o_${ref}`));
+    await seed(t);
+    const { sent } = stubFetch();
+    await post(t, button('t|en|3|1'));
+    const ref = String(sent('sendInvoice').at(-1)!.body.payload);
+    await post(
+      t,
+      message('', {
+        text: undefined,
+        successful_payment: {
+          currency: 'XTR',
+          total_amount: 700,
+          invoice_payload: ref,
+          telegram_payment_charge_id: 'charge_saved',
+        },
+      }),
+    );
     const codes = sent('sendMessage').at(-1)!;
     expect(String(codes.body.text)).toMatch(/FSM-/);
     const saved = (codes.body.reply_markup as { inline_keyboard: { callback_data?: string }[][] })
@@ -454,8 +414,9 @@ describe('crypto', () => {
 
     await post(t, button(saved, 777));
     expect(sent('deleteMessage').at(-1)!.body).toEqual({ chat_id: CHAT, message_id: 777 });
-    await post(t, button(check));
-    expect(String(calls.at(-1)!.body.text)).toMatch(/already shown/);
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/^Deleted/);
+    const status = await t.query(internal.billing.botOrderStatus, { orderRef: ref });
+    expect(status?.giftCodes).toEqual([]);
 
     // Privacy: no table holds the chat id (the rate-limit subject is a salted HMAC).
     await t.run(async (ctx) => {
@@ -468,9 +429,9 @@ describe('crypto', () => {
 
   test('per-chat checkout limit', async () => {
     const t = convexTest(schema, modules);
-    await seed(t, { stars: false });
+    await seed(t);
     const { sent } = stubFetch();
-    for (let i = 0; i < 7; i++) await post(t, button('p|en|3|1|n'));
+    for (let i = 0; i < 7; i++) await post(t, button('t|en|3|1'));
     expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/Too many requests/);
     await t.run(async (ctx) => {
       expect(await ctx.db.query('billingOrders').collect()).toHaveLength(6);
