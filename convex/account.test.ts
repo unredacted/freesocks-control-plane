@@ -12,7 +12,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { SwitchServerReason } from '../src/shared/contracts/switchServerReasons';
 import { signValue } from './lib/cookies';
-import { livePeriodCarry } from './account';
+import { carryPeriodEnd } from './lib/quotaCarry';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -132,26 +132,46 @@ describe('quota carryover across re-issues (Review D-M3)', () => {
     expect((await t.run((ctx) => ctx.db.get(currentId)))!.periodCarryBytes).toBe(2 * GB);
   });
 
-  test('a carry goes stale when the traffic period rolls', () => {
-    const issued = Date.parse('2026-11-20T00:00:00Z');
-    const row = { _creationTime: issued, periodCarryBytes: 5 * GB };
-    expect(livePeriodCarry(row, {}, issued + 86_400_000)).toBe(5 * GB);
-    // The provider reset the key's counter after it was issued.
+  test('a carry runs to the end of the period and the tier push respects it', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const current = await t.run(async (ctx) => {
+      const row = await ctx.db.get((await ctx.db.get(userId))!.currentSubscriptionId!);
+      return row!;
+    });
+    expect(current.periodCarryUntil).toBe(carryPeriodEnd('MONTH', current._creationTime));
+    const pushed = await t.query(internal.lifecycle.activeSubAndTier, { userId });
+    expect(pushed!.trafficLimitBytes).toBe(50 * GB - GB);
+  });
+
+  test('the expiry cron restores the full limit and drops the carry', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const currentId = await t.run(async (ctx) => {
+      const id = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      await ctx.db.patch(id, { periodCarryUntil: Date.now() - 1 });
+      return id;
+    });
+    const due = await t.query(internal.subscriptions.findExpiredCarries, {
+      now: Date.now(),
+      limit: 10,
+    });
+    expect(due).toEqual([expect.objectContaining({ restoreLimitBytes: 50 * GB })]);
+
+    await t.action(internal.lifecycle.expireQuotaCarries, {});
+
+    const row = await t.run((ctx) => ctx.db.get(currentId));
+    expect(row!.periodCarryBytes).toBeUndefined();
+    expect(row!.periodCarryUntil).toBeUndefined();
     expect(
-      livePeriodCarry(
-        row,
-        { lastTrafficResetAt: '2026-12-01T00:00:00Z' },
-        issued + 12 * 86_400_000,
-      ),
-    ).toBe(0);
-    expect(
-      livePeriodCarry(row, { lastTrafficResetAt: '2026-11-01T00:00:00Z' }, issued + 86_400_000),
-    ).toBe(5 * GB);
-    // No reset stamp (Outline): a month after issuance, unless it never resets.
-    expect(livePeriodCarry(row, {}, issued + 40 * 86_400_000)).toBe(0);
-    expect(
-      livePeriodCarry(row, { trafficLimitStrategy: 'NO_RESET' }, issued + 40 * 86_400_000),
-    ).toBe(5 * GB);
+      (await t.query(internal.lifecycle.activeSubAndTier, { userId }))!.trafficLimitBytes,
+    ).toBe(50 * GB);
   });
 });
 

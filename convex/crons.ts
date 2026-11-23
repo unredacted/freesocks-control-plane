@@ -81,6 +81,9 @@ crons.daily(
 // (keyEpochs.maybeRotate) so a dark deployment doesn't cold-start a Node action
 // every 10 min just to no-op. A daily backstop sweep runs even if rotation stalls.
 crons.interval('epoch-key-rotate', { minutes: 1 }, internal.keyEpochs.maybeRotate, {});
+// Restore the full traffic limit of keys whose quota-carry period ended
+// (lib/quotaCarry.ts). Hourly, so the month roll lands within the hour.
+crons.interval('quota-carry-expire', { hours: 1 }, internal.lifecycle.expireQuotaCarries, {});
 crons.daily('epoch-key-sweep', { hourUTC: 3, minuteUTC: 50 }, internal.keyEpochs.sweepExpired, {});
 
 // Member issue telemetry: bounded daily delete of rows past the admin-tunable

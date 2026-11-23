@@ -24,11 +24,13 @@ import { randomHex } from './lib/crypto';
 import { requiresPrivateDelivery } from '../src/shared/contracts/connectionModes';
 import { boundedUsername } from './lib/backends/username';
 import { issueNewSubscription } from './lib/issuance';
+import { carryPeriodEnd, liveCarryBytes, type CarryFields } from './lib/quotaCarry';
 import {
   applyUsageCarryover,
   computeExpireAtIso,
   resolveHwidLimit,
   resolveTrafficLimitBytes,
+  type TrafficLimitStrategy,
   type UsageSeries,
 } from './lib/backends/types';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
@@ -111,19 +113,15 @@ async function auditIfPlacementless(
 const TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Quota carryover (Review D-M3): a re-issue mints a FRESH backend traffic
- * counter, so without a carry every regenerate/switch would reset the member's
- * period quota (scripted churn compounded it by orders of magnitude). The new
- * key's limit is the tier limit less what the member already spent this
- * period: the old key's live usage PLUS what that key had itself carried in
- * from its predecessors (`periodCarryBytes`), so a chain of re-issues cannot
+ * Quota carryover (Review D-M3, lib/quotaCarry.ts): a re-issue mints a FRESH
+ * backend traffic counter, so without a carry every regenerate/switch would
+ * reset the member's period quota (scripted churn compounded it by orders of
+ * magnitude). The new key's limit is the tier limit less what the member
+ * already spent this period: the old key's live usage PLUS what that key had
+ * itself carried in from its predecessors, so a chain of re-issues cannot
  * forget earlier keys. Spending on the old key during its 24h grace is charged
  * to the current key by the tombstone sweep (`graceBaseUsedBytes`,
  * lifecycle.settleGraceUsage).
- *
- * A carry goes stale once the old key's counter reset after the key was issued
- * (a new period), or, for a resetting strategy with no reset stamp (Outline),
- * a month after issuance.
  *
  * Best-effort: a backend blip (or an already-gone old key) must not block
  * re-issue, since the member may be replacing a key on a failing server. A
@@ -133,53 +131,37 @@ const TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
  */
 type QuotaCarry = {
   trafficLimitBytes: number | null;
-  // Spent on earlier keys this period, stored on the new row.
+  // Spent on earlier keys this period and when it stops counting (new row).
   periodCarryBytes?: number;
+  periodCarryUntil?: number;
   // The old key's usage counted above, stored on its tombstone.
   graceBaseUsedBytes?: number;
 };
 
-const PERIOD_CARRY_MAX_AGE_MS = 31 * 24 * 60 * 60 * 1000;
-
-/** What the old key had carried in, unless its traffic period has since rolled. */
-export function livePeriodCarry(
-  oldSub: { _creationTime: number; periodCarryBytes?: number },
-  state: { lastTrafficResetAt?: string; trafficLimitStrategy?: string },
-  now: number,
-): number {
-  const carried = Math.max(0, Math.floor(oldSub.periodCarryBytes ?? 0));
-  if (carried === 0) return 0;
-  const resetAt = state.lastTrafficResetAt ? Date.parse(state.lastTrafficResetAt) : NaN;
-  if (Number.isFinite(resetAt) && resetAt > oldSub._creationTime) return 0;
-  if (
-    state.trafficLimitStrategy !== 'NO_RESET' &&
-    now - oldSub._creationTime > PERIOD_CARRY_MAX_AGE_MS
-  )
-    return 0;
-  return carried;
-}
-
 async function carriedTrafficLimit(
   ctx: ActionCtx,
-  oldSub: {
-    backend: Backend;
-    backendUserId: string;
-    _creationTime: number;
-    periodCarryBytes?: number;
-  } | null,
-  limitBytes: number | null,
+  oldSub: ({ backend: Backend; backendUserId: string } & CarryFields) | null,
+  tier: {
+    monthlyTrafficGb: number;
+    isDefaultFree: boolean;
+    trafficStrategy?: TrafficLimitStrategy;
+  },
+  bonusGb: number,
 ): Promise<QuotaCarry> {
+  const limitBytes = resolveTrafficLimitBytes(tier, bonusGb);
   if (limitBytes === null || !oldSub) return { trafficLimitBytes: limitBytes };
   try {
     const state = await ctx.runAction(internal.backends.getUser, {
       backend: oldSub.backend,
       backendUserId: oldSub.backendUserId,
     });
+    const now = Date.now();
     const used = Math.max(0, Math.floor(state.usedTrafficBytes ?? 0));
-    const spent = used + livePeriodCarry(oldSub, state, Date.now());
+    const spent = used + liveCarryBytes(oldSub, now);
     return {
       trafficLimitBytes: applyUsageCarryover(limitBytes, spent),
       periodCarryBytes: spent,
+      periodCarryUntil: carryPeriodEnd(tier.trafficStrategy, now),
       graceBaseUsedBytes: used,
     };
   } catch {
@@ -917,9 +899,10 @@ export const regenerate = internalAction({
       oldSub ? undefined : (region ?? geoCountry),
     );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
-    const carry = await carriedTrafficLimit(ctx, oldSub, resolveTrafficLimitBytes(tier, bonusGb));
+    const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
     const issued = await issueNewSubscription(ctx, {
       periodCarryBytes: carry.periodCarryBytes,
+      periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: tier.backend,
       spec: {
@@ -1071,13 +1054,10 @@ export const switchBackend = internalAction({
       destination?.family?.id,
     );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
-    const carry = await carriedTrafficLimit(
-      ctx,
-      oldSub,
-      resolveTrafficLimitBytes(peerTier, bonusGb),
-    );
+    const carry = await carriedTrafficLimit(ctx, oldSub, peerTier, bonusGb);
     const issued = await issueNewSubscription(ctx, {
       periodCarryBytes: carry.periodCarryBytes,
+      periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: peerTier.backend,
       spec: {
@@ -1272,9 +1252,10 @@ export const switchMode = internalAction({
         userId,
       );
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
-      const carry = await carriedTrafficLimit(ctx, oldSub, resolveTrafficLimitBytes(tier, bonusGb));
+      const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
       const issued = await issueNewSubscription(ctx, {
         periodCarryBytes: carry.periodCarryBytes,
+        periodCarryUntil: carry.periodCarryUntil,
         userId,
         backend: tier.backend,
         spec: {
@@ -1643,9 +1624,10 @@ export const switchServer = internalAction({
         };
       }
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
-      const carry = await carriedTrafficLimit(ctx, oldSub, resolveTrafficLimitBytes(tier, bonusGb));
+      const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
       const issued = await issueNewSubscription(ctx, {
         periodCarryBytes: carry.periodCarryBytes,
+        periodCarryUntil: carry.periodCarryUntil,
         userId,
         backend: tier.backend,
         spec: {
@@ -1932,9 +1914,10 @@ export const moveToCountryExit = internalAction({
     if (target.fallbackUnresolved) return nothing;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
-    const carry = await carriedTrafficLimit(ctx, oldSub, resolveTrafficLimitBytes(tier, bonusGb));
+    const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
     const issued = await issueNewSubscription(ctx, {
       periodCarryBytes: carry.periodCarryBytes,
+      periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: tier.backend,
       spec: {

@@ -18,7 +18,6 @@ import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
 import { deleteCopiesOf } from './mirrorCopies';
 import {
-  applyUsageCarryover,
   computeExpireAtIso,
   farFutureExpiryIso,
   resolveHwidLimit,
@@ -40,6 +39,7 @@ import { resolveDefaultFreeTier } from './tiers';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { forgetAccount } from './edgeTrust';
+import { keyTrafficLimit } from './lib/quotaCarry';
 
 // --- entitlement seam ------------------------------------------------------
 
@@ -349,7 +349,9 @@ export const activeSubAndTier = internalQuery({
       // The user's local status, so the push can re-enable a key the grace sweep
       // disabled (updateUser never touches enable/disable state). (Review #2.)
       userStatus: user.status,
-      trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+      // Less what earlier keys spent this period (lib/quotaCarry.ts): a tier
+      // push must not hand a re-issued key its spent bytes back.
+      trafficLimitBytes: keyTrafficLimit(resolveTrafficLimitBytes(tier, bonusGb), sub, Date.now()),
       trafficLimitStrategy: tier.trafficStrategy,
       // The CURRENT tier's slug, so the push re-tags the backend key on a tier
       // change (issuance stamps the slug — e.g. FREE — and nothing else ever
@@ -816,18 +818,10 @@ async function settleGraceUsage(
       usedBytes: used,
     });
     if (!charge) return;
-    const current = await ctx.runAction(internal.backends.getUser, {
-      backend: charge.backend,
-      backendUserId: charge.backendUserId,
-    });
-    // Unlimited now (an upgrade since): nothing to charge against.
-    if (current.trafficLimitBytes === null) return;
     await ctx.runAction(internal.backends.updateUser, {
       backend: charge.backend,
       backendUserId: charge.backendUserId,
-      patch: {
-        trafficLimitBytes: applyUsageCarryover(current.trafficLimitBytes, charge.extraBytes),
-      },
+      patch: { trafficLimitBytes: charge.trafficLimitBytes },
     });
   } catch (err) {
     console.warn(
@@ -903,6 +897,50 @@ export const sweepTombstones = internalAction({
         }
       }
       return { removed };
+    }),
+});
+
+// --- quota carry expiry ----------------------------------------------------
+
+/**
+ * Cron: once a key's carry period ends (lib/quotaCarry.ts), restore its full
+ * tier limit and drop the carry. Nothing else would: the donation re-cap runs
+ * only when the bonus moves, and a re-issued key's reduced limit would
+ * otherwise outlive the provider's own counter reset. A failed restore keeps
+ * the row for the next run.
+ */
+export const expireQuotaCarries = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ restored: number }> =>
+    runWithCronOutcome(ctx, 'quota-carry-expire', async () => {
+      let restored = 0;
+      for (let round = 0; round < 20; round++) {
+        const due = await ctx.runQuery(internal.subscriptions.findExpiredCarries, {
+          now: Date.now(),
+          limit: 100,
+        });
+        let failed = 0;
+        for (const d of due) {
+          try {
+            if (d.restoreLimitBytes !== null) {
+              await ctx.runAction(internal.backends.updateUser, {
+                backend: d.backend,
+                backendUserId: d.backendUserId,
+                patch: { trafficLimitBytes: d.restoreLimitBytes },
+              });
+              restored++;
+            }
+            await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+              subscriptionId: d.subscriptionId,
+            });
+          } catch {
+            failed++;
+          }
+        }
+        // A short page is the end; a page of failures waits for the next run.
+        if (due.length < 100 || failed === due.length) break;
+      }
+      return { restored };
     }),
 });
 

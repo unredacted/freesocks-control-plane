@@ -42,6 +42,9 @@ import { bumpCountryKeysForRow } from './lib/countryKeyCounts';
 import { memberLaneOfUser } from './edgeLanes';
 import { noteExposures } from './edgeTrust';
 import { mirrorFormatValidator } from './lib/mirrorFormats';
+import { carryPeriodEnd, keyTrafficLimit, liveCarryBytes } from './lib/quotaCarry';
+import { resolveTrafficLimitBytes } from './lib/backends/types';
+import { resolveCurrentBonusGb } from './lib/donationBonus';
 
 const mirror = v.object({
   provider: v.string(),
@@ -235,8 +238,10 @@ export const insertSubscription = internalMutation({
     // listed country or `ZZ`, already checked by the HTTP layer and checked
     // again here. Wins over a carried one. Stored only on a freedom-family key.
     region: v.optional(v.string()),
-    // Bytes spent on earlier keys this period (account.ts carriedTrafficLimit).
+    // Bytes spent on earlier keys this period, and when that period ends
+    // (lib/quotaCarry.ts; account.ts carriedTrafficLimit).
     periodCarryBytes: v.optional(v.number()),
+    periodCarryUntil: v.optional(v.number()),
   },
   handler: async (ctx, a) => {
     // The fronted-URL token: carried from the old row when requested, else a
@@ -1353,7 +1358,8 @@ export const setPlacementAndClearCache = internalMutation({
  * Record a superseded key's spending during its grace against the member's
  * current key (lifecycle.settleGraceUsage). Serializable: the spend is
  * recomputed from the stored base, so two sweeps cannot both count it. Returns
- * the key whose provider limit to lower, or null when there is none.
+ * the current key and its new provider limit, or null when there is nothing to
+ * lower (no current key, or an unlimited tier).
  */
 export const recordGraceSpend = internalMutation({
   args: { subscriptionId: v.id('subscriptions'), usedBytes: v.number() },
@@ -1366,11 +1372,62 @@ export const recordGraceSpend = internalMutation({
     const user = await ctx.db.get(old.userId);
     const currentId = user?.currentSubscriptionId;
     const current = currentId && currentId !== old._id ? await ctx.db.get(currentId) : null;
-    if (!current || current.state !== 'active' || current.userId !== old.userId) return null;
-    await ctx.db.patch(current._id, {
-      periodCarryBytes: (current.periodCarryBytes ?? 0) + extraBytes,
-    });
-    return { backend: current.backend, backendUserId: current.backendUserId, extraBytes };
+    const tier = user ? await ctx.db.get(user.tierId) : null;
+    if (!current || !tier || current.state !== 'active' || current.userId !== old.userId)
+      return null;
+    const now = Date.now();
+    const live = liveCarryBytes(current, now);
+    const carry = {
+      periodCarryBytes: live + extraBytes,
+      periodCarryUntil:
+        live > 0 ? current.periodCarryUntil! : carryPeriodEnd(tier.trafficStrategy, now),
+    };
+    await ctx.db.patch(current._id, carry);
+    const tierLimit = resolveTrafficLimitBytes(tier, await resolveCurrentBonusGb(ctx.db, now));
+    const trafficLimitBytes = keyTrafficLimit(tierLimit, carry, now);
+    if (trafficLimitBytes === null) return null;
+    return { backend: current.backend, backendUserId: current.backendUserId, trafficLimitBytes };
+  },
+});
+
+/** Rows whose carry period has ended (the quota-carry-expire cron). */
+export const findExpiredCarries = internalQuery({
+  args: { now: v.number(), limit: v.number() },
+  handler: async (ctx, { now, limit }) => {
+    const rows = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_period_carry_until', (q) =>
+        q.gt('periodCarryUntil', 0).lte('periodCarryUntil', now),
+      )
+      .take(limit);
+    const out = [];
+    for (const row of rows) {
+      const user = row.state === 'active' ? await ctx.db.get(row.userId) : null;
+      const tier = user ? await ctx.db.get(user.tierId) : null;
+      out.push({
+        subscriptionId: row._id,
+        backend: row.backend,
+        backendUserId: row.backendUserId,
+        // The full tier limit to restore on a live key; null = just clear.
+        restoreLimitBytes:
+          tier && user?.currentSubscriptionId === row._id
+            ? resolveTrafficLimitBytes(tier, await resolveCurrentBonusGb(ctx.db, now))
+            : null,
+      });
+    }
+    return out;
+  },
+});
+
+/** Drop a key's carry (its period ended, or an admin reset its traffic). */
+export const clearPeriodCarry = internalMutation({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }) => {
+    const row = await ctx.db.get(subscriptionId);
+    if (row && (row.periodCarryBytes !== undefined || row.periodCarryUntil !== undefined)) {
+      await ctx.db.patch(row._id, { periodCarryBytes: undefined, periodCarryUntil: undefined });
+    }
+    return null;
   },
 });
 /**

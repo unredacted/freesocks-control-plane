@@ -791,7 +791,9 @@ export const activeSubForUser = internalQuery({
       .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
       .order('desc')
       .first();
-    return sub ? { backend: sub.backend, backendUserId: sub.backendUserId } : null;
+    return sub
+      ? { subscriptionId: sub._id, backend: sub.backend, backendUserId: sub.backendUserId }
+      : null;
   },
 });
 
@@ -952,6 +954,17 @@ export const runUserOp = internalAction({
             code: 'backend.reset_failed',
             message: 'The backend did not reset this key’s traffic. Try again later.',
           });
+        }
+        // A reset hands the member their whole quota back, so the bytes a
+        // re-issued key carried from earlier keys go too (lib/quotaCarry.ts).
+        await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+          subscriptionId: sub.subscriptionId,
+        });
+        try {
+          await ctx.runAction(internal.lifecycle.pushTierToBackend, { userId });
+        } catch {
+          // The carry is gone locally; the next tier push or the expiry cron
+          // restores the provider limit.
         }
       }
       await ctx.runMutation(internal.adminApi.recordUserOpAudit, {

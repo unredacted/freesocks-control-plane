@@ -116,6 +116,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   { name: 'admin-invite-sweep', everyMs: DAY, description: 'Drop expired admin invite tokens' },
   { name: 'epoch-key-sweep', everyMs: DAY, description: 'Destroy long-expired HPKE epoch seeds' },
   {
+    name: 'quota-carry-expire',
+    everyMs: HOUR,
+    description: 'Restore the full traffic limit once a re-issued key’s quota period ends',
+  },
+  {
     name: 'issue-telemetry-retention',
     everyMs: DAY,
     description: 'Prune issue-telemetry rows past the diagnostics retention window',

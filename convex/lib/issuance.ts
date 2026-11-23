@@ -57,8 +57,9 @@ export async function issueNewSubscription(
     // key); stored on a freedom-family key only (subscriptions.insertSubscription).
     region?: string;
     // Bytes spent on earlier keys this traffic period, already taken off
-    // spec.trafficLimitBytes (account.ts carriedTrafficLimit).
+    // spec.trafficLimitBytes, and when the period ends (lib/quotaCarry.ts).
     periodCarryBytes?: number;
+    periodCarryUntil?: number;
   },
 ): Promise<IssueResult> {
   const issued = await ctx.runAction(internal.backends.issueUser, {
@@ -93,6 +94,7 @@ export async function issueNewSubscription(
       carryCountryFromId: input.carryCountryFromId,
       region: input.region,
       periodCarryBytes: input.periodCarryBytes,
+      periodCarryUntil: input.periodCarryUntil,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,
