@@ -96,8 +96,17 @@ start_udp() {
   done
   sleep 1
   snap selected
-  tap_id "$PKG:id/fab" || { echo 'no start button'; return 1; }
-  sleep 8
+  # A Compose screen: the button has its label, not a resource id.
+  dump
+  tap_text '^Start service$' || { echo 'no start button'; return 1; }
+  # The app's own listener, forwarded to the runner, up: a refusal below is
+  # then the app's, not an app that never started.
+  local end=$((SECONDS + 30))
+  until bash -c 'exec 3<>/dev/tcp/127.0.0.1/10808' 2>/dev/null; do
+    ((SECONDS > end)) && { echo 'the app never listened'; snap not-listening; return 1; }
+    sleep 2
+  done
+  sleep 4
   snap started
 }
 # fresh: the app with no data, as installed (each raw config on its own, so a
@@ -135,7 +144,7 @@ if start_udp && through_until 45 && carried_more "$before"; then
   drop_udp
   stop_app
   launch
-  start_udp && never && ok[udp]=true
+  start_udp && never && ${ok[connection]} && ok[udp]=true
   allow_udp
 fi
 stop_app
@@ -163,14 +172,14 @@ fresh
 launch
 import_sub "$HY_WRONGPIN_URL"
 before=$(carried node)
-start_udp && never && [ "$(carried node)" -eq "$before" ] && ok[wrongPinRefused]=true
+start_udp && never && [ "$(carried node)" -eq "$before" ] && ${ok[connection]} && ok[wrongPinRefused]=true
 stop_app
 
 # The node's pin at a rogue with another certificate: refused, and it got nothing.
 fresh
 launch
 import_sub "$HY_ROGUE_URL"
-start_udp && never && [ "$(carried rogue)" -eq 0 ] && ok[rogueRefused]=true
+start_udp && never && [ "$(carried rogue)" -eq 0 ] && ${ok[connection]} && ok[rogueRefused]=true
 stop_app
 
 version=$(adb shell dumpsys package "$PKG" | sed -n 's/.*versionName=\([^ ]*\).*/\1/p' | head -1 | tr -d '\r')

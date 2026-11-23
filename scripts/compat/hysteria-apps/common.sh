@@ -38,9 +38,11 @@ through() {
   else
     local n
     n=$(cat /proc/sys/kernel/random/uuid)
-    # A name, not the page's address: the apps' default routing sends a
-    # private address straight out. The servers redirect it to the page.
-    [ "$(curl --silent --max-time 10 --socks5-hostname "$LISTENER" "http://hysteria-check.example/$n")" = "reality-page /$n" ]
+    # A public address, not the page's own: the apps' default routing sends a
+    # private address straight out, and resolves a name before routing it
+    # (which cannot finish here: every request ends at the page). The servers
+    # redirect it to the page; sent anywhere else it would not answer this.
+    [ "$(curl --silent --max-time 10 --socks5-hostname "$LISTENER" "http://1.1.1.1/$n")" = "reality-page /$n" ]
   fi
 }
 through_until() { # through_until <seconds>

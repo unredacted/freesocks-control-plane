@@ -104,7 +104,7 @@ if fetch_sub "$HY_GOOD_URL" "$names"; then
     snap connected
     drop_udp
     run_udp
-    never && ok[udp]=true
+    never && ${ok[connection]} && ok[udp]=true
     allow_udp
   fi
   # Refresh: the app's updater again, same servers.
@@ -114,11 +114,11 @@ fi
 
 if fetch_sub "$HY_WRONGPIN_URL" "$HY_WORK/app-names-wrongpin.txt"; then
   before=$(carried node)
-  run_udp && never && [ "$(carried node)" -eq "$before" ] && ok[wrongPinRefused]=true
+  run_udp && never && [ "$(carried node)" -eq "$before" ] && ${ok[connection]} && ok[wrongPinRefused]=true
 fi
 
 if fetch_sub "$HY_ROGUE_URL" "$HY_WORK/app-names-rogue.txt"; then
-  run_udp && never && [ "$(carried rogue)" -eq 0 ] && ok[rogueRefused]=true
+  run_udp && never && [ "$(carried rogue)" -eq 0 ] && ${ok[connection]} && ok[rogueRefused]=true
 fi
 stop_app
 # The app's own logs, for a failed step (fixture data only).

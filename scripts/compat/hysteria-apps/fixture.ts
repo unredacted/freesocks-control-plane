@@ -21,8 +21,8 @@
  *
  * `carried` prints how many requests that server carried for the member (its
  * access log; nothing else is read or printed). The page behind the servers
- * (any name, e.g. http://hysteria-check.example/<nonce>: the servers redirect
- * every request to it) is reachable only through them.
+ * (any address, e.g. http://1.1.1.1/<nonce>: the servers redirect every
+ * request to it) is reachable only through them.
  *
  * Every value here is per run and dies with the containers.
  */
@@ -97,9 +97,8 @@ function serverConfig(cert: { certificate: string; key: string }, password: stri
       {
         tag: 'out',
         protocol: 'freedom',
-        // Every request ends at the page, whatever name it asked for: the
-        // apps fetch a name, since their default routing sends a private
-        // address straight out instead of through the server.
+        // Every request ends at the page, whatever it asked for: the apps'
+        // default routing sends the page's own (private) address straight out.
         settings: {
           redirect: '10.89.73.20:8080',
           finalRules: [{ action: 'allow', ip: ['10.89.73.0/24'] }],
