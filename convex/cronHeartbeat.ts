@@ -132,6 +132,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   },
   { name: 'retention-audit', everyMs: DAY, description: 'Prune the audit log past its window' },
   { name: 'retention-webhooks', everyMs: DAY, description: 'Prune webhook dedupe records' },
+  {
+    name: 'retention-telegram-updates',
+    everyMs: DAY,
+    description: 'Prune Telegram gift shop update ids',
+  },
   { name: 'retention-tier-history', everyMs: DAY, description: 'Prune tier-change history' },
   {
     name: 'retention-subscriptions',

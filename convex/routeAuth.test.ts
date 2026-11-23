@@ -66,6 +66,7 @@ const PUBLIC_ROUTES: Record<string, string> = {
   'POST /api/webhooks/nowpayments': 'HMAC-signed processor webhook',
   'POST /api/webhooks/btcpay': 'HMAC-signed processor webhook',
   'POST /api/webhooks/stripe': 'signed processor webhook',
+  'POST /api/webhooks/telegram': 'Telegram webhook, secret-token header',
   'POST /api/webhooks/paypal': 'signed processor webhook (verified with PayPal)',
 };
 

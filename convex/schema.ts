@@ -104,13 +104,15 @@ const subscriptionMirror = v.object({
   ),
 });
 
-// Self-service membership payment processors (hosted-redirect rails). Keep in
-// sync with the PaymentProcessor adapters in convex/lib/processors/.
+// Self-service membership payment processors: the hosted-redirect rails (keep
+// in sync with the adapters in convex/lib/processors/) plus Telegram Stars,
+// which only the Telegram gift shop takes (OrderProcessorId).
 const billingProcessor = v.union(
   v.literal('nowpayments'),
   v.literal('btcpay'),
   v.literal('stripe'),
   v.literal('paypal'),
+  v.literal('telegram_stars'),
 );
 // Order lifecycle. `confirming` is the crypto mempool/confirmation wait (a
 // non-terminal state the SPA keeps polling). Only `paid` grants membership.
@@ -1355,14 +1357,25 @@ export default defineSchema({
   // membership. NO payer PII is stored (no email/name/address) — only the ref,
   // amount, tier, duration, and status. `by_status` (Convex appends
   // `_creationTime`) drives the stale-pending sweep.
+  // Telegram gift shop: update ids seen, for dedupe (Telegram redelivers an
+  // update until it gets a 200). The id only: never the update, chat or user.
+  // Swept after two days (telegramBot.sweepUpdates).
+  telegramUpdates: defineTable({
+    updateId: v.number(),
+  }).index('by_update_id', ['updateId']),
+
   billingOrders: defineTable({
     processor: billingProcessor,
     opaqueRef: v.string(),
     processorRef: v.optional(v.string()),
-    // Absent = an ANONYMOUS donation order (kind 'donation' only): no account
-    // involved, the opaque ref is the payer's only handle. Memberships and
-    // gifts are always user-bound.
+    // Absent = an ANONYMOUS order: a donation, or a Telegram gift-shop order
+    // (channel 'telegram'). No account is involved; the opaque ref is the
+    // payer's only handle. Memberships and web gifts are always user-bound.
     userId: v.optional(v.id('users')),
+    // Where the order was placed. Absent = the website. 'telegram' = the
+    // Telegram gift shop: always a userless gift order, its codes bound to
+    // nothing (never purchasedByUserId), read back only by its opaque ref.
+    channel: v.optional(v.union(v.literal('web'), v.literal('telegram'))),
     // Optional: a donation-only order (kind 'donation') carries no tier.
     tierId: v.optional(v.id('tiers')),
     durationDays: v.number(),

@@ -349,6 +349,9 @@ export const PublicConfig = z.object({
    *  website id are server-side only and never reach a client. Optional +
    *  defaulted for deploy skew (same reason as site.transparencyUrl above). */
   analytics: z.object({ enabled: z.boolean() }).optional().default({ enabled: false }),
+  /** The official Telegram gift shop bot (gift codes only), while its shop is
+   *  open; null otherwise. Only the public username. Optional for deploy skew. */
+  telegram: z.object({ botUsername: z.string() }).nullable().optional().default(null),
   /** Member-facing connection-mode catalog (the transport chooser): the LEAF
    *  sub-choices. `family` names the parent mode the leaf belongs to (see
    *  `connectionModeFamilies`); `isFamilyDefault` is the leaf selected when a

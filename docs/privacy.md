@@ -706,6 +706,23 @@ one-click decline). What it does and does not do:
   and rows are deleted by a daily sweep after the admin-tunable retention
   window (default 90 days).
 
+## 7b. Telegram gift shop (optional, off by default)
+
+The Telegram bot sells gift codes only (`docs/billing.md` § "Telegram gift shop").
+
+- **Telegram sees** that a Telegram account talked to the FreeSocks bot and, for
+  Stars, paid it. Bot chats are ordinary cloud chats, not end-to-end encrypted,
+  so the codes message stays on Telegram's servers until the buyer deletes it
+  (the bot offers a button that does).
+- **FCP stores** only the order (length, number of codes, price, status) under a
+  random reference, with no account, and the `update_id` of each update for two
+  days (dedupe). No chat id, user id, name, language or update body is stored or
+  logged. The only per-chat trace is a rate-limit row keyed by a salted HMAC of
+  the chat id, swept like every rate-limit row.
+- **Codes are linked to nothing:** a bot order's codes carry no buyer and no order
+  id, so redeeming one does not tie the redeeming account to a Telegram account.
+- The bot never asks for an account number.
+
 ## 8. Edges: reachability probes and report attribution
 
 The origin-edge layer (`docs/edges.md`) adds two flows that touch third parties or

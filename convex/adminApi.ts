@@ -1881,8 +1881,9 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
   return {
     id: o._id as string,
     processor: o.processor,
+    channel: o.channel ?? 'web',
     refPrefix: o.opaqueRef.slice(0, 8),
-    // Null = anonymous donation order (no account behind it).
+    // Null = an anonymous order (a donation, or a Telegram gift-shop order).
     userId: (o.userId as string | undefined) ?? null,
     status: o.status,
     amountCents: o.amountCents,

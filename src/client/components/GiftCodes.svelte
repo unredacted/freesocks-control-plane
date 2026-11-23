@@ -136,6 +136,18 @@
       <div>
         <h2 class="font-display text-base font-semibold">{t('gift.title')}</h2>
         <p class="text-sm text-muted-foreground">{t('gift.subtitle')}</p>
+        {#if config.data?.telegram}
+          <p class="mt-1 text-xs text-muted-foreground">
+            <a
+              class="link-brand"
+              href="https://t.me/{config.data.telegram.botUsername}"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t('gift.telegramShop', { bot: config.data.telegram.botUsername })}
+            </a>
+          </p>
+        {/if}
       </div>
     </div>
 

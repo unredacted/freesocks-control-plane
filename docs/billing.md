@@ -199,10 +199,10 @@ order still stores no payer identity).
 
 Flow (gift):
 
-1. The buyer's client pre-generates `quantity` CSPRNG codes and posts only their
-   **hashes** with the checkout; the processor redirect/IPN is identical to a self
-   purchase.
-2. On the **paid** webhook, the grant action mints `quantity` single-use
+1. The checkout is the same as a self purchase apart from `kind` and `quantity`;
+   the processor redirect/IPN is identical.
+2. On the **paid** webhook, the ingest action generates `quantity` CSPRNG codes
+   and the grant mints them as single-use
    redemption codes (`redemptionCodes`, **hash-only**, bound to the buyer) — the
    same table admin-minted membership codes use — and stashes the **plaintexts**
    in a **transient `giftReveal` buffer** on the order row.
@@ -222,6 +222,77 @@ Flow (gift):
 Gift codes are bearer credentials (anyone holding one can redeem it), so the
 reveal-once + sweep design keeps the plaintext out of long-term storage. The buyer
 manages their codes from the `GiftCodes` backend.
+
+## Telegram gift shop
+
+An optional Telegram bot (`convex/telegramBot.ts`) that sells **gift codes and
+nothing else**. Buyers redeem a code in the app like any other gift code. The bot
+never asks for, sees or stores an account number, so a Telegram identity never
+meets a FreeSocks account. It ships **off**.
+
+**Orders.** A bot order is a `billingOrders` row with `channel: 'telegram'`, `kind:
+'gift'` and **no `userId`**. Its codes are minted with **no `purchasedByUserId`**
+(and, like every gift, no order id), so nothing links them to a buyer or an order.
+The 128-bit opaque ref is the buyer's only handle: the bot reads the order back
+through `billing.botOrderStatus` and clears the reveal through
+`billing.ackBotGiftReveal`, both of which answer only for telegram-channel orders.
+The web checkout route still refuses an anonymous gift, and `grantOrder` still
+refuses a userless gift that isn't from the bot.
+
+**Payment.** Two methods, each with its own switch (Admin -> Billing -> Telegram
+gift shop):
+
+- **Crypto** on the NOWPayments and BTCPay rails that are on in the billing form.
+  The bot calls `billing.createCheckout` with `channel: 'telegram'` and shows the
+  deposit details in the chat when the rail uses direct checkout (or the hosted
+  page link otherwise). The processor's success and cancel URLs are
+  `https://t.me/<bot>?start=o_<ref>`, which brings the buyer back to the bot's
+  payment check. Prices are the membership prices; the crypto minimum applies.
+- **Telegram Stars** (`processor: 'telegram_stars'`, currency `XTR`, whole Stars in
+  `amountCents`). Prices per code are set per duration in the card
+  (`telegram.stars.prices`); a duration with no Stars price isn't sold for Stars.
+  The bot sends a Telegram invoice whose payload is the order ref. Telegram's
+  `pre_checkout_query` is answered yes only for a pending Stars order of exactly
+  that amount (`billing.starsPreCheckout`). `successful_payment` goes through
+  `billing.ingestStarsPayment`: the same claim (`telegram_stars:<charge id>`),
+  mint and `applyEvent` path as a processor webhook, so it grants exactly once. A
+  `refunded_payment` audits `billing.refund_seen`; the codes stay valid (nothing
+  links them to the order). Stars revenue is not in the revenue chart (a
+  different currency). Stars are paid out through Telegram, outside FCP.
+
+**Delivery is pull-only.** The bot keeps no chat, so it can't message a buyer
+later. A Stars buyer gets the codes in the same update as the payment; a crypto
+buyer taps **Check payment** or comes back through the return link. The codes
+message has a **Saved, delete this message** button that clears the reveal and
+deletes the message from the chat. The `billing-gift-reveal-sweep` 24 h window
+applies; a buyer who missed it gives support the 8-character order ref the bot
+showed, which matches the ref prefix in Admin -> Billing -> Orders.
+
+**Setup.**
+
+1. Create the bot with BotFather and set `TELEGRAM_BOT_TOKEN` and
+   `TELEGRAM_WEBHOOK_SECRET` (random, 1-256 of `A-Za-z0-9_-`) in the deployment
+   env. `PUBLIC_BASE_URL` must be set.
+2. In the card, enter the bot username, set Stars prices if you sell for Stars,
+   and press **Register webhook**. That points Telegram at
+   `/api/webhooks/telegram` with the secret and sets the command menu in every
+   language. The card shows whether Telegram reaches the webhook.
+3. Turn on the methods, then **Shop open**. While open, the site footer and the
+   gift card link the bot (`publicConfig.telegram`), so buyers can tell the real
+   bot from a copy.
+
+**Webhook.** `POST /api/webhooks/telegram` checks the
+`x-telegram-bot-api-secret-token` header against `TELEGRAM_WEBHOOK_SECRET`
+(constant time; 503 while unset, 401 on a mismatch), caps the body at 64 KiB, and
+dedupes on `update_id` (`telegramUpdates`, ids only, swept after two days). It
+answers 200 to everything else, except a Stars payment whose grant failed, which
+gets a 500 so Telegram redelivers it. Group chats are ignored (codes would be
+shown to the whole group).
+
+**Text.** The bot's words are the `bot` group of `messages/<locale>.json`, copied
+to `convex/lib/telegram/botMessages.generated.ts` by `bun run i18n:keys`. They go
+through the human translation packets like every other string; until a language
+is reviewed, the bot shows English in it.
 
 ## Referral rewards
 
@@ -679,11 +750,19 @@ the balance frequently, and treat the account as expendable.
   direct checkout also creates the payment on it).
 - `webhook.nowpayments.ip` — 120/min per IP (one payment fires several IPNs).
 - `webhook.btcpay.ip` — 120/min per IP (several invoice events per payment).
+- `webhook.telegram.ip` — 600/min per IP (Telegram sends from a few addresses).
+- `bot.telegram.chat` — 30/min per Telegram chat; `bot.telegram.checkout` — 6/hr
+  per chat (new orders). The subject is a salted HMAC of the chat id.
 
 These policies are admin-tunable in Admin → Rate limits. NOWPayments fallback lookups also have a fixed, deployment-wide limit of 30 per minute. An exhausted lookup budget returns HTTP 429 so the provider can retry. Directly authenticated IPNs can still settle.
 
 ## Tests
 
+`convex/billingTelegram.test.ts` (bot orders in the billing core: userless gift
+orders, Stars orders, pre-checkout, exactly-once Stars grant, refunds, codes bound
+to nobody), `convex/telegramBot.test.ts` (the bot end to end: webhook secret, size
+cap, dedupe, switches, Stars and crypto flows, and that no table keeps the chat),
+`convex/lib/telegram/*.test.ts` (button protocol, text, token-free API errors),
 `convex/directCheckout.test.ts` (direct checkout: stored details, exact amounts,
 memo refusal, minimum error, hosted fallbacks, single grant + wipe, BTCPay methods),
 `convex/billing.test.ts` (domain) + the billing blocks in `convex/http.test.ts`

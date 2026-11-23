@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**238 of 845 strings are missing** (the app currently shows English for
+**330 of 937 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -221,7 +221,7 @@ review.
 | `account.createSub` | Get my key | ساخت اشتراک |
 | `account.creating` | Creating your key… | در حال ساخت… |
 | `account.rotateTitle` | Change your account number? | شمارهٔ حساب تغییر کند؟ |
-| `account.rotateBody` | A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked. | یک شمارهٔ ۳۲ رقمی جدید ساخته و فقط یک بار نمایش داده می‌شود. شمارهٔ فعلی بلافاصله از کار می‌افتد و هر کسی که آن را دارد دسترسی‌اش را از دست می‌دهد. اگر فکر می‌کنید شماره‌تان لو رفته این کار را انجام دهید. |
+| `account.rotateBody` | A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked. All passkeys on the account will be removed, and other sessions will be signed out. | یک شمارهٔ ۳۲ رقمی جدید ساخته و فقط یک بار نمایش داده می‌شود. شمارهٔ فعلی بلافاصله از کار می‌افتد و هر کسی که آن را دارد دسترسی‌اش را از دست می‌دهد. اگر فکر می‌کنید شماره‌تان لو رفته این کار را انجام دهید. همهٔ کلیدهای عبور حساب حذف می‌شوند و نشست‌های دیگر پایان می‌یابند. |
 | `account.rotateConfirm` | Yes, change it | بله، تغییر بده |
 | `account.rotating` | Rotating… | در حال تغییر… |
 | `account.rotateFailedTitle` | Could not change the account number | تغییر شمارهٔ حساب ناموفق بود |
@@ -541,7 +541,7 @@ review.
 | `app.adminLoadFailedTitle` | Couldn't load the admin console | نتوانستم کنسول مدیریت را بارگیری کنم |
 | `app.adminLoadFailedBody` | The network request for this section failed. Reload to retry. | درخواست شبکه برای این بخش ناموفق بود. برای تلاش مجدد، دوباره بارگیری کنید. |
 
-## `footer` — The site footer (nonprofit line, terms/privacy links).
+## `footer` — The site footer (nonprofit line, terms/privacy links). *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -555,6 +555,7 @@ review.
 | `footer.socialMastodon` | FreeSocks on Mastodon | فری‌ساکس در ماستودون |
 | `footer.socialBluesky` | FreeSocks on Bluesky | فری‌ساکس در بلوسکای |
 | `footer.support` | Support | پشتیبانی |
+| `footer.telegramShop` | Gift codes on Telegram | ⚠️ **MISSING** |
 
 ## `renew` — Expiring/expired membership callouts and renewal prompts. *(4 missing)*
 
@@ -572,7 +573,7 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | اکنون در طرح رایگان هستید. برای بازگرداندن عضویت خود، از پایین تمدید کنید. |
 | `renew.renewCta` | Renew membership | تمدید عضویت |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(5 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -618,8 +619,9 @@ review.
 | `upgrade.failedBody` | Your payment did not go through, or the checkout expired. You can try again. | پرداخت شما انجام نشد یا مهلت پرداخت به پایان رسید. می‌توانید دوباره تلاش کنید. |
 | `upgrade.underpaidTitle` | Your payment arrived short | ⚠️ **MISSING** |
 | `upgrade.underpaidBody` | We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out. | ⚠️ **MISSING** |
+| `upgrade.cardReachHint` | If the payment page doesn't load, connect with your free FreeSocks key first, then try again. | ⚠️ **MISSING** |
 
-## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming.
+## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming. *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -641,8 +643,9 @@ review.
 | `gift.reveal.ack` | I have saved these codes | من این کدها را ذخیره کرده‌ام |
 | `gift.reveal.saved` | I've saved them | من آنها را ذخیره کرده‌ام |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | کدهای شما هنوز روی صفحه هستند. اگر بدون ذخیره کردن آنها از صفحه خارج شوید، دیگر نمی‌توانید آنها را ببینید. |
+| `gift.telegramShop` | You can also buy gift codes in our official Telegram bot, @{bot}. It never asks for your account number. | ⚠️ **MISSING** |
 
-## `error` — API error messages shown to members. *(3 missing)*
+## `error` — API error messages shown to members. *(5 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -670,6 +673,8 @@ review.
 | `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | حالت اتصال فعلی شما دیگر در دسترس نیست. ابتدا به حالت دیگری تغییر دهید، سپس دوباره امتحان کنید. |
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
+| `error.coinMinimum` | This amount is below that coin's minimum. Pick another coin or a longer term. | ⚠️ **MISSING** |
+| `error.coinUnavailable` | That coin isn't available right now. Pick another one. | ⚠️ **MISSING** |
 
 ## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(9 missing)*
 
@@ -1068,3 +1073,100 @@ review.
 | `telemetry.asnLabel` | Network (ASN) | ⚠️ **MISSING** |
 | `telemetry.notSet` | Not set | ⚠️ **MISSING** |
 | `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |
+
+## `direct` — Miscellaneous strings. *(33 missing)*
+
+| Key | English | Persian (فارسی) |
+| --- | --- | --- |
+| `direct.coinLabel` | Coin and network | ⚠️ **MISSING** |
+| `direct.coinHint` | Pick the network your wallet or exchange will send on. You pay on this page; you are not sent anywhere else. | ⚠️ **MISSING** |
+| `direct.title` | Send your payment | ⚠️ **MISSING** |
+| `direct.waiting` | Waiting for your payment. This page updates by itself. | ⚠️ **MISSING** |
+| `direct.timeLeft` | Time left | ⚠️ **MISSING** |
+| `direct.methodLabel` | Payment method | ⚠️ **MISSING** |
+| `direct.sendExactly` | Send exactly {amount} {unit} on {network}. | ⚠️ **MISSING** |
+| `direct.networkWarning` | Send only on {network}. Money sent on any other network is lost. | ⚠️ **MISSING** |
+| `direct.lightningOnly` | Pay this invoice from a Lightning wallet. | ⚠️ **MISSING** |
+| `direct.amountLabel` | Amount ({unit}) | ⚠️ **MISSING** |
+| `direct.addressLabel` | {network} address | ⚠️ **MISSING** |
+| `direct.invoiceLabel` | Lightning invoice | ⚠️ **MISSING** |
+| `direct.memoLabel` | Memo / tag | ⚠️ **MISSING** |
+| `direct.memoWarning` | Include this memo (also called tag or destination tag). Without it the payment cannot be matched to you. | ⚠️ **MISSING** |
+| `direct.copyLabel` | Copy {what} | ⚠️ **MISSING** |
+| `direct.qrAddressOnly` | QR has the address only. Enter the amount yourself. | ⚠️ **MISSING** |
+| `direct.qrWithAmount` | QR includes the amount. | ⚠️ **MISSING** |
+| `direct.seenBody` | We have seen your payment. It activates automatically once it confirms. | ⚠️ **MISSING** |
+| `direct.showDetails` | Show payment details | ⚠️ **MISSING** |
+| `direct.expiredTitle` | This payment address has expired | ⚠️ **MISSING** |
+| `direct.expiredBody` | Don't send anything to it. Start again to get a fresh address and amount. | ⚠️ **MISSING** |
+| `direct.startAgain` | Start again | ⚠️ **MISSING** |
+| `direct.hostedFallback` | Prefer the payment provider's own page? | ⚠️ **MISSING** |
+| `direct.hostedFallbackLink` | Open it instead | ⚠️ **MISSING** |
+| `direct.lightning` | Lightning | ⚠️ **MISSING** |
+| `direct.bitcoinOnchain` | Bitcoin (on-chain) | ⚠️ **MISSING** |
+| `direct.allCoins` | All coins | ⚠️ **MISSING** |
+| `direct.needsMemo` | needs memo | ⚠️ **MISSING** |
+| `direct.coinsLoading` | Loading coins… | ⚠️ **MISSING** |
+| `direct.searchLabel` | Search coins | ⚠️ **MISSING** |
+| `direct.searchPlaceholder` | Search {count} coins by name or network | ⚠️ **MISSING** |
+| `direct.noMatch` | No coin matches. Try the coin's name, like USDT, or its network, like Tron. | ⚠️ **MISSING** |
+| `direct.pickedCoin` | Selected: {coin} on {network} | ⚠️ **MISSING** |
+
+## `bot` — Miscellaneous strings. *(54 missing)*
+
+| Key | English | Persian (فارسی) |
+| --- | --- | --- |
+| `bot.closed` | The FreeSocks gift shop is closed right now. You can still get FreeSocks on our website: {site} | ⚠️ **MISSING** |
+| `bot.welcome` | Buy FreeSocks membership gift codes here.<br><br>Each code adds membership to any FreeSocks account. Redeem it in the app under Account, then Redeem a code. This bot never asks for your account number.<br><br>The official FreeSocks bot is the one linked from {site} | ⚠️ **MISSING** |
+| `bot.buttonBuy` | Buy gift codes | ⚠️ **MISSING** |
+| `bot.buttonPrivacy` | What this bot stores | ⚠️ **MISSING** |
+| `bot.buttonLanguage` | Language | ⚠️ **MISSING** |
+| `bot.buttonBack` | Back | ⚠️ **MISSING** |
+| `bot.chooseLanguage` | Choose a language. | ⚠️ **MISSING** |
+| `bot.chooseDuration` | How long should each code last? | ⚠️ **MISSING** |
+| `bot.chooseQuantity` | How many codes? | ⚠️ **MISSING** |
+| `bot.choosePayment` | How do you want to pay? | ⚠️ **MISSING** |
+| `bot.chooseCoin` | Which coin do you want to pay with? | ⚠️ **MISSING** |
+| `bot.durationOne` | 1 month | ⚠️ **MISSING** |
+| `bot.durationMany` | {months} months | ⚠️ **MISSING** |
+| `bot.starsAmount` | {stars} Stars | ⚠️ **MISSING** |
+| `bot.payStars` | Telegram Stars, {amount} | ⚠️ **MISSING** |
+| `bot.payCrypto` | Crypto, {amount} | ⚠️ **MISSING** |
+| `bot.payBitcoin` | Bitcoin, {amount} | ⚠️ **MISSING** |
+| `bot.orderSummary` | {quantity} x {duration} gift codes | ⚠️ **MISSING** |
+| `bot.payDirect` | Send exactly <code>{amount}</code> {unit} to this address:<br><br><code>{address}</code> | ⚠️ **MISSING** |
+| `bot.payNetwork` | Network: {network} | ⚠️ **MISSING** |
+| `bot.payMemo` | Memo or tag (required, or the payment is lost): <code>{memo}</code> | ⚠️ **MISSING** |
+| `bot.payExpires` | Pay before {expires} (UTC). | ⚠️ **MISSING** |
+| `bot.payAfter` | After paying, tap Check payment. Your codes appear here once the payment confirms, which can take a while for some coins. | ⚠️ **MISSING** |
+| `bot.payHosted` | Open the payment page to pay {amount}. When you finish you will come back here. If not, tap Check payment. | ⚠️ **MISSING** |
+| `bot.buttonOpenPayment` | Open payment page | ⚠️ **MISSING** |
+| `bot.buttonCheck` | Check payment | ⚠️ **MISSING** |
+| `bot.notPaidYet` | Not paid yet. If you just paid, wait a few minutes and check again. | ⚠️ **MISSING** |
+| `bot.confirming` | Payment seen. Waiting for confirmations, check again in a few minutes. | ⚠️ **MISSING** |
+| `bot.underpaid` | The payment arrived short of the price. Contact support and quote order {ref}. | ⚠️ **MISSING** |
+| `bot.expired` | This order expired. Start a new one with /buy. | ⚠️ **MISSING** |
+| `bot.failed` | This payment did not go through. Start a new one with /buy. | ⚠️ **MISSING** |
+| `bot.orderNotFound` | That order was not found. Start a new one with /buy. | ⚠️ **MISSING** |
+| `bot.codesTitle` | Your FreeSocks gift codes: | ⚠️ **MISSING** |
+| `bot.codesHelp` | Each code gives {duration} of FreeSocks membership. Redeem it in the app: Account, then Redeem a code. A code works once, and anyone who has it can use it, so share them carefully.<br><br>Save them now, then tap the button below to delete this message from the chat. | ⚠️ **MISSING** |
+| `bot.buttonSaved` | Saved, delete this message | ⚠️ **MISSING** |
+| `bot.buttonRedeem` | Redeem on the website | ⚠️ **MISSING** |
+| `bot.codesGone` | These codes were already shown. If you lost them, contact support and quote order {ref}. | ⚠️ **MISSING** |
+| `bot.deleted` | Deleted. Thank you for supporting FreeSocks. | ⚠️ **MISSING** |
+| `bot.orderRef` | Order {ref} | ⚠️ **MISSING** |
+| `bot.starsTitle` | FreeSocks gift codes | ⚠️ **MISSING** |
+| `bot.starsDescription` | {quantity} x {duration} of FreeSocks membership, as gift codes. | ⚠️ **MISSING** |
+| `bot.starsLabel` | Gift codes | ⚠️ **MISSING** |
+| `bot.starsRefused` | This order can no longer be paid. Start a new one with /buy. | ⚠️ **MISSING** |
+| `bot.privacy` | What this bot stores: for each message Telegram tells it your chat, your Telegram name and your app language. It keeps none of that. It stores only the order (length, number of codes, price and status) under a random reference. The codes are not linked to you or to any FreeSocks account.<br><br>Telegram keeps this chat on its own servers, so delete the codes message once you have saved the codes. Crypto payments go through our payment processor, Stars payments through Telegram. | ⚠️ **MISSING** |
+| `bot.help` | /buy: buy gift codes<br>/language: change the language<br>/privacy: what this bot stores<br><br>Redeem codes in the app or on the website: Account, then Redeem a code. | ⚠️ **MISSING** |
+| `bot.rateLimited` | Too many requests. Wait a minute and try again. | ⚠️ **MISSING** |
+| `bot.error` | Something went wrong. Try again in a moment. | ⚠️ **MISSING** |
+| `bot.unknown` | Use the buttons, or send /buy to start. | ⚠️ **MISSING** |
+| `bot.unavailable` | This payment method is not available right now. Try another one. | ⚠️ **MISSING** |
+| `bot.belowMinimum` | This amount is below the minimum for that coin. Pick another coin or more codes. | ⚠️ **MISSING** |
+| `bot.commandBuy` | Buy gift codes | ⚠️ **MISSING** |
+| `bot.commandLanguage` | Change the language | ⚠️ **MISSING** |
+| `bot.commandPrivacy` | What this bot stores | ⚠️ **MISSING** |
+| `bot.commandHelp` | Help | ⚠️ **MISSING** |

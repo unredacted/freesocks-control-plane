@@ -15,11 +15,23 @@
    */
   const cfg = configQuery();
   const site = $derived(cfg.data?.site);
+  // The official Telegram gift shop, while it is open (null otherwise).
+  const telegram = $derived(cfg.data?.telegram ?? null);
 </script>
 
 {#if site?.supportEmail}
   <a class="hover:text-foreground" href="mailto:{site.supportEmail}">
     {t('footer.support')}
+  </a>
+{/if}
+{#if telegram}
+  <a
+    class="hover:text-foreground"
+    href="https://t.me/{telegram.botUsername}"
+    target="_blank"
+    rel="noopener noreferrer"
+  >
+    {t('footer.telegramShop')}
   </a>
 {/if}
 {#if site?.repoEnabled && site.repoUrl}

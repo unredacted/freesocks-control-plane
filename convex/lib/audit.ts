@@ -122,6 +122,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // full-IP vs coarse-location choice (a privacy-posture change worth a trail).
   // Operator alerts (convex/alerts.ts): booleans only; never the URL, topic or token.
   'admin.alerts.change': ['enabled', 'urlChanged', 'topicSet', 'tokenSet'],
+  // Telegram gift shop settings + webhook (booleans and counts; never a token).
+  'admin.telegram.change': [
+    'enabled',
+    'starsEnabled',
+    'cryptoEnabled',
+    'starsPriceCount',
+    'usernameChanged',
+  ],
+  'admin.telegram.webhook': ['action'],
   'admin.analytics.change': [
     'enabled',
     'forwardIp',
@@ -152,7 +161,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'membership_code.revoke': ['codeId'],
   'membership_code.redeem': ['tierId', 'durationDays'],
   // Billing: self-service membership purchases + donations (never payer PII).
-  'billing.checkout.created': ['processor', 'months', 'kind', 'quantity', 'donationCents'],
+  // `channel`: 'web' or 'telegram' (the Telegram gift shop). Never a chat id.
+  'billing.checkout.created': [
+    'processor',
+    'months',
+    'kind',
+    'quantity',
+    'donationCents',
+    'channel',
+  ],
   'billing.order.paid': [
     'processor',
     'tierSlug',
@@ -161,6 +178,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'kind',
     'quantity',
     'donationCents',
+    'channel',
   ],
   'billing.config.update': ['key'],
   // Grant refused by the defense-in-depth cross-checks (amount/ref mismatch) —
