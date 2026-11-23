@@ -9,6 +9,8 @@ does the same while the app is stopped.
 
 v2rayn_db.py <data dir> schema           the tables' columns
 v2rayn_db.py <data dir> sub <url>        the one test subscription, due now
+v2rayn_db.py <data dir> due              the subscription due again (its servers kept)
+v2rayn_db.py <data dir> updated          when the app's updater last fetched it
 v2rayn_db.py <data dir> profiles         remarks of the subscription's servers
 v2rayn_db.py <data dir> select <regex>   make the first matching server active
 """
@@ -16,7 +18,6 @@ import json
 import re
 import sqlite3
 import sys
-import time
 
 data, command, *args = sys.argv[1:]
 DB = f'{data}/guiConfigs/guiNDB.db'
@@ -70,6 +71,12 @@ elif command == 'sub':
         list(row.values()),
     )
     db.commit()
+elif command == 'due':
+    db.execute('UPDATE SubItem SET UpdateTime = 0 WHERE Id = ?', (SUB_ID,))
+    db.commit()
+elif command == 'updated':
+    r = db.execute('SELECT UpdateTime FROM SubItem WHERE Id = ?', (SUB_ID,)).fetchone()
+    print(r['UpdateTime'] if r else '')
 elif command == 'profiles':
     for r in db.execute('SELECT Remarks FROM ProfileItem WHERE Subid = ?', (SUB_ID,)):
         print(r['Remarks'])

@@ -1,11 +1,18 @@
 name: Hysteria in real apps
-# The released v2rayNG (Android emulator) and v2rayN (Linux) against the node
-# image's Xray-core serving FCP's own Hysteria transport
-# (docs/client-compatibility.md § "Hysteria in real apps"): each app imports a
-# Privacy raw config through its own importer, connects through the `· UDP`
-# entry, stops when UDP to the node is dropped, and refuses an entry whose pin
-# is wrong or a rogue with another certificate. Fixture data only: the
-# certificate pair and password are per run and die with the runner.
+# The released v2rayNG (Android emulator) and v2rayN (Linux) with a Privacy
+# Hysteria raw config (docs/client-compatibility.md § "Hysteria in real apps"):
+# each app imports it through its own importer, connects through the `· UDP`
+# entry, stops getting through when UDP to the node is dropped, refreshes it,
+# and refuses an entry whose pin is wrong or a rogue with another certificate.
+#
+#  - `fixture` (every run): the node image's Xray-core serving FCP's own
+#    Hysteria transport on the runner, with a certificate pair and password
+#    made for the run; screens and logs are kept (fixture data only).
+#  - `beta` (run by hand on main, target: beta): the canary key on beta
+#    (FCP_COMPAT_HYSTERIA_TARGET in the `client-compatibility` environment),
+#    the app importing it from beta itself. Only the booleans are kept: a
+#    screen would show the node's name and address. A passing run is the
+#    evidence scripts/compat/evidence.ts --ci-result records.
 on:
   pull_request:
     paths:
@@ -23,19 +30,26 @@ on:
   schedule:
     - cron: '23 9 * * 1'
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'fixture, or beta (the canary key; main only)'
+        type: choice
+        options: [fixture, beta]
+        default: fixture
 
 permissions:
   contents: read
 concurrency:
-  group: client-app-hysteria-${{ github.event_name }}-${{ github.ref }}
+  group: client-app-hysteria-${{ github.event_name }}-${{ github.ref }}-${{ inputs.target || 'fixture' }}
   cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
-  app:
-    name: ${{ matrix.app }}
+  fixture:
+    if: inputs.target != 'beta'
+    name: ${{ matrix.app }} (fixture)
     strategy:
       fail-fast: false
       matrix:
@@ -78,18 +92,81 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: bash scripts/compat/hysteria-apps/v2rayng.sh '${{ steps.app.outputs.path }}' http://10.0.2.2:4180
+          script: bash scripts/compat/hysteria-apps/v2rayng.sh '${{ steps.app.outputs.path }}'
       - name: v2rayN on Linux
         if: matrix.app == 'v2rayN'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb imagemagick >/dev/null
-          bash scripts/compat/hysteria-apps/v2rayn.sh '${{ steps.app.outputs.path }}' http://127.0.0.1:4180
+          bash scripts/compat/hysteria-apps/v2rayn.sh '${{ steps.app.outputs.path }}'
       - if: always()
         run: bun --no-env-file scripts/compat/hysteria-apps/fixture.ts down
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: hysteria-${{ matrix.app }}
+          name: hysteria-fixture-${{ matrix.app }}
           path: test-results/compat/hysteria-apps/
           retention-days: 14
+
+  beta:
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'beta' && github.ref == 'refs/heads/main'
+    name: ${{ matrix.app }} (beta)
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [v2rayNG, v2rayN]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    # Its deployment branches are main only; the canary is a test account.
+    environment: client-compatibility
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - name: Download the pinned ${{ matrix.app }} release
+        id: app
+        run: echo "path=$(bun --no-env-file scripts/compat/hysteria-apps/fixture.ts download '${{ matrix.app }}')" >>"$GITHUB_OUTPUT"
+      - name: Read the canary's raw config; start the rogue and the edited copies
+        env:
+          FCP_COMPAT_HYSTERIA_TARGET: ${{ secrets.FCP_COMPAT_HYSTERIA_TARGET }}
+        run: |
+          host=127.0.0.1
+          if [ '${{ matrix.app }}' = v2rayNG ]; then host=10.0.2.2; fi
+          bun --no-env-file scripts/compat/hysteria-apps/fixture.ts beta '${{ matrix.app }}' "$host"
+          nohup python3 -m http.server 4180 --bind 127.0.0.1 \
+            --directory .cache/compat/hysteria-apps/www >/dev/null 2>&1 </dev/null &
+      - name: Let the runner user open /dev/kvm
+        if: matrix.app == 'v2rayNG'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: v2rayNG on an Android emulator
+        if: matrix.app == 'v2rayNG'
+        uses: reactivecircus/android-emulator-runner@v2.35.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash scripts/compat/hysteria-apps/v2rayng.sh '${{ steps.app.outputs.path }}'
+      - name: v2rayN on Linux
+        if: matrix.app == 'v2rayN'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb >/dev/null
+          bash scripts/compat/hysteria-apps/v2rayn.sh '${{ steps.app.outputs.path }}'
+      - if: always()
+        run: bun --no-env-file scripts/compat/hysteria-apps/fixture.ts down
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: hysteria-beta-${{ matrix.app }}
+          # The booleans only (the drivers keep nothing else on beta).
+          path: test-results/compat/hysteria-apps/*/result.json
+          if-no-files-found: error
+          retention-days: 90

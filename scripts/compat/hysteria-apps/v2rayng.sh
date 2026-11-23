@@ -1,156 +1,170 @@
 #!/usr/bin/env bash
 # v2rayNG on an Android emulator against a Hysteria target
-# (docs/client-compatibility.md § "Hysteria in real apps"). Runs inside
-# reactivecircus/android-emulator-runner, with adb on PATH and one emulator.
+# (docs/client-compatibility.md § "Hysteria in real apps"; the target is
+# common.sh's target.env). Runs inside reactivecircus/android-emulator-runner,
+# with adb on PATH and one emulator.
 #
-#   v2rayng.sh <apk> <base URL of the raw configs, as the emulator reaches it>
+#   v2rayng.sh <apk>
 #
-# The base URL serves `good`, `wrongpin` and `rogue` (fixture.ts). The app takes
-# each through its own importer (`v2rayng://install-sub`), the `· UDP` entry is
-# chosen and connected from the app's own screen, and every check is a page
-# fetched through the app's own listener: through the node when it should work,
-# nothing when the pin is wrong or UDP to the node is dropped. The results go to
-# test-results/compat/hysteria-apps/v2rayng/result.json (booleans only).
+# The app takes each raw config through its own importer
+# (`v2rayng://install-sub`, which adds the subscription and fetches it), the
+# `· UDP` entry is chosen and started from the app's own screen, and every
+# check is a request through the app's own listener (forwarded to the runner).
+# Results: test-results/compat/hysteria-apps/v2rayng/result.json (booleans
+# only). Screens and the app's log are kept for the fixture only: on beta they
+# show the node's name and address.
 set -uo pipefail
 APK=${1:?apk}
-BASE=${2:?base URL}
 PKG=com.v2ray.ang
 OUT=test-results/compat/hysteria-apps/v2rayng
 DIR=$(cd "$(dirname "$0")" && pwd)
-FIXTURE=(bun --no-env-file "$DIR/fixture.ts")
+# shellcheck source=common.sh
+. "$DIR/common.sh"
 mkdir -p "$OUT"
+UI="$HY_WORK/ui.xml"
 step=0
 
-snap() { # snap <name>: a screenshot and a UI dump of fixture data only
+dump() { # the screen's elements, for finding things on it
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$UI" >/dev/null 2>&1
+}
+snap() {
+  dump
+  [ "$HY_KIND" = fixture ] || return 0
   step=$((step + 1))
   local name
   name=$(printf '%02d-%s' "$step" "$1")
   adb exec-out screencap -p >"$OUT/$name.png" 2>/dev/null || true
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 &&
-    adb pull /sdcard/ui.xml "$OUT/$name.xml" >/dev/null 2>&1
-  cp "$OUT/$name.xml" "$OUT/last.xml" 2>/dev/null || true
+  cp "$UI" "$OUT/$name.xml" 2>/dev/null || true
 }
-tap_text() { # tap_text <regex>: scrolls the list down until it shows
-  local at i
-  for i in 1 2 3 4 5 6; do
-    if at=$(python3 "$DIR/ui.py" "$OUT/last.xml" text "$1"); then
-      # shellcheck disable=SC2086
-      adb shell input tap $at
-      return 0
-    fi
-    adb shell input swipe 160 450 160 200 300
-    sleep 1
-    snap scrolled
-  done
-  return 1
+tap_at() { # shellcheck disable=SC2086
+  adb shell input tap $1
 }
-tap_id() {
-  local at
-  at=$(python3 "$DIR/ui.py" "$OUT/last.xml" id "$1") || return 1
-  # shellcheck disable=SC2086
-  adb shell input tap $at
-}
-nonce() { cat /proc/sys/kernel/random/uuid; }
-fetch() { # fetch: 0 when the page answered through the app's listener
-  local n
-  n=$(nonce)
-  [ "$(curl --silent --max-time 10 --socks5-hostname 127.0.0.1:10808 "http://10.89.73.20:8080/$n")" = "reality-page /$n" ]
-}
-fetch_until() { # fetch_until <seconds>
-  local end=$((SECONDS + $1))
-  until fetch; do ((SECONDS > end)) && return 1; sleep 2; done
-}
-carried() { "${FIXTURE[@]}" carried "$1"; }
-import() { # import <name>
-  adb shell am start -a android.intent.action.VIEW -p "$PKG" \
-    -d "'v2rayng://install-sub?url=$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$BASE/$1")'" >/dev/null
-  # The scheme activity closes at once and the fetch finishes in the
-  # background, after the list on screen was loaded: open the app again.
-  sleep 10
-  adb shell am force-stop "$PKG"
-  launch
-}
+find_text() { python3 "$DIR/ui.py" "$UI" text "$1"; }
+tap_text() { local at; at=$(find_text "$1") && tap_at "$at"; }
+tap_id() { local at; at=$(python3 "$DIR/ui.py" "$UI" id "$1") && tap_at "$at"; }
+scroll_down() { adb shell input swipe 160 450 160 200 300; sleep 1; }
+scroll_top() { for _ in 1 2 3 4 5 6; do adb shell input swipe 160 200 160 500 150; done; sleep 1; }
 launch() {
   adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   sleep 5
 }
-stop_app_vpn() {
+stop_app() {
   adb shell am force-stop "$PKG"
   sleep 2
 }
-connect_udp() { # select the `· UDP` entry on the screen and press start
+# import_sub <url>: through the app's own scheme. The scheme screen closes at
+# once and the fetch ends in the background, after the list on screen was
+# loaded: the app is opened again.
+import_sub() {
+  local q
+  q=$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$1")
+  adb shell am start -a android.intent.action.VIEW -p "$PKG" -d "'v2rayng://install-sub?url=$q'" >/dev/null 2>&1
+  sleep 12
+  stop_app
+  launch
+}
+# names_on_screen <file>: every entry name in the list, scrolled top to bottom.
+names_on_screen() {
+  : >"$1"
+  scroll_top
+  for _ in 1 2 3 4 5 6; do
+    dump
+    python3 "$DIR/ui.py" "$UI" texts >>"$1"
+    scroll_down
+  done
+  scroll_top
+}
+# start_udp: the `· UDP` entry selected and started from the app's screen.
+start_udp() {
+  scroll_top
   snap list
-  tap_text '· UDP$' || { echo 'no · UDP entry on screen'; return 1; }
+  local i
+  for i in 1 2 3 4 5 6; do
+    tap_text '· UDP$' && break
+    ((i == 6)) && { echo 'no · UDP entry on screen'; return 1; }
+    scroll_down
+    dump
+  done
   sleep 1
   snap selected
   tap_id "$PKG:id/fab" || { echo 'no start button'; return 1; }
-  sleep 6
-  snap connected
+  sleep 8
+  snap started
 }
-declare -A result
+# fresh: the app with no data, as installed (each raw config on its own, so a
+# `· UDP` entry on screen is always the one just imported).
+fresh() {
+  adb shell pm clear "$PKG" >/dev/null
+  adb shell appops set "$PKG" ACTIVATE_VPN allow
+  adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+}
+declare -A ok=([rawImport]=false [import]=false [connection]=false [udp]=false
+  [refresh]=false [wrongPinRefused]=false [rogueRefused]=false)
 
 adb install -r "$APK" >/dev/null
-adb shell appops set "$PKG" ACTIVATE_VPN allow
+fresh
 adb forward tcp:10808 tcp:10808 >/dev/null
-# The app's own log (fixture data only), for when a step fails.
-adb logcat -c
-adb logcat -v time 'com.v2ray.ang:V' 'AndroidRuntime:E' '*:S' >"$OUT/logcat.txt" 2>&1 </dev/null &
+if [ "$HY_KIND" = fixture ]; then
+  adb logcat -c
+  adb logcat -v time 'com.v2ray.ang:V' 'AndroidRuntime:E' '*:S' >"$OUT/logcat.txt" 2>&1 </dev/null &
+fi
 launch
 snap first-run
 
-# 1. Import the raw config; both entries show.
-import good
+# The raw config through the app's importer: every entry, `· UDP` and `· Direct`.
+names="$HY_WORK/app-names.txt"
+import_sub "$HY_GOOD_URL"
 snap imported
-python3 "$DIR/ui.py" "$OUT/last.xml" texts >"$OUT/imported-texts.txt"
-if grep -q '· UDP$' "$OUT/imported-texts.txt" && grep -q '· Direct$' "$OUT/imported-texts.txt"; then
-  result[rawImport]=true
-else
-  result[rawImport]=false
-fi
+names_on_screen "$names"
+grep -q '· UDP$' "$names" && grep -q '· Direct$' "$names" && ok[rawImport]=true
+has_all_names "$names" && ok[import]=true
 
-# 2. Connect through `· UDP`: a page answers, and the node carried it.
 before=$(carried node)
-result[udp]=false
-if connect_udp && fetch_until 45 && [ "$(carried node)" -gt "$before" ]; then
-  # 3. UDP to the node dropped: nothing answers.
-  sudo iptables -t raw -I OUTPUT -p udp -d 127.0.0.1 --dport 8443 -j DROP
-  stop_app_vpn
+if start_udp && through_until 45 && carried_more "$before"; then
+  ok[connection]=true
+  # UDP to the node dropped: nothing gets through.
+  drop_udp
+  stop_app
   launch
-  connect_udp
-  if ! fetch && ! fetch && ! fetch; then result[udp]=true; fi
-  sudo iptables -t raw -D OUTPUT -p udp -d 127.0.0.1 --dport 8443 -j DROP
+  start_udp && never && ok[udp]=true
+  allow_udp
 fi
-stop_app_vpn
+stop_app
 
-# 4. One character of the pin changed: refused.
-import wrongpin
+# Refresh from the app's own menu: the same entries.
+launch
+dump
+if tap_text '^More options$'; then
+  sleep 1
+  dump
+  if tap_text '(?i)update subscription'; then
+    sleep 12
+    stop_app
+    launch
+    again="$HY_WORK/app-names-again.txt"
+    names_on_screen "$again"
+    has_all_names "$again" && ok[refresh]=true
+  fi
+fi
+snap refreshed
+stop_app
+
+# One character of the pin changed: refused, and the node saw nothing for it.
+fresh
+launch
+import_sub "$HY_WRONGPIN_URL"
 before=$(carried node)
-connect_udp
-if ! fetch && ! fetch && ! fetch && [ "$(carried node)" -eq "$before" ]; then
-  result[wrongPinRefused]=true
-else
-  result[wrongPinRefused]=false
-fi
-stop_app_vpn
+start_udp && never && [ "$(carried node)" -eq "$before" ] && ok[wrongPinRefused]=true
+stop_app
 
-# 5. The node's pin, the rogue's address: refused, and the rogue got nothing.
-import rogue
-connect_udp
-if ! fetch && ! fetch && ! fetch && [ "$(carried rogue)" -eq 0 ]; then
-  result[rogueRefused]=true
-else
-  result[rogueRefused]=false
-fi
-stop_app_vpn
+# The node's pin at a rogue with another certificate: refused, and it got nothing.
+fresh
+launch
+import_sub "$HY_ROGUE_URL"
+start_udp && never && [ "$(carried rogue)" -eq 0 ] && ok[rogueRefused]=true
+stop_app
 
 version=$(adb shell dumpsys package "$PKG" | sed -n 's/.*versionName=\([^ ]*\).*/\1/p' | head -1 | tr -d '\r')
-python3 - "$OUT/result.json" "$version" "${result[rawImport]}" "${result[udp]}" \
-  "${result[wrongPinRefused]}" "${result[rogueRefused]}" <<'PY'
-import json, sys
-out, version, *flags = sys.argv[1:]
-keys = ['rawImport', 'udp', 'wrongPinRefused', 'rogueRefused']
-r = {'client': 'v2rayNG', 'appVersion': version, **{k: f == 'true' for k, f in zip(keys, flags)}}
-json.dump(r, open(out, 'w'), indent=2)
-print(json.dumps(r))
-sys.exit(0 if all(r[k] for k in keys) else 1)
-PY
+pairs=()
+for k in rawImport import connection udp refresh wrongPinRefused rogueRefused; do pairs+=("$k=${ok[$k]}"); done
+write_result "$OUT/result.json" v2rayNG "$version" "${pairs[@]}"

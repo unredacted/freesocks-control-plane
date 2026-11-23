@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 # v2rayN (Linux, Avalonia) in a virtual X display against a Hysteria target
-# (docs/client-compatibility.md § "Hysteria in real apps").
+# (docs/client-compatibility.md § "Hysteria in real apps"; the target is
+# common.sh's target.env).
 #
-#   v2rayn.sh <deb> <base URL of the raw configs>
+#   v2rayn.sh <deb>
 #
 # The package is installed with apt the way a user installs it. Each raw config
-# (`good`, `wrongpin`, `rogue`, fixture.ts) is added as the app's subscription
-# and fetched and parsed by the app's own updater; the `· UDP` server is made
-# the active one and the app started, and every check is a page fetched through
-# the app's own listener. Results: test-results/compat/hysteria-apps/v2rayn/
-# result.json (booleans only).
+# is added as the app's subscription and fetched and parsed by the app's own
+# updater (v2rayN has no URL scheme: the row its "Add subscription" dialog
+# writes is written while it is stopped, due at once). The `· UDP` server is
+# made the active one, as a click in its list does, and every check is a
+# request through the app's own listener. Results:
+# test-results/compat/hysteria-apps/v2rayn/result.json (booleans only).
 set -uo pipefail
 DEB=${1:?deb}
-BASE=${2:?base URL}
 OUT=test-results/compat/hysteria-apps/v2rayn
 DIR=$(cd "$(dirname "$0")" && pwd)
-FIXTURE=(bun --no-env-file "$DIR/fixture.ts")
+# shellcheck source=common.sh
+. "$DIR/common.sh"
 export V2RAYN_LOCAL_APPLICATION_DATA_V2=1
 DATA="$HOME/.local/share/v2rayN"
 # .NET answers an empty path for a folder that does not exist yet.
@@ -23,27 +25,16 @@ mkdir -p "$HOME/.local/share"
 export DISPLAY=:99
 mkdir -p "$OUT"
 step=0
-APP_PID=
 
-snap() {
+snap() { # fixture only: a beta screen shows the node's name and address
+  [ "$HY_KIND" = fixture ] || return 0
   step=$((step + 1))
   import -window root "$OUT/$(printf '%02d-%s' "$step" "$1").png" 2>/dev/null || true
 }
 db() { python3 "$DIR/v2rayn_db.py" "$DATA" "$@"; }
-nonce() { cat /proc/sys/kernel/random/uuid; }
-fetch() {
-  local n
-  n=$(nonce)
-  [ "$(curl --silent --max-time 10 --socks5-hostname 127.0.0.1:10808 "http://10.89.73.20:8080/$n")" = "reality-page /$n" ]
-}
-fetch_until() {
-  local end=$((SECONDS + $1))
-  until fetch; do ((SECONDS > end)) && return 1; sleep 2; done
-}
-carried() { "${FIXTURE[@]}" carried "$1"; }
+log() { if [ "$HY_KIND" = fixture ]; then cat >>"$OUT/app.log"; else cat >/dev/null; fi; }
 start_app() {
-  /usr/bin/v2rayn >>"$OUT/app.log" 2>&1 </dev/null &
-  APP_PID=$!
+  /usr/bin/v2rayn 2>&1 </dev/null | log &
 }
 stop_app() {
   pkill -f /opt/v2rayN/v2rayN || true
@@ -56,74 +47,82 @@ wait_for() { # wait_for <seconds> <command...>
   shift
   until "$@" >/dev/null 2>&1; do ((SECONDS > end)) && return 1; sleep 2; done
 }
-has_profiles() { [ "$(db profiles | wc -l)" -ge 1 ]; }
-# Fetch one raw config through the app's updater, then make `· UDP` active and start.
-use() { # use <name>
+fetched_since() { [ "$(db updated)" != "$1" ] && [ "$(db profiles | wc -l)" -ge 1 ]; }
+# fetch_sub <url> <names file>: the app's updater fetches the raw config.
+fetch_sub() {
   stop_app
-  db sub "$BASE/$1"
+  db sub "$1"
+  local was
+  was=$(db updated)
   start_app
-  wait_for 150 has_profiles || { echo "v2rayN never fetched $1"; snap "no-fetch-$1"; return 1; }
-  db profiles >"$OUT/profiles-$1.txt"
-  stop_app
-  db select '· UDP$' || { echo "no · UDP server in $1"; return 1; }
-  start_app
-  sleep 12
-  snap "running-$1"
+  wait_for 150 fetched_since "$was" || { echo 'v2rayN never fetched the raw config'; return 1; }
+  db profiles >"$2"
 }
-declare -A result
+# refresh_sub <names file>: the same subscription due again, its servers kept.
+refresh_sub() {
+  stop_app
+  local was
+  was=$(db updated)
+  db due
+  start_app
+  wait_for 150 fetched_since "$was" || { echo 'v2rayN never refreshed the raw config'; return 1; }
+  db profiles >"$1"
+}
+# run_udp: the `· UDP` server active, the app running.
+run_udp() {
+  stop_app
+  db select '· UDP$' || { echo 'no · UDP server'; return 1; }
+  start_app
+  # The app's listener up, then a moment for the core behind it.
+  wait_for 45 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10808' || { echo 'no listener on 10808'; return 1; }
+  sleep 4
+}
+declare -A ok=([rawImport]=false [import]=false [connection]=false [udp]=false
+  [refresh]=false [wrongPinRefused]=false [rogueRefused]=false)
 
 sudo apt-get install -y -qq "$PWD/$DEB" >/dev/null
 Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 </dev/null &
 sleep 2
 start_app
-wait_for 90 test -f "$DATA/guiConfigs/guiNDB.db" || { echo 'v2rayN made no data dir'; snap no-data; exit 1; }
+wait_for 90 test -f "$DATA/guiConfigs/guiNDB.db" || {
+  echo 'v2rayN made no data folder'
+  snap no-data
+  exit 1
+}
 sleep 8
 snap first-run
 stop_app
-db schema >"$OUT/schema.txt"
-db config-keys >"$OUT/config-keys.txt"
+[ "$HY_KIND" = fixture ] && db schema >"$OUT/schema.txt"
 
-result[rawImport]=false
-result[udp]=false
-if use good; then
-  grep -q '· UDP$' "$OUT/profiles-good.txt" && grep -q '· Direct$' "$OUT/profiles-good.txt" &&
-    result[rawImport]=true
+names="$HY_WORK/app-names.txt"
+if fetch_sub "$HY_GOOD_URL" "$names"; then
+  snap imported
+  grep -q '· UDP$' "$names" && grep -q '· Direct$' "$names" && ok[rawImport]=true
+  same_names "$names" && ok[import]=true
   before=$(carried node)
-  if fetch_until 45 && [ "$(carried node)" -gt "$before" ]; then
-    sudo iptables -t raw -I OUTPUT -p udp -d 127.0.0.1 --dport 8443 -j DROP
-    stop_app
-    start_app
-    sleep 12
-    if ! fetch && ! fetch && ! fetch; then result[udp]=true; fi
-    sudo iptables -t raw -D OUTPUT -p udp -d 127.0.0.1 --dport 8443 -j DROP
+  if run_udp && through_until 45 && carried_more "$before"; then
+    ok[connection]=true
+    snap connected
+    drop_udp
+    run_udp
+    never && ok[udp]=true
+    allow_udp
   fi
+  # Refresh: the app's updater again, same servers.
+  again="$HY_WORK/app-names-again.txt"
+  refresh_sub "$again" && same_names "$again" && ok[refresh]=true
 fi
 
-result[wrongPinRefused]=false
-if use wrongpin; then
+if fetch_sub "$HY_WRONGPIN_URL" "$HY_WORK/app-names-wrongpin.txt"; then
   before=$(carried node)
-  if ! fetch && ! fetch && ! fetch && [ "$(carried node)" -eq "$before" ]; then
-    result[wrongPinRefused]=true
-  fi
+  run_udp && never && [ "$(carried node)" -eq "$before" ] && ok[wrongPinRefused]=true
 fi
 
-result[rogueRefused]=false
-if use rogue; then
-  if ! fetch && ! fetch && ! fetch && [ "$(carried rogue)" -eq 0 ]; then
-    result[rogueRefused]=true
-  fi
+if fetch_sub "$HY_ROGUE_URL" "$HY_WORK/app-names-rogue.txt"; then
+  run_udp && never && [ "$(carried rogue)" -eq 0 ] && ok[rogueRefused]=true
 fi
 stop_app
-# The core v2rayN ran for the Hysteria server, from its own log (no config is kept).
-grep -o -E '(Xray|sing-box) [0-9.]+' "$OUT/app.log" | sort -u >"$OUT/cores.txt" || true
 
-python3 - "$OUT/result.json" "$(dpkg-query -W -f '${Version}' v2rayn)" "${result[rawImport]}" \
-  "${result[udp]}" "${result[wrongPinRefused]}" "${result[rogueRefused]}" <<'PY'
-import json, sys
-out, version, *flags = sys.argv[1:]
-keys = ['rawImport', 'udp', 'wrongPinRefused', 'rogueRefused']
-r = {'client': 'v2rayN', 'appVersion': version, **{k: f == 'true' for k, f in zip(keys, flags)}}
-json.dump(r, open(out, 'w'), indent=2)
-print(json.dumps(r))
-sys.exit(0 if all(r[k] for k in keys) else 1)
-PY
+pairs=()
+for k in rawImport import connection udp refresh wrongPinRefused rogueRefused; do pairs+=("$k=${ok[$k]}"); done
+write_result "$OUT/result.json" v2rayN "$(dpkg-query -W -f '${Version}' v2rayn)" "${pairs[@]}"

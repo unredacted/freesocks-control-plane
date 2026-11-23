@@ -21,13 +21,16 @@
  *
  * `carried` prints how many requests that server carried for the member (its
  * access log; nothing else is read or printed). The page behind the servers
- * (http://10.89.73.20:8080/<nonce>) is reachable only through them.
+ * (any name, e.g. http://hysteria-check.example/<nonce>: the servers redirect
+ * every request to it) is reachable only through them.
  *
  * Every value here is per run and dies with the containers.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import {
   buildTransport,
   type ModeTemplateInput,
@@ -37,6 +40,7 @@ import { hysteriaHostMapper } from '../../../convex/lib/backend/hostMapper';
 import { guardHysteria } from '../../../convex/lib/hysteriaGuard';
 import { applyMapper } from '../../../convex/lib/edges/testing/fakeBackend';
 import { hysteriaApps, type HysteriaApp } from '../../../tests/compat/hysteriaApps';
+import { clients } from '../../../tests/compat/manifest';
 
 const WORK = '.cache/compat/hysteria-apps';
 const ENGINES_WORK = '.cache/compat/hysteria';
@@ -93,7 +97,13 @@ function serverConfig(cert: { certificate: string; key: string }, password: stri
       {
         tag: 'out',
         protocol: 'freedom',
-        settings: { finalRules: [{ action: 'allow', ip: ['10.89.73.0/24'] }] },
+        // Every request ends at the page, whatever name it asked for: the
+        // apps fetch a name, since their default routing sends a private
+        // address straight out instead of through the server.
+        settings: {
+          redirect: '10.89.73.20:8080',
+          finalRules: [{ action: 'allow', ip: ['10.89.73.0/24'] }],
+        },
       },
     ],
   };
@@ -132,6 +142,35 @@ function directLink(id: string, host: string): string {
 }
 
 const raw = (...lines: string[]) => Buffer.from(lines.join('\n') + '\n').toString('base64');
+/** One character of a hex pin changed. */
+const flip = (hex: string) => (hex[0] === '0' ? '1' : '0') + hex.slice(1);
+/** The entry lines of a raw config (base64 or plain). */
+function linesOf(body: string): string[] {
+  const text = body.trim();
+  const decoded = /^[A-Za-z0-9+/=_-]+$/.test(text)
+    ? Buffer.from(text, 'base64').toString('utf8')
+    : text;
+  return decoded
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => /^[a-z0-9+.-]+:\/\//i.test(l));
+}
+const nameOf = (line: string) => decodeURIComponent(line.split('#').pop() ?? '');
+
+/** What the drivers read (common.sh): never printed, it can hold the canary's URL. */
+function writeTarget(t: Record<string, string>, names: string[]): void {
+  writeFileSync(
+    `${WORK}/target.env`,
+    Object.entries(t)
+      .map(([k, v]) => {
+        if (v.includes("'")) throw new Error(`${k} holds a quote`);
+        return `${k}='${v}'\n`;
+      })
+      .join(''),
+    { mode: 0o600 },
+  );
+  writeFileSync(`${WORK}/names.txt`, names.join('\n') + '\n', { mode: 0o600 });
+}
 
 function up(host: string): void {
   const password = randomUUID();
@@ -151,15 +190,87 @@ function up(host: string): void {
   const guarded = guardHysteria(body, { pinHex: [node.pinHex], spkiB64: [node.spkiB64] });
   if (guarded.kind !== 'kept' || guarded.content !== body || guarded.dropped !== 0)
     throw new Error('the delivery guard changed the body');
-  const flip = (hex: string) => (hex[0] === '0' ? '1' : '0') + hex.slice(1);
   writeFileSync(`${WORK}/www/good`, body);
   writeFileSync(
     `${WORK}/www/wrongpin`,
     raw(hysteriaLink(password, host, NODE_PORT, { ...node, pinHex: flip(node.pinHex) })),
   );
   writeFileSync(`${WORK}/www/rogue`, raw(hysteriaLink(password, host, ROGUE_PORT, node)));
+  writeTarget(
+    {
+      HY_KIND: 'fixture',
+      HY_GOOD_URL: `http://${host}:4180/good`,
+      HY_WRONGPIN_URL: `http://${host}:4180/wrongpin`,
+      HY_ROGUE_URL: `http://${host}:4180/rogue`,
+      HY_NODE_IP: '127.0.0.1',
+      HY_NODE_PORT: String(NODE_PORT),
+    },
+    linesOf(body).map(nameOf),
+  );
   compose('up', '-d', ...SERVICES);
   console.log(`fixture up: entries at ${host}, node :${NODE_PORT}/udp, rogue :${ROGUE_PORT}/udp`);
+}
+
+/**
+ * The beta canary (FCP_COMPAT_HYSTERIA_TARGET, docs/client-compatibility.md
+ * § "Hysteria in real apps"): the app imports the canary key's raw config from
+ * beta itself. Fetched here once with the app's own User-Agent, it gives the
+ * entry names, the node's UDP endpoint, the wrong-pin copy and the rogue entry
+ * (the node's pin and the member's password, at a local rogue with another
+ * certificate for the same name). Prints nothing about any of it.
+ */
+async function beta(app: string, host: string): Promise<void> {
+  const target = JSON.parse(process.env.FCP_COMPAT_HYSTERIA_TARGET ?? 'null') as {
+    url?: string;
+  } | null;
+  if (!target?.url) throw new Error('FCP_COMPAT_HYSTERIA_TARGET is not set');
+  const ua = clients.find((c) => c.name === app)?.userAgents[0];
+  if (!ua) throw new Error(`no User-Agent for ${app}`);
+  const r = await fetch(target.url, {
+    headers: { 'user-agent': ua },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!r.ok) throw new Error(`the canary answered HTTP ${r.status}`);
+  const lines = linesOf(await r.text());
+  const hy = lines.filter((l) => /^(hysteria2|hy2):\/\//.test(l));
+  if (hy.length !== 1) throw new Error(`expected one Hysteria entry, found ${hy.length}`);
+  const line = hy[0]!;
+  const entry = new URL(line.replace(/^hy2:/, 'hysteria2:'));
+  const pin = entry.searchParams.get('pinSHA256');
+  const sni = entry.searchParams.get('sni');
+  if (!pin || !sni) throw new Error('the Hysteria entry has no pin or name');
+  const nodeIp = isIP(entry.hostname)
+    ? entry.hostname
+    : (await lookup(entry.hostname, { family: 4 })).address;
+  const wrong = line.replace(`pinSHA256=${pin}`, `pinSHA256=${flip(pin)}`);
+  if (wrong === line) throw new Error('could not change the pin');
+  const rogueEntry = line.replace(`@${entry.host}`, `@${host}:${ROGUE_PORT}`);
+  if (rogueEntry === line) throw new Error('could not point the entry at the rogue');
+
+  rmSync(WORK, { recursive: true, force: true });
+  mkdirSync(`${WORK}/www`, { recursive: true });
+  rmSync(ENGINES_WORK, { recursive: true, force: true });
+  mkdirSync(`${ENGINES_WORK}/client`, { recursive: true });
+  const rogue = generateHysteriaCertificate(sni);
+  writeFileSync(
+    `${ENGINES_WORK}/rogue.json`,
+    JSON.stringify(serverConfig(rogue, decodeURIComponent(entry.username))),
+  );
+  writeFileSync(`${WORK}/www/wrongpin`, raw(...lines.map((l) => (l === line ? wrong : l))));
+  writeFileSync(`${WORK}/www/rogue`, raw(rogueEntry));
+  writeTarget(
+    {
+      HY_KIND: 'beta',
+      HY_GOOD_URL: target.url,
+      HY_WRONGPIN_URL: `http://${host}:4180/wrongpin`,
+      HY_ROGUE_URL: `http://${host}:4180/rogue`,
+      HY_NODE_IP: nodeIp,
+      HY_NODE_PORT: entry.port || '443',
+    },
+    lines.map(nameOf),
+  );
+  compose('up', '-d', ...SERVICES.filter((x) => x !== 'compat-hysteria-node'));
+  console.log(`beta target ready: ${lines.length} entries, one Hysteria entry with its pin`);
 }
 
 function carried(which: string): void {
@@ -197,6 +308,7 @@ async function download(app: string): Promise<void> {
 
 const [command, arg] = process.argv.slice(2);
 if (command === 'up' && arg) up(arg);
+else if (command === 'beta' && arg && process.argv[4]) await beta(arg, process.argv[4]);
 else if (command === 'download' && arg) await download(arg);
 else if (command === 'carried' && arg) carried(arg);
 else if (command === 'down') {
@@ -204,6 +316,8 @@ else if (command === 'down') {
   rmSync(WORK, { recursive: true, force: true });
   rmSync(ENGINES_WORK, { recursive: true, force: true });
 } else {
-  console.error('usage: fixture.ts up <entry host> | carried <node|rogue> | download <app> | down');
+  console.error(
+    'usage: fixture.ts up <entry host> | beta <app> <entry host> | carried <node|rogue> | download <app> | down',
+  );
   process.exit(2);
 }
