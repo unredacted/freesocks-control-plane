@@ -125,6 +125,37 @@ describe('cronGates: an idle tick starts no Node action', () => {
       expect(await scheduledNames(ctx)).toEqual(['storage:verifyMirrorCopies']);
     });
   });
+
+  test('one run at a time: a tick while the scheduled run is pending schedules no second copy', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const subscriptionId = await subscription(ctx);
+      await ctx.db.insert('mirrorCopies', {
+        subscriptionId,
+        provider: 'p1',
+        objectPath: 'mirrors/a',
+        state: 'never',
+        since: Date.now(),
+        failures: 0,
+        updatedAt: Date.now(),
+      });
+    });
+    expect(await t.mutation(internal.cronGates.mirrorVerify, {})).toEqual({ scheduled: true });
+    // The first run has not started (convex-test leaves it pending): still due, still leased.
+    expect(await t.mutation(internal.cronGates.mirrorVerify, {})).toEqual({
+      scheduled: false,
+      running: true,
+    });
+    await t.run(async (ctx) => {
+      expect(await scheduledNames(ctx)).toEqual(['storage:verifyMirrorCopies']);
+      // A skipped overlapping tick stamps nothing, like a cron tick Convex skips.
+      expect(await heartbeat(ctx, 'mirror-verify')).toBeNull();
+      // Once that run is over, the next tick may schedule again.
+      const job = (await ctx.db.system.query('_scheduled_functions').collect())[0]!;
+      await ctx.scheduler.cancel(job._id);
+    });
+    expect(await t.mutation(internal.cronGates.mirrorVerify, {})).toEqual({ scheduled: true });
+  });
 });
 
 describe('edge-reconcile reads the Node runtime version at most hourly', () => {

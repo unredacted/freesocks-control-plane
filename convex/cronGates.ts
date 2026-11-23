@@ -13,8 +13,16 @@
  *
  * The Node actions keep their own full checks: a gate that says "due" when the
  * action then finds nothing costs one Node run, never a wrong result.
+ *
+ * One run at a time: Convex never starts a cron target while its previous run
+ * is still going, but here the target is the gate, which returns at once. So
+ * each gate keeps the id of the run it scheduled (`appState`
+ * `cron-gate:<name>`) and schedules no other while that one is pending or in
+ * progress, the way the cron itself skipped a tick that overlapped a long run
+ * (sni-qualify spaces its handshakes, so a big due list outlasts 5 minutes).
  */
-import { internalAction, internalMutation } from './_generated/server';
+import type { FunctionReference } from 'convex/server';
+import { internalAction, internalMutation, type MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { recordSkippedRun, runWithCronOutcome } from './cronHeartbeat';
 import { hasDueQualification } from './sniFamilies';
@@ -22,46 +30,91 @@ import { hasDueRepair } from './mirrorUploads';
 import { hasDueVerify } from './mirrorCopies';
 import { MAX_LISTS } from './lib/edges/lists/facts';
 
+type GateResult = { scheduled: boolean; running?: true };
+type NodeCronAction = FunctionReference<'action', 'internal', Record<string, never>>;
+
+const leaseKey = (name: string) => `cron-gate:${name}`;
+
+/** Whether the run this gate last scheduled is still pending or in progress. */
+async function previousRunActive(ctx: MutationCtx, name: string): Promise<boolean> {
+  const row = await ctx.db
+    .query('appState')
+    .withIndex('by_key', (q) => q.eq('key', leaseKey(name)))
+    .unique();
+  const jobId = row && ctx.db.system.normalizeId('_scheduled_functions', row.value);
+  if (!jobId) return false;
+  const job = await ctx.db.system.get(jobId);
+  return !!job && (job.state.kind === 'pending' || job.state.kind === 'inProgress');
+}
+
+/** Schedule the Node run now and remember its id as the gate's lease. */
+async function scheduleRun(ctx: MutationCtx, name: string, fn: NodeCronAction): Promise<void> {
+  const jobId = await ctx.scheduler.runAfter(0, fn, {});
+  const key = leaseKey(name);
+  const row = await ctx.db
+    .query('appState')
+    .withIndex('by_key', (q) => q.eq('key', key))
+    .unique();
+  const now = Date.now();
+  if (row) await ctx.db.patch(row._id, { value: jobId, updatedAt: now });
+  else await ctx.db.insert('appState', { key, value: jobId, updatedAt: now });
+}
+
+/**
+ * The shared gate: skip the tick while the last scheduled run is still going
+ * (no stamp, like a skipped cron tick); else schedule the run when `isDue`
+ * says so, or stamp an idle run.
+ */
+async function gate(
+  ctx: MutationCtx,
+  name: string,
+  fn: NodeCronAction,
+  isDue: () => Promise<boolean>,
+  onIdle?: () => Promise<void>,
+): Promise<GateResult> {
+  if (await previousRunActive(ctx, name)) return { scheduled: false, running: true };
+  if (await isDue()) {
+    await scheduleRun(ctx, name, fn);
+    return { scheduled: true };
+  }
+  if (onIdle) await onIdle();
+  await recordSkippedRun(ctx, name);
+  return { scheduled: false };
+}
+
 /** `sni-qualify`: TLS checks of due names (sniQualifyOps.run, Node). */
 export const sniQualify = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ scheduled: boolean }> => {
-    if (await hasDueQualification(ctx.db, Date.now())) {
-      await ctx.scheduler.runAfter(0, internal.sniQualifyOps.run, {});
-      return { scheduled: true };
-    }
-    // What `run` does on every tick, due names or not: FCP's own test of sends
-    // still waiting on a node (sniAutoConfirm.ts; a no-op while it is off).
-    await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, {});
-    await recordSkippedRun(ctx, 'sni-qualify');
-    return { scheduled: false };
-  },
+  handler: (ctx): Promise<GateResult> =>
+    gate(
+      ctx,
+      'sni-qualify',
+      internal.sniQualifyOps.run,
+      () => hasDueQualification(ctx.db, Date.now()),
+      // What `run` does on every tick, due names or not: FCP's own test of sends
+      // still waiting on a node (sniAutoConfirm.ts; a no-op while it is off).
+      async () => {
+        await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, {});
+      },
+    ),
 });
 
 /** `mirror-barrier-repair`: unfinished mirror uploads (storage.repairMirrorUploads, Node). */
 export const mirrorBarrierRepair = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ scheduled: boolean }> => {
-    if (await hasDueRepair(ctx.db, Date.now())) {
-      await ctx.scheduler.runAfter(0, internal.storage.repairMirrorUploads, {});
-      return { scheduled: true };
-    }
-    await recordSkippedRun(ctx, 'mirror-barrier-repair');
-    return { scheduled: false };
-  },
+  handler: (ctx): Promise<GateResult> =>
+    gate(ctx, 'mirror-barrier-repair', internal.storage.repairMirrorUploads, () =>
+      hasDueRepair(ctx.db, Date.now()),
+    ),
 });
 
 /** `mirror-verify`: read published mirror copies back (storage.verifyMirrorCopies, Node). */
 export const mirrorVerify = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ scheduled: boolean }> => {
-    if (await hasDueVerify(ctx.db, Date.now())) {
-      await ctx.scheduler.runAfter(0, internal.storage.verifyMirrorCopies, {});
-      return { scheduled: true };
-    }
-    await recordSkippedRun(ctx, 'mirror-verify');
-    return { scheduled: false };
-  },
+  handler: (ctx): Promise<GateResult> =>
+    gate(ctx, 'mirror-verify', internal.storage.verifyMirrorCopies, () =>
+      hasDueVerify(ctx.db, Date.now()),
+    ),
 });
 
 /**

@@ -101,7 +101,7 @@ describe('cronHeartbeat', () => {
       const end = target.indexOf('\nexport ', start + 1);
       const body = target.slice(start, end === -1 ? undefined : end);
       const stamp = new RegExp(
-        `(?:recordHeartbeat|recordSkippedRun|runWithCronOutcome|heartbeatFromAction)\\(\\s*ctx,\\s*'${job.name}'`,
+        `(?:recordHeartbeat|recordSkippedRun|gate|runWithCronOutcome|heartbeatFromAction)\\(\\s*ctx,\\s*'${job.name}'`,
       );
       expect(
         stamp.test(body),
