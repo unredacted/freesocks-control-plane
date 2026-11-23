@@ -118,6 +118,7 @@ import type * as lib_donationBonus from "../lib/donationBonus.js";
 import type * as lib_edges_sni_family from "../lib/edges/sni/family.js";
 import type * as lib_hpke from "../lib/hpke.js";
 import type * as lib_hpkeCrypto from "../lib/hpkeCrypto.js";
+import type * as lib_hpkeServer from "../lib/hpkeServer.js";
 import type * as lib_http from "../lib/http.js";
 import type * as lib_hysteriaGroups from "../lib/hysteriaGroups.js";
 import type * as lib_issuance from "../lib/issuance.js";
@@ -337,6 +338,7 @@ declare const fullApi: ApiFromModules<{
   "lib/edges/sni/family": typeof lib_edges_sni_family;
   "lib/hpke": typeof lib_hpke;
   "lib/hpkeCrypto": typeof lib_hpkeCrypto;
+  "lib/hpkeServer": typeof lib_hpkeServer;
   "lib/http": typeof lib_http;
   "lib/hysteriaGroups": typeof lib_hysteriaGroups;
   "lib/issuance": typeof lib_issuance;

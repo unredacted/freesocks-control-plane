@@ -1,9 +1,9 @@
 /**
  * The CDN-blinding channel protocol: how a sealed request/response is built and
- * opened, shared by the client (browser) and the server "use node" action so
- * both agree on the wire format. Built on ./hpke.ts (seal/open) + ./envelope.ts
- * (codec, info, policy). Like hpke.ts, this needs full WebCrypto and runs only
- * in the browser and the Node action, never the default isolate.
+ * opened, shared by the client (browser) and the server (the sealed httpAction,
+ * convex/lib/hpkeServer.ts) so both agree on the wire format. Built on ./hpke.ts
+ * (seal/open) + ./envelope.ts (codec, info, policy). Like hpke.ts, it needs
+ * subtle HKDF: the browser and the Convex default V8 runtime both have it.
  *
  * Two constructions:
  *   request 'seal': the client seals the request body to the server STATIC key
@@ -115,7 +115,7 @@ export async function clientOpenResponse(opts: {
   return JSON.parse(td(pt));
 }
 
-// --- server (the "use node" action) -------------------------------------------
+// --- server (the sealed httpAction, V8) ---------------------------------------
 
 /** Open a sealed request body with the server static private key. Returns the plaintext object. */
 export async function serverOpenRequest(opts: {
