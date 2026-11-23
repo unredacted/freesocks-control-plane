@@ -159,8 +159,8 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
 
 ## Instances + config (the admin-managed half)
 
-Each `backendServers` row is `{ backend, name, slug, config, isActive, priority, keyCount,
-lastHealthOkAt, lastHealthRttMs }`. `config` is a discriminated union carrying the per-type
+Each `backendServers` row is `{ backend, name, slug, config, isActive, priority, maxKeys,
+location… }`: stable configuration only. `config` is a discriminated union carrying the per-type
 connection secret:
 
 - `remnawave`: `{ baseUrl, apiToken }`
@@ -182,6 +182,19 @@ also permits loopback endpoints.
 For previously configured panels, compare saved URLs with the operator's inventory. If an earlier
 edit may have sent a token to an unintended destination, revoke it on the original panel and save
 a replacement for the intended URL.
+
+**Load and health live beside the row** (`convex/lib/serverLoad.ts`). The key count sits in
+`backendServerLoad` and the healthcheck's `lastHealthOkAt` + `lastHealthRttMs` (+ the fleet stats)
+in `backendServerHealth`, one row each per instance. Convex caches a query until a write lands in
+what it read, and the server row is read for its name, location and config by cached queries
+(`publicConfig.get`, the status page, the subscription route's entry naming). With the count on
+the row, every issuance evicted all of them and concurrent issuances on one instance conflicted.
+The two side tables are separate so the readers that need the online bit (the location catalog,
+the status page) never see a per-issuance write. `seed:migrateServerLoad` (run by `seedCutover`)
+copies rows written before the split; until it runs, reads fall back to the old fields on the row.
+The row keeps its copy, and a new row still gets `keyCount: 0` at creation, so a rollback to the
+build before the split finds valid rows (it resumes from the copied figures). A later release
+clears and drops those fields.
 
 **Pool scoring**: `pickCandidatesForIssue` prefers instances health-checked within ~30 min (else
 falls back to all active), then scores `latency_weight * lastHealthRttMs + key_count_weight *

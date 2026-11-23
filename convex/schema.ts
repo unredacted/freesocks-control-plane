@@ -7,6 +7,7 @@ import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { realityClientRefusalFields, realityClientRefusalV } from './lib/realityClients';
 import { edgeClientCheckV, sniAutoTestCheckV } from './lib/edges/clientCheck/validators';
 import { mirrorFormatValidator } from './lib/mirrorFormats';
+import { fleetStatsValidator } from './lib/fleetStats';
 import { directPaymentValidator } from './lib/directPayment';
 
 /**
@@ -1486,9 +1487,13 @@ export default defineSchema({
   // Backend instances: one row per deployed proxy server of any backend type
   // (Remnawave, Outline, ...). Generalizes the former `outlineServers` table so
   // adding a backend type needs no new table. `config` holds the per-type
-  // connection secret (never returned to the SPA). `keyCount` + `lastHealthRttMs`
-  // feed pool selection at issuance; `lastHealthOkAt` is stamped by the
-  // healthcheck cron. Uniqueness of `slug` is enforced in the mutation.
+  // connection secret (never returned to the SPA). Uniqueness of `slug` is
+  // enforced in the mutation. Stable configuration ONLY: the fields that move
+  // on their own (the key count bumped at every issuance, the health stamps and
+  // fleet stats the 10-min healthcheck writes) live in `backendServerLoad` /
+  // `backendServerHealth` (lib/serverLoad.ts), so a write there never evicts the
+  // cached queries that read this row for its name, location or config
+  // (publicConfig.get, the subscription route's naming, the status page).
   backendServers: defineTable({
     backend: backendId,
     name: v.string(),
@@ -1509,32 +1514,51 @@ export default defineSchema({
     locationLng: v.optional(v.number()),
     isActive: v.boolean(),
     priority: v.number(),
-    lastHealthOkAt: v.optional(v.number()),
-    lastHealthRttMs: v.optional(v.number()),
-    keyCount: v.number(),
     // Optional hard capacity cap: at keyCount >= maxKeys the instance is skipped
     // by pickCandidatesForIssue (all-at-capacity → backend.unavailable). Absent
-    // (or null-cleared) = uncapped.
+    // (or null-cleared) = uncapped. The count itself is in `backendServerLoad`.
     maxKeys: v.optional(v.number()),
-    // Read-only fleet observability, cached by the backend-healthcheck cron so the
-    // admin dashboard never makes a live backend call. Best-effort: absent until the
-    // first successful fetch, and left as-is (not cleared) on a later failure.
-    fleetStats: v.optional(
-      v.object({
-        onlineNow: v.number(),
-        nodesOnline: v.number(),
-        nodesTotal: v.number(),
-        distinctCountries: v.number(),
-        monthTrafficBytes: v.number(),
-        lifetimeTrafficBytes: v.number(),
-        panelVersion: v.string(),
-      }),
-    ),
+    // LEGACY, read only as a fallback until `seed:migrateServerLoad` (run by
+    // seedCutover on deploy) copies them into backendServerLoad /
+    // backendServerHealth. Kept (not cleared) so a rollback to the build before
+    // the split finds valid rows: that build requires `keyCount`, so a new row
+    // still gets `keyCount: 0` once at creation. Nothing else writes them; a
+    // later release clears and drops them.
+    keyCount: v.optional(v.number()),
+    lastHealthOkAt: v.optional(v.number()),
+    lastHealthRttMs: v.optional(v.number()),
+    fleetStats: v.optional(fleetStatsValidator),
     fleetStatsAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
     .index('by_backend_active', ['backend', 'isActive', 'priority']),
+
+  // The key count of one backend server (lib/serverLoad.ts): bumped at every
+  // issuance and teardown, overwritten by the healthcheck where the backend
+  // reports an authoritative count (Outline). Only the issuance pickers and the
+  // admin views read it. Kept apart from `backendServerHealth` so the public
+  // readers that need the online bit never see a per-issuance write. Absent =
+  // no key counted yet (0).
+  backendServerLoad: defineTable({
+    backendServerId: v.id('backendServers'),
+    keyCount: v.number(),
+    updatedAt: v.number(),
+  }).index('by_server', ['backendServerId']),
+
+  // Health stamps of one backend server (lib/serverLoad.ts), written by the
+  // 10-min backend-healthcheck cron: the last successful check + its rtt (pool
+  // selection, the location online bit, alerts) and the read-only fleet
+  // observability the admin dashboard shows (best-effort: absent until the
+  // first successful fetch, left as-is on a later failure).
+  backendServerHealth: defineTable({
+    backendServerId: v.id('backendServers'),
+    lastHealthOkAt: v.optional(v.number()),
+    lastHealthRttMs: v.optional(v.number()),
+    fleetStats: v.optional(fleetStatsValidator),
+    fleetStatsAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_server', ['backendServerId']),
 
   // Per-placement node-load cache for issuance-time node placement. One row per
   // internal mode group (the placement handle), refreshed by the backend-healthcheck
@@ -3494,6 +3518,16 @@ export default defineSchema({
     distinctReporters: v.number(),
     usersOnline: v.union(v.number(), v.null()),
   }).index('by_relay_at', ['relayId', 'at']),
+
+  // When the block detector last evaluated an origin (convex/edgeDetector.ts).
+  // Kept off the `relays` row: the detector runs every 5 min and the row is
+  // only rewritten when the suspicion itself changes, so the stamp alone never
+  // evicts the cached queries that read the origin (the subscription route's
+  // edge render). Read by the admin origin view only.
+  relayEvalStamps: defineTable({
+    relayId: v.id('relays'),
+    lastEvalAt: v.number(),
+  }).index('by_relay', ['relayId']),
 
   // Per-NODE stats from the backend (the origin mode group is shared, so per-mode group
   // remnawaveNodeStats cannot isolate one node). Refreshed by the healthcheck cron.

@@ -14,6 +14,7 @@
  * (modeSlug, 'remnawave'), config = {"squadUuids":[...]}.
  */
 import type { DatabaseReader } from '../_generated/server';
+import { keyCountsOf } from './serverLoad';
 import { DEFAULT_CONNECTION_MODE, effectiveDefaultId, resolveModeCatalog } from './connectionModes';
 
 /** Fail-safe parse of a stored mode group pool: a JSON array of non-empty strings,
@@ -433,7 +434,10 @@ export async function resolvePlacementTarget(
   }
 
   // Eligible backends for a NEW key: active instances, minus at-capacity ones.
-  let eligible = servers.filter((s) => s.maxKeys == null || s.keyCount < s.maxKeys);
+  const keyCounts = await keyCountsOf(db, servers);
+  let eligible = servers.filter(
+    (s) => s.maxKeys == null || (keyCounts.get(s._id) ?? 0) < s.maxKeys,
+  );
   if (eligible.length === 0) eligible = servers; // fail-soft: degraded > blocked
 
   // Soft location narrowing: prefer the member's picked location (else the exit

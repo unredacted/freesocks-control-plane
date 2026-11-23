@@ -18,7 +18,7 @@ import {
   currentMonthDailyGb,
   recentGiftsProjection,
 } from './lib/donationBonus';
-import { readUserCounts } from './lib/statusCounters';
+import { readFreeUsersHelped } from './lib/statusCounters';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
@@ -97,7 +97,7 @@ export const get = query({
       billing,
       donationState,
       storedDonationHistory,
-      userCounts,
+      freeUsersHelped,
       firstMirror,
       publicModes,
       referralCfg,
@@ -116,7 +116,10 @@ export const get = query({
       // Live shared donation bonus (GB) on every free user's monthly cap this month.
       readDonationState(ctx.db),
       readDonationHistory(ctx.db),
-      readUserCounts(ctx.db),
+      // The rounded public figure only (stats:publicImpact), never the live
+      // user counter: that row moves at every sign-up and would evict this
+      // query's cached result each time.
+      readFreeUsersHelped(ctx.db),
       // Is the opt-in "trouble connecting? try a mirror" affordance available? Only
       // a boolean (≥1 active mirror provider) — no provider details/secrets. Lets the
       // SPA hide the affordance entirely on a dormant deployment.
@@ -265,7 +268,7 @@ export const get = query({
           // counter) — rounded DOWN to the nearest 10 so the public bootstrap
           // doesn't carry an exact live fleet-size signal (the /status page
           // bands load for the same reason).
-          freeUsersHelped: Math.floor(userCounts.freeActive / 10) * 10,
+          freeUsersHelped,
           // Per-month bonus-GB ledger (last 12; GB only — no dollar amounts).
           history: donationHistory,
           // Month-to-date cumulative bonus-GB series (one value per UTC day,

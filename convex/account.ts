@@ -965,7 +965,9 @@ export const getNodeStatus = internalAction({
     // Fallback: instance-level health (Outline, legacy rows, placement-less
     // keys). `online:null` when the instance has never passed a healthcheck.
     if (server) {
-      const okAt = server.lastHealthOkAt ?? null;
+      const okAt: number | null = await ctx.runQuery(internal.backendServers.lastHealthOkAt, {
+        id: server._id,
+      });
       return {
         node: {
           online: okAt == null ? null : Date.now() - okAt < 30 * 60_000,

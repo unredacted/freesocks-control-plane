@@ -72,6 +72,7 @@ import { locationsOfAccount } from './edgeLocations';
 import { nameViewOf } from './edgeNames';
 import { assertAdmission } from './lib/edges/maintenance';
 import { AUDIENCE_NEEDS_SPREAD, holdsContainment } from './edgeAudiences';
+import { lastEvalAtOf } from './lib/edges/evalStamps';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -154,7 +155,12 @@ export const summary = internalQuery({
         }
       }
       out.push({
-        relay: mapRelayAdmin(o, cfg, await setupRunLiveOn(ctx.db, o)),
+        relay: mapRelayAdmin(
+          o,
+          cfg,
+          await setupRunLiveOn(ctx.db, o),
+          await lastEvalAtOf(ctx.db, o),
+        ),
         pool,
         standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished')
           .length,

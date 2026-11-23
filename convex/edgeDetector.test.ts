@@ -1388,3 +1388,59 @@ describe('origin block detector', () => {
     expect(thawed).toMatchObject({ evaluated: 1, suspected: 1, rotated: 1 });
   });
 });
+
+// The detector runs every 5 min over every origin. A quiet origin must not
+// rewrite its `relays` row each pass (that evicted every cached query reading
+// the origin, the subscription route's edge render among them): only the
+// evaluation stamp moves, on its own row.
+describe('recordEvaluation writes the origin only on a change', () => {
+  const NOW = 1_800_000_000_000;
+  const quiet = {
+    state: 'clear',
+    hintLevel: 'none',
+    score: 0,
+    reportScore: 0,
+    loadScore: 0,
+    probeScore: 0,
+    scope: null,
+    countries: [],
+    edgeEvidence: [],
+    firstSeenAt: null,
+    quietEvals: 0,
+    baselineWarm: false,
+    transition: null,
+    nodeOffline: false,
+  };
+
+  test('a repeat of the same evaluation leaves the row as it was; the stamp moves', async () => {
+    const s = await seed();
+    const record = (now: number, evaluation: object) =>
+      s.t.mutation(internal.edgeDetector.recordEvaluation, {
+        relayId: s.relayId,
+        now,
+        evaluation,
+        usersOnline: null,
+        veto: null,
+        loadStale: true,
+      });
+    const row = () => s.t.run((ctx) => ctx.db.get(s.relayId));
+    const adminLastEval = async () =>
+      (await s.t.query(internal.relays.listForAdmin, {})).find((r) => r.id === s.relayId)!
+        .suspicion!.lastEvalAt;
+
+    await record(NOW, quiet);
+    const first = await row();
+    expect(first!.suspicion).toMatchObject({ state: 'clear', lastEvalAt: NOW });
+
+    await record(NOW + 300_000, quiet);
+    expect(await row()).toEqual(first);
+    // The admin view still shows the real last evaluation.
+    expect(await adminLastEval()).toBe(new Date(NOW + 300_000).toISOString());
+
+    // A real change (reports appear) is written.
+    await record(NOW + 600_000, { ...quiet, score: 0.4, reportScore: 0.8 });
+    const changed = await row();
+    expect(changed!.suspicion).toMatchObject({ reportScore: 0.8, lastEvalAt: NOW + 600_000 });
+    expect(changed!.updatedAt).toBe(NOW + 600_000);
+  });
+});

@@ -39,6 +39,7 @@ import {
   realityListener,
   registerRelay,
 } from './lib/edges/testing/fixtures';
+import { readHealth } from './lib/serverLoad';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -360,8 +361,10 @@ describe('backend observation', () => {
     void panel;
     const out = await t.action(internal.backendServers.healthcheck, {});
     expect(out).toEqual({ checked: 1, healthy: 1 });
-    const server = await t.run((ctx) => ctx.db.get(serverId));
-    expect(server!.lastHealthOkAt).toBeGreaterThan(0);
+    const okAt = await t.run(
+      async (ctx) => (await readHealth(ctx.db, (await ctx.db.get(serverId))!)).lastHealthOkAt,
+    );
+    expect(okAt).toBeGreaterThan(0);
   });
 
   test('an Outline instance has nothing to observe', async () => {

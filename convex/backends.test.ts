@@ -21,6 +21,7 @@ import {
 import { remnawaveUpdateUser } from './lib/backends/remnawave';
 import { sha256Hex } from './lib/crypto';
 import { MIRROR_FORMATS, mirrorSetHash } from './lib/mirrorFormats';
+import { readKeyCount } from './lib/serverLoad';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -311,7 +312,9 @@ describe('backends dispatch', () => {
     expect(issued.backendUserId).toBe('7b51b8a0-7a4c-4f0b-9e76-0d6a4c1f2a3b');
     await t.run(async (ctx) => {
       const row = await ctx.db.get(serverId);
-      expect(row!.keyCount).toBe(1);
+      expect(await readKeyCount(ctx.db, row!)).toBe(1);
+      // The count lives in the side table; the server row itself is not written.
+      expect(row!.keyCount).toBe(0);
     });
   });
 
