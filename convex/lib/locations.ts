@@ -14,6 +14,7 @@ import { BACKEND_IDS } from './backendIds';
 import { CAPABILITIES } from './backends/capabilities';
 import { computeLocationLoad, HEALTH_FRESH_MS, type LoadBand } from './loadBands';
 import { healthFresh, healthOf } from './serverLoad';
+import { locationTierSlugs } from './locationAccess';
 
 export interface LocationEntry {
   code: string;
@@ -24,6 +25,10 @@ export interface LocationEntry {
    *  them on an instance at this location). City-level only — the label
    *  already names the city, so the pair discloses nothing new. */
   coords: { lat: number; lng: number } | null;
+  /** The tier slugs this location is open to (lib/locationAccess.ts); null =
+   *  every tier. A members-only location stays in the catalog, so the SPA can
+   *  mark it "Members". */
+  tiers: string[] | null;
 }
 
 /** Active instances of every backend type that participates in the location
@@ -49,9 +54,13 @@ export async function resolveLocations(db: DatabaseReader): Promise<LocationEntr
   const servers = await collectLocationCapableServers(db);
   // The health stamps, not the key counts: the public catalog never reads a
   // row an issuance writes (lib/serverLoad.ts).
-  const [nodeRows, health] = await Promise.all([
+  const [nodeRows, health, tiers] = await Promise.all([
     db.query('backendNodeInventory').collect(),
     healthOf(db, servers),
+    // Only read when some instance is gated (the tiers table is small either way).
+    servers.some((s) => s.allowedTierIds?.length)
+      ? db.query('tiers').collect()
+      : Promise.resolve([] as Doc<'tiers'>[]),
   ]);
   const now = Date.now();
 
@@ -74,6 +83,7 @@ export async function resolveLocations(db: DatabaseReader): Promise<LocationEntr
       label: instances.find((s) => s.locationLabel)?.locationLabel ?? code,
       online,
       coords: located ? { lat: located.locationLat!, lng: located.locationLng! } : null,
+      tiers: locationTierSlugs(instances, tiers),
       load: computeLocationLoad(
         nodeRows,
         new Set(instances.map((s) => s._id)),

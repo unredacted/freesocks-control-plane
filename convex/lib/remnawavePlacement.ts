@@ -15,6 +15,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import { keyCountsOf } from './serverLoad';
+import { serverAllowsTier } from './locationAccess';
 import { DEFAULT_CONNECTION_MODE, effectiveDefaultId, resolveModeCatalog } from './connectionModes';
 
 /** Fail-safe parse of a stored mode group pool: a JSON array of non-empty strings,
@@ -378,6 +379,10 @@ export async function resolvePlacementTarget(
     // link, a qualification, a rehearsal on a node being protected there) asks
     // for this; a member key never lands on an inactive instance.
     includeInactive?: boolean;
+    // The member's tier: instances that do not allow it are out (HARD, unlike
+    // `location`; lib/locationAccess.ts). Absent = no tier filter (FCP's own
+    // checks, tier pushes).
+    tierId?: string | null;
   } = {},
 ): Promise<{
   placement: string | null;
@@ -403,10 +408,15 @@ export async function resolvePlacementTarget(
     if (row) statsByPlacement.set(placement, { serverId: row.backendServerId as string });
   }
 
-  const servers = await db
+  const activeServers = await db
     .query('backendServers')
     .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
     .collect();
+  // Tier access is HARD: an instance that does not take the member's tier is
+  // never a target, not even as a degraded fallback. With none left the key
+  // has nowhere to go (the caller answers backend.unavailable).
+  const servers = activeServers.filter((s) => serverAllowsTier(s, opts.tierId));
+  if (servers.length === 0 && activeServers.length > 0) return { placement: null, serverId: null };
 
   if (opts.onlyServerId) {
     // HARD pin: the in-place switch can only use mode groups on the key's own backend.
@@ -468,7 +478,9 @@ export async function resolvePlacementTarget(
     // exists on ITS backend — a (mode group, wrong-backend) pair mints a key that can't
     // route. Signal the caller to FAIL LOUDLY instead (503, retryable); a
     // single-backend deploy keeps the fail-soft (the pair can't mismatch).
-    if (servers.length > 1)
+    // Counted over EVERY active backend, not the tier's: one allowed backend
+    // among several still lets an unattributed group belong to another one.
+    if (activeServers.length > 1)
       return { placement: null, serverId: null, unattributedMultiPanel: true };
     // UNKNOWN is not the same as KNOWN-UNUSABLE. The fail-soft below exists for
     // mode groups we could not attribute at all; a mode group we DID attribute, to a backend

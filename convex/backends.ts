@@ -58,6 +58,7 @@ import {
 } from './lib/backends/mock';
 import { isRemnawaveNotFound } from './lib/backends/remnawave';
 import { scopedServerId, toProviderUserId, toStoredBackendUserId } from './lib/backendUserId';
+import { serverAllowsTier } from './lib/locationAccess';
 
 const backendId = backendIdValidator;
 const trafficStrategy = v.union(
@@ -135,23 +136,30 @@ export const issueUser = internalAction({
     // that is out of the issuance pool, which only member keys must skip.
     // A node being taken live again there is still tested.
     ownCheck: v.optional(v.boolean()),
+    // The member's tier: an instance that does not take it is never used
+    // (lib/locationAccess.ts), pinned or picked.
+    tierId: v.optional(v.id('tiers')),
   },
   handler: async (
     ctx,
-    { backend, spec, pinServerId, ownCheck },
+    { backend, spec, pinServerId, ownCheck, tierId },
   ): Promise<IssuedUser & { backendServerId?: Id<'backendServers'> }> => {
     if (mockBackendEnabled()) return mockIssueUser(spec as IssueUserSpec);
     let server: Doc<'backendServers'> | null;
     if (pinServerId) {
       const pinned = await ctx.runQuery(internal.backendServers.getById, { id: pinServerId });
       server =
-        pinned && (pinned.isActive || ownCheck === true) && pinned.backend === backend
+        pinned &&
+        (pinned.isActive || ownCheck === true) &&
+        pinned.backend === backend &&
+        serverAllowsTier(pinned, tierId)
           ? pinned
           : null;
       if (!server) throw new ConvexError({ code: 'backend.unavailable', backend });
     } else {
       const candidates = await ctx.runQuery(internal.backendServers.pickCandidatesForIssue, {
         backend,
+        ...(tierId ? { tierId } : {}),
       });
       if (candidates.length === 0)
         // Typed so the HTTP layer maps it to an actionable 503 by CODE, not a brittle

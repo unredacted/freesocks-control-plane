@@ -61,7 +61,14 @@ describe('resolveLocations', () => {
     await seedServer(t, { slug: 'ol', backend: 'outline', location: 'OL' }); // wrong backend
     const locations = await t.run((ctx) => resolveLocations(ctx.db));
     expect(locations).toEqual([
-      { code: 'MCI', label: 'Kansas City, MO', online: true, load: 'unknown', coords: null },
+      {
+        code: 'MCI',
+        label: 'Kansas City, MO',
+        online: true,
+        load: 'unknown',
+        coords: null,
+        tiers: null,
+      },
     ]);
   });
 
@@ -79,7 +86,7 @@ describe('resolveLocations', () => {
     await seedServer(t, { slug: 'ams', location: 'AMS', healthAgeMs: null }); // never probed
     const locations = await t.run((ctx) => resolveLocations(ctx.db));
     expect(locations).toEqual([
-      { code: 'AMS', label: 'AMS', online: false, load: 'unknown', coords: null },
+      { code: 'AMS', label: 'AMS', online: false, load: 'unknown', coords: null, tiers: null },
     ]);
   });
 

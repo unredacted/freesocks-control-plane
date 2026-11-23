@@ -386,7 +386,16 @@
     "offline": "offline",
     "pickerHint": "Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network.",
     "recommended": "Recommended for you",
-    "pickerHintRecommended": "Automatic tries the locations recommended for your country first. Pick one yourself if another works better on your network."
+    "pickerHintRecommended": "Automatic tries the locations recommended for your country first. Pick one yourself if another works better on your network.",
+    "membersOnly": "Members",
+    "current": "Current",
+    "lockedTitle": "{location} is for members",
+    "lockedBody": "Upgrade your membership to connect from {location}. Your key uses a location included in your plan until then.",
+    "lockedCta": "See membership",
+    "pickedLocked": "Members only",
+    "keepsFirst": "Your free key stays in the location you picked first. Members can switch location at any time.",
+    "autoShort": "Automatic",
+    "autoHint": "Least busy"
   },
   "usage": {
     "show": "Show usage trend",
@@ -719,10 +728,14 @@
     "billing": "The payment service couldn't process this. Please try again later.",
     "serverError": "The server had a problem handling this. Please try again in a few minutes.",
     "modeUnavailable": "Your current connection mode is no longer available. Switch to another mode first, then try again.",
-    "noOtherServer": "There is no other server available right now. Please try again later.",
+    "noOtherServer": "There is no other server in this location right now. Please try again later.",
     "switchServerUnsupported": "Switching servers is not available for this key.",
     "coinMinimum": "This amount is below that coin's minimum. Pick another coin or a longer term.",
-    "coinUnavailable": "That coin isn't available right now. Pick another one."
+    "coinUnavailable": "That coin isn't available right now. Pick another one.",
+    "locationMembersOnly": "That location is for members. Upgrade your membership to use it.",
+    "locationSwitchMembership": "Changing your location is part of membership.",
+    "locationUnavailable": "That location cannot take your key right now. Please try again later.",
+    "locationSame": "Your key is already in that location."
   },
   "setup": {
     "title": "Set up your VPN app",
@@ -1011,6 +1024,13 @@
       "memberBodyUnlimited": "No monthly cap, faster servers and more locations to choose from. Your payment also helps keep free accounts running.",
       "memberBody": "Faster servers and more locations to choose from. Your payment also helps keep free accounts running.",
       "perMonth": "a month"
+    },
+    "locations": {
+      "title": "Where our servers are",
+      "subtitle": "You pick a location when you create your key. Members can switch between all of them at any time.",
+      "everyone": "Free and members",
+      "members": "Members only",
+      "statusLink": "Live network status"
     }
   },
   "hpke": {
@@ -1097,9 +1117,9 @@
   },
   "switchServer": {
     "action": "Switch server",
-    "title": "Move to a different server?",
-    "body": "For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import.",
-    "bodyWithServer": "For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import.",
+    "title": "Move to another server in the same location?",
+    "body": "For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server in the same location; your subscription URL stays the same, so there is nothing to re-import.",
+    "bodyWithServer": "For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server in the same location; your subscription URL stays the same, so there is nothing to re-import.",
     "reasonLegend": "What's wrong with your current server?",
     "reasonSlow": "It's slow",
     "reasonBlocked": "It's blocked where I am",
@@ -1107,12 +1127,15 @@
     "reasonOther": "Something else",
     "point1": "Your apps pick up the new server on their next refresh",
     "point2": "Your account and the data you have left are unchanged",
-    "point3": "If your key has to move to another location, your devices reconnect and register again",
+    "point3": "If your key has to be recreated on another server, your devices reconnect and register again",
     "confirm": "Move my key",
     "working": "Moving…",
     "done": "Your key has moved to a different server.",
     "failed": "Could not move your key",
-    "vsNewKey": "If the subscription URL itself stopped working everywhere, or you think someone else has it, use \"Create a new key\" instead - that replaces the URL."
+    "vsNewKey": "If the subscription URL itself stopped working everywhere, or you think someone else has it, use \"Create a new key\" instead - that replaces the URL.",
+    "actionIn": "Switch server in {location}",
+    "titleIn": "Move to another server in {location}?",
+    "vsLocation": "Want to connect from a different city instead? Use \"Switch location\"."
   },
   "report": {
     "action": "Report issue",
@@ -1179,5 +1202,26 @@
     "searchPlaceholder": "Search {count} coins by name or network",
     "noMatch": "No coin matches. Try the coin's name, like USDT, or its network, like Tron.",
     "pickedCoin": "Selected: {coin} on {network}"
+  },
+  "switchLocation": {
+    "action": "Switch location",
+    "title": "Switch location",
+    "body": "Pick where your key connects from. Your subscription URL stays the same, so there is nothing to re-import: your apps pick up the new location on their next refresh.",
+    "legend": "Move my key to",
+    "current": "You are here",
+    "point1": "Your account and the data you have left are unchanged",
+    "point2": "Your devices reconnect and register again",
+    "confirm": "Move my key",
+    "working": "Moving…",
+    "done": "Your key has moved to {location}.",
+    "failed": "Could not move your key",
+    "noOther": "There is no other location to move to right now.",
+    "memberTitle": "Choosing your location is part of membership",
+    "memberBody": "Members can move their key to any of our locations, whenever they like.",
+    "memberBodyFrom": "Your free key stays in {location}. Members can move their key to any of our locations, whenever they like.",
+    "memberLocations": "Members can also use: {list}",
+    "memberCta": "See membership",
+    "serverAlt": "Is your server blocked or slow? Switching to another server in the same location is free.",
+    "serverAltCta": "Switch server instead"
   }
 }

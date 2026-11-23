@@ -12,6 +12,7 @@
   import { BACKEND_IDS, type BackendId } from '../../../shared/contracts/backends';
   import { MAX_PLACE_NAME, cleanNamePart } from '../../../shared/entryNames';
   import { createMutation } from '@tanstack/svelte-query';
+  import { adminTiersQuery } from '../../lib/queries';
   import { toast } from 'svelte-sonner';
   import { z as zod } from 'zod';
 
@@ -49,6 +50,7 @@
       isActive: s?.isActive ?? true,
       priority: s?.priority ?? 0,
       maxKeys: s?.maxKeys ?? null,
+      allowedTierIds: [...(s?.allowedTierIds ?? [])],
       baseUrl: rw?.baseUrl ?? '',
       apiTokenSet: rw?.apiTokenSet ?? false,
       apiUrlMasked: ol?.apiUrlMasked ?? '',
@@ -73,6 +75,14 @@
   let priority = $state(init.priority);
   // Free-text so the field can be blank (= no cap); parsed on save.
   let maxKeysText = $state(init.maxKeys != null ? String(init.maxKeys) : '');
+  // Tier access (lib/locationAccess.ts): empty = every tier. The list shows the
+  // tiers of this instance's backend; ids of other tiers are kept as they are.
+  const tiersQuery = adminTiersQuery();
+  let allowedTierIds = $state<string[]>(init.allowedTierIds);
+  let accessTiers = $derived((tiersQuery.data ?? []).filter((t) => t.backend === backend));
+  function toggleTier(id: string, on: boolean) {
+    allowedTierIds = on ? [...allowedTierIds, id] : allowedTierIds.filter((x) => x !== id);
+  }
   // Remnawave (apiToken) + Outline (apiUrl) secrets stay blank until retyped.
   let baseUrl = $state(init.baseUrl);
   let apiToken = $state('');
@@ -177,6 +187,8 @@
     // Blank = clear the cap (null); a positive integer sets it.
     const parsedMax = parseInt(maxKeysText.trim(), 10);
     common.maxKeys = Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : null;
+    // [] = every tier.
+    common.allowedTierIds = allowedTierIds;
     if (backend === 'remnawave') {
       if (baseUrl) common.baseUrl = baseUrl;
       if (apiToken) common.apiToken = apiToken;
@@ -458,6 +470,36 @@
           </p>
         </div>
       </div>
+      <fieldset class="space-y-2 rounded-md border border-border p-3">
+        <legend class="px-1 text-xs text-muted-foreground">Who can use this location</legend>
+        <label class="flex items-center gap-3 text-sm">
+          <Checkbox
+            checked={allowedTierIds.length === 0}
+            onCheckedChange={(v) => {
+              if (v === true) allowedTierIds = [];
+            }}
+          />
+          <span>Every tier</span>
+        </label>
+        {#each accessTiers as tier (tier.id)}
+          <label class="flex items-center gap-3 text-sm">
+            <Checkbox
+              checked={allowedTierIds.includes(tier.id)}
+              onCheckedChange={(v) => toggleTier(tier.id, v === true)}
+            />
+            <span>
+              Only {tier.name}
+              <span class="text-xs text-muted-foreground">({tier.slug})</span>
+            </span>
+          </label>
+        {/each}
+        <p class="text-[11px] text-muted-foreground">
+          Pick tiers to make this location theirs only (for example members only). Other tiers still
+          see it on the home page and in the location picker, marked members only, but never get a
+          key here. A key left here after a membership ends moves to a location its new tier can
+          use, keeping its link.
+        </p>
+      </fieldset>
       <label class="flex items-center gap-3 text-sm">
         <Checkbox checked={isActive} onCheckedChange={(v) => (isActive = v === true)} />
         <span>Active (eligible for new key issuance)</span>

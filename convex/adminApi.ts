@@ -50,6 +50,7 @@ import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { CAPABILITIES } from './lib/backends/capabilities';
 import { MAX_SPEED_LIMIT_MBPS } from './lib/backends/types';
+import { tierCanSwitchLocation } from './lib/locationAccess';
 import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
@@ -112,6 +113,9 @@ const tierUpsertFields = {
   isActive: v.boolean(),
   priority: v.number(),
   expirationDaysAfterMembershipLapse: v.number(),
+  // May members move their key between locations (lib/locationAccess.ts).
+  // Absent = the default (paid yes, default-free no).
+  canSwitchLocation: v.optional(v.boolean()),
   // Plan-card feature lines (validated by normalizeTierFeatures); absent or
   // null = the built-in defaults.
   features: v.optional(v.union(v.array(v.any()), v.null())),
@@ -204,6 +208,7 @@ function mapTier(t: Doc<'tiers'>) {
     isActive: t.isActive,
     priority: t.priority,
     expirationDaysAfterMembershipLapse: t.expirationDaysAfterMembershipLapse,
+    canSwitchLocation: tierCanSwitchLocation(t),
     features: resolveTierFeatures(t.features as TierFeature[] | undefined, t.isDefaultFree),
     featuresDefault: t.features === undefined,
     createdAt: iso(t._creationTime),
@@ -295,6 +300,7 @@ function mapBackendServer(
     locationLabel: s.locationLabel ?? null,
     locationLat: s.locationLat ?? null,
     locationLng: s.locationLng ?? null,
+    allowedTierIds: (s.allowedTierIds ?? []) as string[],
     isActive: s.isActive,
     priority: s.priority,
     keyCount,
@@ -374,6 +380,7 @@ export const createTier = internalMutation({
       isActive: a.isActive,
       priority: a.priority,
       expirationDaysAfterMembershipLapse: a.expirationDaysAfterMembershipLapse,
+      ...(a.canSwitchLocation !== undefined ? { canSwitchLocation: a.canSwitchLocation } : {}),
       ...(a.features ? { features: a.features as TierFeature[] } : {}),
       updatedAt: Date.now(),
     });
@@ -431,6 +438,7 @@ export const updateTier = internalMutation({
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     expirationDaysAfterMembershipLapse: v.optional(v.number()),
+    canSwitchLocation: v.optional(v.boolean()),
     features: v.optional(v.union(v.array(v.any()), v.null())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -505,6 +513,19 @@ export const deleteTier = internalMutation({
         message: 'Cannot delete a tier that still has membership codes. Revoke them first.',
       });
     }
+    // A backend limited to this tier would be left with a list naming no tier
+    // (open to nobody), and dropping the id instead could open it to everyone.
+    // The admin decides: refuse while any backend lists it. The table is the
+    // small instance pool, never traffic-scaled.
+    const gated = (await ctx.db.query('backendServers').collect()).find((s) =>
+      (s.allowedTierIds ?? []).includes(id),
+    );
+    if (gated) {
+      throw new ConvexError({
+        code: 'tier.in_use',
+        message: `Cannot delete a tier that backend "${gated.name}" is limited to. Change who can use that location first.`,
+      });
+    }
     await ctx.db.delete(id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -549,6 +570,7 @@ export const upsertTierBySlug = internalMutation({
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     expirationDaysAfterMembershipLapse: v.optional(v.number()),
+    canSwitchLocation: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -579,6 +601,7 @@ export const upsertTierBySlug = internalMutation({
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
         expirationDaysAfterMembershipLapse: a.expirationDaysAfterMembershipLapse ?? 0,
+        ...(a.canSwitchLocation !== undefined ? { canSwitchLocation: a.canSwitchLocation } : {}),
         updatedAt: Date.now(),
       });
       if (a.isDefaultFree) await clearOtherDefaultFree(ctx, backend, id);
@@ -1371,6 +1394,23 @@ function positionMoved(
   );
 }
 
+/**
+ * Validate a backend instance's allowed-tier list: every id must name a tier;
+ * duplicates collapse. null or [] = every tier (stored as absent).
+ */
+async function checkAllowedTiers(
+  db: DatabaseReader,
+  ids: readonly Id<'tiers'>[] | null | undefined,
+): Promise<Id<'tiers'>[] | undefined> {
+  if (!ids || ids.length === 0) return undefined;
+  const unique = [...new Set(ids)];
+  if (unique.length > 32) throw new Error('allowedTierIds: at most 32 tiers');
+  for (const id of unique) {
+    if (!(await db.get(id))) throw new Error('allowedTierIds names a tier that does not exist');
+  }
+  return unique;
+}
+
 function checkLocationCoords(a: { locationLat?: number | null; locationLng?: number | null }): {
   touched: boolean;
   locationLat?: number;
@@ -1488,6 +1528,8 @@ export const createBackendServer = internalMutation({
     locationLabel: v.optional(v.union(v.string(), v.null())),
     locationLat: v.optional(v.union(v.number(), v.null())),
     locationLng: v.optional(v.union(v.number(), v.null())),
+    // Tiers allowed a key here; null or [] = every tier (lib/locationAccess.ts).
+    allowedTierIds: v.optional(v.union(v.array(v.id('tiers')), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1511,11 +1553,13 @@ export const createBackendServer = internalMutation({
     const loc = checkLocation(a);
     const coords = checkLocationCoords(a);
 
+    const allowedTierIds = await checkAllowedTiers(ctx.db, a.allowedTierIds);
     const config = buildBackendServerConfig(a);
     const id = await ctx.db.insert('backendServers', {
       backend: a.backend,
       name: a.name,
       slug: a.slug,
+      ...(allowedTierIds ? { allowedTierIds } : {}),
       location: loc.location,
       locationLabel: loc.locationLabel,
       locationLat: coords.locationLat,
@@ -1550,6 +1594,8 @@ export const updateBackendServer = internalMutation({
     locationLabel: v.optional(v.union(v.string(), v.null())),
     locationLat: v.optional(v.union(v.number(), v.null())),
     locationLng: v.optional(v.union(v.number(), v.null())),
+    // Tiers allowed a key here; null or [] = every tier (lib/locationAccess.ts).
+    allowedTierIds: v.optional(v.union(v.array(v.id('tiers')), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1589,9 +1635,23 @@ export const updateBackendServer = internalMutation({
       fields.locationLat = coords.locationLat;
       fields.locationLng = coords.locationLng;
     }
+    // null or [] opens the instance to every tier again.
+    if (patch.allowedTierIds !== undefined)
+      fields.allowedTierIds = await checkAllowedTiers(ctx.db, patch.allowedTierIds);
+    // A narrower list strands the keys of the tiers it drops: move them now
+    // (keeping their links) rather than at each member's next tier change.
+    const before = existing.allowedTierIds ?? [];
+    const after = fields.allowedTierIds ?? []; // [] = every tier
+    const narrowed =
+      patch.allowedTierIds !== undefined &&
+      after.length > 0 &&
+      (before.length === 0 || before.some((t) => !after.includes(t)));
 
     fields.config = mergeBackendServerConfig(existing.config, patch);
     await ctx.db.patch(id, fields);
+    if (narrowed) {
+      await ctx.scheduler.runAfter(0, internal.account.relocateServerKeys, { serverId: id });
+    }
     // The node's position orders steered members' addresses (latency ordering).
     if (positionMoved(existing, coords)) await nodePositionMoved(ctx, id);
     await writeAuditLog(ctx, {

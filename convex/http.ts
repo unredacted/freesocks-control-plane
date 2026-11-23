@@ -1677,6 +1677,16 @@ http.route({
         return errorJson('validation', 'location must be a string or null', 400);
       }
     }
+    // Tier access (lib/locationAccess.ts): a members-only location, or a
+    // location change on a tier that keeps its first pick, is refused before
+    // anything is spent. Judged on the effective pick (absent = the stored one).
+    if (location !== undefined) {
+      const refusal = await ctx.runQuery(internal.account.locationChoiceCheck, {
+        userId: member.userId,
+        location,
+      });
+      if (refusal) return errorJson(refusal.code, refusal.message, refusal.status);
+    }
     // The member's answer given with the first key (sign-up): sealed only.
     const answer = await takeRegionAnswer(ctx, req, member.userId, body.region);
     if (answer.kind === 'refused') return answer.response;
@@ -2033,6 +2043,41 @@ http.route({
       // switchServer answers ok:false only where the key stayed put (nowhere
       // else to go, unsupported, mode unavailable, placement still resolving).
       if (!result.ok) await releaseIssuanceUnits(ctx, member.userId, 'account.switch-server');
+      return sagaResult(result);
+    });
+  }),
+});
+
+// "Switch location": move the key to another location, keeping the member's
+// link (account.switchLocation). Same saga shape and sealing as switch-server.
+http.route({
+  path: '/api/v1/account/switch-location',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ location?: unknown; confirm?: boolean }>(req);
+    if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
+    if (
+      typeof body.location !== 'string' ||
+      body.location.length === 0 ||
+      body.location.length > 32
+    )
+      return errorJson('validation', 'location must be a location code', 400);
+    const location = body.location;
+    // Refused moves (members only, same place) cost nothing: judged first.
+    const refusal = await ctx.runQuery(internal.account.locationChoiceCheck, {
+      userId: member.userId,
+      location,
+    });
+    if (refusal) return errorJson(refusal.code, refusal.message, refusal.status);
+    return withIssuanceSaga(ctx, member.userId, 'account.switch-location', async (requestId) => {
+      const result = await ctx.runAction(internal.account.switchLocation, {
+        userId: member.userId,
+        location,
+        requestId,
+      });
+      if (!result.ok) await releaseIssuanceUnits(ctx, member.userId, 'account.switch-location');
       return sagaResult(result);
     });
   }),

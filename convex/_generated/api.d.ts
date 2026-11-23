@@ -379,6 +379,7 @@ import type * as lib_issueTelemetry from "../lib/issueTelemetry.js";
 import type * as lib_lanes from "../lib/lanes.js";
 import type * as lib_legacyFields from "../lib/legacyFields.js";
 import type * as lib_loadBands from "../lib/loadBands.js";
+import type * as lib_locationAccess from "../lib/locationAccess.js";
 import type * as lib_locations from "../lib/locations.js";
 import type * as lib_memberCountry from "../lib/memberCountry.js";
 import type * as lib_memberEntryNames from "../lib/memberEntryNames.js";
@@ -859,6 +860,7 @@ declare const fullApi: ApiFromModules<{
   "lib/lanes": typeof lib_lanes;
   "lib/legacyFields": typeof lib_legacyFields;
   "lib/loadBands": typeof lib_loadBands;
+  "lib/locationAccess": typeof lib_locationAccess;
   "lib/locations": typeof lib_locations;
   "lib/memberCountry": typeof lib_memberCountry;
   "lib/memberEntryNames": typeof lib_memberEntryNames;

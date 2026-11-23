@@ -63,8 +63,8 @@
      *  handler as the pass's node line). Omitted = the action isn't offered
      *  here (no key to move / backend can't move one / caller has no modal). */
     onSwitchServer?: () => void;
-    /** Quick fix #2: open the new-key flow with the location picker (the
-     *  regenerate modal). Omitted = not offered (single-location deploys). */
+    /** Quick fix #2: open "Switch location" (the membership note on a tier
+     *  that may not switch). Omitted = not offered (single-location deploys). */
     onPickLocation?: () => void;
     /** Open the report-issue dialog. The one place a member reports from (the
      *  pass has no report button): a member stuck here is exactly who should
@@ -301,7 +301,7 @@
             {#if onPickLocation}
               <Button variant="outline" size="sm" class="min-h-11" onclick={onPickLocation}>
                 <MapPin class="size-4" />
-                {t('mirror.pickLocation')}
+                {t('switchLocation.action')}
               </Button>
             {/if}
             {#if onReportIssue}
