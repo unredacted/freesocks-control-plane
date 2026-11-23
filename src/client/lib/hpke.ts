@@ -253,9 +253,11 @@ function applyRevocation(r: SignedRevocation): number | undefined {
  * WORSE for the population this serves: the fetch-spec cache modes send
  * `max-age=0`, which punches every request past the CDN to the origin, where the
  * per-IP `hpke.keys.fetch` policy lives. A per-browser cache saves nothing for many
- * distinct clients behind one carrier-grade NAT - only the shared CDN cache does -
- * so bypassing it trades a bounded, quiet staleness for 429s and a silent
- * missing epoch exactly where censorship makes NAT sharing the norm.
+ * distinct clients behind one carrier-grade NAT - only the shared CDN cache does.
+ * The origin never refuses this route (past the budget it answers from the
+ * datastore alone, convex/http.ts hpkeKeysHandler), so a neighbour on the same
+ * address cannot lock others out of an epoch, but routine lookups still belong
+ * on the cache.
  */
 let _bypassKeysCacheOnce = false;
 

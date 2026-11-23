@@ -681,16 +681,24 @@ http.route({
 // public key before sealing the login to it, so a CDN that tampers is caught.
 // Briefly cacheable (the epoch is valid for ~30 min and carries its own notAfter).
 const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> => {
-  const limited = await throttlePublicGet(ctx, req, 'hpke.keys.fetch');
-  if (limited) return limited;
+  // Never refuse a key lookup: a manifest-pinned client cannot seal a login,
+  // sign-up or bootstrap without an epoch, and the per-IP bucket is shared by
+  // everyone behind a carrier NAT, so a 429 here would let one neighbour lock
+  // the rest out. Past the budget the answer comes from the datastore alone
+  // (no seed-store check, no re-mint), which bounds what a flood can drive;
+  // a published epoch the store lost still recovers through the client's
+  // retry on 503 hpke.key_unavailable.
+  const overBudget = (await throttlePublicGet(ctx, req, 'hpke.keys.fetch')) !== null;
   const [candidate, revocation] = await Promise.all([
-    ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {}),
+    overBudget
+      ? ctx.runQuery(internal.keyEpochs.current, {})
+      : ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {}),
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
   const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;
   // No live epoch while signing is on: mint one now (throttled), not at the
   // next cron tick, so pinned clients can seal again within seconds.
-  if (!epoch && process.env.FS_MANIFEST_SK) {
+  if (!epoch && !overBudget && process.env.FS_MANIFEST_SK) {
     await ctx.runMutation(internal.keyEpochs.requestRemint, {}).catch(() => {});
   }
   return json(
@@ -722,7 +730,10 @@ const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> 
     // normally has >=20 min left, so this clamp only ever bites if that ratio
     // changes -- it is the guarantee, not a hot path. A rotation gap (epoch null)
     // is not cached at all, so it clears the moment the rotate cron catches up.
-    { 'cache-control': epochCacheControl(epoch?.notAfter) },
+    {
+      'cache-control': epochCacheControl(epoch?.notAfter),
+      ...(overBudget ? { 'x-fs-keys-throttled': '1' } : {}),
+    },
   );
 };
 http.route({ path: '/api/v1/hpke/keys', method: 'GET', handler: httpAction(hpkeKeysHandler) });

@@ -129,12 +129,18 @@ rotation gap. That clamp is load-bearing — raising `max-age` past the epoch va
 reintroduce the bug — and it is why the client can then read the endpoint under normal
 cache rules.
 
-The client deliberately does **not** force revalidation. The fetch-spec cache modes
-(`no-store`, `no-cache`) send `max-age=0`, which punches every request past the CDN to the
-origin, where the per-IP `hpke.keys.fetch` policy lives; and a per-browser cache saves
-nothing for many distinct clients sharing one carrier-grade NAT, which only the shared CDN
-cache can absorb. Bypassing it would trade a bounded, now-quiet staleness for 429s and a
-silent static-key fallback precisely where censorship makes NAT sharing the norm.
+The client deliberately does **not** force revalidation on routine lookups (only the
+one retry after `503 hpke.key_unavailable` does). The fetch-spec cache modes (`no-store`,
+`no-cache`) send `max-age=0`, which punches every request past the CDN to the origin; and a
+per-browser cache saves nothing for many distinct clients sharing one carrier-grade NAT,
+which only the shared CDN cache can absorb.
+
+The origin never refuses the key route. The per-IP `hpke.keys.fetch` policy only decides
+how it answers: within the budget it checks the volatile seed store and can trigger a
+re-mint; past it, it answers from the datastore alone (header `x-fs-keys-throttled: 1`).
+Everyone behind a carrier NAT shares one budget, so a 429 would let one neighbour sending
+cache-busting requests keep the rest from ever getting an epoch, which a manifest-pinned
+client needs to seal a login, sign-up or bootstrap.
 
 The client also re-attests every 5 minutes and on refocus or regained connectivity
 (throttled to one check per minute), so a long-lived tab's verdict is current rather than
