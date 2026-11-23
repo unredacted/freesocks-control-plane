@@ -37,6 +37,7 @@
   let botToken = $state('');
   let starsEnabled = $state(false);
   let cryptoEnabled = $state(false);
+  let termsUrl = $state('');
   // Stars per code, by months, as typed ('' = not sold for Stars).
   let stars = $state<Record<number, string>>({});
   let init = $state(false);
@@ -46,6 +47,7 @@
       botUsername = view.botUsername;
       starsEnabled = view.starsEnabled;
       cryptoEnabled = view.cryptoEnabled;
+      termsUrl = view.termsUrl;
       stars = Object.fromEntries(view.starsPrices.map((p) => [p.months, String(p.stars)]));
       init = true;
     }
@@ -88,6 +90,7 @@
       starsEnabled,
       cryptoEnabled,
       starsPrices,
+      termsUrl: termsUrl.trim(),
       ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
     });
   }
@@ -177,11 +180,25 @@
       <Checkbox checked={cryptoEnabled} onCheckedChange={(v) => (cryptoEnabled = v === true)} />
       <span>Sell for crypto (the NOWPayments and BTCPay rails that are on above)</span>
     </label>
+    {#if cryptoEnabled}
+      <p class="ml-7 text-xs text-amber-600">
+        Telegram's rules say a bot selling digital goods must take Telegram Stars only, and name
+        crypto and outside payment pages. Telegram can remove a bot that sells for crypto.
+      </p>
+    {/if}
     <label class="flex items-center gap-3">
       <Checkbox checked={starsEnabled} onCheckedChange={(v) => (starsEnabled = v === true)} />
       <span>Sell for Telegram Stars</span>
     </label>
   </div>
+
+  <label class="block space-y-1">
+    <span class="text-xs text-muted-foreground">
+      Full terms of sale (optional https link). The bot always shows its own short terms, and buyers
+      accept them before paying; this adds a link to yours.
+    </span>
+    <Input placeholder="https://" bind:value={termsUrl} autocomplete="off" />
+  </label>
 
   <div>
     <p class="mb-2 text-xs text-muted-foreground">

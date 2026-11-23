@@ -15,6 +15,7 @@ import {
   type BotMessageKey,
 } from './botMessages.generated';
 import type { StarsPrice, TelegramConfig } from '../telegramConfig';
+import { MAX_DURATION_MONTHS } from '../billingConfig';
 
 export type { BotLocale, BotMessageKey };
 export { BOT_LOCALES };
@@ -103,6 +104,9 @@ export type Action =
   | { k: 'buy' }
   | { k: 'dur'; months: number }
   | { k: 'qty'; months: number; qty: number }
+  /** The buyer accepted the terms for this order: show how to pay. */
+  | { k: 'accept'; months: number; qty: number }
+  | { k: 'terms' }
   | { k: 'pay'; months: number; qty: number; method: PayMethod }
   | { k: 'coin'; months: number; qty: number; ticker: string }
   | { k: 'check'; ref: string }
@@ -134,6 +138,10 @@ export function encodeAction(lang: BotLocale, a: Action): string {
       return `d|${lang}|${a.months}`;
     case 'qty':
       return `q|${lang}|${a.months}|${a.qty}`;
+    case 'accept':
+      return `t|${lang}|${a.months}|${a.qty}`;
+    case 'terms':
+      return `T|${lang}`;
     case 'pay':
       return `p|${lang}|${a.months}|${a.qty}|${a.method}`;
     case 'coin':
@@ -150,7 +158,7 @@ export function decodeAction(data: string | undefined): { lang: BotLocale; actio
   if (!data || data.length > 64) return null;
   const [code, lang, f1, f2, f3, ...rest] = data.split('|');
   if (rest.length > 0 || !lang || !isBotLocale(lang)) return null;
-  const months = intIn(f1, 1, 36);
+  const months = intIn(f1, 1, MAX_DURATION_MONTHS);
   const qty = intIn(f2, 1, 50);
   switch (code) {
     case 'm':
@@ -169,6 +177,12 @@ export function decodeAction(data: string | undefined): { lang: BotLocale; actio
       return months !== null && qty !== null && f3 === undefined
         ? { lang, action: { k: 'qty', months, qty } }
         : null;
+    case 't':
+      return months !== null && qty !== null && f3 === undefined
+        ? { lang, action: { k: 'accept', months, qty } }
+        : null;
+    case 'T':
+      return f1 === undefined ? { lang, action: { k: 'terms' } } : null;
     case 'p':
       return months !== null && qty !== null && (f3 === 's' || f3 === 'n' || f3 === 'b')
         ? { lang, action: { k: 'pay', months, qty, method: f3 } }
@@ -254,6 +268,18 @@ export function sellableDurations(tg: TelegramConfig, billing: ShopBilling): num
     .map((d) => d.months)
     .filter((m) => methodsFor(tg, billing, m, 1).length > 0)
     .sort((a, b) => a - b);
+}
+
+/** The ShopBilling slice of a resolved billing config. */
+export function toShopBilling(b: ShopBilling): ShopBilling {
+  return {
+    enabled: b.enabled,
+    currency: b.currency,
+    durations: b.durations.map(({ months, amountCents }) => ({ months, amountCents })),
+    rails: { nowpayments: b.rails.nowpayments, btcpay: b.rails.btcpay },
+    cryptoMinMonths: b.cryptoMinMonths,
+    btcpayMinMonths: b.btcpayMinMonths,
+  };
 }
 
 /** The shop is open: switched on, billing on, and something to sell. */

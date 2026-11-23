@@ -85,6 +85,7 @@ export const setConfig = internalMutation({
     starsEnabled: v.optional(v.boolean()),
     starsPrices: v.optional(v.array(v.object({ months: v.number(), stars: v.number() }))),
     cryptoEnabled: v.optional(v.boolean()),
+    termsUrl: v.optional(v.string()),
     botToken: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -182,6 +183,8 @@ export const webhookStatus = internalAction({
 function commandsFor(locale: BotLocale) {
   return [
     { command: 'buy', description: trPlain(locale, 'commandBuy') },
+    { command: 'terms', description: trPlain(locale, 'commandTerms') },
+    { command: 'paysupport', description: trPlain(locale, 'commandPaySupport') },
     { command: 'language', description: trPlain(locale, 'commandLanguage') },
     { command: 'privacy', description: trPlain(locale, 'commandPrivacy') },
     { command: 'help', description: trPlain(locale, 'commandHelp') },
@@ -191,7 +194,7 @@ function commandsFor(locale: BotLocale) {
 /**
  * Point Telegram's webhook at this deployment (with the secret header) and
  * set the command menu in every language, or remove the webhook. Pending
- * updates are dropped either way: they may predate the current settings.
+ * updates are KEPT either way: they may hold Stars payments not yet granted.
  * Registering with no webhook secret set makes one (32 random bytes) and
  * saves it first, so the operator never has to pick one.
  */

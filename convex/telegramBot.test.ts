@@ -8,7 +8,7 @@
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
-import { internal } from './_generated/api';
+import { api, internal } from './_generated/api';
 import { hmacSha512Hex } from './lib/crypto';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -19,8 +19,10 @@ const IPN_SECRET = 'test-ipn-secret';
 
 type Call = { method: string; body: Record<string, unknown>; url: string };
 
-function stubFetch() {
+/** `fail`: Bot API methods that fail once (Telegram answers an error). */
+function stubFetch(fail: string[] = []) {
   const calls: Call[] = [];
+  const failing = [...fail];
   let nextMessageId = 500;
   const fn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url);
@@ -28,6 +30,11 @@ function stubFetch() {
     if (u.startsWith('https://api.telegram.org/')) {
       const method = u.split('/').pop()!;
       calls.push({ method, body, url: u });
+      const f = failing.indexOf(method);
+      if (f >= 0) {
+        failing.splice(f, 1);
+        return Response.json({ ok: false, error_code: 502, description: 'Bad Gateway' });
+      }
       const result =
         method === 'sendMessage'
           ? { message_id: nextMessageId++ }
@@ -210,6 +217,14 @@ describe('the shop', () => {
       .inline_keyboard;
     expect(kb.flat().map((b) => b.text)).toEqual(['3 months', '12 months', 'Back']);
     await post(t, button('q|en|3|2'));
+    // The terms come first; the methods only after Accept.
+    const terms = calls.at(-1)!;
+    expect(String(terms.body.text)).toMatch(/Terms of sale/);
+    const termsKb = (
+      terms.body.reply_markup as { inline_keyboard: { text: string }[][] }
+    ).inline_keyboard.flat();
+    expect(termsKb.map((b) => b.text)).toEqual(['I accept, continue', 'Back']);
+    await post(t, button('t|en|3|2'));
     const methods = (
       calls.at(-1)!.body.reply_markup as { inline_keyboard: { text: string }[][] }
     ).inline_keyboard
@@ -238,6 +253,8 @@ describe('Telegram Stars', () => {
     const invoice = sent('sendInvoice')[0]!.body;
     expect(invoice.currency).toBe('XTR');
     expect(invoice.provider_token).toBe('');
+    // Single-chat: a forwarded copy cannot be paid by someone else.
+    expect(invoice.start_parameter).toBe('buy');
     expect(invoice.prices).toEqual([{ label: 'Gift codes', amount: 1400 }]);
     const ref = String(invoice.payload);
     expect(ref).toMatch(/^[0-9a-f]{32}$/);
@@ -277,6 +294,112 @@ describe('Telegram Stars', () => {
       expect(await ctx.db.query('redemptionCodes').collect()).toHaveLength(2);
     });
   });
+
+  async function starsOrder(t: ReturnType<typeof convexTest>, sent: (m: string) => Call[]) {
+    await post(t, button('p|en|3|1|s'));
+    return String(sent('sendInvoice').at(-1)!.body.payload);
+  }
+  const starsPaid = (ref: string, chargeId: string, refunded = false) =>
+    message('', {
+      text: undefined,
+      [refunded ? 'refunded_payment' : 'successful_payment']: {
+        currency: 'XTR',
+        total_amount: 700,
+        invoice_payload: ref,
+        telegram_payment_charge_id: chargeId,
+      },
+    });
+
+  test('a second payment on a paid order is refunded and leaves the order alone', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { sent } = stubFetch();
+    const ref = await starsOrder(t, sent);
+    await post(t, starsPaid(ref, 'charge_a'));
+    await post(t, starsPaid(ref, 'charge_b'));
+    expect(sent('refundStarPayment').map((c) => c.body)).toEqual([
+      { user_id: CHAT, telegram_payment_charge_id: 'charge_b' },
+    ]);
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/refunded in full/);
+    // Telegram then reports that refund: it is not this order's refund.
+    await post(t, starsPaid(ref, 'charge_b', true));
+    await t.run(async (ctx) => {
+      const actions = (await ctx.db.query('auditLog').collect()).map((a) => a.action);
+      expect(actions).toContain('billing.overpayment_seen');
+      expect(actions).not.toContain('billing.refund_seen');
+      expect(await ctx.db.query('redemptionCodes').collect()).toHaveLength(1);
+    });
+  });
+
+  test('codes are sent again when Telegram refused them the first time', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { sent } = stubFetch(['sendMessage']);
+    const ref = await starsOrder(t, sent);
+    const update = starsPaid(ref, 'charge_r');
+    expect((await post(t, update)).status).toBe(500);
+    expect((await post(t, update)).status).toBe(200); // Telegram redelivers it
+    const codes = sent('sendMessage').filter((c) => String(c.body.text).includes('FSM-'));
+    expect(codes).toHaveLength(2); // the refused one, then the delivered one
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query('redemptionCodes').collect()).toHaveLength(1);
+    });
+  });
+});
+
+describe('terms and support', () => {
+  test('/terms, /paysupport and /support answer even while closed', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t, { shop: false });
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'site.supportEmail',
+        value: JSON.stringify('help@freesocks.example'),
+        updatedAt: Date.now(),
+      }),
+    );
+    const { sent } = stubFetch();
+    await post(t, message('/terms'));
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/Terms of sale/);
+    await post(t, message('/paysupport'));
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/help@freesocks\.example/);
+    await post(t, message('/support'));
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/@BotSupport cannot help/);
+  });
+
+  test('register keeps pending updates and lists /terms and /paysupport', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { sent } = stubFetch();
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
+    expect(sent('setWebhook')[0]!.body).not.toHaveProperty('drop_pending_updates');
+    const commands = (sent('setMyCommands')[0]!.body.commands as { command: string }[]).map(
+      (c) => c.command,
+    );
+    expect(commands).toEqual(['buy', 'terms', 'paysupport', 'language', 'privacy', 'help']);
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'remove' });
+    expect(sent('deleteWebhook')[0]!.body).toEqual({ drop_pending_updates: false });
+  });
+});
+
+describe('the public link', () => {
+  test('only while the bot would answer as open', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    expect((await t.query(api.publicConfig.get, {})).telegram).toEqual({
+      botUsername: 'FreeSocksShopBot',
+    });
+    // Nothing to sell (no Stars, no crypto): the bot says closed, the site stays quiet.
+    await t.mutation(internal.telegramAdmin.setConfig, {
+      starsEnabled: false,
+      cryptoEnabled: false,
+    });
+    expect((await t.query(api.publicConfig.get, {})).telegram).toBeNull();
+    await t.mutation(internal.telegramAdmin.setConfig, { starsEnabled: true });
+    // No webhook secret: Telegram cannot reach the bot.
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', '');
+    expect((await t.query(api.publicConfig.get, {})).telegram).toBeNull();
+  });
 });
 
 describe('crypto', () => {
@@ -314,7 +437,11 @@ describe('crypto', () => {
     const ref = check.split('|')[2]!;
 
     await post(t, button(check));
-    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/Not paid yet/);
+    expect(String(calls.at(-1)!.body.text)).toMatch(/Not paid yet/);
+    // Check answers in place: tapping it never piles up messages.
+    const before = sent('sendMessage').length;
+    await post(t, button(check));
+    expect(sent('sendMessage')).toHaveLength(before);
 
     await payIpn(t, ref);
     // The buyer comes back through the processor's return link.
@@ -328,7 +455,7 @@ describe('crypto', () => {
     await post(t, button(saved, 777));
     expect(sent('deleteMessage').at(-1)!.body).toEqual({ chat_id: CHAT, message_id: 777 });
     await post(t, button(check));
-    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/already shown/);
+    expect(String(calls.at(-1)!.body.text)).toMatch(/already shown/);
 
     // Privacy: no table holds the chat id (the rate-limit subject is a salted HMAC).
     await t.run(async (ctx) => {

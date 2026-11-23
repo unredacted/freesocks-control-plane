@@ -30,6 +30,7 @@ import {
   resolveProcessorSecrets,
 } from './lib/billingConfig';
 import { resolveTelegramConfig, type TelegramConfig } from './lib/telegramConfig';
+import { resolveSiteConfig } from './lib/siteConfig';
 import * as tg from './lib/telegram/api';
 import type { InlineKeyboard } from './lib/telegram/api';
 import {
@@ -50,6 +51,7 @@ import {
   shopOpen,
   starsPriceFor,
   startOrderRef,
+  toShopBilling,
   tr,
   trPlain,
   type Action,
@@ -71,15 +73,18 @@ export interface ShopContext {
   coins: { ticker: string; label: string; network: string }[];
   /** The website, for links ('' when unset). */
   site: string;
+  /** Where buyers write for payment help ('' when unset). */
+  supportEmail: string;
 }
 
 export const shopContext = internalQuery({
   args: {},
   handler: async (ctx): Promise<ShopContext> => {
-    const [tgConfig, billing, secrets] = await Promise.all([
+    const [tgConfig, billing, secrets, site] = await Promise.all([
       resolveTelegramConfig(ctx.db),
       resolveBillingConfig(ctx.db),
       resolveProcessorSecrets(ctx.db),
+      resolveSiteConfig(ctx.db),
     ]);
     const coins =
       billing.enabled && billing.rails.nowpayments
@@ -91,16 +96,10 @@ export const shopContext = internalQuery({
         : [];
     return {
       tg: tgConfig,
-      billing: {
-        enabled: billing.enabled,
-        currency: billing.currency,
-        durations: billing.durations.map(({ months, amountCents }) => ({ months, amountCents })),
-        rails: { nowpayments: billing.rails.nowpayments, btcpay: billing.rails.btcpay },
-        cryptoMinMonths: billing.cryptoMinMonths,
-        btcpayMinMonths: billing.btcpayMinMonths,
-      },
+      billing: toShopBilling(billing),
       coins,
       site: (secrets.publicBaseUrl ?? '').replace(/\/$/, ''),
+      supportEmail: site.supportEmail,
     };
   },
 });
@@ -232,8 +231,12 @@ class Bot {
           keyboard: out.keyboard,
         });
         return;
-      } catch {
-        // Too old to edit, or unchanged: send a fresh one instead.
+      } catch (err) {
+        // Unchanged (a repeated tap): nothing to do, and no extra copy.
+        if (err instanceof tg.TelegramApiError && /not modified/i.test(err.description ?? '')) {
+          return;
+        }
+        // Too old to edit, or gone: send a fresh one instead.
       }
     }
     await this.send(out);
@@ -241,6 +244,11 @@ class Bot {
 
   async send(out: Out): Promise<void> {
     await tg.sendMessage(this.token, this.chatId, out.text, { html: true, keyboard: out.keyboard });
+  }
+
+  /** One line of bot text in this chat's language. */
+  say(key: Parameters<typeof tr>[1], params?: Parameters<typeof tr>[2]): string {
+    return tr(this.lang, key, params);
   }
 
   private siteLine(): string {
@@ -258,9 +266,47 @@ class Bot {
         [this.btn(trPlain(this.lang, 'buttonBuy'), { k: 'buy' })],
         [
           this.btn(trPlain(this.lang, 'buttonPrivacy'), { k: 'privacy' }),
+          this.btn(trPlain(this.lang, 'buttonTerms'), { k: 'terms' }),
           this.btn(trPlain(this.lang, 'buttonLanguage'), { k: 'langs' }),
         ],
       ],
+    };
+  }
+
+  /**
+   * The terms of sale. With an order, the buyer must accept them (the button)
+   * before any payment method is shown: Telegram's rule for payments.
+   */
+  terms(order?: { months: number; qty: number }): Out {
+    const parts: string[] = [];
+    if (order) {
+      parts.push(
+        tr(this.lang, 'orderSummary', {
+          quantity: order.qty,
+          duration: durationLabel(this.lang, order.months),
+        }),
+        tr(this.lang, 'termsAsk'),
+      );
+    }
+    parts.push(tr(this.lang, 'terms'));
+    if (this.shop.tg.termsUrl) {
+      parts.push(tr(this.lang, 'termsMore', { url: this.shop.tg.termsUrl }));
+    }
+    const keyboard: InlineKeyboard = order
+      ? [
+          [this.btn(trPlain(this.lang, 'buttonAccept'), { k: 'accept', ...order })],
+          [this.btn(trPlain(this.lang, 'buttonBack'), { k: 'dur', months: order.months })],
+        ]
+      : [[this.btn(trPlain(this.lang, 'buttonBack'), { k: 'menu' })]];
+    return { text: parts.join('\n\n'), keyboard };
+  }
+
+  /** /paysupport: where payment problems go (Telegram's support can't help). */
+  support(): Out {
+    return {
+      text: this.shop.supportEmail
+        ? tr(this.lang, 'paySupport', { email: this.shop.supportEmail })
+        : tr(this.lang, 'paySupportSite', { site: this.siteLine() }),
     };
   }
 
@@ -319,7 +365,7 @@ class Bot {
         ticker: c.ticker,
       }),
     ]);
-    rows.push([this.btn(trPlain(this.lang, 'buttonBack'), { k: 'qty', months, qty })]);
+    rows.push([this.btn(trPlain(this.lang, 'buttonBack'), { k: 'accept', months, qty })]);
     return { text: tr(this.lang, 'chooseCoin'), keyboard: rows };
   }
 
@@ -368,8 +414,12 @@ class Bot {
     };
   }
 
-  /** The codes, with the delete button. Sent as a NEW message so it can be deleted alone. */
-  async sendCodes(ref: string, status: BotOrderStatus): Promise<void> {
+  /**
+   * The codes, with the delete button. A Check tap turns its own message into
+   * the codes (so repeated taps never leave extra copies); otherwise it is a
+   * new message, which the delete button removes on its own.
+   */
+  codes(ref: string, status: BotOrderStatus): Out {
     const codes = status.giftCodes.map((c) => `<code>${escapeHtml(c)}</code>`).join('\n');
     const keyboard: InlineKeyboard = [
       [this.btn(trPlain(this.lang, 'buttonSaved'), { k: 'ack', ref })],
@@ -379,46 +429,51 @@ class Bot {
         { text: trPlain(this.lang, 'buttonRedeem'), url: `${this.shop.site}/account` },
       ]);
     }
-    await tg.sendMessage(
-      this.token,
-      this.chatId,
-      [
+    return {
+      text: [
         tr(this.lang, 'codesTitle'),
         codes,
         tr(this.lang, 'codesHelp', { duration: durationLabel(this.lang, status.months) }),
         tr(this.lang, 'orderRef', { ref: refPrefix(ref) }),
       ].join('\n\n'),
-      { html: true, keyboard },
-    );
+      keyboard,
+    };
   }
 
-  /** Where an order stands, as the buyer sees it. Paid + unseen codes are sent. */
+  /**
+   * Where an order stands, as the buyer sees it; paid + unseen codes are shown.
+   * From a Check button the answer replaces that message, so tapping again
+   * never piles up copies. Throws if Telegram refuses the message.
+   */
   async check(ref: string): Promise<void> {
     const status = await this.ctx.runQuery(internal.billing.botOrderStatus, { orderRef: ref });
     if (!status) {
-      await this.send({ text: tr(this.lang, 'orderNotFound') });
+      await this.show({ text: tr(this.lang, 'orderNotFound') });
       return;
     }
     const r = { ref: refPrefix(ref) };
     switch (status.status) {
       case 'paid':
-        if (status.giftCodes.length > 0) await this.sendCodes(ref, status);
-        else await this.send({ text: tr(this.lang, 'codesGone', r) });
+        await this.show(
+          status.giftCodes.length > 0
+            ? this.codes(ref, status)
+            : { text: tr(this.lang, 'codesGone', r) },
+        );
         return;
       case 'pending':
-        await this.send({ text: tr(this.lang, 'notPaidYet'), keyboard: [this.checkRow(ref)] });
+        await this.show({ text: tr(this.lang, 'notPaidYet'), keyboard: [this.checkRow(ref)] });
         return;
       case 'confirming':
-        await this.send({ text: tr(this.lang, 'confirming'), keyboard: [this.checkRow(ref)] });
+        await this.show({ text: tr(this.lang, 'confirming'), keyboard: [this.checkRow(ref)] });
         return;
       case 'underpaid':
-        await this.send({ text: tr(this.lang, 'underpaid', r) });
+        await this.show({ text: tr(this.lang, 'underpaid', r) });
         return;
       case 'expired':
-        await this.send({ text: tr(this.lang, 'expired') });
+        await this.show({ text: tr(this.lang, 'expired') });
         return;
       case 'failed':
-        await this.send({ text: tr(this.lang, 'failed') });
+        await this.show({ text: tr(this.lang, 'failed') });
         return;
     }
   }
@@ -504,6 +559,31 @@ class Bot {
 
 // --- the entry point ------------------------------------------------------------
 
+/**
+ * Refund a Stars payment the shop could not fulfil, and tell the buyer. The
+ * payer's id comes from this update only; it is never stored.
+ */
+async function refundUnfulfilled(
+  bot: Bot,
+  token: string,
+  payerId: number | undefined,
+  p: TgPayment,
+): Promise<void> {
+  try {
+    if (payerId === undefined) throw new Error('no payer');
+    await tg.refundStarPayment(token, payerId, p.telegram_payment_charge_id);
+    await bot.send({ text: bot.say('starsNotFulfilled') });
+  } catch (err) {
+    console.error(
+      '[telegram] stars refund failed:',
+      err instanceof tg.TelegramApiError ? err.message : 'error',
+    );
+    await bot
+      .send({ text: bot.say('starsRefundFailed', { ref: refPrefix(p.invoice_payload) }) })
+      .catch(() => undefined);
+  }
+}
+
 /** A Stars payment that must be redelivered (its grant failed). */
 class PaymentRetry extends Error {
   constructor(readonly cause: unknown) {
@@ -562,7 +642,7 @@ export const handleUpdate = internalAction({
       const refunded = update.message?.refunded_payment;
       if (paid || refunded) {
         const p = (paid ?? refunded)!;
-        let res: { duplicate: boolean };
+        let res: { duplicate: boolean; granted: boolean };
         try {
           res = await ctx.runAction(internal.billing.ingestStarsPayment, {
             orderRef: p.invoice_payload,
@@ -577,9 +657,41 @@ export const handleUpdate = internalAction({
           });
           throw new PaymentRetry(err);
         }
-        if (paid && !res.duplicate) {
-          const lang = pickLocale(update.message?.from?.language_code);
-          await new Bot(ctx, token, shop, chatId, lang).check(p.invoice_payload);
+        if (paid) {
+          const payer = update.message?.from;
+          const lang = pickLocale(payer?.language_code);
+          const bot = new Bot(ctx, token, shop, chatId, lang);
+          if (!res.duplicate && !res.granted) {
+            // Paid but not fulfilled (the order was already paid, or refused):
+            // Telegram's rule is a full refund.
+            await refundUnfulfilled(bot, token, payer?.id, p);
+            return { handled: true };
+          }
+          // The codes have exactly one way to the buyer: this message. Its
+          // delivery is claimed once per payment (a resent payment does not
+          // send them twice). If Telegram refuses it, the claim stays
+          // retryable, the update is released and the route answers 500, so
+          // the payment is redelivered and the codes are sent again.
+          const deliveryId = `telegram_stars:${p.telegram_payment_charge_id}:delivery`;
+          const delivery = await ctx.runMutation(internal.webhooks.claimEvent, {
+            eventId: deliveryId,
+            source: 'billing.telegram_stars.delivery',
+            payload: JSON.stringify({ event: 'delivery' }),
+          });
+          if (delivery.proceed) {
+            try {
+              await bot.check(p.invoice_payload);
+              await ctx.runMutation(internal.webhooks.markEventProcessed, {
+                eventId: deliveryId,
+              });
+            } catch (err) {
+              await ctx.runMutation(internal.webhooks.markEventFailed, { eventId: deliveryId });
+              await ctx.runMutation(internal.telegramBot.releaseUpdate, {
+                updateId: update.update_id,
+              });
+              throw new PaymentRetry(err);
+            }
+          }
         }
         return { handled: true };
       }
@@ -604,7 +716,7 @@ export const handleUpdate = internalAction({
         const a = decoded.action;
         // Checking or clearing an order, privacy and language work even while
         // the shop is closed; everything that sells needs it open.
-        const sells = !['check', 'ack', 'privacy', 'langs'].includes(a.k);
+        const sells = !['check', 'ack', 'privacy', 'langs', 'terms'].includes(a.k);
         if (sells && !open) {
           await bot.show(bot.closed());
           return { handled: true };
@@ -618,6 +730,9 @@ export const handleUpdate = internalAction({
             break;
           case 'privacy':
             await bot.show(bot.privacy());
+            break;
+          case 'terms':
+            await bot.show(bot.terms());
             break;
           case 'langs':
             await bot.show(bot.languages());
@@ -633,6 +748,9 @@ export const handleUpdate = internalAction({
             await bot.show(bot.quantities(a.months));
             break;
           case 'qty':
+            await bot.show(bot.terms({ months: a.months, qty: a.qty }));
+            break;
+          case 'accept':
             await bot.show(bot.methods(a.months, a.qty));
             break;
           case 'pay':
@@ -650,7 +768,10 @@ export const handleUpdate = internalAction({
       const ref = cmd?.name === 'start' ? startOrderRef(cmd.arg) : null;
       if (ref) await bot.check(ref);
       else if (cmd?.name === 'privacy') await bot.send(bot.privacy());
-      else if (cmd?.name === 'language') await bot.send(bot.languages());
+      else if (cmd?.name === 'terms') await bot.send(bot.terms());
+      else if (cmd?.name === 'paysupport' || cmd?.name === 'support') {
+        await bot.send(bot.support());
+      } else if (cmd?.name === 'language') await bot.send(bot.languages());
       else if (cmd?.name === 'help') await bot.send({ text: tr(lang, 'help') });
       else if (!open) await bot.send(bot.closed());
       else if (cmd?.name === 'buy') await bot.send(bot.durations());

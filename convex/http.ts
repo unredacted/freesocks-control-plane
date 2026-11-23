@@ -4024,6 +4024,7 @@ http.route({
         ...bool('cryptoEnabled'),
         ...(typeof body.botUsername === 'string' ? { botUsername: body.botUsername } : {}),
         ...(typeof body.botToken === 'string' ? { botToken: body.botToken } : {}),
+        ...(typeof body.termsUrl === 'string' ? { termsUrl: body.termsUrl } : {}),
         ...(prices ? { starsPrices: prices } : {}),
         actorAdminId: admin.adminUserId,
       });

@@ -984,7 +984,11 @@ export const applyEvent = internalMutation({
           },
         });
       }
-      if (a.status === 'failed') {
+      // A Stars refund names the exact payment it returns. The bot refunds a
+      // second payment on a paid order right away; that refund is not this
+      // order's (the payment that paid it stands), so it changes nothing.
+      const otherStarsPayment = a.processor === 'telegram_stars' && !isSamePayment;
+      if (a.status === 'failed' && !otherStarsPayment) {
         await writeAuditLog(ctx, {
           actorType: 'webhook',
           actorId: order.userId,

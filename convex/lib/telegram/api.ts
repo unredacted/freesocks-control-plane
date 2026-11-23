@@ -141,7 +141,11 @@ export function answerCallbackQuery(
   });
 }
 
-/** A Telegram Stars invoice: currency XTR, no provider token, one price line. */
+/**
+ * A Telegram Stars invoice: currency XTR, no provider token, one price line.
+ * A start_parameter makes it single-chat: a forwarded copy carries a link to
+ * the bot instead of a Pay button, so nobody else can pay this order.
+ */
 export function sendStarsInvoice(
   token: string,
   chatId: number,
@@ -155,6 +159,19 @@ export function sendStarsInvoice(
     provider_token: '',
     currency: 'XTR',
     prices: [{ label: inv.label, amount: inv.stars }],
+    start_parameter: 'buy',
+  });
+}
+
+/** Give a Stars payment back in full (the order could not be fulfilled). */
+export function refundStarPayment(
+  token: string,
+  userId: number,
+  chargeId: string,
+): Promise<unknown> {
+  return callTelegram(token, 'refundStarPayment', {
+    user_id: userId,
+    telegram_payment_charge_id: chargeId,
   });
 }
 
@@ -192,13 +209,14 @@ export function setWebhook(
     url,
     secret_token: secretToken,
     allowed_updates: allowedUpdates,
-    drop_pending_updates: true,
+    // Never drop pending updates: they may hold Stars payments not yet granted.
     max_connections: 10,
   });
 }
 
 export function deleteWebhook(token: string): Promise<unknown> {
-  return callTelegram(token, 'deleteWebhook', { drop_pending_updates: true });
+  // Pending updates are kept (Stars payments among them) for the next register.
+  return callTelegram(token, 'deleteWebhook', { drop_pending_updates: false });
 }
 
 export function getMe(token: string): Promise<{ id: number; username?: string }> {

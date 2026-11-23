@@ -239,6 +239,13 @@ through `billing.botOrderStatus` and clears the reveal through
 The web checkout route still refuses an anonymous gift, and `grantOrder` still
 refuses a userless gift that isn't from the bot.
 
+**Terms first.** After the buyer picks a length and a number of codes, the bot
+shows its terms of sale (the `bot.terms` text, plus a link to
+`telegram.termsUrl` when set) and shows the payment methods only after
+**I accept, continue**. `/terms` shows them at any time. `/paysupport` (and
+`/support`) points to `site.supportEmail`, or the site, and says Telegram's own
+support can't help with bot purchases. Telegram requires all three for payments.
+
 **Payment.** Two methods, each with its own switch (Admin -> Billing -> Telegram
 gift shop):
 
@@ -248,21 +255,35 @@ gift shop):
   page link otherwise). The processor's success and cancel URLs are
   `https://t.me/<bot>?start=o_<ref>`, which brings the buyer back to the bot's
   payment check. Prices are the membership prices; the crypto minimum applies.
+  **Telegram's rules say a bot selling digital goods must take Stars only** (they
+  name crypto and outside payment pages, and Telegram can remove a bot that
+  breaks this), so the card warns when this switch is on.
 - **Telegram Stars** (`processor: 'telegram_stars'`, currency `XTR`, whole Stars in
   `amountCents`). Prices per code are set per duration in the card
   (`telegram.stars.prices`); a duration with no Stars price isn't sold for Stars.
-  The bot sends a Telegram invoice whose payload is the order ref. Telegram's
+  The bot sends a Telegram invoice whose payload is the order ref, with a
+  `start_parameter`, which makes it single-chat: a forwarded copy carries a link
+  to the bot instead of a Pay button. Telegram's
   `pre_checkout_query` is answered yes only for a pending Stars order of exactly
   that amount (`billing.starsPreCheckout`). `successful_payment` goes through
   `billing.ingestStarsPayment`: the same claim (`telegram_stars:<charge id>`),
   mint and `applyEvent` path as a processor webhook, so it grants exactly once. A
-  `refunded_payment` audits `billing.refund_seen`; the codes stay valid (nothing
-  links them to the order). Stars revenue is not in the revenue chart (a
+  fresh payment that doesn't grant (a second payment on a paid order) is refunded
+  at once with `refundStarPayment` (Telegram's rule for an order that can't be
+  fulfilled); the payer's id comes from that update and is not stored. Telegram's
+  later `refunded_payment` for it changes nothing, since it isn't the payment
+  that paid the order. A `refunded_payment` for the paying payment audits
+  `billing.refund_seen`; the codes stay valid (nothing links them to the order). Stars revenue is not in the revenue chart (a
   different currency). Stars are paid out through Telegram, outside FCP.
 
 **Delivery is pull-only.** The bot keeps no chat, so it can't message a buyer
-later. A Stars buyer gets the codes in the same update as the payment; a crypto
-buyer taps **Check payment** or comes back through the return link. The codes
+later. A Stars buyer gets the codes in the same update as the payment. That
+delivery is claimed once per payment (`telegram_stars:<charge id>:delivery` in
+`webhookEvents`); if Telegram refuses the message, the claim stays retryable and
+the webhook answers 500, so Telegram redelivers the payment and the codes are
+sent again. A crypto buyer taps **Check payment**, which answers by editing that
+message (repeated taps never leave extra copies), or comes back through the
+return link. The codes
 message has a **Saved, delete this message** button that clears the reveal and
 deletes the message from the chat. The `billing-gift-reveal-sweep` 24 h window
 applies; a buyer who missed it gives support the 8-character order ref the bot
@@ -278,15 +299,18 @@ showed, which matches the ref prefix in Admin -> Billing -> Orders.
 3. Press **Register webhook**. With no webhook secret saved, it makes one (32
    random bytes, `telegram.secret.webhookSecret`) and saves it first. It then
    points Telegram at `/api/webhooks/telegram` with that secret and sets the
-   command menu in every language. Registering again reuses the secret. The card
+   command menu in every language. Registering again reuses the secret. Neither
+   register nor remove drops pending updates: they may hold Stars payments not
+   yet granted. The card
    shows whether Telegram reaches the webhook.
 
    `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` in the deployment env still
    work as fallbacks; a saved value wins.
 
-4. Turn on the methods, then **Shop open**. While open, the site footer and the
-   gift card link the bot (`publicConfig.telegram`), so buyers can tell the real
-   bot from a copy.
+4. Turn on the methods, then **Shop open**. While the bot would answer as open
+   (switched on, billing on, something to sell, token and webhook secret set), the
+   site footer and the gift card link it (`publicConfig.telegram`), so buyers can
+   tell the real bot from a copy.
 
 **Webhook.** `POST /api/webhooks/telegram` checks the
 `x-telegram-bot-api-secret-token` header against the webhook secret
