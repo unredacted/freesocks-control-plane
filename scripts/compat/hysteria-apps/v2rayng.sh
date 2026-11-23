@@ -122,6 +122,11 @@ fresh() {
 delete_udp() {
   sub_tab || return 1
   scroll_top
+  # The app does not delete the selected entry (`· UDP`, from the connection
+  # check): another one is selected first.
+  dump
+  tap_text '· Direct$' || { echo 'no · Direct entry to select'; return 1; }
+  sleep 1
   local at i
   for i in 1 2 3 4 5 6; do
     dump
