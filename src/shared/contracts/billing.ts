@@ -164,17 +164,47 @@ export const DirectCoinView = z.object({
 });
 export type DirectCoinView = z.infer<typeof DirectCoinView>;
 
+/** `GET /api/v1/billing/coins`: the direct NOWPayments coin picker, in display order. */
+export const DirectCoinsResponse = z.object({
+  coins: z.array(
+    z.object({
+      ticker: z.string(),
+      /** Unit shown next to the amount, e.g. `USDT`. */
+      label: z.string(),
+      /** Network shown everywhere the coin appears, e.g. `Tron (TRC-20)`. */
+      network: z.string(),
+      /** NOWPayments uses a memo / tag for this coin (a hint for the picker). */
+      memo: z.boolean().default(false),
+      /** A quick-pick button (the operator's pinned coins); the rest are in the drop-down. */
+      pinned: z.boolean().default(true),
+    }),
+  ),
+});
+export type DirectCoinsResponse = z.infer<typeof DirectCoinsResponse>;
+
+export const CoinSource = z.enum(['account', 'list']);
+export type CoinSource = z.infer<typeof CoinSource>;
+
 export const CheckoutStyle = z.enum(['hosted', 'direct']);
 export type CheckoutStyle = z.infer<typeof CheckoutStyle>;
 
 export const DirectCheckoutView = z.object({
-  nowpayments: z.object({ style: CheckoutStyle, coins: z.array(DirectCoinView) }),
+  nowpayments: z.object({
+    style: CheckoutStyle,
+    /** `account`: every coin switched on in the NOWPayments dashboard; `list`: `coins` only. */
+    source: CoinSource.default('list'),
+    coins: z.array(DirectCoinView),
+    /** Source `account`: tickers never offered. */
+    exclude: z.array(z.string()).default([]),
+    /** Source `account`: tickers shown first, in order. */
+    pinned: z.array(z.string()).default([]),
+  }),
   btcpay: z.object({ style: CheckoutStyle, methods: z.array(z.string()) }),
 });
 export type DirectCheckoutView = z.infer<typeof DirectCheckoutView>;
 
 const DIRECT_CHECKOUT_VIEW_DEFAULT: DirectCheckoutView = {
-  nowpayments: { style: 'hosted', coins: [] },
+  nowpayments: { style: 'hosted', source: 'account', coins: [], exclude: [], pinned: [] },
   btcpay: { style: 'hosted', methods: [] },
 };
 
@@ -184,6 +214,10 @@ export const CoinCheckResponse = z.object({
   error: z.string().nullable(),
   /** Price of the cheapest term the crypto rail sells (cents); null if none. */
   cheapestCryptoCents: z.number().int().nullable(),
+  /** Source `account`: coins now offered from the account (null = list not read). */
+  accountCoinCount: z.number().int().nullable().default(null),
+  /** Source `account`: network codes with no member-facing name (shown as the bare code). */
+  unnamedNetworks: z.array(z.string()).default([]),
   coins: z.array(
     z.object({
       ticker: z.string(),

@@ -25,18 +25,25 @@ import { applyMembership } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
 import { recordDonation, subtractDonation } from './lib/donationBonus';
 import {
+  ACCOUNT_COINS_KEY,
   directEnabled,
   findDuration,
   minMonthsForProcessor,
   resolveBillingConfig,
+  readAccountCoins,
+  resolveDirectCoins,
   resolveProcessorSecrets,
   withinUnderpaymentTolerance,
 } from './lib/billingConfig';
+import { knownNetwork } from './lib/cryptoNetworks';
+import { runWithCronOutcome } from './cronHeartbeat';
 import type {
+  AccountCoinsCache,
   BillingConfig,
   BtcpayCheckoutConfig,
   DirectCoin,
   ProcessorSecrets,
+  ResolvedCoin,
 } from './lib/billingConfig';
 import {
   DirectPaymentError,
@@ -262,13 +269,23 @@ export const resolveSecrets = internalQuery({
 /** Resolve the billing config + the membership tierId for the checkout action. */
 export const checkoutContext = internalQuery({
   args: {},
-  handler: async (ctx): Promise<{ config: BillingConfig; tierId: Id<'tiers'> | null }> => {
+  handler: async (
+    ctx,
+  ): Promise<{
+    config: BillingConfig;
+    tierId: Id<'tiers'> | null;
+    directCoins: ResolvedCoin[];
+  }> => {
     const config = await resolveBillingConfig(ctx.db);
     const tier = await ctx.db
       .query('tiers')
       .withIndex('by_slug', (q) => q.eq('slug', config.tierSlug))
       .unique();
-    return { config, tierId: tier?._id ?? null };
+    return {
+      config,
+      tierId: tier?._id ?? null,
+      directCoins: await resolveDirectCoins(ctx.db, config),
+    };
   },
 });
 
@@ -362,7 +379,10 @@ export const createCheckout = internalAction({
     payCurrency: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<{ redirectUrl: string; orderRef: string; direct: boolean }> => {
-    const { config, tierId } = await ctx.runQuery(internal.billing.checkoutContext, {});
+    const { config, tierId, directCoins } = await ctx.runQuery(
+      internal.billing.checkoutContext,
+      {},
+    );
     if (!config.enabled) {
       throw new ConvexError({
         code: 'billing.disabled',
@@ -470,9 +490,9 @@ export const createCheckout = internalAction({
     // Direct checkout: resolve the picked coin BEFORE any invoice exists, so a
     // crafted or stale ticker fails without leaving anything at the processor.
     let directCoin: DirectCoin | null = null;
-    if (a.processor === 'nowpayments' && a.payCurrency && directEnabled(config, 'nowpayments')) {
+    if (a.processor === 'nowpayments' && a.payCurrency && directCoins.length > 0) {
       const ticker = a.payCurrency.trim().toLowerCase();
-      directCoin = config.direct.nowpayments.coins.find((c) => c.ticker === ticker) ?? null;
+      directCoin = directCoins.find((c) => c.ticker === ticker) ?? null;
       if (!directCoin) {
         throw new ConvexError({
           code: 'billing.invalid_coin',
@@ -1392,13 +1412,102 @@ export const ingestEvent = internalAction({
 
 // --- admin: direct-checkout coin check (Admin → Billing "Check coins") --------
 
+// --- direct checkout: the NOWPayments account's coin list ---------------------
+
+/** Store a fresh account coin list (source "account"). */
+export const storeAccountCoins = internalMutation({
+  args: {
+    coins: v.array(v.object({ ticker: v.string(), network: v.string(), memo: v.boolean() })),
+  },
+  handler: async (ctx, { coins }) => {
+    const value: AccountCoinsCache = { fetchedAt: Date.now(), coins };
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', ACCOUNT_COINS_KEY))
+      .unique();
+    const doc = { key: ACCOUNT_COINS_KEY, value: JSON.stringify(value), updatedAt: Date.now() };
+    if (row) await ctx.db.patch(row._id, doc);
+    else await ctx.db.insert('appState', doc);
+  },
+});
+
+/** Whether the account list should be kept fresh, plus the API config to do it. */
+export const accountCoinsContext = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<{ wanted: boolean }> => {
+    const np = (await resolveBillingConfig(ctx.db)).direct.nowpayments;
+    return { wanted: np.style === 'direct' && np.source === 'account' };
+  },
+});
+
 /**
- * Check the direct NOWPayments coin allowlist against the account, read-only:
- * per coin, whether it is switched on in the NOWPayments dashboard, its network
- * and memo use, and its minimum next to the cheapest crypto term. The SPA turns
- * these into warnings (not enabled, needs a memo that isn't allowed, minimum
- * above the cheapest term).
+ * Re-read the coins switched on in the NOWPayments dashboard (source
+ * "account"). On a failed read the last good list stays: a blip at NOWPayments
+ * must not switch direct checkout off. Hourly cron, after an admin config save,
+ * and from "Check coins". Returns the number of coins now cached (null = kept).
  */
+async function refreshAccountCoinsNow(ctx: ActionCtx): Promise<number | null> {
+  const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
+  if (!secrets.nowpayments.apiKey) return null;
+  const coins = await nowpayments.accountCoins({
+    apiUrl: secrets.nowpayments.apiUrl,
+    apiKey: secrets.nowpayments.apiKey,
+  });
+  if (!coins) {
+    console.warn('[billing] nowpayments account coin list unreadable; keeping the last one');
+    return null;
+  }
+  await ctx.runMutation(internal.billing.storeAccountCoins, { coins });
+  return coins.length;
+}
+
+export const refreshAccountCoins = internalAction({
+  args: {},
+  handler: async (ctx): Promise<null> =>
+    runWithCronOutcome(ctx, 'billing-nowpayments-coins', async () => {
+      const { wanted } = await ctx.runQuery(internal.billing.accountCoinsContext, {});
+      if (wanted) await refreshAccountCoinsNow(ctx);
+      return null;
+    }),
+});
+
+/** The member coin picker's list (public, `GET /api/v1/billing/coins`). */
+export const publicDirectCoins = internalQuery({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{
+    coins: Array<{
+      ticker: string;
+      label: string;
+      network: string;
+      memo: boolean;
+      pinned: boolean;
+    }>;
+  }> => {
+    const config = await resolveBillingConfig(ctx.db);
+    if (!config.enabled || !config.rails.nowpayments) return { coins: [] };
+    const coins = await resolveDirectCoins(ctx.db, config);
+    return {
+      coins: coins.map(({ ticker, label, network, memo, pinned }) => ({
+        ticker,
+        label,
+        network,
+        memo,
+        pinned,
+      })),
+    };
+  },
+});
+
+/**
+ * Admin -> Billing "Check coins", read-only at NOWPayments (it only refreshes
+ * our cache). Source "account": re-reads the account list, then checks the
+ * first coins members see (pinned first). Source "list": checks the whole
+ * hand-written list. Per coin: switched on in the dashboard, network, memo use,
+ * and an indicative minimum next to the cheapest crypto term.
+ */
+const CHECK_MAX_COINS = 16;
 export const checkDirectCoins = internalAction({
   args: {},
   handler: async (
@@ -1407,6 +1516,10 @@ export const checkDirectCoins = internalAction({
     ok: boolean;
     error: string | null;
     cheapestCryptoCents: number | null;
+    /** Source "account": coins now offered (null = the account list was unreadable). */
+    accountCoinCount: number | null;
+    /** Source "account": network codes with no member-facing name (shown as the bare code). */
+    unnamedNetworks: string[];
     coins: nowpayments.CoinCheck[];
   }> => {
     const [secrets, { config }] = await Promise.all([
@@ -1415,16 +1528,48 @@ export const checkDirectCoins = internalAction({
     ]);
     const cheapest = config.durations.find((d) => d.months >= config.cryptoMinMonths);
     const cheapestCryptoCents = cheapest ? cheapest.amountCents : null;
+    const empty = { accountCoinCount: null, unnamedNetworks: [], coins: [] };
     if (!secrets.nowpayments.apiKey) {
-      return { ok: false, error: 'API key not configured', cheapestCryptoCents, coins: [] };
+      return { ok: false, error: 'API key not configured', cheapestCryptoCents, ...empty };
+    }
+    const np = config.direct.nowpayments;
+    let accountCoinCount: number | null = null;
+    let unnamedNetworks: string[] = [];
+    let tickers = np.coins.map((c) => c.ticker);
+    if (np.source === 'account') {
+      accountCoinCount = await refreshAccountCoinsNow(ctx);
+      const { directCoins } = await ctx.runQuery(internal.billing.checkoutContext, {});
+      const cache = await ctx.runQuery(internal.billing.accountCoinsCache, {});
+      unnamedNetworks = [
+        ...new Set((cache?.coins ?? []).map((c) => c.network).filter((n) => !knownNetwork(n))),
+      ];
+      // directCoins is empty while the style is hosted; check the cache order then.
+      tickers = (
+        directCoins.length
+          ? directCoins.map((c) => c.ticker)
+          : (cache?.coins ?? []).map((c) => c.ticker)
+      ).slice(0, CHECK_MAX_COINS);
+      if (accountCoinCount === null) {
+        return {
+          ok: false,
+          error: 'NOWPayments did not return a readable coin list',
+          cheapestCryptoCents,
+          ...empty,
+        };
+      }
     }
     const coins = await nowpayments.checkCoins(
       { apiUrl: secrets.nowpayments.apiUrl, apiKey: secrets.nowpayments.apiKey },
-      config.direct.nowpayments.coins.map((c) => c.ticker),
+      tickers,
       config.currency,
     );
-    return { ok: true, error: null, cheapestCryptoCents, coins };
+    return { ok: true, error: null, cheapestCryptoCents, accountCoinCount, unnamedNetworks, coins };
   },
+});
+
+export const accountCoinsCache = internalQuery({
+  args: {},
+  handler: (ctx): Promise<AccountCoinsCache | null> => readAccountCoins(ctx.db),
 });
 
 // --- admin: live credential probe (Admin → Billing "test connection") ---------

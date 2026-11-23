@@ -67,15 +67,13 @@ export type AdminAuthStatus = z.infer<typeof AdminAuthStatus>;
 
 /** Public projection of the direct-checkout config (see PublicConfig.billing.direct). */
 export const PublicDirectCheckout = z.object({
-  nowpayments: z.object({
-    enabled: z.boolean(),
-    coins: z.array(z.object({ ticker: z.string(), label: z.string(), network: z.string() })),
-  }),
+  /** The coin list itself is GET /api/v1/billing/coins (DirectCoinsResponse). */
+  nowpayments: z.object({ enabled: z.boolean() }),
   btcpay: z.object({ enabled: z.boolean() }),
 });
 export type PublicDirectCheckout = z.infer<typeof PublicDirectCheckout>;
 const PUBLIC_DIRECT_DEFAULT: PublicDirectCheckout = {
-  nowpayments: { enabled: false, coins: [] },
+  nowpayments: { enabled: false },
   btcpay: { enabled: false },
 };
 
@@ -204,9 +202,9 @@ export const PublicConfig = z.object({
     btcpayMinMonths: z.number().int().default(1),
     /**
      * Direct checkout per crypto rail: when `enabled`, the payment details show
-     * on our own page instead of the processor's. NOWPayments carries the coin
-     * picker's allowlist (operator text, shown verbatim). Defaulted for deploy
-     * skew (older backends omit it = everything hosted).
+     * on our own page instead of the processor's (the coins come from
+     * GET /api/v1/billing/coins). Defaulted for deploy skew (older backends
+     * omit it = everything hosted).
      */
     direct: PublicDirectCheckout.default(PUBLIC_DIRECT_DEFAULT),
     /**

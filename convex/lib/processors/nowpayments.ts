@@ -562,6 +562,59 @@ async function getJson(cfg: NowPaymentsConfig, path: string): Promise<unknown> {
   }
 }
 
+function listOf(x: unknown, ...keys: string[]): unknown[] | null {
+  if (!x || typeof x !== 'object') return null;
+  for (const k of keys) {
+    const v = (x as Record<string, unknown>)[k];
+    if (Array.isArray(v)) return v;
+  }
+  return null;
+}
+
+/** `/v1/full-currencies` keyed by lower-cased code (empty map when unreadable). */
+async function currencyDetails(
+  cfg: NowPaymentsConfig,
+): Promise<Map<string, Record<string, unknown>>> {
+  const details = new Map<string, Record<string, unknown>>();
+  for (const c of listOf(await getJson(cfg, '/v1/full-currencies'), 'currencies') ?? []) {
+    if (c && typeof c === 'object' && typeof (c as { code?: unknown }).code === 'string') {
+      details.set((c as { code: string }).code.toLowerCase(), c as Record<string, unknown>);
+    }
+  }
+  return details;
+}
+
+/**
+ * Every coin switched on in the NOWPayments dashboard's coin settings
+ * (`/v1/merchant/coins`), with its network code and memo use from
+ * `/v1/full-currencies`. A coin without a readable network is left out: the
+ * member must be told the network, and we won't guess it. Null when either
+ * call fails (the caller keeps its last good list).
+ */
+export async function accountCoins(
+  cfg: NowPaymentsConfig,
+): Promise<Array<{ ticker: string; network: string; memo: boolean }> | null> {
+  const [merchant, details] = await Promise.all([
+    getJson(cfg, '/v1/merchant/coins'),
+    currencyDetails(cfg),
+  ]);
+  const enabled = listOf(merchant, 'selectedCurrencies', 'currencies');
+  if (!enabled || details.size === 0) return null;
+  const out: Array<{ ticker: string; network: string; memo: boolean }> = [];
+  const seen = new Set<string>();
+  for (const raw of enabled) {
+    const ticker = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    if (!/^[a-z0-9]{2,20}$/.test(ticker) || seen.has(ticker)) continue;
+    const d = details.get(ticker);
+    if (!d || d.enable === false) continue;
+    const network = typeof d.network === 'string' ? d.network.trim().toLowerCase() : '';
+    if (!/^[a-z0-9-]{1,20}$/.test(network)) continue;
+    seen.add(ticker);
+    out.push({ ticker, network, memo: d.extra_id_exists === true });
+  }
+  return out;
+}
+
 /**
  * Read-only check of the direct-coin allowlist against the account: which
  * tickers are switched on (`/v1/merchant/coins`), their network and memo use
@@ -573,28 +626,14 @@ export async function checkCoins(
   tickers: string[],
   fiat: string,
 ): Promise<CoinCheck[]> {
-  const [merchant, full] = await Promise.all([
+  const [merchant, details] = await Promise.all([
     getJson(cfg, '/v1/merchant/coins'),
-    getJson(cfg, '/v1/full-currencies'),
+    currencyDetails(cfg),
   ]);
-  const listOf = (x: unknown, ...keys: string[]): unknown[] | null => {
-    if (!x || typeof x !== 'object') return null;
-    for (const k of keys) {
-      const v = (x as Record<string, unknown>)[k];
-      if (Array.isArray(v)) return v;
-    }
-    return null;
-  };
   const enabled = listOf(merchant, 'selectedCurrencies', 'currencies');
   const enabledSet = enabled
     ? new Set(enabled.filter((c): c is string => typeof c === 'string').map((c) => c.toLowerCase()))
     : null;
-  const details = new Map<string, Record<string, unknown>>();
-  for (const c of listOf(full, 'currencies') ?? []) {
-    if (c && typeof c === 'object' && typeof (c as { code?: unknown }).code === 'string') {
-      details.set((c as { code: string }).code.toLowerCase(), c as Record<string, unknown>);
-    }
-  }
   return Promise.all(
     tickers.map(async (ticker): Promise<CoinCheck> => {
       const d = details.get(ticker);

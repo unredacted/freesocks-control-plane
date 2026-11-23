@@ -2547,6 +2547,19 @@ http.route({
   }),
 });
 
+// The coins a member may pick for a direct NOWPayments checkout (public: the
+// anonymous donate page needs it too). One cached appState read, no processor
+// call. Empty when direct checkout is off or has no coins.
+http.route({
+  path: '/api/v1/billing/coins',
+  method: 'GET',
+  handler: httpAction(async (ctx) => {
+    return json(await ctx.runQuery(internal.billing.publicDirectCoins, {}), 200, {
+      'cache-control': 'public, max-age=60',
+    });
+  }),
+});
+
 // Poll an order's status (the return page). Scoped to the requesting member —
 // a ref that isn't theirs (or doesn't exist) is a 404. Without a session it
 // answers ONLY for anonymous donation orders (the unguessable 128-bit ref is

@@ -148,6 +148,8 @@ describe('direct checkout: NOWPayments', () => {
     settings(t, {
       'billing.nowpayments.enabled': true,
       'billing.nowpayments.checkoutStyle': 'direct',
+      // These tests pin the hand-written list; the account source is below.
+      'billing.nowpayments.coinSource': 'list',
       ...extra,
     });
 
@@ -422,6 +424,7 @@ describe('direct checkout: NOWPayments', () => {
       await settings(t, {
         'billing.nowpayments.enabled': true,
         'billing.nowpayments.checkoutStyle': style,
+        'billing.nowpayments.coinSource': 'list',
       });
       const { calls } = stubNowPayments(() => jsonRes(paymentReply()));
       const res = await t.action(internal.billing.createCheckout, {
@@ -471,6 +474,136 @@ describe('direct checkout: NOWPayments', () => {
     const order = await readOrder(t, res.orderRef);
     expect(order?.status).toBe('expired');
     expect(order?.directPayment).toBeUndefined();
+  });
+});
+
+describe('direct checkout: coins from the NOWPayments account', () => {
+  beforeEach(() => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
+    vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  const account = (t: T, extra: Record<string, unknown> = {}) =>
+    settings(t, {
+      'billing.nowpayments.enabled': true,
+      'billing.nowpayments.checkoutStyle': 'direct',
+      ...extra,
+    });
+
+  /** /v1/merchant/coins + /v1/full-currencies (+ invoice / invoice-payment for checkout). */
+  function stubAccount(merchantOk = true) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/merchant/coins') {
+          return merchantOk
+            ? jsonRes({ selectedCurrencies: ['BTC', 'usdttrc20', 'xrp', 'nonet', 'off'] })
+            : jsonRes({}, 500);
+        }
+        if (path === '/v1/full-currencies') {
+          return jsonRes({
+            currencies: [
+              { code: 'BTC', network: 'btc', extra_id_exists: false, enable: true },
+              { code: 'USDTTRC20', network: 'trx', extra_id_exists: false, enable: true },
+              { code: 'XRP', network: 'xrp', extra_id_exists: true, enable: true },
+              { code: 'NONET', network: null, enable: true },
+              { code: 'OFF', network: 'eth', enable: false },
+            ],
+          });
+        }
+        if (path === '/v1/invoice') {
+          return jsonRes({ id: 'inv_9', invoice_url: 'https://nowpayments.io/payment/?iid=inv_9' });
+        }
+        if (path === '/v1/invoice-payment') {
+          return jsonRes(paymentReply({ pay_currency: 'xrp', payin_extra_id: '99' }));
+        }
+        return jsonRes({}, 404);
+      }),
+    );
+  }
+
+  test('the refresh caches enabled coins with a network; members see them in order', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    await account(t);
+    stubAccount();
+    await t.action(internal.billing.refreshAccountCoins, {});
+    const { coins } = await t.query(internal.billing.publicDirectCoins, {});
+    // No network → left out; disabled → left out; pinned btc first.
+    expect(coins).toEqual([
+      { ticker: 'btc', label: 'BTC', network: 'Bitcoin', memo: false, pinned: true },
+      { ticker: 'usdttrc20', label: 'USDT', network: 'Tron (TRC-20)', memo: false, pinned: true },
+      { ticker: 'xrp', label: 'XRP', network: 'XRP Ledger', memo: true, pinned: false },
+    ]);
+  });
+
+  test('a memo coin from the account checks out with its memo', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seed(t);
+    await account(t);
+    stubAccount();
+    await t.action(internal.billing.refreshAccountCoins, {});
+    const res = await t.action(internal.billing.createCheckout, {
+      userId,
+      processor: 'nowpayments',
+      months: 3,
+      payCurrency: 'xrp',
+    });
+    expect(res.direct).toBe(true);
+    const m = (await readOrder(t, res.orderRef))?.directPayment?.methods[0];
+    expect(m).toMatchObject({ unit: 'XRP', network: 'XRP Ledger', memo: '99' });
+  });
+
+  test('an excluded coin is refused, and an unreadable refresh keeps the last list', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seed(t);
+    await account(t, { 'billing.nowpayments.coinExclude': ['xrp'] });
+    stubAccount();
+    await t.action(internal.billing.refreshAccountCoins, {});
+    expect(
+      await catchCode(
+        t.action(internal.billing.createCheckout, {
+          userId,
+          processor: 'nowpayments',
+          months: 3,
+          payCurrency: 'xrp',
+        }),
+      ),
+    ).toBe('billing.invalid_coin');
+
+    stubAccount(false);
+    await t.action(internal.billing.refreshAccountCoins, {});
+    const { coins } = await t.query(internal.billing.publicDirectCoins, {});
+    expect(coins.map((c) => c.ticker)).toEqual(['btc', 'usdttrc20']);
+  });
+
+  test('no cached list yet: nothing to offer, checkout stays hosted', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seed(t);
+    await account(t);
+    stubAccount();
+    expect((await t.query(internal.billing.publicDirectCoins, {})).coins).toEqual([]);
+    const res = await t.action(internal.billing.createCheckout, {
+      userId,
+      processor: 'nowpayments',
+      months: 3,
+      payCurrency: 'btc',
+    });
+    expect(res.direct).toBe(false);
+  });
+
+  test('the refresh does nothing while the rail is hosted', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    await settings(t, { 'billing.nowpayments.enabled': true });
+    stubAccount();
+    await t.action(internal.billing.refreshAccountCoins, {});
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 

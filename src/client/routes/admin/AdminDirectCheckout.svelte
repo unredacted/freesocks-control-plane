@@ -15,6 +15,7 @@
   import {
     CoinCheckResponse,
     type CheckoutStyle,
+    type CoinSource,
     type DirectCheckoutView,
   } from '../../../shared/contracts/billing';
   import { toast } from 'svelte-sonner';
@@ -68,7 +69,7 @@
     const coin = direct.nowpayments.coins.find((c) => c.ticker === ticker);
     const out: string[] = [];
     if (row.enabledOnAccount === false) out.push('not switched on in the NOWPayments dashboard');
-    if (row.needsMemo && coin && !coin.allowMemo) {
+    if (direct.nowpayments.source === 'list' && row.needsMemo && coin && !coin.allowMemo) {
       out.push('uses a memo: payments will be refused until "Memo OK" is ticked');
     }
     if (
@@ -84,6 +85,16 @@
   }
 
   let methodsText = $derived(direct.btcpay.methods.join(', '));
+  const tickerList = (v: string): string[] =>
+    v
+      .split(',')
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean);
+  let flaggedRows = $derived(
+    (check?.coins ?? [])
+      .map((c) => ({ ticker: c.ticker, warn: warnings(c.ticker) }))
+      .filter((r) => r.warn.length > 0),
+  );
 </script>
 
 <div class="space-y-4 border-t border-border pt-4">
@@ -115,70 +126,149 @@
       </select>
     </label>
 
-    <div>
-      <p class="text-xs font-medium text-muted-foreground">Coins members can pick</p>
-      <p class="mt-1 text-xs text-muted-foreground">
-        Ticker is NOWPayments' code, which names the network (usdttrc20 = USDT on Tron). Unit and
-        network are shown to members as written, so name the network exactly. A coin that needs a
-        memo or destination tag is refused unless "Memo OK" is ticked. With no coins, the rail stays
-        hosted.
+    <label class="block">
+      <span class="mb-1 block text-xs font-medium text-muted-foreground"
+        >Coins members can pick</span
+      >
+      <select
+        class="min-h-9 rounded-md border border-input bg-background px-2 text-sm"
+        value={direct.nowpayments.source}
+        onchange={(e) =>
+          (direct.nowpayments.source = (e.currentTarget as HTMLSelectElement).value as CoinSource)}
+      >
+        <option value="account">Every coin switched on in NOWPayments</option>
+        <option value="list">Only my own list</option>
+      </select>
+    </label>
+
+    {#if direct.nowpayments.source === 'account'}
+      <p class="text-xs text-muted-foreground">
+        Members get a drop-down of every coin switched on in your NOWPayments dashboard (coin
+        settings), re-read hourly and on save. Turn coins on or off there. Network names come from a
+        fixed table; a network it doesn't know shows as its bare code (Check coins lists them).
+        Coins that use a memo or tag are included, with the memo warning.
       </p>
-    </div>
-    {#if direct.nowpayments.coins.length > 0}
-      <div class="space-y-2">
-        {#each direct.nowpayments.coins as c, i (i)}
-          {@const warn = warnings(c.ticker)}
-          <div class="flex flex-wrap items-center gap-2">
-            <Input
-              class="min-h-9 w-32 font-mono"
-              placeholder="usdttrc20"
-              aria-label="Ticker"
-              value={c.ticker}
-              oninput={(e) => (c.ticker = (e.currentTarget as HTMLInputElement).value.trim())}
-            />
-            <Input
-              class="min-h-9 w-20"
-              placeholder="USDT"
-              aria-label="Unit"
-              value={c.label}
-              oninput={(e) => (c.label = (e.currentTarget as HTMLInputElement).value)}
-            />
-            <Input
-              class="min-h-9 w-48"
-              placeholder="Tron (TRC-20)"
-              aria-label="Network"
-              value={c.network}
-              oninput={(e) => (c.network = (e.currentTarget as HTMLInputElement).value)}
-            />
-            <label class="flex items-center gap-1.5 text-xs">
-              <Checkbox checked={c.allowMemo} onCheckedChange={(v) => (c.allowMemo = !!v)} />
-              Memo OK
-            </label>
-            <Button variant="ghost" size="sm" onclick={() => moveCoin(i, -1)} aria-label="Move up">
-              ↑
-            </Button>
-            <Button variant="ghost" size="sm" onclick={() => moveCoin(i, 1)} aria-label="Move down">
-              ↓
-            </Button>
-            <Button variant="ghost" size="sm" onclick={() => removeCoin(i)}>Remove</Button>
-            {#if warn.length > 0}
-              <span class="basis-full text-xs text-amber-600 dark:text-amber-400">
-                {c.ticker}: {warn.join('; ')}
-              </span>
-            {/if}
-          </div>
-        {/each}
+      <label class="block">
+        <span class="mb-1 block text-xs font-medium text-muted-foreground">Shown first</span>
+        <Input
+          class="min-h-9 font-mono"
+          placeholder="btc, xmr, usdttrc20, ltc"
+          value={direct.nowpayments.pinned.join(', ')}
+          onchange={(e) =>
+            (direct.nowpayments.pinned = tickerList((e.currentTarget as HTMLInputElement).value))}
+        />
+        <span class="mt-1 block text-xs text-muted-foreground">
+          NOWPayments tickers, in order, shown as buttons (up to six). Every coin is also in the
+          drop-down.
+        </span>
+      </label>
+      <label class="block">
+        <span class="mb-1 block text-xs font-medium text-muted-foreground">Never offer</span>
+        <Input
+          class="min-h-9 font-mono"
+          placeholder="e.g. usdterc20"
+          value={direct.nowpayments.exclude.join(', ')}
+          onchange={(e) =>
+            (direct.nowpayments.exclude = tickerList((e.currentTarget as HTMLInputElement).value))}
+        />
+        <span class="mt-1 block text-xs text-muted-foreground">
+          Tickers to leave out of the direct page even though they are on in NOWPayments.
+        </span>
+      </label>
+    {:else}
+      <div>
+        <p class="text-xs font-medium text-muted-foreground">Coins members can pick</p>
+        <p class="mt-1 text-xs text-muted-foreground">
+          Ticker is NOWPayments' code, which names the network (usdttrc20 = USDT on Tron). Unit and
+          network are shown to members as written, so name the network exactly. A coin that needs a
+          memo or destination tag is refused unless "Memo OK" is ticked. With no coins, the rail
+          stays hosted.
+        </p>
       </div>
+      {#if direct.nowpayments.coins.length > 0}
+        <div class="space-y-2">
+          {#each direct.nowpayments.coins as c, i (i)}
+            {@const warn = warnings(c.ticker)}
+            <div class="flex flex-wrap items-center gap-2">
+              <Input
+                class="min-h-9 w-32 font-mono"
+                placeholder="usdttrc20"
+                aria-label="Ticker"
+                value={c.ticker}
+                oninput={(e) => (c.ticker = (e.currentTarget as HTMLInputElement).value.trim())}
+              />
+              <Input
+                class="min-h-9 w-20"
+                placeholder="USDT"
+                aria-label="Unit"
+                value={c.label}
+                oninput={(e) => (c.label = (e.currentTarget as HTMLInputElement).value)}
+              />
+              <Input
+                class="min-h-9 w-48"
+                placeholder="Tron (TRC-20)"
+                aria-label="Network"
+                value={c.network}
+                oninput={(e) => (c.network = (e.currentTarget as HTMLInputElement).value)}
+              />
+              <label class="flex items-center gap-1.5 text-xs">
+                <Checkbox checked={c.allowMemo} onCheckedChange={(v) => (c.allowMemo = !!v)} />
+                Memo OK
+              </label>
+              <Button
+                variant="ghost"
+                size="sm"
+                onclick={() => moveCoin(i, -1)}
+                aria-label="Move up"
+              >
+                ↑
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onclick={() => moveCoin(i, 1)}
+                aria-label="Move down"
+              >
+                ↓
+              </Button>
+              <Button variant="ghost" size="sm" onclick={() => removeCoin(i)}>Remove</Button>
+              {#if warn.length > 0}
+                <span class="basis-full text-xs text-amber-600 dark:text-amber-400">
+                  {c.ticker}: {warn.join('; ')}
+                </span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
     <div class="flex flex-wrap items-center gap-2">
-      <Button variant="outline" size="sm" onclick={addCoin}>Add coin</Button>
+      {#if direct.nowpayments.source === 'list'}
+        <Button variant="outline" size="sm" onclick={addCoin}>Add coin</Button>
+      {/if}
       <Button variant="outline" size="sm" onclick={runCheck} disabled={checking}>
         {checking ? 'Checking…' : 'Check coins'}
       </Button>
       <span class="text-xs text-muted-foreground">
-        Checks the saved list against your NOWPayments account. Creates nothing.
+        Reads the SAVED settings against your NOWPayments account. Creates nothing.
       </span>
     </div>
+    {#if check?.ok && check.accountCoinCount != null}
+      <p class="text-xs text-muted-foreground">
+        {check.accountCoinCount} coins are on in NOWPayments; checked the first {check.coins.length}
+        members see.
+      </p>
+      {#if check.unnamedNetworks.length > 0}
+        <p class="text-xs text-amber-600 dark:text-amber-400">
+          Networks shown as a bare code (not in the name table): {check.unnamedNetworks
+            .join(', ')
+            .toUpperCase()}. Exclude those coins if the code alone could confuse a payer.
+        </p>
+      {/if}
+      {#each flaggedRows as r (r.ticker)}
+        <p class="text-xs text-amber-600 dark:text-amber-400">{r.ticker}: {r.warn.join('; ')}</p>
+      {/each}
+    {/if}
     {#if check?.ok}
       {@const flagged = check.coins.filter((c) => warnings(c.ticker).length > 0).length}
       {@const unread = check.coins.filter(

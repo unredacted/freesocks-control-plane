@@ -75,6 +75,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: HOUR,
     description: 'Clear stale plaintext gift-code reveals',
   },
+  {
+    name: 'billing-nowpayments-coins',
+    everyMs: HOUR,
+    description: 'Refresh the NOWPayments coin list for direct checkout',
+  },
   { name: 'mirror-refresh', everyMs: 6 * HOUR, description: 'Refresh the S3 subscription mirrors' },
   {
     name: 'mirror-barrier-repair',

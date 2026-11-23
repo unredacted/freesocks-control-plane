@@ -14,11 +14,15 @@ import {
   BILLING_DEFAULTS,
   BILLING_KEYS,
   billingConfigWrites,
+  directCoinsFrom,
   directEnabled,
   sanitizeDirectCoins,
+  sanitizeTickerList,
+  type BillingConfig,
   withinUnderpaymentTolerance,
   type DirectCoin,
 } from './lib/billingConfig';
+import { coinUnit, networkLabel } from './lib/cryptoNetworks';
 
 /** The JSON-decoded value written for `key`, or undefined if not written. */
 function written(patch: unknown, key: string): unknown {
@@ -153,7 +157,13 @@ describe('direct checkout config', () => {
     const on = (coins: DirectCoin[]) => ({
       ...BILLING_DEFAULTS,
       direct: {
-        nowpayments: { style: 'direct' as const, coins },
+        nowpayments: {
+          style: 'direct' as const,
+          source: 'list' as const,
+          coins,
+          exclude: [],
+          pinned: [],
+        },
         btcpay: { style: 'direct' as const, methods: [] },
       },
     });
@@ -204,5 +214,78 @@ describe('direct checkout config', () => {
         BILLING_KEYS.btcpay_directMethods,
       ),
     ).toEqual(['BTC-LN', 'BTC-CHAIN']);
+  });
+});
+
+describe('direct coins from the NOWPayments account', () => {
+  const cfg = (np: Partial<BillingConfig['direct']['nowpayments']> = {}): BillingConfig => ({
+    ...BILLING_DEFAULTS,
+    direct: {
+      ...BILLING_DEFAULTS.direct,
+      nowpayments: { ...BILLING_DEFAULTS.direct.nowpayments, style: 'direct', ...np },
+    },
+  });
+  const cache = {
+    fetchedAt: 1,
+    coins: [
+      { ticker: 'usdterc20', network: 'eth', memo: false },
+      { ticker: 'xrp', network: 'xrp', memo: true },
+      { ticker: 'usdttrc20', network: 'trx', memo: false },
+      { ticker: 'btc', network: 'btc', memo: false },
+      { ticker: 'eth', network: 'eth', memo: false },
+      { ticker: 'weird', network: 'zzchain', memo: false },
+    ],
+  };
+
+  test('default source is the account; pinned first, then by unit and network', () => {
+    expect(BILLING_DEFAULTS.direct.nowpayments.source).toBe('account');
+    const coins = directCoinsFrom(cfg({ pinned: ['usdttrc20', 'btc'] }), cache);
+    expect(coins.map((c) => c.ticker)).toEqual([
+      'usdttrc20',
+      'btc',
+      'eth',
+      'usdterc20',
+      'weird',
+      'xrp',
+    ]);
+    expect(coins[0]).toMatchObject({ label: 'USDT', network: 'Tron (TRC-20)', allowMemo: true });
+    expect(coins.find((c) => c.ticker === 'eth')?.network).toBe('Ethereum');
+    expect(coins.find((c) => c.ticker === 'usdterc20')?.network).toBe('Ethereum (ERC-20)');
+    expect(coins.find((c) => c.ticker === 'xrp')).toMatchObject({
+      network: 'XRP Ledger',
+      memo: true,
+    });
+    // An unknown network is the bare code, never a guess.
+    expect(coins.find((c) => c.ticker === 'weird')?.network).toBe('ZZCHAIN');
+  });
+
+  test('exclude, hosted style and an empty cache all yield no coins to offer', () => {
+    expect(directCoinsFrom(cfg({ exclude: ['xrp'] }), cache).map((c) => c.ticker)).not.toContain(
+      'xrp',
+    );
+    expect(directCoinsFrom(cfg({ style: 'hosted' }), cache)).toEqual([]);
+    expect(directCoinsFrom(cfg(), null)).toEqual([]);
+  });
+
+  test('source "list" ignores the cache', () => {
+    const coins = directCoinsFrom(cfg({ source: 'list' }), cache);
+    expect(coins.map((c) => c.ticker)).toEqual(
+      BILLING_DEFAULTS.direct.nowpayments.coins.map((c) => c.ticker),
+    );
+  });
+
+  test('ticker lists are lowercased, shape-checked and deduped', () => {
+    expect(sanitizeTickerList([' BTC ', 'btc', 'bad ticker', 'xmr'], [])).toEqual(['btc', 'xmr']);
+    expect(sanitizeTickerList('nope', ['btc'])).toEqual(['btc']);
+  });
+
+  test('units and network names', () => {
+    expect(coinUnit('usdttrc20', 'trx')).toBe('USDT');
+    expect(coinUnit('usdtbsc', 'bsc')).toBe('USDT');
+    expect(coinUnit('bnbbsc', 'bsc')).toBe('BNB');
+    expect(coinUnit('trx', 'trx')).toBe('TRX');
+    expect(coinUnit('usdc', 'eth')).toBe('USDC');
+    expect(networkLabel('bsc', 'BNB')).toBe('BNB Smart Chain');
+    expect(networkLabel('bsc', 'USDT')).toBe('BNB Smart Chain (BEP-20)');
   });
 });

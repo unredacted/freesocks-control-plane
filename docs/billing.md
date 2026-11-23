@@ -294,18 +294,42 @@ payer's side, only an address and an amount, so both crypto rails can show those
 on our own origin instead. Admin → Billing → **Direct checkout**:
 
 - `billing.nowpayments.checkoutStyle` / `billing.btcpay.checkoutStyle`:
-  `hosted` (default) or `direct`. The PR shipped dormant: both default hosted.
-- `billing.nowpayments.directCoins`: the coins a member may pick, in order, at
-  most 24: `{ ticker, label, network, allowMemo }`. `ticker` is NOWPayments' code,
-  which names the network (`usdttrc20` = USDT on Tron); `label` (the unit) and
-  `network` are operator text shown verbatim. An empty list keeps the rail hosted.
+  `hosted` (default) or `direct`. Shipped dormant: both default hosted.
+- `billing.nowpayments.coinSource`: where the member's coin list comes from.
+  - `account` (default): **every coin switched on in the NOWPayments dashboard's
+    coin settings**, so the dashboard is the one place coins are managed. The
+    list is read from `/v1/merchant/coins` (enabled tickers) joined with
+    `/v1/full-currencies` (each coin's `network` code and `extra_id_exists`),
+    cached in `appState` (`billing:nowpayments:accountCoins`) and re-read by the
+    hourly `billing-nowpayments-coins` cron, right after an Admin → Billing save,
+    and by **Check coins**. A failed read keeps the last good list; with no list
+    yet the rail stays hosted. A coin without a readable network is left out.
+    Memo coins are included (switching one on in the dashboard is the opt-in) and
+    flagged "needs memo" in the picker. `billing.nowpayments.coinPinned` (default
+    `btc, xmr, usdttrc20, ltc`) is shown first, in order; the rest sort by unit
+    then network. `billing.nowpayments.coinExclude` leaves tickers out.
+  - `list`: only `billing.nowpayments.directCoins`, at most 24 entries of
+    `{ ticker, label, network, allowMemo }`, with `label` (the unit) and `network`
+    shown verbatim and memo coins refused unless `allowMemo`.
+- **Network names** (`convex/lib/cryptoNetworks.ts`): for `account`, the network a
+  member sees is OUR text for known NOWPayments codes (Tron (TRC-20), Ethereum
+  (ERC-20), BNB Smart Chain (BEP-20), Solana, TON, Polygon, ...), never the
+  processor's free-text coin name; an unknown code shows as the bare code in
+  capitals, and Check coins lists those codes so the operator can exclude them.
+  The unit is the ticker minus that network's suffix (`usdttrc20` → `USDT`).
+- The member picker reads `GET /api/v1/billing/coins` (public, one cached read,
+  `max-age=60`), not the public config: the list can run to hundreds. The first
+  six coins are buttons, the full list a native drop-down. Submit waits for the
+  list, so a quick click never falls back to hosted by accident.
 - `billing.btcpay.directMethods`: BTCPay payment method ids shown, in order
   (default `BTC-CHAIN`, `BTC-LN`).
-- **Check coins** (`POST /api/v1/admin/billing/check-coins`, read-only): per saved
-  coin, whether it is switched on in the NOWPayments dashboard
-  (`/v1/merchant/coins`), its network and memo use (`/v1/full-currencies`), and
-  an indicative minimum (`/v1/min-amount` with `fiat_equivalent`), flagged
-  against the cheapest crypto term. Run it before switching direct on.
+- **Check coins** (`POST /api/v1/admin/billing/check-coins`, read-only at
+  NOWPayments): for `account` it re-reads the list and reports how many coins are
+  on and which networks have no name; then, for the first 16 coins members see
+  (`account`) or the whole list (`list`), whether each is switched on, its network
+  and memo use, and an indicative minimum (`/v1/min-amount` with
+  `fiat_equivalent`) against the cheapest crypto term. Run it before switching
+  direct on.
 
 Card rails stay hosted: Stripe.js and PayPal's scripts can't be proxied (their
 terms and PCI forbid it), and a separate `pay.` subdomain would isolate scripts

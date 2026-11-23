@@ -165,6 +165,10 @@ crons.interval(
   {},
 );
 
+// Direct crypto checkout with coin source "account": re-read the coins switched
+// on in the NOWPayments dashboard. No-op unless that mode is on.
+crons.interval('billing-nowpayments-coins', { hours: 1 }, internal.billing.refreshAccountCoins, {});
+
 // Keep the S3 subscription mirrors fresh: a full pass over every mirrored key
 // re-renders it and rewrites each copy whose object does not hold that body
 // (the sync ledger, convex/mirrorCopies.ts). No-op unless a mirror provider

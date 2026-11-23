@@ -2029,6 +2029,12 @@ export const setBillingConfig = internalMutation({
       });
     }
     const config = await resolveBillingConfig(ctx.db);
+    // Direct checkout from the account's coin list: fill / refresh the cached
+    // list now rather than at the next hourly tick, so switching it on works at once.
+    const np = config.direct.nowpayments;
+    if (np.style === 'direct' && np.source === 'account') {
+      await ctx.scheduler.runAfter(0, internal.billing.refreshAccountCoins, {});
+    }
     const secretStatus = processorSecretStatus(await resolveProcessorSecrets(ctx.db));
     return { config, secretStatus };
   },

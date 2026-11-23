@@ -15,7 +15,7 @@
    */
   import { Button } from '@client/components/ui/button';
   import * as Collapsible from '@client/components/ui/collapsible';
-  import { configQuery } from '../lib/queries';
+  import { configQuery, directCoinsQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { t } from '../lib/i18n/index.svelte';
@@ -128,8 +128,9 @@
 
   // Direct crypto checkout (Admin -> Billing): the member picks the coin and
   // network here and pays on our own page. Hosted otherwise (no picker).
+  const coinList = directCoinsQuery(() => !!billing?.direct?.nowpayments.enabled);
   let directCoins = $derived(
-    billing?.direct?.nowpayments.enabled ? billing.direct.nowpayments.coins : [],
+    billing?.direct?.nowpayments.enabled ? (coinList.data?.coins ?? []) : [],
   );
   let coinRaw = $state<string | null>(null);
   let coin = $derived(
@@ -137,6 +138,13 @@
   );
   let payCurrency = $derived(
     selectedProcessor === 'nowpayments' && directCoins.length > 0 ? coin : null,
+  );
+  // Direct checkout is on but the list hasn't arrived: hold the submit, or a
+  // quick click would silently fall back to the hosted page.
+  let coinsPending = $derived(
+    selectedProcessor === 'nowpayments' &&
+      !!billing?.direct?.nowpayments.enabled &&
+      coinList.isPending,
   );
 
   // Optional donation added on top of the membership (0 = none).
@@ -323,6 +331,8 @@
       <div class="mt-3">
         <CoinPicker coins={directCoins} selected={coin} onSelect={(c) => (coinRaw = c)} />
       </div>
+    {:else if coinsPending}
+      <p class="mt-3 text-xs text-muted-foreground">{t('direct.coinsLoading')}</p>
     {/if}
     {#if selectedProcessor === 'stripe' || selectedProcessor === 'paypal'}
       <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.cardReachHint')}</p>
@@ -392,7 +402,7 @@
     </div>
     <Button
       onclick={submit}
-      disabled={!selectedProcessor || !selectedMonths || checkout.isPending}
+      disabled={!selectedProcessor || !selectedMonths || checkout.isPending || coinsPending}
       class="w-full sm:w-auto min-h-11"
     >
       {checkout.isPending ? t('upgrade.starting') : t('upgrade.continue')}

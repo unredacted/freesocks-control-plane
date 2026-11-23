@@ -12,6 +12,7 @@
  * the checkout action, and the admin write path share one source of truth.
  */
 import type { DatabaseReader } from '../_generated/server';
+import { coinUnit, networkLabel } from './cryptoNetworks';
 
 export type BillingProcessor = 'nowpayments' | 'btcpay' | 'stripe' | 'paypal';
 
@@ -121,8 +122,25 @@ export interface DirectCoin {
   allowMemo: boolean;
 }
 
+/**
+ * Where the direct NOWPayments coin list comes from. `account` (default): every
+ * coin switched on in the NOWPayments dashboard's coin settings, read from its
+ * API and cached (see ACCOUNT_COINS_KEY), minus `exclude`, with `pinned` first.
+ * `list`: the hand-written `coins` list only.
+ */
+export type CoinSource = 'account' | 'list';
+
 export interface DirectCheckoutConfig {
-  nowpayments: { style: CheckoutStyle; coins: DirectCoin[] };
+  nowpayments: {
+    style: CheckoutStyle;
+    source: CoinSource;
+    /** The hand-written list (source `list`). */
+    coins: DirectCoin[];
+    /** Tickers never offered (source `account`). */
+    exclude: string[];
+    /** Tickers shown first, in this order (source `account`). */
+    pinned: string[];
+  };
   /** `methods`: BTCPay payment method ids shown on the direct page, e.g. `BTC-CHAIN`. */
   btcpay: { style: CheckoutStyle; methods: string[] };
 }
@@ -179,7 +197,10 @@ export const BILLING_DEFAULTS: BillingConfig = {
   direct: {
     nowpayments: {
       style: 'hosted',
-      // A starting list only (direct is off by default). Run Admin -> Billing ->
+      source: 'account',
+      exclude: [],
+      pinned: ['btc', 'xmr', 'usdttrc20', 'ltc'],
+      // The hand-written list for source "list". A starting list only (direct is off by default). Run Admin -> Billing ->
       // Check coins against the account before switching direct on.
       coins: [
         { ticker: 'btc', label: 'BTC', network: 'Bitcoin', allowMemo: false },
@@ -222,6 +243,9 @@ export const BILLING_KEYS = {
   donation_bonusWindowDays: 'billing.donation.bonusWindowDays',
   nowpayments_checkoutStyle: 'billing.nowpayments.checkoutStyle',
   nowpayments_directCoins: 'billing.nowpayments.directCoins',
+  nowpayments_coinSource: 'billing.nowpayments.coinSource',
+  nowpayments_coinExclude: 'billing.nowpayments.coinExclude',
+  nowpayments_coinPinned: 'billing.nowpayments.coinPinned',
   btcpay_checkoutStyle: 'billing.btcpay.checkoutStyle',
   btcpay_directMethods: 'billing.btcpay.directMethods',
 } as const;
@@ -354,6 +378,23 @@ export function sanitizeDirectCoins(raw: unknown): DirectCoin[] {
   return out;
 }
 
+const MAX_TICKER_LIST = 64;
+/** A ticker list (exclude / pinned): lowercased, shape-checked, deduped, capped. */
+export function sanitizeTickerList(raw: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(raw)) return [...fallback];
+  const out: string[] = [];
+  for (const v of raw) {
+    const t = typeof v === 'string' ? v.trim().toLowerCase() : '';
+    if (/^[a-z0-9]{2,20}$/.test(t) && !out.includes(t)) out.push(t);
+    if (out.length >= MAX_TICKER_LIST) break;
+  }
+  return out;
+}
+
+function asCoinSource(raw: unknown, fallback: CoinSource): CoinSource {
+  return raw === 'account' || raw === 'list' ? raw : fallback;
+}
+
 /** BTCPay method ids for the direct page: shape-checked, deduped, capped. */
 export function sanitizeDirectMethods(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [...BILLING_DEFAULTS.direct.btcpay.methods];
@@ -373,12 +414,105 @@ export function sanitizeDirectMethods(raw: unknown): string[] {
  */
 export function directEnabled(cfg: BillingConfig, processor: BillingProcessor): boolean {
   if (processor === 'nowpayments') {
-    return cfg.direct.nowpayments.style === 'direct' && cfg.direct.nowpayments.coins.length > 0;
+    const np = cfg.direct.nowpayments;
+    // Source "account" depends on the cached account list, so the real answer
+    // is resolveDirectCoins(...).length > 0; this is the config half of it.
+    return np.style === 'direct' && (np.source === 'account' || np.coins.length > 0);
   }
   if (processor === 'btcpay') {
     return cfg.direct.btcpay.style === 'direct' && cfg.direct.btcpay.methods.length > 0;
   }
   return false;
+}
+
+/** appState row caching the NOWPayments account's enabled coins (source "account"). */
+export const ACCOUNT_COINS_KEY = 'billing:nowpayments:accountCoins';
+
+/** One cached account coin: what `/v1/merchant/coins` + `/v1/full-currencies` said. */
+export interface AccountCoin {
+  ticker: string;
+  /** NOWPayments network code, e.g. `trx`. */
+  network: string;
+  /** NOWPayments uses a memo / destination tag for this coin. */
+  memo: boolean;
+}
+
+export interface AccountCoinsCache {
+  fetchedAt: number;
+  coins: AccountCoin[];
+}
+
+/** A coin as the member picker shows it (the checkout re-resolves it server-side). */
+export interface ResolvedCoin extends DirectCoin {
+  /** NOWPayments marks the coin as using a memo (a hint; the payment itself decides). */
+  memo: boolean;
+  /** Shown as a quick-pick button (pinned, or every coin of a hand-written list). */
+  pinned: boolean;
+}
+
+export async function readAccountCoins(db: DatabaseReader): Promise<AccountCoinsCache | null> {
+  const row = await db
+    .query('appState')
+    .withIndex('by_key', (q) => q.eq('key', ACCOUNT_COINS_KEY))
+    .unique();
+  if (!row) return null;
+  try {
+    const v = JSON.parse(row.value) as AccountCoinsCache;
+    return Array.isArray(v?.coins) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The coins a member may pick for a direct NOWPayments payment, in display
+ * order. Empty = direct is effectively off (the rail stays hosted). Source
+ * "account": the cached account list minus `exclude`, `pinned` first, the rest
+ * by unit then network, labels from lib/cryptoNetworks (memo coins included:
+ * switching a coin on in the NOWPayments dashboard is the operator's opt-in).
+ */
+export function directCoinsFrom(
+  cfg: BillingConfig,
+  cache: AccountCoinsCache | null,
+): ResolvedCoin[] {
+  const np = cfg.direct.nowpayments;
+  if (np.style !== 'direct') return [];
+  if (np.source === 'list') {
+    return np.coins.map((c) => ({ ...c, memo: c.allowMemo, pinned: true }));
+  }
+  const exclude = new Set(np.exclude);
+  const coins: ResolvedCoin[] = (cache?.coins ?? [])
+    .filter((c) => !exclude.has(c.ticker))
+    .map((c) => {
+      const label = coinUnit(c.ticker, c.network);
+      return {
+        ticker: c.ticker,
+        label,
+        network: networkLabel(c.network, label),
+        allowMemo: true,
+        memo: c.memo,
+        pinned: np.pinned.includes(c.ticker),
+      };
+    });
+  const rank = (t: string) => {
+    const i = np.pinned.indexOf(t);
+    return i === -1 ? np.pinned.length : i;
+  };
+  return coins.sort(
+    (a, b) =>
+      rank(a.ticker) - rank(b.ticker) ||
+      a.label.localeCompare(b.label) ||
+      a.network.localeCompare(b.network),
+  );
+}
+
+export async function resolveDirectCoins(
+  db: DatabaseReader,
+  cfg: BillingConfig,
+): Promise<ResolvedCoin[]> {
+  const np = cfg.direct.nowpayments;
+  if (np.style !== 'direct') return [];
+  return directCoinsFrom(cfg, np.source === 'account' ? await readAccountCoins(db) : null);
 }
 
 /** A whole number of days in [1, MAX_BONUS_WINDOW_DAYS]; else the fallback. */
@@ -448,6 +582,9 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     dWindow,
     npStyle,
     npCoins,
+    npSource,
+    npExclude,
+    npPinned,
     bpStyle,
     bpMethods,
   ] = await Promise.all([
@@ -473,6 +610,9 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.donation_bonusWindowDays),
     readSetting(db, BILLING_KEYS.nowpayments_checkoutStyle),
     readSetting(db, BILLING_KEYS.nowpayments_directCoins),
+    readSetting(db, BILLING_KEYS.nowpayments_coinSource),
+    readSetting(db, BILLING_KEYS.nowpayments_coinExclude),
+    readSetting(db, BILLING_KEYS.nowpayments_coinPinned),
     readSetting(db, BILLING_KEYS.btcpay_checkoutStyle),
     readSetting(db, BILLING_KEYS.btcpay_directMethods),
   ]);
@@ -512,7 +652,10 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     direct: {
       nowpayments: {
         style: asCheckoutStyle(npStyle, BILLING_DEFAULTS.direct.nowpayments.style),
+        source: asCoinSource(npSource, BILLING_DEFAULTS.direct.nowpayments.source),
         coins: sanitizeDirectCoins(npCoins),
+        exclude: sanitizeTickerList(npExclude, BILLING_DEFAULTS.direct.nowpayments.exclude),
+        pinned: sanitizeTickerList(npPinned, BILLING_DEFAULTS.direct.nowpayments.pinned),
       },
       btcpay: {
         style: asCheckoutStyle(bpStyle, BILLING_DEFAULTS.direct.btcpay.style),
@@ -676,6 +819,19 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
       if ('coins' in np) {
         if (!Array.isArray(np.coins)) throw new Error('direct.nowpayments.coins must be a list');
         put(BILLING_KEYS.nowpayments_directCoins, sanitizeDirectCoins(np.coins));
+      }
+      if ('source' in np) {
+        put(BILLING_KEYS.nowpayments_coinSource, asCoinSource(np.source, def.nowpayments.source));
+      }
+      for (const [field, key] of [
+        ['exclude', BILLING_KEYS.nowpayments_coinExclude],
+        ['pinned', BILLING_KEYS.nowpayments_coinPinned],
+      ] as const) {
+        if (field in np) {
+          if (!Array.isArray(np[field]))
+            throw new Error(`direct.nowpayments.${field} must be a list`);
+          put(key, sanitizeTickerList(np[field], []));
+        }
       }
     }
     if (dc.btcpay && typeof dc.btcpay === 'object') {

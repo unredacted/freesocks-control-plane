@@ -1167,6 +1167,10 @@
     "hostedFallback": "Prefer the payment provider's own page?",
     "hostedFallbackLink": "Open it instead",
     "lightning": "Lightning",
-    "bitcoinOnchain": "Bitcoin (on-chain)"
+    "bitcoinOnchain": "Bitcoin (on-chain)",
+    "allCoins": "All coins",
+    "allCoinsPlaceholder": "Other coins ({count})",
+    "needsMemo": "needs memo",
+    "coinsLoading": "Loading coins…"
   }
 }

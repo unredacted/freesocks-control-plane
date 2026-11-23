@@ -11,7 +11,7 @@
    */
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
-  import { configQuery, accountCodesQuery } from '../lib/queries';
+  import { configQuery, accountCodesQuery, directCoinsQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { t } from '../lib/i18n/index.svelte';
@@ -39,8 +39,9 @@
 
   // Direct crypto checkout (Admin -> Billing): the member picks the coin and
   // network here and pays on our own page. Hosted otherwise (no picker).
+  const coinList = directCoinsQuery(() => !!billing?.direct?.nowpayments.enabled);
   let directCoins = $derived(
-    billing?.direct?.nowpayments.enabled ? billing.direct.nowpayments.coins : [],
+    billing?.direct?.nowpayments.enabled ? (coinList.data?.coins ?? []) : [],
   );
   let coinRaw = $state<string | null>(null);
   let coin = $derived(
@@ -48,6 +49,13 @@
   );
   let payCurrency = $derived(
     selectedProcessor === 'nowpayments' && directCoins.length > 0 ? coin : null,
+  );
+  // Direct checkout is on but the list hasn't arrived: hold the submit, or a
+  // quick click would silently fall back to the hosted page.
+  let coinsPending = $derived(
+    selectedProcessor === 'nowpayments' &&
+      !!billing?.direct?.nowpayments.enabled &&
+      coinList.isPending,
   );
 
   let selectedMonthsRaw = $state<number | null>(null);
@@ -173,6 +181,8 @@
         <div class="mt-3">
           <CoinPicker coins={directCoins} selected={coin} onSelect={(c) => (coinRaw = c)} />
         </div>
+      {:else if coinsPending}
+        <p class="mt-3 text-xs text-muted-foreground">{t('direct.coinsLoading')}</p>
       {/if}
       {#if selectedProcessor === 'stripe' || selectedProcessor === 'paypal'}
         <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.cardReachHint')}</p>
@@ -244,7 +254,7 @@
       </div>
       <Button
         onclick={submit}
-        disabled={!selectedProcessor || !selectedMonths || checkout.isPending}
+        disabled={!selectedProcessor || !selectedMonths || checkout.isPending || coinsPending}
         class="w-full min-h-11 sm:w-auto"
       >
         {checkout.isPending ? t('gift.starting') : t('gift.buy')}
