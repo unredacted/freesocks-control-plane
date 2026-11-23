@@ -23,10 +23,11 @@
  *    request inputs before anything is rendered, and the outcome carries the
  *    location it rendered with. The guess is written once, at `locateMember`.
  */
-import type { FunctionReturnType } from 'convex/server';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
+import type { countryContextOf } from '../memberCountry';
+import type { PlaceRenderContext } from '../edgeRender';
 import { appNoticeFor, type AppNotice } from './appNotice';
 import type { CountryContext } from './edges/assignment';
 import { classifyClient } from './edges/clientFamilies';
@@ -153,10 +154,16 @@ export async function locateAt(
   return locateFrom(a, place, country);
 }
 
-/** The member's country context (`memberCountry.contextFor`). */
-export type MemberCountryContext = FunctionReturnType<typeof internal.memberCountry.contextFor>;
+/**
+ * The member's country context (`memberCountry.contextFor`). Typed from the
+ * plain read, not `FunctionReturnType<typeof internal...>`: going through the
+ * generated `api.d.ts` makes this alias reference itself once the bindings are
+ * regenerated (the deploy's typecheck does that), and every `internal` type
+ * downstream collapses to implicit `any`.
+ */
+export type MemberCountryContext = Awaited<ReturnType<typeof countryContextOf>>;
 /** The place's render context (`edgeRender.renderContextFor`). */
-export type PlaceContext = FunctionReturnType<typeof internal.edgeRender.renderContextFor>;
+export type PlaceContext = PlaceRenderContext;
 
 /** `locateAt` over contexts already read (convex/deliveryContext.ts). */
 export function locateFrom(
