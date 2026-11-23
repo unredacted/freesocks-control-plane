@@ -41,6 +41,7 @@ import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { CAPABILITIES } from './lib/backends/capabilities';
+import { MAX_SPEED_LIMIT_MBPS } from './lib/backends/types';
 import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
@@ -88,6 +89,8 @@ const tierUpsertFields = {
   description: v.union(v.string(), v.null()),
   backend: backendId,
   monthlyTrafficGb: v.number(),
+  // Mbps, 0 = unlimited. Optional so an older client's create still works (0).
+  speedLimitMbps: v.optional(v.number()),
   deviceLimit: v.number(),
   hwidLimit: v.number(),
   hwidEnabled: v.boolean(),
@@ -146,6 +149,20 @@ function checkTierBounds(patch: Record<string, unknown>): void {
       }
     }
   }
+  if ('speedLimitMbps' in patch && patch.speedLimitMbps !== undefined) {
+    const val = patch.speedLimitMbps;
+    if (
+      typeof val !== 'number' ||
+      !Number.isInteger(val) ||
+      val < 0 ||
+      val > MAX_SPEED_LIMIT_MBPS
+    ) {
+      throw new ConvexError({
+        code: 'validation',
+        message: `speedLimitMbps must be an integer from 0 to ${MAX_SPEED_LIMIT_MBPS}`,
+      });
+    }
+  }
   if ('priority' in patch) {
     const val = patch.priority;
     if (typeof val !== 'number' || !Number.isInteger(val)) {
@@ -168,6 +185,7 @@ function mapTier(t: Doc<'tiers'>) {
     description: t.description ?? null,
     backend: t.backend,
     monthlyTrafficGb: t.monthlyTrafficGb,
+    speedLimitMbps: t.speedLimitMbps ?? 0,
     deviceLimit: t.deviceLimit,
     hwidLimit: t.hwidLimit,
     hwidEnabled: t.hwidEnabled,
@@ -326,6 +344,7 @@ export const createTier = internalMutation({
       description: a.description ?? undefined,
       backend: a.backend,
       monthlyTrafficGb: a.monthlyTrafficGb,
+      speedLimitMbps: a.speedLimitMbps ?? 0,
       deviceLimit: a.deviceLimit,
       hwidLimit: a.hwidLimit,
       hwidEnabled: a.hwidEnabled,
@@ -382,6 +401,7 @@ export const updateTier = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     backend: v.optional(backendId),
     monthlyTrafficGb: v.optional(v.number()),
+    speedLimitMbps: v.optional(v.number()),
     deviceLimit: v.optional(v.number()),
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
@@ -501,6 +521,7 @@ export const upsertTierBySlug = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     backend: v.optional(backendId),
     monthlyTrafficGb: v.optional(v.number()),
+    speedLimitMbps: v.optional(v.number()),
     deviceLimit: v.optional(v.number()),
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
@@ -530,6 +551,7 @@ export const upsertTierBySlug = internalMutation({
         description: a.description ?? undefined,
         backend,
         monthlyTrafficGb: a.monthlyTrafficGb ?? 0,
+        speedLimitMbps: a.speedLimitMbps ?? 0,
         deviceLimit: a.deviceLimit ?? 0,
         hwidLimit: a.hwidLimit ?? 0,
         hwidEnabled: a.hwidEnabled ?? false,

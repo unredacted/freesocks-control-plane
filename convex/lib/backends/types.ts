@@ -42,6 +42,24 @@ export function resolveTrafficLimitBytes(
   return gbToBytes(gb);
 }
 
+/** The speed cap a fresh deploy gives the default-free tiers (Mbps). */
+export const DEFAULT_FREE_SPEED_LIMIT_MBPS = 100;
+
+/** Upper bound an admin may store (Mbps): 100 Gbps, far above any node link. */
+export const MAX_SPEED_LIMIT_MBPS = 100_000;
+
+/**
+ * A tier's per-user speed cap in Mbps: null (unlimited) when the tier has none
+ * (`speedLimitMbps` 0 or never set), else the cap. Only a backend whose
+ * capability record says `speedLimit` can apply it; today none can (neither
+ * the Remnawave panel nor Xray has a per-user rate, Outline has none either),
+ * so the value is stored and shown in Admin only. docs/backends.md § "Speed limits".
+ */
+export function resolveSpeedLimitMbps(tier: { speedLimitMbps?: number }): number | null {
+  const mbps = tier.speedLimitMbps ?? 0;
+  return mbps > 0 ? mbps : null;
+}
+
 /**
  * The new key's traffic limit after carrying the superseded key's used bytes
  * forward (Review D-M3): a re-issue mints a FRESH backend counter while the old

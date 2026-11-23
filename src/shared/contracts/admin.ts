@@ -19,6 +19,11 @@ export const TierAdmin = z.object({
   description: z.string().nullable(),
   backend: BackendId,
   monthlyTrafficGb: z.number().int().nonnegative(),
+  /**
+   * Per-user speed cap in Mbps, 0 = unlimited (server bound 100000). Stored
+   * only: no backend can apply it yet (capabilities.speedLimit).
+   */
+  speedLimitMbps: z.number().int().nonnegative().max(100_000).optional().default(0),
   deviceLimit: z.number().int().nonnegative(),
   hwidLimit: z.number().int().nonnegative(),
   hwidEnabled: z.boolean(),

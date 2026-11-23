@@ -56,6 +56,7 @@
     description: null,
     backend: 'remnawave',
     monthlyTrafficGb: 50,
+    speedLimitMbps: 0,
     deviceLimit: 1,
     hwidLimit: 1,
     hwidEnabled: true,
@@ -268,6 +269,22 @@
           Monthly traffic (GB, 0 = unlimited)
         </label>
         <Input id="tier-traffic" type="number" min={0} bind:value={draft.monthlyTrafficGb} />
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="tier-speed">
+          Speed limit (Mbps, 0 = unlimited)
+        </label>
+        <Input
+          id="tier-speed"
+          type="number"
+          min={0}
+          max={100000}
+          bind:value={draft.speedLimitMbps}
+        />
+        <p class="text-xs text-muted-foreground/80 mt-1 leading-snug">
+          Saved with the plan but not applied yet: neither Xray nor Outline can cap one key's speed.
+          Members are not shown it.
+        </p>
       </div>
       <div>
         <label class="text-xs text-muted-foreground mb-1 block" for="tier-devices">

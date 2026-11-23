@@ -766,6 +766,45 @@ can't honor a device limit — device limits are an `url`-delivery / fronted con
 The device list + member self-service **revoke** (`POST /api/v1/account/devices/revoke`)
 are Remnawave-only; Outline has no device concept and returns a typed 409.
 
+## Speed limits
+
+Each tier carries a per-user speed cap, `tiers.speedLimitMbps` (Mbps; 0 = unlimited),
+edited on **Admin → Tiers** next to the monthly traffic. The deploy seed
+(`seed.seedTierSpeedLimits`, run by `seedCutover`) fills tiers that never had a value
+once: default-free tiers get **100**, every other tier (the `member` tier included) **0**.
+A stored value is never overwritten, so an operator's edit, including a 0 on a free
+tier, survives every later deploy. `resolveSpeedLimitMbps(tier)` in
+`lib/backends/types.ts` turns it into `number | null` (null = unlimited).
+
+**No backend can apply it yet, so it is stored and shown in Admin only.** The capability
+flag `speedLimit` is `false` on both backends and nothing is sent at issuance, on the tier
+push (`lifecycle.pushTierToBackend`) or in `lifecycle.activeSubAndTier`. Members are not
+shown the cap. What was checked (2026-11):
+
+- **Remnawave panel:** the create/update user bodies have no speed or bandwidth field in
+  the 2.x contract (2.8.1) or the 3.x contract (3.4.20, which only adds
+  `trafficLimitStrategy`). The 3.x **node plugins** (torrent blocker, ingress/egress
+  filters, connection drop, pre/post-start, IP block executor) filter and drop; none
+  shapes traffic.
+- **Xray core (26.10.31):** policy levels carry timeouts, buffer size and stats switches,
+  no rate. The only rate knobs are REALITY `limitFallbackUpload` / `limitFallbackDownload`,
+  which cap traffic that fails REALITY auth, not users. The panel writes each client's
+  `email` as its numeric user id and never sets a `level`, so a node cannot tell one
+  tier's users from another's without a per-user list in the config profile, and every
+  profile change reloads the core on every node.
+- **Outline:** data limits only, no speed limit.
+
+Enforcing it therefore needs node-side work, chosen by the owner: the nodes already run
+`fq` as root qdisc (the Ansible role's BBR setup), and `fq maxrate` caps each socket's
+send rate, which is a per-connection (not per-user) cap that would apply to every user
+on the node. A per-tier cap built on it means placing capped tiers on their own nodes.
+Shaping per source address on the node (an nftables meter, or tc HTB/cake keyed by source
+IP) comes closer to per-user, but only on direct nodes: behind a CDN or an L4 edge the
+source is the front's address, and it still cannot tell one tier from another.
+When a backend gains a way to apply the cap, flip `speedLimit` in its capability row
+together with the provider change that sends `resolveSpeedLimitMbps`, and show the cap to
+members only where the flag is true.
+
 ## Subscription formats (Clash, sing-box, base64)
 
 Remnawave emits the subscription in **different formats chosen by the requesting
