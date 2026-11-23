@@ -894,6 +894,44 @@ http.route({
 
 // --- member auth ------------------------------------------------------------
 
+/**
+ * Login's per-IP gate, run by sealed() BEFORE the body is opened: a flood of
+ * sealed logins is refused without a decapsulation each (about 1 ms of V8 CPU,
+ * in the action slots every HTTP route shares), and before the outbound captcha
+ * verify (P1-2). Every attempt from the IP counts, malformed ones too.
+ */
+async function admitAccountLogin(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  // Fail closed (mirrors account-create): with no trustworthy client IP the
+  // per-IP throttle can't run and the per-(prefix,IP) backstop would degrade
+  // to a deployment-wide per-prefix bucket — one shared brute-force window
+  // AND a cross-user lockout lever. A proxy misconfig must answer 503, never
+  // silently weaken login throttling.
+  if (!ip) {
+    return errorJson(
+      'auth.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  // Same policy key + subject as before, so counters carry over. Not an
+  // oracle — the 429 depends only on the requester's own IP, never on account
+  // validity (those failures stay folded into the generic 'invalid').
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'account-login.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!rl.allowed) {
+    return errorJson(
+      'rate_limit.exceeded',
+      'Too many attempts from your network. Please wait a bit and try again.',
+      429,
+      { retryAfterMs: rl.retryAfterMs },
+    );
+  }
+  return null;
+}
+
 http.route({
   path: '/api/v1/auth/account-login',
   method: 'POST',
@@ -906,34 +944,13 @@ http.route({
     if (!body.accountId || !captchaToken) {
       return errorJson('validation', 'accountId and captchaToken are required', 400);
     }
+    // The IP check and the per-IP throttle already ran in admitAccountLogin.
     const ip = resolveClientIp(req);
-    // Fail closed (mirrors account-create): with no trustworthy client IP the
-    // per-IP throttle can't run and the per-(prefix,IP) backstop would degrade
-    // to a deployment-wide per-prefix bucket — one shared brute-force window
-    // AND a cross-user lockout lever. A proxy misconfig must answer 503, never
-    // silently weaken login throttling.
     if (!ip) {
       return errorJson(
         'auth.ip_unresolved',
         'Unable to establish your network address. Try again later or contact support.',
         503,
-      );
-    }
-    // Per-IP throttle BEFORE the outbound captcha verify (mirrors account-create,
-    // P1-2): without it, a login flood drives one Cap siteverify call per request.
-    // Same policy key + subject the action used before, so counters carry over.
-    // Not an oracle — the 429 depends only on the requester's own IP, never on
-    // account validity (those failures stay folded into the generic 'invalid').
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account-login.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!rl.allowed) {
-      return errorJson(
-        'rate_limit.exceeded',
-        'Too many attempts from your network. Please wait a bit and try again.',
-        429,
-        { retryAfterMs: rl.retryAfterMs },
       );
     }
     // PoP (Phase 2): the client folds its session public key into the (sealed)
@@ -968,7 +985,7 @@ http.route({
       200,
       { 'set-cookie': cookie },
     );
-  }),
+  }, admitAccountLogin),
 });
 
 http.route({
