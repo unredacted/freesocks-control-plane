@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import { readKeyCount } from './lib/serverLoad';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = ReturnType<typeof convexTest>;
@@ -288,8 +289,8 @@ describe('generic dispatch (convex/backends.ts via the provider registry)', () =
     });
     expect(issued.backendUserId).toBe(UUID);
     expect(issued.backendServerId).toBe(instanceId);
-    const row = await t.run((ctx) => ctx.db.get(instanceId));
-    expect(row!.keyCount).toBe(1);
+    const keys = await t.run(async (ctx) => readKeyCount(ctx.db, (await ctx.db.get(instanceId))!));
+    expect(keys).toBe(1);
   });
 
   test('issueUser throws when no active instance of the type exists', async () => {

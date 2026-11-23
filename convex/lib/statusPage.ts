@@ -15,6 +15,7 @@
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
 import { collectLocationCapableServers } from './locations';
+import { healthFresh, healthOf } from './serverLoad';
 import { byFamilyThenOrder, resolveModeCatalog } from './connectionModes';
 import { resolveCensoredCountries } from './censoredCountries';
 import { computeLocationLoad, HEALTH_FRESH_MS, type LoadBand } from './loadBands';
@@ -161,7 +162,10 @@ export async function resolveStatusConfig(db: DatabaseReader): Promise<StatusPag
  */
 export async function resolveStatusLocations(db: DatabaseReader): Promise<StatusLocation[]> {
   const servers = await collectLocationCapableServers(db);
-  const nodeRows = await db.query('backendNodeInventory').collect();
+  const [nodeRows, health] = await Promise.all([
+    db.query('backendNodeInventory').collect(),
+    healthOf(db, servers),
+  ]);
   const now = Date.now();
 
   const byCode = new Map<string, typeof servers>();
@@ -174,9 +178,7 @@ export async function resolveStatusLocations(db: DatabaseReader): Promise<Status
 
   const out: StatusLocation[] = [];
   for (const [code, instances] of byCode) {
-    const online = instances.some(
-      (s) => s.lastHealthOkAt != null && now - s.lastHealthOkAt < HEALTH_FRESH_MS,
-    );
+    const online = instances.some((s) => healthFresh(health.get(s._id), now, HEALTH_FRESH_MS));
     const label = instances.find((s) => s.locationLabel)?.locationLabel ?? code;
     out.push({
       code,

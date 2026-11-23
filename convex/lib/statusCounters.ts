@@ -367,6 +367,56 @@ export async function readUserCounts(db: DatabaseReader): Promise<UserCounts> {
   return (await readCounter(db, USER_COUNTER)).counts;
 }
 
+// ---------------------------------------------------------------------------
+// Public impact: `stats:publicImpact` (the one user figure /config shows)
+// ---------------------------------------------------------------------------
+
+/**
+ * The public bootstrap (`publicConfig.get`, cached per Convex's query cache)
+ * shows ONE figure derived from the user counter: active free users, rounded
+ * down to the nearest 10. `stats:userCounts` itself is rewritten at every
+ * sign-up and status change, and reading it would evict that cached result at
+ * each one. This small row holds just the rounded figure and is written only
+ * when it changes (from the two writers of `freeActive`: the reconcile's
+ * finish and `setFreeActive`).
+ */
+export const PUBLIC_IMPACT_KEY = 'stats:publicImpact';
+
+/** Rounded DOWN to the nearest 10, so the public bootstrap carries no exact
+ *  live fleet-size signal (the /status page bands load for the same reason). */
+export function freeUsersHelpedOf(freeActive: number): number {
+  return Math.floor(Math.max(0, freeActive) / 10) * 10;
+}
+
+function parseImpact(value: string): number | null {
+  try {
+    const n = (JSON.parse(value) as { freeUsersHelped?: unknown }).freeUsersHelped;
+    return typeof n === 'number' && Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The public "free users helped" figure. Falls back to the live counter
+ *  until the row exists (the first reconcile after the release writes it). */
+export async function readFreeUsersHelped(db: DatabaseReader): Promise<number> {
+  const row = await readRow(db, PUBLIC_IMPACT_KEY);
+  const stored = row ? parseImpact(row.value) : null;
+  if (stored !== null) return stored;
+  return freeUsersHelpedOf((await readUserCounts(db)).freeActive);
+}
+
+/** Bring `stats:publicImpact` in line with the counter; no write when unchanged. */
+export async function syncPublicImpact(ctx: MutationCtx): Promise<void> {
+  const value = freeUsersHelpedOf((await readUserCounts(ctx.db)).freeActive);
+  const row = await readRow(ctx.db, PUBLIC_IMPACT_KEY);
+  if (row && parseImpact(row.value) === value) return;
+  const json = JSON.stringify({ freeUsersHelped: value });
+  if (row) await ctx.db.patch(row._id, { value: json, updatedAt: Date.now() });
+  else
+    await ctx.db.insert('appState', { key: PUBLIC_IMPACT_KEY, value: json, updatedAt: Date.now() });
+}
+
 /**
  * Apply a status transition to the counter. `statusFrom`/`statusTo` null = "none"
  * (creation → only `statusTo`; hard-delete → only `statusFrom`). Reading `statusFrom`

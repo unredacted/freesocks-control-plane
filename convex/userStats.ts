@@ -21,6 +21,7 @@ import {
   readUserCounts,
   scanCounterPage,
   sessionBucket,
+  syncPublicImpact,
   type SessionCounts,
   type UserCounts,
 } from './lib/statusCounters';
@@ -55,8 +56,11 @@ export const scanUserCountsPage = internalMutation({
 
 export const finishUserCountsReconcile = internalMutation({
   args: { token: v.number() },
-  handler: async (ctx, { token }): Promise<boolean> =>
-    finishCounterReconcile(ctx, USER_COUNTER, token),
+  handler: async (ctx, { token }): Promise<boolean> => {
+    const finished = await finishCounterReconcile(ctx, USER_COUNTER, token);
+    if (finished) await syncPublicImpact(ctx);
+    return finished;
+  },
 });
 
 /** The counter row as it currently stands. */
@@ -88,6 +92,7 @@ export const setFreeActive = internalMutation({
   args: { freeActive: v.number() },
   handler: async (ctx, { freeActive }) => {
     await patchCounterCounts(ctx, USER_COUNTER, { freeActive: Math.max(0, freeActive) });
+    await syncPublicImpact(ctx);
     return null;
   },
 });

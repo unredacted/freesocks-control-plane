@@ -274,7 +274,9 @@ All are placeholders until an operator sets real values — like the membership 
 the month's `bonusGb` frozen at write time), so a month roll no longer discards the
 prior month. The daily user-counts reconcile additionally tallies `freeActive`
 (active users on default-free tiers) into `stats:userCounts`. `publicConfig`
-`billing.donation` projects `freeUsersHelped` + a last-12-months `history` of
+`billing.donation` projects `freeUsersHelped` (that figure rounded down to 10, read from its own
+`appState` row `stats:publicImpact`, written only when the rounded value changes, so a sign-up
+bumping `stats:userCounts` does not evict the cached `/config`) + a last-12-months `history` of
 `{month, bonusGb}` — **GB and user counts only; dollar amounts are never public**
 (the current month is synthesized live from the accumulator). `getAccountView`
 returns the member's own `donatedCentsTotal`/`donationCount` (summed from their paid

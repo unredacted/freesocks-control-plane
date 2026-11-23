@@ -12,6 +12,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { SwitchServerReason } from '../src/shared/contracts/switchServerReasons';
 import { signValue } from './lib/cookies';
+import { readKeyCount } from './lib/serverLoad';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -1326,7 +1327,7 @@ describe('deleteSubscriptionEverywhere ordering (P1-5)', () => {
       // The row is still selectable by the next sweep — NOT tombstoned to deleted.
       expect(sub!.state).toBe('disabled');
       // keyCount decrement only happens AFTER a successful backend delete.
-      expect((await ctx.db.get(instanceId))!.keyCount).toBe(1);
+      expect(await readKeyCount(ctx.db, (await ctx.db.get(instanceId))!)).toBe(1);
     });
   });
 
@@ -1343,7 +1344,7 @@ describe('deleteSubscriptionEverywhere ordering (P1-5)', () => {
 
     await t.run(async (ctx) => {
       expect((await ctx.db.get(subId))!.state).toBe('deleted');
-      expect((await ctx.db.get(instanceId))!.keyCount).toBe(0);
+      expect(await readKeyCount(ctx.db, (await ctx.db.get(instanceId))!)).toBe(0);
     });
   });
 });

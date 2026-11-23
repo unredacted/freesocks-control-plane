@@ -13,6 +13,7 @@ import type { Doc } from '../_generated/dataModel';
 import { BACKEND_IDS } from './backendIds';
 import { CAPABILITIES } from './backends/capabilities';
 import { computeLocationLoad, HEALTH_FRESH_MS, type LoadBand } from './loadBands';
+import { healthFresh, healthOf } from './serverLoad';
 
 export interface LocationEntry {
   code: string;
@@ -46,7 +47,12 @@ export { HEALTH_FRESH_MS };
 
 export async function resolveLocations(db: DatabaseReader): Promise<LocationEntry[]> {
   const servers = await collectLocationCapableServers(db);
-  const nodeRows = await db.query('backendNodeInventory').collect();
+  // The health stamps, not the key counts: the public catalog never reads a
+  // row an issuance writes (lib/serverLoad.ts).
+  const [nodeRows, health] = await Promise.all([
+    db.query('backendNodeInventory').collect(),
+    healthOf(db, servers),
+  ]);
   const now = Date.now();
 
   const byCode = new Map<string, typeof servers>();
@@ -59,9 +65,7 @@ export async function resolveLocations(db: DatabaseReader): Promise<LocationEntr
 
   const out: LocationEntry[] = [];
   for (const [code, instances] of byCode) {
-    const online = instances.some(
-      (s) => s.lastHealthOkAt != null && now - s.lastHealthOkAt < HEALTH_FRESH_MS,
-    );
+    const online = instances.some((s) => healthFresh(health.get(s._id), now, HEALTH_FRESH_MS));
     // First instance at the code with a full coordinate pair (same convention
     // as the label: any backend at the location may carry it).
     const located = instances.find((s) => s.locationLat != null && s.locationLng != null);

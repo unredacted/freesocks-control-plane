@@ -59,6 +59,8 @@ import {
 } from './lib/edges/scoring';
 import type { Verdict } from './lib/edges/probes/verdict';
 import { lanesOn } from './lib/edges/lanes';
+import { canonicalJson } from './lib/backend/digest';
+import { stampEvaluation } from './lib/edges/evalStamps';
 import { openBudgetLeft } from './edgeLanes';
 import {
   applySimulatedEvidence,
@@ -454,7 +456,16 @@ export const relayWindow = internalAction({
   },
 });
 
-/** Persist one evaluation: suspicion state, a baseline sample, transition audits, sample retention. */
+/**
+ * Persist one evaluation: suspicion state, a baseline sample, transition audits, sample retention.
+ *
+ * The `relays` row is rewritten only when the suspicion itself changed. The
+ * detector runs every 5 min over every origin and a quiet origin evaluates to
+ * the same record each time; patching it anyway (only `lastEvalAt` moving)
+ * evicted every cached query that reads the origin (the subscription route's
+ * edge render among them) and raced the other writers of the row. When it was
+ * last evaluated is stamped on its own row (`relayEvalStamps`) instead.
+ */
 export const recordEvaluation = internalMutation({
   args: {
     relayId: v.id('relays'),
@@ -493,37 +504,35 @@ export const recordEvaluation = internalMutation({
       !a.loadStale &&
       !a.windowIncomplete &&
       !(origin.cooldownUntil !== undefined && origin.cooldownUntil > a.now);
-    await ctx.db.patch(a.relayId, {
-      suspicion: {
-        state: ev.state,
-        hintLevel: ev.hintLevel,
-        score: round3(ev.score),
-        reportScore: round3(ev.reportScore),
-        loadScore: round3(ev.loadScore),
-        probeScore: round3(ev.probeScore),
-        scope: ev.scope,
-        countries: ev.countries.slice(0, 10),
-        edgeEvidence: ev.edgeEvidence.map((e) => ({
-          edgeId: e.edgeId as Id<'edges'>,
-          source: e.source,
-          countries: e.countries.slice(0, 10),
-          ...(e.neverReached ? { neverReached: e.neverReached.slice(0, 10) } : {}),
-        })),
-        firstSeenAt: ev.firstSeenAt,
-        lastEvalAt: a.now,
-        quietEvals: ev.quietEvals,
-        baselineWarm: ev.baselineWarm,
-        veto: a.veto,
-        hint: hintText(ev, a.veto),
-        lastRotateError:
-          a.lastRotateError === undefined
-            ? prev?.lastRotateError
-            : (a.lastRotateError ?? undefined),
-        ...(a.simulated ? { simulated: true } : {}),
-        ...(a.heldBack && ev.state === 'suspected' ? { heldBack: true } : {}),
-      },
-      updatedAt: a.now,
-    });
+    const suspicion = {
+      state: ev.state,
+      hintLevel: ev.hintLevel,
+      score: round3(ev.score),
+      reportScore: round3(ev.reportScore),
+      loadScore: round3(ev.loadScore),
+      probeScore: round3(ev.probeScore),
+      scope: ev.scope,
+      countries: ev.countries.slice(0, 10),
+      edgeEvidence: ev.edgeEvidence.map((e) => ({
+        edgeId: e.edgeId as Id<'edges'>,
+        source: e.source,
+        countries: e.countries.slice(0, 10),
+        ...(e.neverReached ? { neverReached: e.neverReached.slice(0, 10) } : {}),
+      })),
+      firstSeenAt: ev.firstSeenAt,
+      lastEvalAt: a.now,
+      quietEvals: ev.quietEvals,
+      baselineWarm: ev.baselineWarm,
+      veto: a.veto,
+      hint: hintText(ev, a.veto),
+      lastRotateError:
+        a.lastRotateError === undefined ? prev?.lastRotateError : (a.lastRotateError ?? undefined),
+      ...(a.simulated ? { simulated: true } : {}),
+      ...(a.heldBack && ev.state === 'suspected' ? { heldBack: true } : {}),
+    };
+    if (suspicionChanged(prev, suspicion))
+      await ctx.db.patch(a.relayId, { suspicion, updatedAt: a.now });
+    await stampEvaluation(ctx, a.relayId, a.now);
     if (baselineEligible) {
       // Written ONCE, with one meaning: `reports` is the window's row count and
       // `distinctReporters` its deduplicated member count, both straight from
@@ -597,6 +606,18 @@ export const clearHeldBackForRollback = internalMutation({
     return { cleared };
   },
 });
+
+/** Whether a new suspicion record differs from the stored one in anything but
+ *  `lastEvalAt` (key order and absent-vs-undefined fields do not count). */
+export function suspicionChanged(
+  prev: Doc<'relays'>['suspicion'],
+  next: NonNullable<Doc<'relays'>['suspicion']>,
+): boolean {
+  if (!prev) return true;
+  const { lastEvalAt: _p, ...a } = prev;
+  const { lastEvalAt: _n, ...b } = next;
+  return canonicalJson(a) !== canonicalJson(b);
+}
 
 function round3(x: number): number {
   return Math.round(x * 1000) / 1000;

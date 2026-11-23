@@ -112,6 +112,7 @@ import {
 import type { ListenerSpecInput } from './lib/edges/registration';
 import { currentNodeName, runningRenameOf } from './lib/backend/nodeAliases';
 import { namesHoldingOrigin } from './edgeNames';
+import { deleteEvalStamp, lastEvalAtOf } from './lib/edges/evalStamps';
 
 export {
   assertNoRotationOrQuarantine,
@@ -442,12 +443,14 @@ const NODE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
  * The admin view of one origin. `setupRunLive` (whether a guided setup run is
  * working on it now, null when the caller did not look) keeps the detector's
  * setup veto true between its passes (`setupVetoNow`): a run that failed or
- * was cancelled does not leave "Owned by a setup run" behind.
+ * was cancelled does not leave "Owned by a setup run" behind. `lastEvalAt` is
+ * the detector's own stamp (lib/edges/evalStamps.ts; null: read the suspicion's).
  */
 export function mapRelayAdmin(
   r: Doc<'relays'>,
   cfg: EdgeConfig,
   setupRunLive: boolean | null = null,
+  lastEvalAt: number | null = null,
 ) {
   const policy = originPolicy(r, cfg);
   const storedVeto = r.suspicion?.veto ?? null;
@@ -554,7 +557,7 @@ export function mapRelayAdmin(
           firstSeenAt: r.suspicion.firstSeenAt
             ? new Date(r.suspicion.firstSeenAt).toISOString()
             : null,
-          lastEvalAt: new Date(r.suspicion.lastEvalAt).toISOString(),
+          lastEvalAt: new Date(lastEvalAt ?? r.suspicion.lastEvalAt).toISOString(),
         }
       : null,
     updatedAt: new Date(r.updatedAt).toISOString(),
@@ -575,7 +578,10 @@ export const listForAdmin = internalQuery({
       a.slug.localeCompare(b.slug),
     );
     const out = [];
-    for (const r of rows) out.push(mapRelayAdmin(r, cfg, await setupRunLiveOn(ctx.db, r)));
+    for (const r of rows)
+      out.push(
+        mapRelayAdmin(r, cfg, await setupRunLiveOn(ctx.db, r), await lastEvalAtOf(ctx.db, r)),
+      );
     return out;
   },
 });
@@ -1316,6 +1322,7 @@ export const finalizeDelete = internalMutation({
         backendServerId: mint.backendServerId,
         username: mint.username,
       });
+    await deleteEvalStamp(ctx, id);
     await ctx.db.delete(id);
     return { removed: true, waitingOn: null };
   },

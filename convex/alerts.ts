@@ -20,6 +20,7 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
+import { readHealth } from './lib/serverLoad';
 import { upsertSettingRow } from './appSettings';
 import { CRON_META, cronStaleAfterMs, runWithCronOutcome } from './cronHeartbeat';
 import { spendOf } from './edgePlans';
@@ -278,7 +279,7 @@ export const systemSignals = internalQuery({
     };
     for (const s of await ctx.db.query('backendServers').collect()) {
       if (!s.isActive) continue;
-      const ok = s.lastHealthOkAt ?? null;
+      const ok = (await readHealth(ctx.db, s)).lastHealthOkAt ?? null;
       if (ok === null ? now - s._creationTime > BACKEND_FRESH_MS : now - ok >= BACKEND_FRESH_MS) {
         out.push({
           ...blank,

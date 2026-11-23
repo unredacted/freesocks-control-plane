@@ -30,6 +30,15 @@ import {
 } from './lib/backends/remnawave';
 import { isNumericBackendUserId, scopedServerId, toStoredBackendUserId } from './lib/backendUserId';
 import { resolveLocations } from './lib/locations';
+import { fleetStatsValidator } from './lib/fleetStats';
+import {
+  bumpServerKeyCount,
+  healthOf,
+  keyCountsOf,
+  patchServerHealth,
+  readHealth,
+  setServerKeyCount,
+} from './lib/serverLoad';
 import { backendIdValidator } from './lib/backendIds';
 
 const backendId = backendIdValidator;
@@ -77,28 +86,38 @@ export const pickCandidatesForIssue = internalQuery({
       const allow = new Set<string>(poolIds);
       candidates = candidates.filter((s) => allow.has(s._id));
     }
+    // Key counts + health stamps live in side tables (lib/serverLoad.ts).
+    const [keyCounts, health] = await Promise.all([
+      keyCountsOf(ctx.db, candidates),
+      healthOf(ctx.db, candidates),
+    ]);
+    const keysOf = (s: (typeof candidates)[number]) => keyCounts.get(s._id) ?? 0;
     // Hard capacity cap: an at-capacity instance is out of the running entirely
     // (before the fresh/fallback split, so being "the only fresh one" can't
     // resurrect it). All-at-capacity → [] → the caller's backend.unavailable.
-    candidates = candidates.filter((s) => s.maxKeys == null || s.keyCount < s.maxKeys);
+    candidates = candidates.filter((s) => s.maxKeys == null || keysOf(s) < s.maxKeys);
     if (candidates.length === 0) return [];
     // Prefer instances healthy within ~30 min; fall back to all if none qualify.
     const now = Date.now();
-    const fresh = candidates.filter(
-      (s) => s.lastHealthOkAt != null && now - s.lastHealthOkAt < 30 * 60_000,
-    );
+    const fresh = candidates.filter((s) => {
+      const okAt = health.get(s._id)?.lastHealthOkAt;
+      return okAt != null && now - okAt < 30 * 60_000;
+    });
     const usable = fresh.length > 0 ? fresh : candidates;
     const w = await scoringWeights(ctx);
     return usable
-      .map((s) => ({
-        s,
-        // Probed-ness is the PRIMARY sort key: an instance with no successful
-        // healthcheck yet (lastHealthRttMs == null) is less trustworthy than any
-        // probed one and must sort last, not score as rtt=0 ("fastest"). In the
-        // common `fresh` path every instance is probed, so this is a no-op there.
-        probed: s.lastHealthRttMs != null,
-        score: w.latency * (s.lastHealthRttMs ?? 0) + w.keyCount * s.keyCount,
-      }))
+      .map((s) => {
+        const rtt = health.get(s._id)?.lastHealthRttMs;
+        return {
+          s,
+          // Probed-ness is the PRIMARY sort key: an instance with no successful
+          // healthcheck yet (no rtt) is less trustworthy than any probed one and
+          // must sort last, not score as rtt=0 ("fastest"). In the common `fresh`
+          // path every instance is probed, so this is a no-op there.
+          probed: rtt != null,
+          score: w.latency * (rtt ?? 0) + w.keyCount * keysOf(s),
+        };
+      })
       .sort(
         (a, b) =>
           Number(b.probed) - Number(a.probed) || a.score - b.score || a.s.priority - b.s.priority,
@@ -111,6 +130,15 @@ export const pickCandidatesForIssue = internalQuery({
 export const getById = internalQuery({
   args: { id: v.id('backendServers') },
   handler: (ctx, { id }) => ctx.db.get(id),
+});
+
+/** One instance's last successful healthcheck (null: never, or no such instance). */
+export const lastHealthOkAt = internalQuery({
+  args: { id: v.id('backendServers') },
+  handler: async (ctx, { id }): Promise<number | null> => {
+    const server = await ctx.db.get(id);
+    return server ? ((await readHealth(ctx.db, server)).lastHealthOkAt ?? null) : null;
+  },
 });
 
 /**
@@ -140,16 +168,12 @@ export const resolveKeyServer = internalQuery({
   },
 });
 
-/** Keep the per-instance key count fresh between healthchecks (pool load-scoring). */
+/** Keep the per-instance key count fresh between healthchecks (pool load-scoring).
+ *  Writes `backendServerLoad` only, never the server row (lib/serverLoad.ts). */
 export const bumpKeyCount = internalMutation({
   args: { id: v.id('backendServers'), delta: v.optional(v.number()) },
   handler: async (ctx, { id, delta }) => {
-    const s = await ctx.db.get(id);
-    if (!s) return null;
-    await ctx.db.patch(id, {
-      keyCount: Math.max(0, s.keyCount + (delta ?? 1)),
-      updatedAt: Date.now(),
-    });
+    await bumpServerKeyCount(ctx, id, delta ?? 1);
     return null;
   },
 });
@@ -212,40 +236,24 @@ export const markHealthy = internalMutation({
     rttMs: v.number(),
   },
   handler: async (ctx, { id, keyCount, rttMs }) => {
-    const fields: {
-      lastHealthOkAt: number;
-      lastHealthRttMs: number;
-      updatedAt: number;
-      keyCount?: number;
-    } = {
-      lastHealthOkAt: Date.now(),
-      lastHealthRttMs: rttMs,
-      updatedAt: Date.now(),
-    };
-    if (keyCount != null) fields.keyCount = keyCount;
-    await ctx.db.patch(id, fields);
+    if (!(await ctx.db.get(id))) return null;
+    await patchServerHealth(ctx, id, { lastHealthOkAt: Date.now(), lastHealthRttMs: rttMs });
+    if (keyCount != null) await setServerKeyCount(ctx, id, keyCount);
     return null;
   },
 });
 
-/** Cache the latest read-only fleet stats on the instance row (for the admin
- *  dashboard). Stamped by the healthcheck cron; best-effort, so it's only called
- *  when a fetch succeeded — a failed fetch leaves the last values in place. */
+/** Cache the latest read-only fleet stats on the instance's health row (for the
+ *  admin dashboard). Stamped by the healthcheck cron; best-effort, so it's only
+ *  called when a fetch succeeded — a failed fetch leaves the last values in place. */
 export const markFleetStats = internalMutation({
   args: {
     id: v.id('backendServers'),
-    fleetStats: v.object({
-      onlineNow: v.number(),
-      nodesOnline: v.number(),
-      nodesTotal: v.number(),
-      distinctCountries: v.number(),
-      monthTrafficBytes: v.number(),
-      lifetimeTrafficBytes: v.number(),
-      panelVersion: v.string(),
-    }),
+    fleetStats: fleetStatsValidator,
   },
   handler: async (ctx, { id, fleetStats }) => {
-    await ctx.db.patch(id, { fleetStats, fleetStatsAt: Date.now(), updatedAt: Date.now() });
+    if (!(await ctx.db.get(id))) return null;
+    await patchServerHealth(ctx, id, { fleetStats, fleetStatsAt: Date.now() });
     return null;
   },
 });

@@ -24,6 +24,7 @@ const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { FAKE_ZONES, FAKE_ZONE_ID, fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { upsertLocation } from './edgeLocations';
 import { mockBackendEnabled } from './lib/backends/mock';
+import { migrateServerLoadRow } from './lib/serverLoad';
 import { restoreLegacyKeys, retireLegacyKeys } from './censoredCountries';
 import { EDGE_KEYS, LEGACY_PREFER_EYEBALL_KEY, resolveEdgeConfig } from './lib/edgeConfig';
 import {
@@ -162,6 +163,24 @@ export const seedFreedomEdgesOnly = internalMutation({
  * — set the role's `fcp_remnawave_panel_slug` to match this `remnawave-primary`
  * slug to converge the same row rather than create a second instance.
  */
+/**
+ * Move each backend server's key count and health stamps off its row into
+ * `backendServerLoad` / `backendServerHealth` (lib/serverLoad.ts), and clear
+ * them from the row. Idempotent: a row already moved is skipped, so every
+ * later deploy reports `moved: 0`. The table is small and admin-managed, so
+ * one transaction holds it. Until it has run, readers fall back to the legacy
+ * fields; once it has run on every stack, a later release drops them.
+ */
+export const migrateServerLoad = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ moved: number }> => {
+    let moved = 0;
+    for (const s of await ctx.db.query('backendServers').collect())
+      if (await migrateServerLoadRow(ctx, s)) moved++;
+    return { moved };
+  },
+});
+
 export const seedBackendServersFromEnv = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -181,7 +200,6 @@ export const seedBackendServersFromEnv = internalMutation({
       config: { type: 'remnawave', baseUrl, apiToken },
       isActive: true,
       priority: 0,
-      keyCount: 0,
       updatedAt: Date.now(),
     });
     return { inserted: 1 };
@@ -748,6 +766,9 @@ export const seedCutover = internalAction({
     await ctx.scheduler.runAfter(60_000, internal.countryKeyCounts.reconcile, {});
     await ctx.runMutation(internal.ownExits.refresh, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
+    // Backend servers keep their key count and health stamps in side tables
+    // (lib/serverLoad.ts); moves rows written before that (a no-op afterwards).
+    await ctx.runMutation(internal.seed.migrateServerLoad, {});
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});
     await ctx.runMutation(internal.seed.seedPeerGroups, {});
@@ -813,7 +834,6 @@ export const seedDevEdges = internalMutation({
         config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'dev' },
         isActive: true,
         priority: 0,
-        keyCount: 0,
         updatedAt: now,
       });
       panel = (await ctx.db.get(id))!;

@@ -35,6 +35,14 @@ import {
 } from '../src/shared/contracts/tierFeatures';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { applyCountsDelta, readSessionCounts, readUserCounts } from './lib/statusCounters';
+import {
+  deleteServerLoad,
+  healthOf,
+  keyCountsOf,
+  readHealth,
+  readKeyCount,
+  type ServerHealth,
+} from './lib/serverLoad';
 // One shared by-key upsert (Review P3): the local upsertSetting + setBillingConfig's
 // inline copy both delegate here (also appSettings.set/setMany use it).
 import { upsertSettingRow as upsertSetting } from './appSettings';
@@ -234,7 +242,18 @@ export function maskApiUrl(apiUrl: string): string {
   }
 }
 
-function mapBackendServer(s: Doc<'backendServers'>) {
+/** The admin wire shape: the server row plus its key count and health stamps
+ *  (side tables, lib/serverLoad.ts). */
+async function mapBackendServerAt(db: DatabaseReader, s: Doc<'backendServers'>) {
+  const [keyCount, health] = await Promise.all([readKeyCount(db, s), readHealth(db, s)]);
+  return mapBackendServer(s, keyCount, health);
+}
+
+function mapBackendServer(
+  s: Doc<'backendServers'>,
+  keyCount: number,
+  health: Pick<ServerHealth, 'lastHealthOkAt' | 'lastHealthRttMs'>,
+) {
   const config =
     s.config.type === 'remnawave'
       ? {
@@ -260,10 +279,10 @@ function mapBackendServer(s: Doc<'backendServers'>) {
     locationLng: s.locationLng ?? null,
     isActive: s.isActive,
     priority: s.priority,
-    keyCount: s.keyCount,
+    keyCount,
     maxKeys: s.maxKeys ?? null,
-    lastHealthOkAt: s.lastHealthOkAt != null ? iso(s.lastHealthOkAt) : null,
-    lastHealthRttMs: s.lastHealthRttMs ?? null,
+    lastHealthOkAt: health.lastHealthOkAt != null ? iso(health.lastHealthOkAt) : null,
+    lastHealthRttMs: health.lastHealthRttMs ?? null,
     config,
     createdAt: iso(s._creationTime),
     updatedAt: iso(s.updatedAt),
@@ -1242,8 +1261,16 @@ export const auditList = internalQuery({
 export const backendServersList = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query('backendServers').collect();
-    return { servers: rows.sort((a, b) => a.priority - b.priority).map(mapBackendServer) };
+    const rows = (await ctx.db.query('backendServers').collect()).sort(
+      (a, b) => a.priority - b.priority,
+    );
+    const [keyCounts, health] = await Promise.all([
+      keyCountsOf(ctx.db, rows),
+      healthOf(ctx.db, rows),
+    ]);
+    return {
+      servers: rows.map((s) => mapBackendServer(s, keyCounts.get(s._id) ?? 0, health.get(s._id)!)),
+    };
   },
 });
 
@@ -1461,7 +1488,6 @@ export const createBackendServer = internalMutation({
       config,
       isActive: a.isActive ?? true,
       priority: a.priority ?? 0,
-      keyCount: 0,
       maxKeys: a.maxKeys ?? undefined,
       updatedAt: Date.now(),
     });
@@ -1473,7 +1499,7 @@ export const createBackendServer = internalMutation({
       targetId: id,
       payload: { slug: a.slug, backend: a.backend },
     });
-    return mapBackendServer((await ctx.db.get(id))!);
+    return mapBackendServerAt(ctx.db, (await ctx.db.get(id))!);
   },
 });
 
@@ -1538,7 +1564,7 @@ export const updateBackendServer = internalMutation({
       targetId: id,
       payload: { slug: existing.slug },
     });
-    return mapBackendServer((await ctx.db.get(id))!);
+    return mapBackendServerAt(ctx.db, (await ctx.db.get(id))!);
   },
 });
 
@@ -1585,6 +1611,7 @@ async function removeBackendServer(ctx: MutationCtx, id: Id<'backendServers'>): 
   const blocker = await removalBlocker(ctx.db, id);
   if (blocker) throw new ConvexError(blocker);
   await ctx.db.delete(id);
+  await deleteServerLoad(ctx, id);
   const stats = await ctx.db
     .query('remnawaveNodeStats')
     .withIndex('by_server', (q) => q.eq('backendServerId', id))
@@ -1669,7 +1696,6 @@ export const upsertBackendServerBySlug = internalMutation({
         config,
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
-        keyCount: 0,
         maxKeys: a.maxKeys ?? undefined,
         updatedAt: Date.now(),
       });
@@ -1681,7 +1707,7 @@ export const upsertBackendServerBySlug = internalMutation({
         targetId: id,
         payload: { slug: a.slug, backend: a.backend, created: true },
       });
-      return { ...mapBackendServer((await ctx.db.get(id))!), created: true };
+      return { ...(await mapBackendServerAt(ctx.db, (await ctx.db.get(id))!)), created: true };
     }
 
     // UPDATE path (mirrors updateBackendServer's keep-secret-on-blank merge).
@@ -1712,7 +1738,10 @@ export const upsertBackendServerBySlug = internalMutation({
       targetId: existing._id,
       payload: { slug: a.slug, backend: a.backend, created: false },
     });
-    return { ...mapBackendServer((await ctx.db.get(existing._id))!), created: false };
+    return {
+      ...(await mapBackendServerAt(ctx.db, (await ctx.db.get(existing._id))!)),
+      created: false,
+    };
   },
 });
 
@@ -2063,20 +2092,28 @@ export const statusSummary = internalQuery({
 
     // Backends are small + admin-managed. Health + key counts only; never config.
     const serverRows = await ctx.db.query('backendServers').collect();
+    const [keyCounts, healthById] = await Promise.all([
+      keyCountsOf(ctx.db, serverRows),
+      healthOf(ctx.db, serverRows),
+    ]);
+    const healthOfRow = (s: Doc<'backendServers'>) => healthById.get(s._id)!;
     const backends = serverRows
       .sort((a, b) => a.priority - b.priority)
-      .map((s) => ({
-        slug: s.slug,
-        backend: s.backend,
-        isActive: s.isActive,
-        keyCount: s.keyCount,
-        healthy: s.lastHealthOkAt != null && now - s.lastHealthOkAt < FRESH_MS,
-        lastHealthOkAt: s.lastHealthOkAt != null ? iso(s.lastHealthOkAt) : null,
-        lastHealthRttMs: s.lastHealthRttMs ?? null,
-        // Read-only fleet observability, cached by the healthcheck cron (null until
-        // the first successful fetch / for backends without a fleet, e.g. Outline).
-        fleetStats: s.fleetStats ?? null,
-      }));
+      .map((s) => {
+        const h = healthOfRow(s);
+        return {
+          slug: s.slug,
+          backend: s.backend,
+          isActive: s.isActive,
+          keyCount: keyCounts.get(s._id) ?? 0,
+          healthy: h.lastHealthOkAt != null && now - h.lastHealthOkAt < FRESH_MS,
+          lastHealthOkAt: h.lastHealthOkAt != null ? iso(h.lastHealthOkAt) : null,
+          lastHealthRttMs: h.lastHealthRttMs ?? null,
+          // Read-only fleet observability, cached by the healthcheck cron (null until
+          // the first successful fetch / for backends without a fleet, e.g. Outline).
+          fleetStats: h.fleetStats ?? null,
+        };
+      });
     const activeBackends = backends.filter((b) => b.isActive);
 
     // Cron freshness: the newest successful healthcheck across ACTIVE backends vs
@@ -2084,11 +2121,11 @@ export const statusSummary = internalQuery({
     // backends themselves) may be wedged. lastHealthOkAt is the only cron-stamped
     // signal we have, so it doubles as a liveness proxy for that cron.
     const lastOkMs = serverRows
-      .filter((s) => s.isActive && s.lastHealthOkAt != null)
-      .reduce<number | null>(
-        (max, s) => (max == null || s.lastHealthOkAt! > max ? s.lastHealthOkAt! : max),
-        null,
-      );
+      .filter((s) => s.isActive && healthOfRow(s).lastHealthOkAt != null)
+      .reduce<number | null>((max, s) => {
+        const okAt = healthOfRow(s).lastHealthOkAt!;
+        return max == null || okAt > max ? okAt : max;
+      }, null);
 
     // Per-cron liveness (W4-B4): join the heartbeat rows against the known cron
     // cadences (CRON_META). `pending` = never observed since heartbeats shipped;
@@ -2211,7 +2248,7 @@ export const statusSummary = internalQuery({
         backends: backends.length,
         activeBackends: activeBackends.length,
         healthyBackends: activeBackends.filter((b) => b.healthy).length,
-        keys: serverRows.reduce((n, s) => n + (s.keyCount ?? 0), 0),
+        keys: serverRows.reduce((n, s) => n + (keyCounts.get(s._id) ?? 0), 0),
       },
       backends,
       healthcheck: {

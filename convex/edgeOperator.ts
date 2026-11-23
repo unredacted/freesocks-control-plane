@@ -15,6 +15,8 @@ import { ConvexError, v } from 'convex/values';
 import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
 import { lanesOn } from './lib/edges/lanes';
+import { readHealth } from './lib/serverLoad';
+import { lastEvalAtOf } from './lib/edges/evalStamps';
 import { sampleFamilyFor } from './lib/edges/clientFamilies';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -163,11 +165,15 @@ const isoN = (n: number | undefined | null) => (n ? iso(n) : null);
 // --- facts ---------------------------------------------------------------------------------------
 
 /** Health freshness of a backend server (the healthcheck cron runs every 10 min). */
-function backendHealthy(server: Doc<'backendServers'> | null): boolean | null {
+async function backendHealthy(
+  db: Db,
+  server: Doc<'backendServers'> | null,
+): Promise<boolean | null> {
   if (!server) return null;
+  const { lastHealthOkAt } = await readHealth(db, server);
   // Never checked yet (a server added since the last cron run) is unknown, not unreachable.
-  if (!server.lastHealthOkAt) return null;
-  return Date.now() - server.lastHealthOkAt < 60 * 60_000;
+  if (!lastHealthOkAt) return null;
+  return Date.now() - lastHealthOkAt < 60 * 60_000;
 }
 
 async function originFacts(db: Db, origin: RelayOrigin): Promise<SetupInput['origin']> {
@@ -184,7 +190,7 @@ async function originFacts(db: Db, origin: RelayOrigin): Promise<SetupInput['ori
   return {
     kind: origin.kind,
     backendPresent: !!server && server.isActive,
-    backendHealthy: backendHealthy(server),
+    backendHealthy: await backendHealthy(db, server),
     backendHostManagement: caps?.hostManagement ?? false,
     backendNodeInventory: caps?.nodeInventory ?? false,
   };
@@ -3391,7 +3397,12 @@ export const relayLookup = internalQuery({
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
     return relay
-      ? mapRelayAdmin(relay, await resolveEdgeConfig(ctx.db), await setupRunLiveOn(ctx.db, relay))
+      ? mapRelayAdmin(
+          relay,
+          await resolveEdgeConfig(ctx.db),
+          await setupRunLiveOn(ctx.db, relay),
+          await lastEvalAtOf(ctx.db, relay),
+        )
       : null;
   },
 });
