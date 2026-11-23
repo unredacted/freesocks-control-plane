@@ -10,7 +10,7 @@
 //                CSP nonce into <meta name="csp-nonce">, so the pin is computed over
 //                the canonicalized tag (the generator + background.js apply the same
 //                normalization). index.html carries SRI for every chunk, so pinning
-//                it transitively pins the whole bundle.
+//                the probe confirms that its own HTML fetch matches.
 //   manifestPk / manifestPkPq
 //                the baked manifest public keys (VITE_FS_MANIFEST_PK / _PK_PQ);
 //                used by the optional manifest-signature check (see README).

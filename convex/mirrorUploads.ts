@@ -263,6 +263,20 @@ export const markAttempt = internalMutation({
  * path) to a new row, and a record left on the old row must repair the object
  * the new row serves, never withdraw it.
  */
+/**
+ * Whether the repair pass (storage.ts `repairMirrorUploads`, Node) has anything
+ * to do: the same open-and-due range `listDue` reads, with its in-flight grace.
+ * The V8 cron gate (cronGates.ts) asks this first, so an idle tick never starts
+ * a Node action. A false "due" only costs one Node run that finds nothing.
+ */
+export async function hasDueRepair(db: DatabaseReader, now: number): Promise<boolean> {
+  const candidates = await db
+    .query('mirrorUploads')
+    .withIndex('by_state_due', (q) => q.eq('state', 'open').lte('dueAt', now))
+    .take(REPAIR_BATCH * 4);
+  return candidates.some((r) => r.updatedAt < now - REPAIR_GRACE_MS);
+}
+
 export const listDue = internalQuery({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {

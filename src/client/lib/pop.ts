@@ -11,7 +11,9 @@
  * that during rollout; once POP_REQUIRED is enabled, a bound session with no
  * signature is rejected (re-auth), which is the point.
  */
+import SigningWorker from './pop-worker?worker&inline';
 import { normalizePath } from '../../shared/crypto/envelope';
+import { serverTimeOffset } from './serverClock';
 import {
   POP_ALG_FIELD,
   POP_HOST_HEADER,
@@ -141,7 +143,8 @@ function ensureWorker(): Worker | null {
     return null;
   }
   try {
-    worker = new Worker(new URL('./pop-worker.ts', import.meta.url), { type: 'module' });
+    // Include the signer bytes in the integrity-covered importing bundle.
+    worker = new SigningWorker();
     worker.onmessage = (e: MessageEvent) => {
       const data = e.data as WorkerReply & { id: number };
       const resolve = pending.get(data.id);
@@ -256,38 +259,6 @@ export function injectPopPub(bodyStr: string | undefined, pubB64: string, alg: s
   obj[POP_PUBKEY_FIELD] = pubB64;
   obj[POP_ALG_FIELD] = alg;
   return JSON.stringify(obj);
-}
-
-// --- server-time offset (Phase 3 clock-skew handling) -------------------------
-// Fetched once from /healthz; the worker signs with ts = Date.now() + offset, so
-// a device whose clock is off by more than the +/-60s window still lands in it.
-// Any failure leaves the offset at 0 (rely on the window). Stable per session.
-let _tsOffset = 0;
-let _tsFetched = false;
-let _tsFetch: Promise<void> | null = null;
-
-async function refreshTimeOffset(): Promise<void> {
-  try {
-    const t0 = Date.now();
-    const res = await fetch('/healthz', { credentials: 'omit' });
-    if (!res.ok) return;
-    const body = (await res.json()) as { timestamp?: string };
-    const serverMs = body.timestamp ? Date.parse(body.timestamp) : NaN;
-    if (!Number.isFinite(serverMs)) return;
-    const t1 = Date.now();
-    _tsOffset = serverMs - (t0 + (t1 - t0) / 2); // server time at round-trip midpoint
-  } catch {
-    /* keep 0 */
-  }
-}
-
-async function serverTimeOffset(): Promise<number> {
-  if (_tsFetched) return _tsOffset;
-  _tsFetch ??= refreshTimeOffset().then(() => {
-    _tsFetched = true;
-  });
-  await _tsFetch;
-  return _tsOffset;
 }
 
 /**

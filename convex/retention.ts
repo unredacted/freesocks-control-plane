@@ -213,7 +213,12 @@ export const expireStalePendingOrders = internalMutation({
         .withIndex('by_status', (q) => q.eq('status', status).lt('_creationTime', cutoff))
         .take(page);
       for (const r of rows) {
-        await ctx.db.patch(r._id, { status: 'expired', updatedAt: Date.now() });
+        // directPayment: the deposit details die with the order (lib/directPayment.ts).
+        await ctx.db.patch(r._id, {
+          status: 'expired',
+          directPayment: undefined,
+          updatedAt: Date.now(),
+        });
         expired++;
       }
     }
