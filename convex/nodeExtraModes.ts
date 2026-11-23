@@ -388,6 +388,8 @@ const recordPatch = v.object({
   // The run failed: try again after a backoff (no role report or reconcile
   // may ever come for an adopted node).
   retry: v.optional(v.boolean()),
+  // The node was restarted for this transport (see `loadedFor` in the schema).
+  loadedFor: v.optional(v.string()),
   code: v.optional(v.union(v.string(), v.null())),
   hostUuid: v.optional(v.union(v.string(), v.null())),
   evidence: v.optional(
@@ -426,7 +428,10 @@ export const record = internalMutation({
       const retries = p.retry ? (e.retries ?? 0) + 1 : state === 'serving' ? undefined : e.retries;
       // A write still settling or a look that lags clears in seconds; anything
       // else (a refused rehearsal, the node offline) is tried a minute on.
-      const settling = p.code === 'servers.op_running' || p.code === 'servers.observe_lag';
+      const settling =
+        p.code === 'servers.op_running' ||
+        p.code === 'servers.observe_lag' ||
+        p.code === 'servers.extra_mode_loading';
       if (p.retry && retries)
         await ctx.scheduler.runAfter(
           Math.min(RETRY_MAX_MS, (settling ? 5_000 : 60_000) * 2 ** Math.min(retries - 1, 10)),
@@ -437,6 +442,7 @@ export const record = internalMutation({
         ...e,
         state,
         ...(p.firewall ? { firewall: { ...p.firewall } } : {}),
+        ...(p.loadedFor ? { loadedFor: p.loadedFor } : {}),
         retries,
         code: p.code === undefined ? e.code : (p.code ?? undefined),
         hostUuid: p.hostUuid === undefined ? e.hostUuid : (p.hostUuid ?? undefined),
@@ -690,6 +696,7 @@ async function step(
         confirmedBy: 'role' | 'operator';
       };
       retry?: boolean;
+      loadedFor?: string;
       drop?: boolean;
     },
     auditAction?: { action: string; detail?: string },
@@ -901,11 +908,33 @@ async function step(
   }
 
   if (!c.node?.online) throw new Stop('servers.node_offline');
+  // The test credential first: it puts a user in the mode's group, so the
+  // inbound the restart below loads is one the node keeps.
+  const cred = await credentialFor(ctx, c, slug, setupMode.groupUuid);
+  // A running node takes an inbound added beside its own without loading it:
+  // its config check finds nothing new while the inbound has no users, and
+  // adding one then fails on a handler the core never made. One restart per
+  // transport, before the first check, with the address still off.
+  if (entry().loadedFor !== transportUuid && capabilitiesOf(c.server.backend).nodeRestart) {
+    const nodeUuid = c.node.nodeUuid;
+    await write(ctx, () =>
+      ctx.runMutation(internal.backendWrites.requestNodeAction, {
+        backendServerId: c!.server._id,
+        nodeUuid,
+        action: 'restart',
+        actorRun,
+      }),
+    );
+    await rec(
+      { loadedFor: transportUuid, code: 'servers.extra_mode_loading', retry: true },
+      { action: 'servers.node.extra_mode_restarted' },
+    );
+    return;
+  }
   if (host.isDisabled) {
     await setDisabled(host.hostUuid, false);
     await reload();
   }
-  const cred = await credentialFor(ctx, c, slug, setupMode.groupUuid);
   const verdict = await rehearse(
     ctx,
     c,
@@ -917,7 +946,14 @@ async function step(
     // Never left on unproven: the address goes off again, seen off.
     await close(host.hostUuid);
     await rec(
-      { code: 'servers.rehearsal_failed', retry: true },
+      {
+        // The bodies carried it but a real client could not connect: say so,
+        // not that the subscriptions were wrong.
+        code: verdict.detail.startsWith('client:')
+          ? 'servers.extra_mode_client_failed'
+          : 'servers.rehearsal_failed',
+        retry: true,
+      },
       { action: 'servers.node.extra_mode_rehearsal_failed', detail: verdict.detail.slice(0, 120) },
     );
     return;

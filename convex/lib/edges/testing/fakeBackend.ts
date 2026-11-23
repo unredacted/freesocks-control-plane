@@ -440,6 +440,14 @@ export function createFakeBackend(
       panel.users.push(made);
       return json(made, 201);
     }
+    const nodeAction = path.match(/^\/api\/nodes\/([^/]+)\/actions\/(restart|enable|disable)$/);
+    if (nodeAction && method === 'POST') {
+      const n = panel.nodes.find((x) => x.uuid === nodeAction[1]);
+      if (!n) return jsonRes({ statusCode: 404, message: 'Node not found' }, 404);
+      if (nodeAction[2] !== 'restart') n.isDisabled = nodeAction[2] === 'disable';
+      if (opts.applyNodeUpdates) n.lastStatusChange = `t${++panel.seq}`;
+      return json({ eventSent: true });
+    }
     const userDelete = path.match(/^\/api\/users\/([^/]+)$/);
     if (userDelete && method === 'DELETE') {
       panel.users = panel.users.filter((x) => userKey(x) !== userDelete[1]);
