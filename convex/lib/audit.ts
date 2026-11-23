@@ -360,6 +360,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.extra_mode_serving': ['backendSlug', 'name', 'mode', 'code'],
   'servers.node.extra_mode_closed': ['backendSlug', 'name', 'mode', 'code'],
   'servers.node.extra_mode_rehearsal_failed': ['backendSlug', 'name', 'mode', 'code'],
+  'servers.node.extra_mode_restarted': ['backendSlug', 'name', 'mode'],
   'servers.node.extra_mode_removed': ['backendSlug', 'name', 'mode'],
   // `kept`: how many addresses it already had the approval took it live on (no setup run).
   'servers.node.approved': ['backendSlug', 'name', 'mode', 'kept'],

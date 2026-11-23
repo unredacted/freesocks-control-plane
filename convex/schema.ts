@@ -5127,6 +5127,16 @@ export default defineSchema({
           // runs asks for another when it ends (`rerun`).
           lease: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
           rerun: v.optional(v.boolean()),
+          // The transport the node was restarted for once it was turned on:
+          // a running node takes an inbound added beside its own without
+          // loading it (its config check sees nothing new while the inbound
+          // has no users), so FCP restarts it once, before the first check.
+          // Cleared when the mode waits for its firewall again (the transport
+          // goes off the node, so the next time on needs a restart again).
+          loadedFor: v.optional(v.string()),
+          // That restart's op while it is being sent: a later run looks at the
+          // same op instead of sending another one.
+          restartOp: v.optional(v.id('panelOps')),
           // Failed runs in a row: the next try waits 1, 2, 4… minutes (at most
           // an hour). Reset once it serves.
           retries: v.optional(v.number()),

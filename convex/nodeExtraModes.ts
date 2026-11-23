@@ -388,6 +388,11 @@ const recordPatch = v.object({
   // The run failed: try again after a backoff (no role report or reconcile
   // may ever come for an adopted node).
   retry: v.optional(v.boolean()),
+  // The node was restarted for this transport (see `loadedFor` in the schema);
+  // null forgets it.
+  loadedFor: v.optional(v.union(v.string(), v.null())),
+  // The restart op being sent; null once it settled either way.
+  restartOp: v.optional(v.union(v.id('panelOps'), v.null())),
   code: v.optional(v.union(v.string(), v.null())),
   hostUuid: v.optional(v.union(v.string(), v.null())),
   evidence: v.optional(
@@ -426,7 +431,10 @@ export const record = internalMutation({
       const retries = p.retry ? (e.retries ?? 0) + 1 : state === 'serving' ? undefined : e.retries;
       // A write still settling or a look that lags clears in seconds; anything
       // else (a refused rehearsal, the node offline) is tried a minute on.
-      const settling = p.code === 'servers.op_running' || p.code === 'servers.observe_lag';
+      const settling =
+        p.code === 'servers.op_running' ||
+        p.code === 'servers.observe_lag' ||
+        p.code === 'servers.extra_mode_loading';
       if (p.retry && retries)
         await ctx.scheduler.runAfter(
           Math.min(RETRY_MAX_MS, (settling ? 5_000 : 60_000) * 2 ** Math.min(retries - 1, 10)),
@@ -437,6 +445,15 @@ export const record = internalMutation({
         ...e,
         state,
         ...(p.firewall ? { firewall: { ...p.firewall } } : {}),
+        // Back to waiting for the firewall takes the transport off the node:
+        // turning it on again needs its own restart.
+        loadedFor:
+          state === 'waiting_firewall' && e.state !== 'waiting_firewall'
+            ? undefined
+            : p.loadedFor === undefined
+              ? e.loadedFor
+              : (p.loadedFor ?? undefined),
+        restartOp: p.restartOp === undefined ? e.restartOp : (p.restartOp ?? undefined),
         retries,
         code: p.code === undefined ? e.code : (p.code ?? undefined),
         hostUuid: p.hostUuid === undefined ? e.hostUuid : (p.hostUuid ?? undefined),
@@ -545,6 +562,20 @@ function codeOf(err: unknown, fallback: string): string {
 }
 
 /** One backend write through the ledger, sent and looked at; never two at once. */
+/**
+ * Where an extra mode's node restart stands: `sent` once the backend took it
+ * (or may have: an answer lost on the way still counts, as for the revocation
+ * cut), `pending` while it is still being sent, `failed` when the backend
+ * refused it, a recovery closed it unsent, or the op is gone.
+ */
+export function restartSent(
+  op: Pick<Doc<'panelOps'>, 'request' | 'recovery'> | null,
+): 'sent' | 'pending' | 'failed' {
+  if (!op || op.request === 'rejected_pre_mutation') return 'failed';
+  if (op.request === 'pending') return op.recovery ? 'failed' : 'pending';
+  return 'sent';
+}
+
 async function write(ctx: ActionCtx, make: () => Promise<{ opId: Id<'panelOps'> }>): Promise<void> {
   const { opId } = await make();
   const r = await ctx.runAction(internal.backendWrites.run, { opId });
@@ -626,7 +657,10 @@ async function rehearse(
   cred: { backendShortId: string; subscriptionUrl: string },
   e: { address: string; port: number; sni: string },
   pins: { pinHex: string; spkiB64: string },
-): Promise<{ ok: true; checked: 'client' | 'rehearsal' } | { ok: false; detail: string }> {
+): Promise<
+  | { ok: true; checked: 'client' | 'rehearsal' }
+  | { ok: false; detail: string; connectFailed?: true }
+> {
   const expected = { pinHex: [pins.pinHex], spkiB64: [pins.spkiB64] };
   const failed: string[] = [];
   let linksBody = '';
@@ -668,7 +702,9 @@ async function rehearse(
   if (!outbound) return { ok: false, detail: 'client:no_outbound' };
   const r = await runEngineCheck(svc, { engine: 'sing-box', outbound, reality: false });
   if (!r.ok) return { ok: false, detail: `client:${r.code}` };
-  if (!r.value.ok) return { ok: false, detail: `client:${r.value.code}` };
+  // The engine ran and could not get through: the one case that is the
+  // address's (a check that never ran says nothing about the port).
+  if (!r.value.ok) return { ok: false, detail: `client:${r.value.code}`, connectFailed: true };
   return { ok: true, checked: 'client' };
 }
 
@@ -690,6 +726,8 @@ async function step(
         confirmedBy: 'role' | 'operator';
       };
       retry?: boolean;
+      loadedFor?: string | null;
+      restartOp?: Id<'panelOps'> | null;
       drop?: boolean;
     },
     auditAction?: { action: string; detail?: string },
@@ -901,11 +939,52 @@ async function step(
   }
 
   if (!c.node?.online) throw new Stop('servers.node_offline');
+  // The test credential first: it puts a user in the mode's group, so the
+  // inbound the restart below loads is one the node keeps.
+  const cred = await credentialFor(ctx, c, slug, setupMode.groupUuid);
+  // A running node takes an inbound added beside its own without loading it:
+  // its config check finds nothing new while the inbound has no users, and
+  // adding one then fails on a handler the core never made. One restart per
+  // transport, before the first check, with the address still off.
+  // The op is kept on the entry: a run that ends before the backend answers
+  // looks at the same op next time and never sends a second restart. Only a
+  // restart the backend took (or may have taken) counts as loaded; a refused
+  // one is sent again on the next try.
+  if (entry().loadedFor !== transportUuid && capabilitiesOf(c.server.backend).nodeRestart) {
+    let opId = entry().restartOp;
+    if (!opId) {
+      const nodeUuid = c.node.nodeUuid;
+      ({ opId } = await ctx.runMutation(internal.backendWrites.requestNodeAction, {
+        backendServerId: c.server._id,
+        nodeUuid,
+        action: 'restart',
+        actorRun,
+      }));
+      await rec({ restartOp: opId });
+    }
+    await ctx.runAction(internal.backendWrites.run, { opId });
+    const op = await ctx.runQuery(internal.backendLedger.getForRun, { opId });
+    const sent = restartSent(op);
+    if (sent === 'pending') throw new Stop('servers.op_running');
+    if (sent === 'failed') {
+      await rec({ restartOp: null });
+      throw new Stop('servers.extra_mode_restart_failed');
+    }
+    await rec(
+      {
+        loadedFor: transportUuid,
+        restartOp: null,
+        code: 'servers.extra_mode_loading',
+        retry: true,
+      },
+      { action: 'servers.node.extra_mode_restarted' },
+    );
+    return;
+  }
   if (host.isDisabled) {
     await setDisabled(host.hostUuid, false);
     await reload();
   }
-  const cred = await credentialFor(ctx, c, slug, setupMode.groupUuid);
   const verdict = await rehearse(
     ctx,
     c,
@@ -917,7 +996,15 @@ async function step(
     // Never left on unproven: the address goes off again, seen off.
     await close(host.hostUuid);
     await rec(
-      { code: 'servers.rehearsal_failed', retry: true },
+      {
+        // The bodies carried it and a real client ran but could not connect:
+        // say so, not that the subscriptions were wrong. A check that could
+        // not run (no outbound, the service unreachable) keeps the old code.
+        code: verdict.connectFailed
+          ? 'servers.extra_mode_client_failed'
+          : 'servers.rehearsal_failed',
+        retry: true,
+      },
       { action: 'servers.node.extra_mode_rehearsal_failed', detail: verdict.detail.slice(0, 120) },
     );
     return;
