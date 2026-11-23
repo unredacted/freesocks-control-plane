@@ -552,9 +552,8 @@ What protects a Privacy-mode (`privacy-reality`) connection against a quantum co
   speak VLESS Encryption either. It would need a second port per node and two lanes kept for
   good (pasted configurations never refresh), so it is not built.
 - **"encryption: none" in apps.** Apps print the VLESS `encryption` field, which is `none` on
-  every REALITY entry. That is the extra layer above, not the connection. The Privacy raw
-  configuration says so under the copy button (`rawconfig.encryptionNote`) and the FAQ answers
-  it for every mode (`faq.q11`).
+  every REALITY entry. That is the extra layer above, not the connection. The FAQ answers it
+  for every mode (`faq.q11`); the account page says nothing more, to keep it short.
 
 ## 6. Analytics (optional self-hosted Umami origin)
 

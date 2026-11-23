@@ -33,11 +33,8 @@
     /** Render as the PRIMARY config backend: always open, titled, no collapse
      *  toggle, primary border. Privacy mode makes the raw config the headline. */
     prominent?: boolean;
-    /** Say that "encryption: none" is normal: only for a mode whose TLS runs
-     *  from the app to the node (connectionModeCopy.ts `DIRECT_TLS_MODES`). */
-    encryptionNote?: boolean;
   }
-  let { startOpen = false, prominent = false, encryptionNote = false }: Props = $props();
+  let { startOpen = false, prominent = false }: Props = $props();
 
   // `open` MUST be declared before the query: subscriptionContentQuery evaluates
   // its `enabled` getter synchronously at creation, so reading `open` first would
@@ -149,12 +146,6 @@
           </Button>
         </div>
         <p class="text-sm text-muted-foreground/80">{t('rawconfig.addHint')}</p>
-        {#if encryptionNote}
-          <!-- Direct modes: members paste by hand and read the fields, and an
-               app printing the VLESS field ("encryption: none", the normal value
-               for REALITY) reads like an unencrypted connection. -->
-          <p class="text-sm text-muted-foreground/80">{t('rawconfig.encryptionNote')}</p>
-        {/if}
       {/if}
     </div>
   {/if}

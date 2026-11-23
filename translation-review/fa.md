@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**239 of 846 strings are missing** (the app currently shows English for
+**238 of 845 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -775,7 +775,7 @@ review.
 | `mirrorSuggest.recommended` | Recommended | ⚠️ **MISSING** |
 | `mirrorSuggest.chooseHint` | Copy, download, the QR code and the app buttons below use the link you pick. Clash and sing-box apps read the mirror in their own format: use the link under each one below. | ⚠️ **MISSING** |
 
-## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(4 missing)*
+## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(3 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -783,7 +783,6 @@ review.
 | `rawconfig.title` | Your configuration | پیکربندی شما |
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | پیکربندی کامل پروکسی شما، که از طریق یک کانال رمزگذاری‌شده دریافت می‌شود تا هرگز به‌صورت متن ساده از CDN عبور نکند. به‌جای استفاده از لینک اشتراک، آن را دستی در برنامه‌تان وارد کنید. |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | این ورودی‌های سرور را به‌صورت دستی در برنامهٔ پروکسی خود وارد کنید. |
-| `rawconfig.encryptionNote` | Your app may show "encryption: none" on an entry. That is normal: the whole connection between your device and our server is encrypted with TLS 1.3. That field is for an extra layer this connection does not need. | ⚠️ **MISSING** |
 | `rawconfig.confirmTitle` | Show the raw configuration? | ⚠️ **MISSING** |
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |

@@ -23,7 +23,6 @@
   import { connectionModePref } from '../lib/connectionModePref.svelte';
   import { FALLBACK_CONNECTION_MODE, resolveEffectiveModeId } from '../lib/connectionMode';
   import { availableOn } from '../lib/connectionModeGroups';
-  import { DIRECT_TLS_MODES } from '../lib/connectionModeCopy';
   import { backendEntry, enabledBackends } from '../lib/backends';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
@@ -1147,7 +1146,7 @@
                        under the pass, before the help row, usage and the app
                        list. No public mirrors - they'd expose the config to
                        third parties. -->
-                  <RawConfig prominent encryptionNote={DIRECT_TLS_MODES.has(effectiveModeId)} />
+                  <RawConfig prominent />
                 {/if}
                 {#if !rawConfigFirst}
                   <!-- Right under the pass it fixes. Always rendered outside

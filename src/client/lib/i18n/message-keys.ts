@@ -560,7 +560,6 @@ export type MessageKey =
   | "rawconfig.confirmCta"
   | "rawconfig.confirmTitle"
   | "rawconfig.disclosure"
-  | "rawconfig.encryptionNote"
   | "rawconfig.explainer"
   | "rawconfig.title"
   | "referral.applied"

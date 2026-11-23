@@ -66,18 +66,6 @@ export const MODE_COPY: Record<
   },
 };
 
-/**
- * Built-in modes whose TLS runs from the app to the node itself (REALITY, and
- * Hysteria's QUIC), with no CDN in the path. Only on these does the raw
- * configuration say that "encryption: none" is harmless: behind a CDN the TLS
- * ends at the CDN, and the VLESS layer is what keeps it from reading the stream.
- * By mode id, never by delivery style or family, which an admin can change.
- */
-export const DIRECT_TLS_MODES: ReadonlySet<string> = new Set([
-  'privacy-reality',
-  'privacy-hysteria',
-]);
-
 interface FamilyLike {
   id: string;
   label?: string | null;
