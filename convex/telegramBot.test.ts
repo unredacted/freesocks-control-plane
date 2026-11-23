@@ -31,7 +31,10 @@ function stubFetch(fail: string[] = []) {
       const f = failing.indexOf(method);
       if (f >= 0) {
         failing.splice(f, 1);
-        return Response.json({ ok: false, error_code: 502, description: 'Bad Gateway' });
+        return Response.json(
+          { ok: false, error_code: 502, description: 'Bad Gateway' },
+          { status: 502 },
+        );
       }
       const result =
         method === 'sendMessage'
@@ -187,7 +190,7 @@ describe('the shop', () => {
     await seed(t, { shop: false });
     const { sent } = stubFetch();
     await post(t, message('/buy'));
-    await post(t, button('t|en|3|1'));
+    await post(t, button('t|en|3|1|700'));
     expect(String(sent('sendMessage')[0]?.body.text)).toMatch(/closed/);
     await t.run(async (ctx) => {
       expect(await ctx.db.query('billingOrders').collect()).toHaveLength(0);
@@ -217,7 +220,7 @@ describe('the shop', () => {
     ).inline_keyboard.flat();
     expect(termsKb.map((b) => b.text)).toEqual(['I accept, pay 1400 Stars', 'Back']);
     expect(sent('sendInvoice')).toHaveLength(0);
-    await post(t, button('t|en|3|2'));
+    await post(t, button('t|en|3|2|700'));
     expect(sent('sendInvoice')[0]!.body.prices).toEqual([{ label: 'Gift codes', amount: 1400 }]);
   });
 
@@ -237,7 +240,7 @@ describe('Telegram Stars', () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const { sent } = stubFetch();
-    await post(t, button('t|en|3|2'));
+    await post(t, button('t|en|3|2|700'));
     const invoice = sent('sendInvoice')[0]!.body;
     expect(invoice.currency).toBe('XTR');
     expect(invoice.provider_token).toBe('');
@@ -284,7 +287,7 @@ describe('Telegram Stars', () => {
   });
 
   async function starsOrder(t: ReturnType<typeof convexTest>, sent: (m: string) => Call[]) {
-    await post(t, button('t|en|3|1'));
+    await post(t, button('t|en|3|1|700'));
     return String(sent('sendInvoice').at(-1)!.body.payload);
   }
   const starsPaid = (ref: string, chargeId: string, refunded = false) =>
@@ -333,6 +336,36 @@ describe('Telegram Stars', () => {
       expect(await ctx.db.query('redemptionCodes').collect()).toHaveLength(1);
     });
   });
+
+  test('a refund Telegram refuses for a moment is retried on redelivery', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { sent } = stubFetch(['refundStarPayment']);
+    const ref = await starsOrder(t, sent);
+    await post(t, starsPaid(ref, 'charge_a'));
+    const second = starsPaid(ref, 'charge_b');
+    expect((await post(t, second)).status).toBe(500);
+    expect((await post(t, second)).status).toBe(200); // Telegram redelivers it
+    expect(sent('refundStarPayment')).toHaveLength(2);
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/refunded in full/);
+    // A third delivery of the same payment refunds nothing more.
+    await post(t, starsPaid(ref, 'charge_b'));
+    expect(sent('refundStarPayment')).toHaveLength(2);
+  });
+
+  test('a price changed after the terms were shown is never charged', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { sent, calls } = stubFetch();
+    // The buyer saw 600 per code; the price is now 700.
+    await post(t, button('t|en|3|1|600'));
+    expect(sent('sendInvoice')).toHaveLength(0);
+    expect(String(calls.at(-1)!.body.text)).toMatch(/The price changed/);
+    expect(JSON.stringify(calls.at(-1)!.body.reply_markup)).toContain('t|en|3|1|700');
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query('billingOrders').collect()).toHaveLength(0);
+    });
+  });
 });
 
 describe('terms and support', () => {
@@ -374,16 +407,27 @@ describe('the public link', () => {
   test('only while the bot would answer as open', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
-    expect((await t.query(api.publicConfig.get, {})).telegram).toEqual({
-      botUsername: 'FreeSocksShopBot',
-    });
+    stubFetch();
+    const link = async () => (await t.query(api.publicConfig.get, {})).telegram;
+    // Open, but the webhook was never registered: nobody would answer.
+    expect(await link()).toBeNull();
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
+    expect(await link()).toEqual({ botUsername: 'FreeSocksShopBot' });
     // Nothing to sell: the bot says closed, the site stays quiet.
     await t.mutation(internal.telegramAdmin.setConfig, { starsEnabled: false });
-    expect((await t.query(api.publicConfig.get, {})).telegram).toBeNull();
+    expect(await link()).toBeNull();
     await t.mutation(internal.telegramAdmin.setConfig, { starsEnabled: true });
-    // No webhook secret: Telegram cannot reach the bot.
-    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', '');
-    expect((await t.query(api.publicConfig.get, {})).telegram).toBeNull();
+    expect(await link()).not.toBeNull();
+    // A new token for another bot, not registered yet.
+    await t.mutation(internal.telegramAdmin.setConfig, {
+      botToken: '222222222:ANOTHER_bot_token_abcdefghijklmnopqrst',
+    });
+    expect(await link()).toBeNull();
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
+    expect(await link()).not.toBeNull();
+    // Remove keeps the secret but stops Telegram calling us.
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'remove' });
+    expect(await link()).toBeNull();
   });
 });
 
@@ -392,7 +436,7 @@ describe('the codes message', () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const { sent } = stubFetch();
-    await post(t, button('t|en|3|1'));
+    await post(t, button('t|en|3|1|700'));
     const ref = String(sent('sendInvoice').at(-1)!.body.payload);
     await post(
       t,
@@ -427,11 +471,41 @@ describe('the codes message', () => {
     });
   });
 
+  test('a delete Telegram refuses for a moment keeps the codes for another try', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { sent } = stubFetch(['deleteMessage']);
+    await post(t, button('t|en|3|1|700'));
+    const ref = String(sent('sendInvoice').at(-1)!.body.payload);
+    await post(
+      t,
+      message('', {
+        text: undefined,
+        successful_payment: {
+          currency: 'XTR',
+          total_amount: 700,
+          invoice_payload: ref,
+          telegram_payment_charge_id: 'charge_del',
+        },
+      }),
+    );
+    await post(t, button(`a|en|${ref}`, 901));
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/could not delete/);
+    expect(
+      (await t.query(internal.billing.botOrderStatus, { orderRef: ref }))?.giftCodes,
+    ).toHaveLength(1);
+    await post(t, button(`a|en|${ref}`, 901));
+    expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/^Deleted/);
+    expect((await t.query(internal.billing.botOrderStatus, { orderRef: ref }))?.giftCodes).toEqual(
+      [],
+    );
+  });
+
   test('per-chat checkout limit', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const { sent } = stubFetch();
-    for (let i = 0; i < 7; i++) await post(t, button('t|en|3|1'));
+    for (let i = 0; i < 7; i++) await post(t, button('t|en|3|1|700'));
     expect(String(sent('sendMessage').at(-1)!.body.text)).toMatch(/Too many requests/);
     await t.run(async (ctx) => {
       expect(await ctx.db.query('billingOrders').collect()).toHaveLength(6);

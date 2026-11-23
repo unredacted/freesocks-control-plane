@@ -1244,11 +1244,19 @@ export const adminGrantPlan = internalQuery({
   handler: async (
     ctx,
     { orderId },
-  ): Promise<{ kind: 'self' | 'gift' | 'donation'; quantity: number } | null> => {
+  ): Promise<{
+    kind: 'self' | 'gift' | 'donation';
+    quantity: number;
+    channel: 'web' | 'telegram';
+  } | null> => {
     const id = ctx.db.normalizeId('billingOrders', orderId);
     const order = id ? await ctx.db.get(id) : null;
     if (!order || !ADMIN_GRANTABLE.has(order.status)) return null;
-    return { kind: order.kind ?? 'self', quantity: order.quantity ?? 1 };
+    return {
+      kind: order.kind ?? 'self',
+      quantity: order.quantity ?? 1,
+      channel: order.channel ?? 'web',
+    };
   },
 });
 
@@ -1268,6 +1276,12 @@ export const grantOrderByAdmin = internalMutation({
   },
   handler: async (ctx, a): Promise<{ granted: boolean; kind: 'self' | 'gift' | 'donation' }> => {
     const order = await loadOrderForAdmin(ctx, a.orderId, ADMIN_GRANTABLE);
+    if (order.channel === 'telegram') {
+      throw new ConvexError({
+        code: 'billing.invalid_order',
+        message: 'A Telegram order is delivered in the chat when its Stars payment arrives',
+      });
+    }
     const res = await grantOrder(ctx, order, {
       processor: order.processor,
       processorRef: order.processorRef ?? '',
@@ -1312,6 +1326,15 @@ export const adminGrantOrder = internalAction({
   args: { orderId: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a): Promise<{ granted: boolean; kind: 'self' | 'gift' | 'donation' }> => {
     const plan = await ctx.runQuery(internal.billing.adminGrantPlan, { orderId: a.orderId });
+    if (plan?.channel === 'telegram') {
+      // A bot order's codes reach the buyer only in the chat, in the update
+      // of its Stars payment; a hand grant would mint codes nobody can
+      // deliver (and make a later payment look like a second one).
+      throw new ConvexError({
+        code: 'billing.invalid_order',
+        message: 'A Telegram order is delivered in the chat when its Stars payment arrives',
+      });
+    }
     const giftCodes = plan?.kind === 'gift' ? await mintGiftCodes(plan.quantity) : undefined;
     return ctx.runMutation(internal.billing.grantOrderByAdmin, {
       orderId: a.orderId,
@@ -1995,6 +2018,28 @@ export const botOrderStatus = internalQuery({
       quantity: order.quantity ?? 1,
       giftCodes: order.status === 'paid' && !order.giftRevealAck ? (order.giftReveal ?? []) : [],
     };
+  },
+});
+
+/**
+ * What the bot owes for one Stars payment: its codes when this charge is the
+ * one that paid the order, else a refund (the order was paid by another
+ * charge, or refused this one). Read from the order, so a redelivered payment
+ * gets the same answer as the first attempt.
+ */
+export const starsPaymentFate = internalQuery({
+  args: { orderRef: v.string(), chargeId: v.string() },
+  handler: async (ctx, { orderRef, chargeId }): Promise<'deliver' | 'refund'> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
+      .unique();
+    const paidByThis =
+      order?.channel === 'telegram' &&
+      order.processor === 'telegram_stars' &&
+      order.status === 'paid' &&
+      order.processorRef === chargeId;
+    return paidByThis ? 'deliver' : 'refund';
   },
 });
 

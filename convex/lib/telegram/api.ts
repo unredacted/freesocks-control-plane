@@ -103,6 +103,19 @@ function messageParams(text: string, o: SendOptions): Record<string, unknown> {
   };
 }
 
+/**
+ * Worth retrying later: Telegram or the network had a moment (timeouts,
+ * connection errors, 5xx, 429). A 4xx answer from Telegram is final.
+ */
+export function isTransient(err: unknown): boolean {
+  if (!(err instanceof TelegramApiError)) return true;
+  if (err.kind === 'timeout' || err.kind === 'network') return true;
+  if (err.kind === 'http' || err.kind === 'api') {
+    return err.status === undefined || err.status >= 500 || err.status === 429;
+  }
+  return false;
+}
+
 export function sendMessage(
   token: string,
   chatId: number,

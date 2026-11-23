@@ -27,7 +27,7 @@ describe('the button protocol', () => {
     { k: 'buy' },
     { k: 'dur', months: 12 },
     { k: 'qty', months: 3, qty: 10 },
-    { k: 'accept', months: 120, qty: 50 },
+    { k: 'accept', months: 120, qty: 50, stars: 100000 },
     { k: 'terms' },
     { k: 'ack', ref: REF },
   ];
@@ -53,6 +53,10 @@ describe('the button protocol', () => {
       'd|en|121',
       'q|en|3|51',
       't|en|3|1|x',
+      't|en|3|1', // Accept without the price it showed
+      't|en|3|1|0',
+      't|en|3|1|100001',
+      'q|en|3|1|700', // only Accept carries a price
       'T|en|1',
       // The old crypto buttons no longer exist.
       'p|en|3|1|s',

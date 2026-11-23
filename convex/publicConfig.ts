@@ -24,7 +24,7 @@ import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
 import { publicAnalytics, resolveAnalyticsConfig } from './lib/analyticsConfig';
-import { resolveTelegramConfig, resolveTelegramSecrets } from './lib/telegramConfig';
+import { botIdOf, resolveTelegramConfig, resolveTelegramSecrets } from './lib/telegramConfig';
 import { shopOpen, toShopBilling } from './lib/telegram/flow';
 import { publicFamilyProjection } from './lib/connectionModes';
 import { resolvePublicModes } from './lib/placement';
@@ -336,11 +336,14 @@ export const get = query({
       // The official Telegram gift shop, so the site can link (and vouch for)
       // the real bot: only its public username, only while the shop is open
       // (the bot's own test: switched on, billing on, something to sell) and
-      // the bot can actually answer (token + webhook secret set).
+      // the bot can actually answer: a secret is set and the webhook was
+      // registered for the bot whose token is saved now (Remove, or a new
+      // token not yet registered, hides the link).
       telegram:
         telegramCfg.botUsername &&
-        telegramSecrets.botToken &&
         telegramSecrets.webhookSecret &&
+        telegramCfg.webhookBotId !== '' &&
+        telegramCfg.webhookBotId === botIdOf(telegramSecrets.botToken) &&
         shopOpen(telegramCfg, toShopBilling(billing))
           ? { botUsername: telegramCfg.botUsername }
           : null,

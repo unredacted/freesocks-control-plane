@@ -1230,6 +1230,9 @@
     "starsRefundFailed": "We could not fulfil this order and will return your Stars. Use /paysupport and quote order {ref}.",
     "commandTerms": "Terms of sale",
     "commandPaySupport": "Help with a payment",
-    "orderPrice": "Price: {amount}"
+    "orderPrice": "Price: {amount}",
+    "priceChanged": "The price changed. Here is the current price; nothing was charged.",
+    "deleteFailed": "Telegram could not delete the message just now. Tap the button again in a moment.",
+    "deleteYourself": "Telegram no longer lets the bot delete that message. Please delete it yourself."
   }
 }

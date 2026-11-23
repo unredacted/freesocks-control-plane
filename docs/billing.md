@@ -242,7 +242,9 @@ refuses a userless gift that isn't from the bot.
 **Terms first.** After the buyer picks a length and a number of codes, the bot
 shows its terms of sale (the `bot.terms` text, plus a link to
 `telegram.termsUrl` when set) with the order's price, and sends the Stars
-invoice only after **I accept, pay**. `/terms` shows them at any time. `/paysupport` (and
+invoice only after **I accept, pay**. The button carries the price per code it
+showed; if the price changed since, the bot shows the terms again at the new
+price instead of charging it. `/terms` shows them at any time. `/paysupport` (and
 `/support`) points to `site.supportEmail`, or the site, and says Telegram's own
 support can't help with bot purchases. Telegram requires all three for payments.
 
@@ -262,7 +264,9 @@ that amount (`billing.starsPreCheckout`). `successful_payment` goes through
 and `applyEvent` path as a processor webhook, so it grants exactly once. A fresh
 payment that doesn't grant (a second payment on a paid order) is refunded at once
 with `refundStarPayment` (Telegram's rule for an order that can't be fulfilled);
-the payer's id comes from that update and is not stored. Telegram's later
+the payer's id comes from that update and is not stored, so a refund Telegram
+refuses for a moment answers 500 and runs again when Telegram redelivers the
+payment. Telegram's later
 `refunded_payment` for it changes nothing, since it isn't the payment that paid
 the order. A `refunded_payment` for the paying payment audits
 `billing.refund_seen`; the codes stay valid (nothing links them to the order).
@@ -270,12 +274,16 @@ Stars revenue is not in the revenue chart (a different currency). Stars are paid
 out through Telegram, outside FCP.
 
 **Delivery.** The bot keeps no chat, so it can't message a buyer later: the
-codes go out in the same update as the payment. That delivery is claimed once
-per payment (`telegram_stars:<charge id>:delivery` in `webhookEvents`); if
-Telegram refuses the message, the claim stays retryable and the webhook answers
-500, so Telegram redelivers the payment and the codes are sent again. The codes
-message has a **Saved, delete this message** button that clears the reveal and
-deletes the message from the chat. The `billing-gift-reveal-sweep` 24 h window
+codes go out in the same update as the payment. What a payment is owed is read
+from the order (`billing.starsPaymentFate`): its codes when that charge paid the
+order, else the refund. That job is claimed once per charge
+(`telegram_stars:<charge id>:delivery` or `:refund` in `webhookEvents`); any
+failure from the claim on leaves it retryable and the webhook answers 500, so
+Telegram redelivers the payment and the job runs again. Admin -> Billing has no
+Grant for a bot order: its codes can only reach the buyer in that update. The codes
+message has a **Saved, delete this message** button that deletes the message
+and only then clears the reveal (a delete Telegram refuses for a moment keeps the
+codes so the button can be tapped again). The `billing-gift-reveal-sweep` 24 h window
 applies; a buyer who missed it gives support the 8-character order ref the bot
 showed, which matches the ref prefix in Admin -> Billing -> Orders.
 
@@ -298,7 +306,8 @@ showed, which matches the ref prefix in Admin -> Billing -> Orders.
    work as fallbacks; a saved value wins.
 
 4. Turn on the methods, then **Shop open**. While the bot would answer as open
-   (switched on, billing on, something to sell, token and webhook secret set), the
+   (switched on, billing on, something to sell, and the webhook registered for
+   the bot whose token is saved; Remove or a new token hides it), the
    site footer and the gift card link it (`publicConfig.telegram`), so buyers can
    tell the real bot from a copy.
 

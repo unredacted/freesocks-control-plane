@@ -262,9 +262,11 @@ class Bot {
   terms(order?: { months: number; qty: number }): Out {
     const parts: string[] = [];
     let price: string | null = null;
+    let perCodeShown: number | null = null;
     if (order) {
       const perCode = starsOffer(this.shop.tg, this.shop.billing, order.months);
       if (perCode === null) return { text: tr(this.lang, 'unavailable') };
+      perCodeShown = perCode;
       price = trPlain(this.lang, 'starsAmount', { stars: perCode * order.qty });
       parts.push(
         [
@@ -288,6 +290,7 @@ class Bot {
               this.btn(trPlain(this.lang, 'buttonAccept', { amount: price }), {
                 k: 'accept',
                 ...order,
+                stars: perCodeShown!,
               }),
             ],
             [this.btn(trPlain(this.lang, 'buttonBack'), { k: 'dur', months: order.months })],
@@ -372,20 +375,47 @@ class Bot {
     }
   }
 
-  /** The buyer saved the codes: clear them server-side, then delete the message. */
+  /**
+   * The buyer saved the codes: delete the message, and only then clear them
+   * server-side. If Telegram can't delete it right now the codes stay, so the
+   * button still works; if it never will (too old), the buyer is told to
+   * delete it themselves and the codes are cleared.
+   */
   async ack(ref: string, messageId: number | undefined): Promise<void> {
-    await this.ctx.runMutation(internal.billing.ackBotGiftReveal, { orderRef: ref });
     if (messageId !== undefined) {
-      await tg.deleteMessage(this.token, this.chatId, messageId).catch(() => undefined);
+      try {
+        await tg.deleteMessage(this.token, this.chatId, messageId);
+      } catch (err) {
+        const gone = err instanceof tg.TelegramApiError && /not found/i.test(err.description ?? '');
+        if (!gone) {
+          if (tg.isTransient(err)) {
+            await this.send({ text: tr(this.lang, 'deleteFailed') });
+            return;
+          }
+          await this.ctx.runMutation(internal.billing.ackBotGiftReveal, { orderRef: ref });
+          await this.send({ text: tr(this.lang, 'deleteYourself') });
+          return;
+        }
+      }
     }
+    await this.ctx.runMutation(internal.billing.ackBotGiftReveal, { orderRef: ref });
     await this.send({ text: tr(this.lang, 'deleted') });
   }
 
-  /** The buyer accepted the terms: create the order and send its Stars invoice. */
-  async buy(months: number, qty: number): Promise<void> {
+  /**
+   * The buyer accepted the terms at `acceptedStars` per code: create the order
+   * and send its Stars invoice. If the price changed since, show the terms
+   * again at the new price instead of charging what they didn't accept.
+   */
+  async buy(months: number, qty: number, acceptedStars: number): Promise<void> {
     const perCode = starsOffer(this.shop.tg, this.shop.billing, months);
     if (perCode === null) {
       await this.show({ text: tr(this.lang, 'unavailable') });
+      return;
+    }
+    if (perCode !== acceptedStars) {
+      const again = this.terms({ months, qty });
+      await this.show({ ...again, text: `${tr(this.lang, 'priceChanged')}\n\n${again.text}` });
       return;
     }
     const limit = await this.ctx.runMutation(internal.rateLimits.enforce, {
@@ -417,7 +447,10 @@ class Bot {
 
 /**
  * Refund a Stars payment the shop could not fulfil, and tell the buyer. The
- * payer's id comes from this update only; it is never stored.
+ * payer's id comes from this update only; it is never stored, so a refund
+ * Telegram refuses for a moment THROWS (the caller answers 500 and Telegram
+ * redelivers the payment, payer id and all). A final refusal is logged by kind
+ * and the buyer is sent to /paysupport.
  */
 async function refundUnfulfilled(
   bot: Bot,
@@ -428,16 +461,23 @@ async function refundUnfulfilled(
   try {
     if (payerId === undefined) throw new Error('no payer');
     await tg.refundStarPayment(token, payerId, p.telegram_payment_charge_id);
-    await bot.send({ text: bot.say('starsNotFulfilled') });
   } catch (err) {
-    console.error(
-      '[telegram] stars refund failed:',
-      err instanceof tg.TelegramApiError ? err.message : 'error',
-    );
-    await bot
-      .send({ text: bot.say('starsRefundFailed', { ref: refPrefix(p.invoice_payload) }) })
-      .catch(() => undefined);
+    const already =
+      err instanceof tg.TelegramApiError && /ALREADY_REFUNDED/i.test(err.description ?? '');
+    if (!already) {
+      if (payerId !== undefined && tg.isTransient(err)) throw err;
+      console.error(
+        '[telegram] stars refund failed:',
+        err instanceof tg.TelegramApiError ? err.message : 'error',
+      );
+      await bot
+        .send({ text: bot.say('starsRefundFailed', { ref: refPrefix(p.invoice_payload) }) })
+        .catch(() => undefined);
+      return;
+    }
   }
+  // The money is back; the message is a courtesy.
+  await bot.send({ text: bot.say('starsNotFulfilled') }).catch(() => undefined);
 }
 
 /** A Stars payment that must be redelivered (its grant failed). */
@@ -498,9 +538,8 @@ export const handleUpdate = internalAction({
       const refunded = update.message?.refunded_payment;
       if (paid || refunded) {
         const p = (paid ?? refunded)!;
-        let res: { duplicate: boolean; granted: boolean };
         try {
-          res = await ctx.runAction(internal.billing.ingestStarsPayment, {
+          await ctx.runAction(internal.billing.ingestStarsPayment, {
             orderRef: p.invoice_payload,
             chargeId: p.telegram_payment_charge_id,
             totalAmount: p.total_amount,
@@ -517,36 +556,40 @@ export const handleUpdate = internalAction({
           const payer = update.message?.from;
           const lang = pickLocale(payer?.language_code);
           const bot = new Bot(ctx, token, shop, chatId, lang);
-          if (!res.duplicate && !res.granted) {
-            // Paid but not fulfilled (the order was already paid, or refused):
-            // Telegram's rule is a full refund.
-            await refundUnfulfilled(bot, token, payer?.id, p);
-            return { handled: true };
-          }
-          // The codes have exactly one way to the buyer: this message. Its
-          // delivery is claimed once per payment (a resent payment does not
-          // send them twice). If Telegram refuses it, the claim stays
-          // retryable, the update is released and the route answers 500, so
-          // the payment is redelivered and the codes are sent again.
-          const deliveryId = `telegram_stars:${p.telegram_payment_charge_id}:delivery`;
-          const delivery = await ctx.runMutation(internal.webhooks.claimEvent, {
-            eventId: deliveryId,
-            source: 'billing.telegram_stars.delivery',
-            payload: JSON.stringify({ event: 'delivery' }),
-          });
-          if (delivery.proceed) {
-            try {
-              await bot.deliver(p.invoice_payload);
-              await ctx.runMutation(internal.webhooks.markEventProcessed, {
-                eventId: deliveryId,
-              });
-            } catch (err) {
-              await ctx.runMutation(internal.webhooks.markEventFailed, { eventId: deliveryId });
-              await ctx.runMutation(internal.telegramBot.releaseUpdate, {
-                updateId: update.update_id,
-              });
-              throw new PaymentRetry(err);
+          // What this payment is owed comes from the order (a redelivered
+          // payment only reports a duplicate): its codes when this charge
+          // paid the order, else a full refund (Telegram's rule for an order
+          // that can't be fulfilled). Either job is claimed once per charge.
+          // Any failure from here on (the claim included) leaves the claim
+          // retryable, releases the update and answers 500, so Telegram
+          // redelivers the payment and the job runs again.
+          let jobId: string | null = null;
+          try {
+            const fate = await ctx.runQuery(internal.billing.starsPaymentFate, {
+              orderRef: p.invoice_payload,
+              chargeId: p.telegram_payment_charge_id,
+            });
+            const job = fate === 'deliver' ? 'delivery' : 'refund';
+            const id = `telegram_stars:${p.telegram_payment_charge_id}:${job}`;
+            const claimed = await ctx.runMutation(internal.webhooks.claimEvent, {
+              eventId: id,
+              source: `billing.telegram_stars.${job}`,
+              payload: JSON.stringify({ event: job }),
+            });
+            if (claimed.proceed) {
+              jobId = id;
+              if (job === 'delivery') await bot.deliver(p.invoice_payload);
+              else await refundUnfulfilled(bot, token, payer?.id, p);
+              await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: id });
             }
+          } catch (err) {
+            if (jobId) {
+              await ctx.runMutation(internal.webhooks.markEventFailed, { eventId: jobId });
+            }
+            await ctx.runMutation(internal.telegramBot.releaseUpdate, {
+              updateId: update.update_id,
+            });
+            throw new PaymentRetry(err);
           }
         }
         return { handled: true };
@@ -604,7 +647,7 @@ export const handleUpdate = internalAction({
             await bot.show(bot.terms({ months: a.months, qty: a.qty }));
             break;
           case 'accept':
-            await bot.buy(a.months, a.qty);
+            await bot.buy(a.months, a.qty, a.stars);
             break;
         }
         return { handled: true };

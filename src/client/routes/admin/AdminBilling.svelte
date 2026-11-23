@@ -1116,7 +1116,7 @@
             <span class="ms-auto text-xs text-muted-foreground tabular-nums">
               {o.paidAt ? `paid ${formatDate(o.paidAt)}` : formatDate(o.createdAt)}
             </span>
-            {#if GRANTABLE.has(o.status)}
+            {#if GRANTABLE.has(o.status) && o.channel !== 'telegram'}
               <span class="flex gap-1">
                 <Button
                   size="sm"

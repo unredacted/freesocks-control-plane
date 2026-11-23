@@ -13,9 +13,11 @@ import { writeAuditLog } from './lib/audit';
 import { resolveProcessorSecrets } from './lib/billingConfig';
 import { randomHex } from './lib/crypto';
 import {
+  botIdOf,
   resolveTelegramConfig,
   resolveTelegramSecrets,
   telegramConfigWrites,
+  TELEGRAM_KEYS,
   TELEGRAM_SECRET_KEYS,
   WEBHOOK_SECRET_RE,
   type StarsPrice,
@@ -234,18 +236,27 @@ export const setWebhook = internalAction({
     }
     await ctx.runMutation(internal.telegramAdmin.auditWebhook, {
       action: a.action,
+      botId: a.action === 'register' ? botIdOf(token) : '',
       actorAdminId: a.actorAdminId,
     });
     return { ok: true };
   },
 });
 
+/** Record which bot the webhook now serves ('' after Remove), and audit it. */
 export const auditWebhook = internalMutation({
   args: {
     action: v.union(v.literal('register'), v.literal('remove')),
+    botId: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a): Promise<null> => {
+    await upsertSettingRow(
+      ctx,
+      TELEGRAM_KEYS.webhookBotId,
+      JSON.stringify(a.botId),
+      a.actorAdminId,
+    );
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,

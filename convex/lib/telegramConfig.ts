@@ -31,6 +31,12 @@ export interface TelegramConfig {
   starsPrices: StarsPrice[];
   /** Full terms of sale the bot links ('' = the bot's own short terms only). */
   termsUrl: string;
+  /**
+   * The bot whose webhook Register pointed here (its numeric id, the
+   * non-secret part of the token); '' after Remove or before any Register.
+   * State, not a setting: only the webhook actions write it.
+   */
+  webhookBotId: string;
 }
 
 export const TELEGRAM_KEYS = {
@@ -39,6 +45,7 @@ export const TELEGRAM_KEYS = {
   starsEnabled: 'telegram.stars.enabled',
   starsPrices: 'telegram.stars.prices',
   termsUrl: 'telegram.termsUrl',
+  webhookBotId: 'telegram.webhook.botId',
 } as const;
 
 /** Write-only credentials (DB first, then env). */
@@ -49,6 +56,11 @@ export const TELEGRAM_SECRET_KEYS = {
 
 /** A BotFather token: `<bot id>:<secret>`. */
 export const BOT_TOKEN_RE = /^\d{5,16}:[A-Za-z0-9_-]{30,64}$/;
+
+/** The bot's numeric id: the part of its token before the colon (not secret). */
+export function botIdOf(token: string): string {
+  return BOT_TOKEN_RE.test(token) ? token.slice(0, token.indexOf(':')) : '';
+}
 /** What Telegram accepts as a webhook secret_token. */
 export const WEBHOOK_SECRET_RE = /^[A-Za-z0-9_-]{1,256}$/;
 
@@ -58,6 +70,7 @@ export const TELEGRAM_DEFAULTS: TelegramConfig = {
   starsEnabled: false,
   starsPrices: [],
   termsUrl: '',
+  webhookBotId: '',
 };
 
 /** Upper bound on a Stars price per code (Telegram caps one invoice at 10,000 Stars x quantity anyway). */
@@ -158,19 +171,23 @@ export async function resolveTelegramSecrets(db: DatabaseReader): Promise<Telegr
 
 export async function resolveTelegramConfig(db: DatabaseReader): Promise<TelegramConfig> {
   const read = (key: string) => readSetting(db, key);
-  const [enabled, botUsername, starsEnabled, starsPrices, termsUrl] = await Promise.all([
-    read(TELEGRAM_KEYS.enabled),
-    read(TELEGRAM_KEYS.botUsername),
-    read(TELEGRAM_KEYS.starsEnabled),
-    read(TELEGRAM_KEYS.starsPrices),
-    read(TELEGRAM_KEYS.termsUrl),
-  ]);
+  const [enabled, botUsername, starsEnabled, starsPrices, termsUrl, webhookBotId] =
+    await Promise.all([
+      read(TELEGRAM_KEYS.enabled),
+      read(TELEGRAM_KEYS.botUsername),
+      read(TELEGRAM_KEYS.starsEnabled),
+      read(TELEGRAM_KEYS.starsPrices),
+      read(TELEGRAM_KEYS.termsUrl),
+      read(TELEGRAM_KEYS.webhookBotId),
+    ]);
   return {
     enabled: enabled === true,
     botUsername: sanitizeBotUsername(botUsername),
     starsEnabled: starsEnabled === true,
     starsPrices: sanitizeStarsPrices(starsPrices) ?? [],
     termsUrl: sanitizeTermsUrl(termsUrl),
+    webhookBotId:
+      typeof webhookBotId === 'string' && /^\d{5,16}$/.test(webhookBotId) ? webhookBotId : '',
   };
 }
 

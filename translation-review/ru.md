@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**324 of 931 strings are missing** (the app currently shows English for
+**327 of 934 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -1111,7 +1111,7 @@ review.
 | `direct.noMatch` | No coin matches. Try the coin's name, like USDT, or its network, like Tron. | ⚠️ **MISSING** |
 | `direct.pickedCoin` | Selected: {coin} on {network} | ⚠️ **MISSING** |
 
-## `bot` — Miscellaneous strings. *(48 missing)*
+## `bot` — Miscellaneous strings. *(51 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -1163,3 +1163,6 @@ review.
 | `bot.commandTerms` | Terms of sale | ⚠️ **MISSING** |
 | `bot.commandPaySupport` | Help with a payment | ⚠️ **MISSING** |
 | `bot.orderPrice` | Price: {amount} | ⚠️ **MISSING** |
+| `bot.priceChanged` | The price changed. Here is the current price; nothing was charged. | ⚠️ **MISSING** |
+| `bot.deleteFailed` | Telegram could not delete the message just now. Tap the button again in a moment. | ⚠️ **MISSING** |
+| `bot.deleteYourself` | Telegram no longer lets the bot delete that message. Please delete it yourself. | ⚠️ **MISSING** |

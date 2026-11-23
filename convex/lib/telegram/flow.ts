@@ -16,6 +16,7 @@ import {
 } from './botMessages.generated';
 import type { StarsPrice, TelegramConfig } from '../telegramConfig';
 import { MAX_DURATION_MONTHS } from '../billingConfig';
+import { MAX_STARS_PER_CODE } from '../telegramConfig';
 
 export type { BotLocale, BotMessageKey };
 export { BOT_LOCALES };
@@ -93,14 +94,17 @@ export type Action =
   | { k: 'dur'; months: number }
   /** Show the terms and the price for this order, with Accept and pay. */
   | { k: 'qty'; months: number; qty: number }
-  /** The buyer accepted the terms: create the order and send the Stars invoice. */
-  | { k: 'accept'; months: number; qty: number }
+  /**
+   * The buyer accepted the terms at this price per code: create the order and
+   * send the Stars invoice. A price that changed since is refused, never swapped.
+   */
+  | { k: 'accept'; months: number; qty: number; stars: number }
   | { k: 'ack'; ref: string };
 
 const REF = /^[0-9a-f]{32}$/;
 
 function intIn(s: string | undefined, min: number, max: number): number | null {
-  if (!s || !/^\d{1,3}$/.test(s)) return null;
+  if (!s || !/^\d{1,6}$/.test(s)) return null;
   const n = Number(s);
   return n >= min && n <= max ? n : null;
 }
@@ -125,7 +129,7 @@ export function encodeAction(lang: BotLocale, a: Action): string {
     case 'qty':
       return `q|${lang}|${a.months}|${a.qty}`;
     case 'accept':
-      return `t|${lang}|${a.months}|${a.qty}`;
+      return `t|${lang}|${a.months}|${a.qty}|${a.stars}`;
     case 'ack':
       return `a|${lang}|${a.ref}`;
   }
@@ -134,8 +138,10 @@ export function encodeAction(lang: BotLocale, a: Action): string {
 /** Parse callback_data strictly; anything unexpected is null (never trusted). */
 export function decodeAction(data: string | undefined): { lang: BotLocale; action: Action } | null {
   if (!data || data.length > 64) return null;
-  const [code, lang, f1, f2, f3] = data.split('|');
-  if (f3 !== undefined || !lang || !isBotLocale(lang)) return null;
+  const [code, lang, f1, f2, f3, f4] = data.split('|');
+  if (f4 !== undefined || !lang || !isBotLocale(lang)) return null;
+  // Only Accept carries a third field (the price per code it showed).
+  if (f3 !== undefined && code !== 't') return null;
   const months = intIn(f1, 1, MAX_DURATION_MONTHS);
   const qty = intIn(f2, 1, 50);
   const bare = f1 === undefined;
@@ -156,10 +162,12 @@ export function decodeAction(data: string | undefined): { lang: BotLocale; actio
       return months !== null && f2 === undefined ? { lang, action: { k: 'dur', months } } : null;
     case 'q':
       return months !== null && qty !== null ? { lang, action: { k: 'qty', months, qty } } : null;
-    case 't':
-      return months !== null && qty !== null
-        ? { lang, action: { k: 'accept', months, qty } }
+    case 't': {
+      const stars = intIn(f3, 1, MAX_STARS_PER_CODE);
+      return months !== null && qty !== null && stars !== null
+        ? { lang, action: { k: 'accept', months, qty, stars } }
         : null;
+    }
     case 'a':
       return f1 !== undefined && REF.test(f1) && f2 === undefined
         ? { lang, action: { k: 'ack', ref: f1 } }

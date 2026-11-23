@@ -222,7 +222,7 @@ describe('Telegram gift orders and the rest of billing', () => {
     });
   });
 
-  test('an operator grant of a stuck bot order mints its codes, bound to nobody', async () => {
+  test('an operator cannot grant a bot order (its codes could never be delivered)', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const { orderRef } = await starsBotOrder(t, 1);
@@ -233,13 +233,14 @@ describe('Telegram gift orders and the rest of billing', () => {
         .unique();
       return o!._id as string;
     });
-    const res = await t.action(internal.billing.adminGrantOrder, { orderId });
-    expect(res).toEqual({ granted: true, kind: 'gift' });
-    const status = await t.query(internal.billing.botOrderStatus, { orderRef });
-    expect(status?.giftCodes).toHaveLength(1);
+    await expect(t.action(internal.billing.adminGrantOrder, { orderId })).rejects.toThrow(
+      /delivered in the chat/,
+    );
+    await expect(t.mutation(internal.billing.grantOrderByAdmin, { orderId })).rejects.toThrow(
+      /delivered in the chat/,
+    );
     await t.run(async (ctx) => {
-      const [code] = await ctx.db.query('redemptionCodes').collect();
-      expect(code?.purchasedByUserId).toBeUndefined();
+      expect(await ctx.db.query('redemptionCodes').collect()).toHaveLength(0);
     });
   });
 });
