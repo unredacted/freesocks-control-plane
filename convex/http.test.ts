@@ -278,6 +278,23 @@ describe('account-login throttle runs BEFORE the captcha verify', () => {
     expect(json.error.code).toBe('rate_limit.exceeded');
   });
 
+  test('the per-IP gate runs before the sealed body is opened', async () => {
+    // Sealed bodies that cannot open (unknown recipient) still spend the IP's
+    // budget, so a flood of them is refused at 429 without a decapsulation each.
+    const t = convexTest(schema, modules);
+    const attempt = () =>
+      t.fetch('/api/v1/auth/account-login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.51' },
+        body: JSON.stringify({ fsSealed: { v: 1, kid: '0123456789abcdef', enc: 'AA', ct: 'AA' } }),
+      });
+    for (let i = 0; i < 10; i++) expect((await attempt()).status).not.toBe(429);
+    const blocked = await attempt();
+    expect(blocked.status).toBe(429);
+    const json = (await blocked.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('rate_limit.exceeded');
+  });
+
   test('login fails closed (503) when no trustworthy client IP exists', async () => {
     // No proxy trust configured → the per-IP throttle can't run and the
     // per-(prefix,IP) backstop would degrade to a deployment-wide bucket, so

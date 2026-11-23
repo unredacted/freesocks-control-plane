@@ -7,6 +7,11 @@ an adversary logs, so the choice is recorded here and validated before any seali
 
 ## 0. Headline gate finding (RUNTIME REQUIREMENT)
 
+> **Superseded 2026-11-22 (section 8).** The isolate gained subtle HKDF upstream, and G1 passes in
+> the default V8 runtime on the pinned backend. Server open/seal now runs inline in the sealed
+> `httpAction` (`convex/lib/hpkeServer.ts`), and `convex/lib/hpkeCrypto.ts` is no longer a
+> `"use node"` module. The text below is the original 2026-06 record.
+
 The X-Wing HPKE suite **works correctly and within budget in the Convex Node runtime (`"use node"`),
 but NOT in the default V8 isolate**: the default isolate does not implement `crypto.subtle.importKey`
 for **HKDF** (it does implement HMAC, which `convex/lib/crypto.ts` already relies on, but not HKDF),
@@ -97,7 +102,7 @@ recorded for the record.
 
 | #   | Check                                                                     | Result                                                                                                                                                                                                                            |
 | --- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| G1  | Suite composes + full round-trip (encap, seal, decap, open)               | **PASS in `"use node"`** (round-trip ok). **FAIL in the default isolate** (`crypto.subtle.importKey for HKDF` not implemented). Drives the section-0 decision.                                                                    |
+| G1  | Suite composes + full round-trip (encap, seal, decap, open)               | **PASS in `"use node"`** (round-trip ok). **FAIL in the default isolate** (`crypto.subtle.importKey for HKDF` not implemented). Drives the section-0 decision. **Re-run 2026-11-22: PASS in the default isolate** (section 8).    |
 | G2  | X25519 backend is noble pure-JS, not `subtle` X25519                      | **PASS** (dep-tree: `@hpke/dhkem-x25519` wraps `@noble/curves`; the Node round-trip exercises it without an unsupported-algorithm error)                                                                                          |
 | G3  | `crypto.getRandomValues` usable in the runtime                            | **PASS** (`getRandomValues: true`)                                                                                                                                                                                                |
 | G4  | Single round-trip latency                                                 | **PASS** 18 ms in the Node runtime (7.5 ms standalone bun); well under the 50 ms threshold                                                                                                                                        |
@@ -132,3 +137,41 @@ with the shared module in P0d before any production sealing.
   `convex/lib/hpke.ts` design are updated accordingly.
 - Pending before production sealing (P0d): vendor the X-Wing draft-10 + FIPS 203 KATs into CI; assert
   single-use-context in the wrapper; build `src/shared/crypto/hpke.ts` behind the narrow API.
+
+## 8. Gate G1 re-run in the default V8 runtime (2026-11-22)
+
+Upstream convex-backend added HKDF to the isolate's SubtleCrypto ("Implement HKDF for SubtleCrypto",
+#55023, 2026-07-23) and followed with "Improve SubtleCrypto conformance" (#58129, 2026-09-18). Both
+commits are ancestors of the pinned backend `1447815c` (`docker-compose.stack.yml`; npm 1.48.0,
+2026-10-22), checked in the upstream git history.
+
+The gate was re-run against that exact image (by digest), locally, with no `"use node"` anywhere:
+a throwaway module importing `src/shared/crypto/{envelope,hpke,channel,manifest}.ts`, run both as an
+`internalAction` and inside an `httpAction`. Then the real `convex/` of this change was pushed to the
+same image and driven with sealed requests from a client using the same shared code.
+
+| #   | Check                                                    | Result in the default V8 runtime                                                                                                                                                                                                                                                                   |
+| --- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1  | Suite composes + full round-trip                         | **PASS**: `importKey('raw', …, 'HKDF')` ok; X-Wing derand keygen deterministic; seal+reveal channel round trip ok (action and httpAction)                                                                                                                                                          |
+| G2  | X25519 via noble, not subtle                             | **PASS** (unchanged dependency tree)                                                                                                                                                                                                                                                               |
+| G3  | CSPRNG                                                   | **PASS** in httpActions and in internalActions: random bytes, `Math.random`, ephemeral keys, HPKE `enc` and a hedged ML-DSA-65 signature (fixed key) all differ on every call                                                                                                                      |
+| G5  | 16 concurrent round trips incl. keygen                   | **PASS**                                                                                                                                                                                                                                                                                           |
+| G7  | Implicit rejection                                       | **PASS**: tampered `ct` and tampered `enc` both fail as `OpenError`                                                                                                                                                                                                                                |
+| —   | Manifest signing (Ed25519, ML-DSA-65)                    | **PASS** (pure-JS noble), so rotation and revocation need no Node either                                                                                                                                                                                                                           |
+| —   | `fetch` to the seed store on an `internal: true` network | **PASS**: self-hosted has no egress proxy, so the cloud SSRF block does not apply; `AbortSignal.timeout(2000)` aborts at 2 s                                                                                                                                                                       |
+| —   | End to end on the real code                              | **PASS**: login sealed to the static key and to an epoch key both open (the handler reads the body); tampered → 500 `server.error`; unknown kid → 503 `hpke.key_unavailable`; a GET reveal is sealed and the client opens it; `/api/v1/hpke/keys` publishes the epoch after a V8 HEAD to the store |
+
+Consequence: `convex/lib/hpke.ts` opens and seals inline through `convex/lib/hpkeServer.ts`; the key
+endpoint and `maintainEpoch` read the live epoch directly; `convex/lib/hpkeCrypto.ts` (rotation,
+revocation, self-test) drops `"use node"`. Sealed member requests no longer use the Node action pool.
+`convex/lib/hpkeServer.test.ts` pins this: it fails if a server HPKE module regains `"use node"` or the
+wrapper regains a `runAction`.
+
+Queries and mutations are the one place this code must never run: Convex seeds their randomness per
+execution, so a retried execution would repeat an ephemeral key and nonce. `convex/hpkeRuntimeBoundary.test.ts`
+walks the import graph and fails if any module that registers a query or mutation reaches the seal/open,
+keygen or signing modules by any chain. The sealing-posture knob lives in `convex/lib/hpkePosture.ts` for
+that reason (`adminApi` reports it).
+
+Cost: one sealed-request open (X-Wing decapsulation + ChaCha20-Poly1305) is about 1.0 ms of V8 CPU,
+measured over 200 opens in an action on the pinned image.
