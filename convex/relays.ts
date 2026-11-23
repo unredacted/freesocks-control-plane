@@ -113,6 +113,7 @@ import type { ListenerSpecInput } from './lib/edges/registration';
 import { currentNodeName, runningRenameOf } from './lib/backend/nodeAliases';
 import { namesHoldingOrigin } from './edgeNames';
 import { deleteEvalStamp, lastEvalAtOf } from './lib/edges/evalStamps';
+import { deleteWithheldNote } from './lib/edges/withheldNotes';
 
 export {
   assertNoRotationOrQuarantine,
@@ -1323,6 +1324,7 @@ export const finalizeDelete = internalMutation({
         username: mint.username,
       });
     await deleteEvalStamp(ctx, id);
+    await deleteWithheldNote(ctx, id);
     await ctx.db.delete(id);
     return { removed: true, waitingOn: null };
   },

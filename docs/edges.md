@@ -1190,8 +1190,9 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    leaves: link lines are dropped, sing-box outbounds and Clash proxies are removed with every
    group membership, default and rule naming them (the same pruning as a dropped template).
    The body is still served. The render notes it on the origin (`edgeHostHides.noteWithheld`,
-   scheduled, at most once a minute per origin: `relays.withheldEntries`, the entries' names,
-   never an address), which keeps attention `direct_host_reappeared` raised for 15 minutes
+   scheduled, at most once a minute per origin: one `relayWithheldNotes` row per origin with
+   the entries' names, never an address; kept off the `relays` row so the once-a-minute note
+   neither collides with that row's other writers nor drops the cached reads of it), which keeps attention `direct_host_reappeared` raised for 15 minutes
    after the last note (`lib/edges/withheld.ts`) and is audited `edge.render.withheld` when a
    stretch begins. An entry on a transport no listener speaks passes as before;
 6. checks every outgoing entry, emitted AND retained, against the node by any of its
@@ -8609,6 +8610,15 @@ an entry left out by the 21st is `front_host_unused` too, not `direct_host_reapp
 back, run `edgeHostHides:clearFrontsForRollback` with no arguments right before deploying the
 older build: its schema has no `hostUuids` (the older build records the fronts again on its
 next pass).
+
+**The withheld note moves to its own table** (`relayWithheldNotes`, one row per origin;
+`lib/edges/withheldNotes.ts`): one deploy, no migration, no env change. `relays.withheldEntries`
+is no longer written; reads fall back to it for an origin noted before the move, so a stretch
+that began before the deploy keeps its start. To roll back, run
+`edgeHostHides:clearWithheldForRollback` with no arguments right before deploying the older
+build: it pauses notes (so no render recreates a row in the meantime) and empties the note table
+(and the legacy field), which the older schema does not have. The next forward deploy lifts the
+pause (`seed:seedCutover` runs `edgeHostHides:resumeWithheldNotes`).
 
 **Every bound origin re-observed, unplaced entries left out, refusals for good** add one
 optional field (`relays.withheldEntries`): one deploy, no migration, no env change. From the

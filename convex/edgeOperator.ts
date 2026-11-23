@@ -17,6 +17,7 @@ import type { ActionCtx, QueryCtx } from './_generated/server';
 import { lanesOn } from './lib/edges/lanes';
 import { readHealth } from './lib/serverLoad';
 import { lastEvalAtOf } from './lib/edges/evalStamps';
+import { withheldNoteOf } from './lib/edges/withheldNotes';
 import { sampleFamilyFor } from './lib/edges/clientFamilies';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -1384,7 +1385,12 @@ export const attention = internalQuery({
       // A direct Host reappeared on a bound node and could not be re-hidden:
       // delivery is fail-closed (`leak_detected`) until it is hidden. Or member
       // renders left out an entry FCP could not place (lib/edges/withheld.ts).
-      const direct = directHostFacts(relay, now);
+      // The withheld note lives in its own row (lib/edges/withheldNotes.ts).
+      const noted = {
+        ...relay,
+        withheldEntries: (await withheldNoteOf(ctx.db, relay)) ?? undefined,
+      };
+      const direct = directHostFacts(noted, now);
       if (direct) {
         items.push({
           ...base(relay),
@@ -1445,7 +1451,7 @@ export const attention = internalQuery({
       // leaves it out), and it is known not to be the node. Advice, not an alarm.
       // With the count of the node's keys that have not fetched since the
       // binding was claimed: their apps still connect through the front.
-      const front = frontHostFacts(relay, now);
+      const front = frontHostFacts(noted, now);
       if (front) {
         const keys = frontKeysFor(relay.frontKeys, bindingState.bound ? binding : null);
         items.push({

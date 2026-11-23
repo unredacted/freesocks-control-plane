@@ -2177,10 +2177,10 @@ export default defineSchema({
         ),
       }),
     ),
-    // Entries a member render left out on this origin: on a covered transport, at
-    // an address FCP cannot place (neither an edge nor the node by an address it
-    // knows; edgeHostHides.noteWithheld). Keeps `direct_host_reappeared` raised
-    // while renders keep noting it; `since` is when the current stretch began.
+    // LEGACY: the note now lives in `relayWithheldNotes` (nothing writes this
+    // field; reads fall back to it for an origin noted before the move,
+    // lib/edges/withheldNotes.ts). Entries a member render left out on this
+    // origin; `since` is when the current stretch began.
     withheldEntries: v.optional(
       v.object({
         at: v.number(),
@@ -3507,6 +3507,19 @@ export default defineSchema({
   relayEvalStamps: defineTable({
     relayId: v.id('relays'),
     lastEvalAt: v.number(),
+  }).index('by_relay', ['relayId']),
+
+  // When member renders last left entries out on an origin (one row per origin;
+  // edgeHostHides.noteWithheld, lib/edges/withheldNotes.ts). Off the `relays`
+  // row so a note that moves once a minute neither collides with the row's other
+  // writers nor drops the cached queries that read relays. `since` = when the
+  // current stretch began.
+  relayWithheldNotes: defineTable({
+    relayId: v.id('relays'),
+    at: v.number(),
+    since: v.number(),
+    count: v.number(),
+    remarks: v.array(v.string()),
   }).index('by_relay', ['relayId']),
 
   // Per-NODE stats from the backend (the origin mode group is shared, so per-mode group

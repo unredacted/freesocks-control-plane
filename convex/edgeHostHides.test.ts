@@ -24,6 +24,13 @@ import {
 } from './lib/edges/directHosts';
 import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
+import {
+  deleteWithheldNote,
+  ownWithheldNote,
+  withheldNoteOf,
+  writeWithheldNote,
+  type WithheldNote,
+} from './lib/edges/withheldNotes';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
 import { __setNameResolutionForTests } from './nodeIntentOps';
 import { __setS3SendForTests } from './storage';
@@ -172,7 +179,14 @@ async function world(
       reason: res.headers.get('x-fcp-delivery'),
     };
   };
-  const relay = async () => (await t.run((ctx) => ctx.db.get(fx.relayId)))!;
+  // The relay row as the attention reads it: its withheld note comes from its
+  // own row (lib/edges/withheldNotes.ts), overlaid here so the reads stay short.
+  const relay = async () =>
+    t.run(async (ctx) => {
+      const r = (await ctx.db.get(fx.relayId))!;
+      return { ...r, withheldEntries: (await withheldNoteOf(ctx.db, r)) ?? undefined };
+    });
+  const setNote = (note: WithheldNote) => t.run((ctx) => writeWithheldNote(ctx, fx.relayId, note));
   const rows = () =>
     t.run((ctx) =>
       ctx.db
@@ -180,7 +194,16 @@ async function world(
         .withIndex('by_relay', (q) => q.eq('relayId', fx.relayId))
         .collect(),
     );
-  return { ...fx, panel, subId, edgeId: a.edgeId as Id<'edges'>, download, relay, rows };
+  return {
+    ...fx,
+    panel,
+    subId,
+    edgeId: a.edgeId as Id<'edges'>,
+    download,
+    relay,
+    setNote,
+    rows,
+  };
 }
 
 describe('classifyDirectHosts (pure)', () => {
@@ -1142,14 +1165,29 @@ describe('the direct-Host attention from a render note lapses on its own', () =>
     // A second note inside the minute writes nothing (each is a write).
     vi.setSystemTime(NOW + 30_000);
     await t.mutation(internal.edgeHostHides.noteWithheld, { relayId, count: 1, remarks: [] });
-    expect((await t.run((ctx) => ctx.db.get(relayId)))!.withheldEntries?.count).toBe(2);
+    expect((await t.run((ctx) => ownWithheldNote(ctx.db, relayId)))?.count).toBe(2);
+    // The note lives in its own row: the relay row is never written.
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.withheldEntries).toBeUndefined();
     vi.setSystemTime(NOW + 16 * 60_000);
     expect(await kinds()).not.toContain('direct_host_reappeared');
-    // Rollback: the older schema has no such field.
+    // Rollback: an older schema has no note table.
     expect(await t.mutation(internal.edgeHostHides.clearWithheldForRollback, {})).toEqual({
-      cleared: 1,
+      cleared: 0,
+      notes: 1,
+      paused: true,
     });
-    expect((await t.run((ctx) => ctx.db.get(relayId)))!.withheldEntries).toBeUndefined();
+    expect(await t.run((ctx) => ownWithheldNote(ctx.db, relayId))).toBeNull();
+    // Paused: a render noting after the clear recreates nothing the older
+    // schema would refuse.
+    vi.setSystemTime(NOW + 20 * 60_000);
+    await t.mutation(internal.edgeHostHides.noteWithheld, { relayId, count: 1, remarks: [] });
+    expect(await t.run((ctx) => ownWithheldNote(ctx.db, relayId))).toBeNull();
+    // Going forward again lifts it.
+    expect(await t.mutation(internal.edgeHostHides.resumeWithheldNotes, {})).toEqual({
+      resumed: true,
+    });
+    await t.mutation(internal.edgeHostHides.noteWithheld, { relayId, count: 1, remarks: [] });
+    expect((await t.run((ctx) => ownWithheldNote(ctx.db, relayId)))?.count).toBe(1);
   });
 });
 
@@ -1169,7 +1207,7 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
   test('members no longer get it, and once a look knows it as a front it is advice, never the critical direct-Host alarm', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
-    const { t, relayId, download, relay } = await world({
+    const { t, relayId, download, relay, setNote } = await world({
       hosts: [...panelHosts().filter((h) => h.uuid === FCP_UUID), front()],
     });
     // The rehearsal's look (before go-live) records it, by name and Host uuid
@@ -1198,16 +1236,12 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     expect((await relay()).operatorFronts?.remarks).toEqual([`${FIXTURE_NODE}-relay`]);
     expect((await relay()).directHostAlert).toBeUndefined();
     // Another entry left out that no look knows stays the critical alarm.
-    await t.run((ctx) =>
-      ctx.db.patch(relayId, {
-        withheldEntries: {
-          at: NOW,
-          since: NOW,
-          count: 2,
-          remarks: [`${FIXTURE_NODE}-relay`, 'someone-else'],
-        },
-      }),
-    );
+    await setNote({
+      at: NOW,
+      since: NOW,
+      count: 2,
+      remarks: [`${FIXTURE_NODE}-relay`, 'someone-else'],
+    });
     const both = (await t.query(internal.edgeOperator.attention, {})).items;
     expect(both.find((i) => i.kind === 'direct_host_reappeared')).toMatchObject({
       severity: 'critical',
@@ -1315,13 +1349,11 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     });
     const leftOut = () =>
       t.run((ctx) =>
-        ctx.db.patch(relayId, {
-          withheldEntries: {
-            at: Date.now(),
-            since: NOW,
-            count: 1,
-            remarks: [`${FIXTURE_NODE}-relay`],
-          },
+        writeWithheldNote(ctx, relayId, {
+          at: Date.now(),
+          since: NOW,
+          count: 1,
+          remarks: [`${FIXTURE_NODE}-relay`],
         }),
       );
     const frontItem = async () =>
@@ -1492,5 +1524,68 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     });
     await t.action(internal.edgeHostHides.observe, { relayId });
     expect((await relay()).operatorFronts).toBeUndefined();
+  });
+});
+
+describe('the withheld note lives in its own row (lib/edges/withheldNotes.ts)', () => {
+  test('noting never writes the relays row, so it neither collides with its writers nor drops cached reads of it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const { t, relayId } = await world({ hosts: panelHosts().filter((h) => h.uuid === FCP_UUID) });
+    vi.setSystemTime(NOW);
+    const before = await t.run((ctx) => ctx.db.get(relayId));
+    // The minute turns and several renders of the origin note at once.
+    for (let i = 0; i < 5; i++)
+      await t.mutation(internal.edgeHostHides.noteWithheld, {
+        relayId,
+        count: 1,
+        remarks: ['a-host'],
+      });
+    expect(await t.run((ctx) => ctx.db.get(relayId))).toEqual(before);
+    const note = await t.run((ctx) => ownWithheldNote(ctx.db, relayId));
+    expect(note).toMatchObject({ count: 1, remarks: ['a-host'] });
+    expect(note!.at).toBeGreaterThanOrEqual(NOW);
+    expect(note!.since).toBe(note!.at);
+    const rows = await t.run((ctx) => ctx.db.query('relayWithheldNotes').collect());
+    expect(rows).toHaveLength(1);
+    // One stretch, one audit row.
+    const audits = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audits.filter((a) => a.action === 'edge.render.withheld')).toHaveLength(1);
+  });
+
+  test('an origin noted before the move: read from the legacy field, and the stretch continues into its own row', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const { t, relayId } = await world({ hosts: panelHosts().filter((h) => h.uuid === FCP_UUID) });
+    vi.setSystemTime(NOW);
+    const since = NOW - 5 * 60_000;
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        withheldEntries: { at: NOW - 2 * 60_000, since, count: 1, remarks: ['old-host'] },
+      }),
+    );
+    const kinds = async () =>
+      (await t.query(internal.edgeOperator.attention, {})).items.map((i) => i.kind);
+    expect(await kinds()).toContain('direct_host_reappeared');
+    await t.mutation(internal.edgeHostHides.noteWithheld, {
+      relayId,
+      count: 1,
+      remarks: ['old-host'],
+    });
+    const note = await t.run((ctx) => ownWithheldNote(ctx.db, relayId));
+    expect(note!.at).toBeGreaterThanOrEqual(NOW);
+    expect(note!.since).toBe(since);
+    // An ongoing stretch is not audited again.
+    const audits = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audits.filter((a) => a.action === 'edge.render.withheld')).toHaveLength(0);
+  });
+
+  test('removing the origin drops its note', async () => {
+    const { t, relayId } = await world({ hosts: panelHosts().filter((h) => h.uuid === FCP_UUID) });
+    await t.run((ctx) =>
+      writeWithheldNote(ctx, relayId, { at: NOW, since: NOW, count: 1, remarks: [] }),
+    );
+    await t.run((ctx) => deleteWithheldNote(ctx, relayId));
+    expect(await t.run((ctx) => ownWithheldNote(ctx.db, relayId))).toBeNull();
   });
 });
