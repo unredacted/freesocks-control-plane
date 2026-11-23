@@ -33,6 +33,26 @@ x-logging: &log
 # bounding, bound THAT service on evidence — do not reinstate a blanket set.
 # `pids_limit` stays: it caps fork-bomb blast radius and throttles nothing.
 
+# Isolation (docs/convex-security.md has the full picture):
+#   * Networks by need, not one flat `default`: Postgres and Valkey sit on
+#     `internal: true` networks with no route out, and only the services that
+#     use them can reach them. Caddy (the internet-facing service) shares `edge`
+#     with the backend, Cap and the dashboard only; the client-check sidecar
+#     shares `checks` with the backend only. Docker cannot filter by port, so
+#     whatever joins a network with `backend` can reach :3210 too; keeping the
+#     other services OFF those networks is the part that is achievable.
+#   * Every long-lived service runs with `no-new-privileges` and `cap_drop:
+#     [ALL]`, adding back only what its entrypoint needs. The backend, the
+#     dashboard and Caddy also get a read-only root filesystem.
+#   * The backend runs as an unprivileged uid (10001). Upstream's image is
+#     root-only, so docker/convex-node/Dockerfile makes its binaries world-
+#     executable and the one-shot `data-perms` service hands the data volume to
+#     that uid before the backend starts.
+#   * Backups dump as the read-only `fcp_backup` role (`db-roles` creates it with
+#     `pg_read_all_data`), so the backup sidecar never holds the superuser
+#     password. `bun scripts/bootstrap-secrets.mjs` generates BACKUP_DB_PASSWORD.
+#   convex/deployPins.test.ts holds all of this in place.
+
 services:
   hpke-epoch-store:
     build:
@@ -42,8 +62,11 @@ services:
     restart: unless-stopped
     logging: *log
     read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     environment:
       - HPKE_EPOCH_STORE_TOKEN=${HPKE_EPOCH_STORE_TOKEN:?run bootstrap to set HPKE_EPOCH_STORE_TOKEN}
+    # Only the backend and the deployer can reach it, and it has no route out.
     networks: [epoch_keys]
     healthcheck:
       test:
@@ -57,7 +80,6 @@ services:
       timeout: 2s
       retries: 5
   backend:
-    networks: [default, epoch_keys]
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
     # (`precompiled-<date>-<sha7>` in convex/convex-backend). So the tag here
     # is the git sha of a release: 1447815 = precompiled-2026-10-22-1447815 (the npm 1.48.0 anchor).
@@ -99,16 +121,33 @@ services:
     logging: *log
     stop_grace_period: 10s
     stop_signal: SIGINT
+    # Unprivileged + read-only root. Writes go to the data volume (the backend
+    # keeps its TMPDIR there) and /tmp; HOME points at /tmp because the uid has
+    # no home directory.
+    user: '10001:10001'
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    networks: [edge, data, checks, ops, epoch_keys]
     ports:
       - '127.0.0.1:${PORT:-3210}:3210'
     volumes:
       - data:/convex/data
     environment:
+      - HOME=/tmp
       - ACTIONS_USER_TIMEOUT_SECS=${ACTIONS_USER_TIMEOUT_SECS:-120}
       - APPLICATION_MAX_CONCURRENT_MUTATIONS=16
       - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=16
       - APPLICATION_MAX_CONCURRENT_QUERIES=16
-      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=16
+      # Every HTTP action holds one of these slots for its whole life (including
+      # while it awaits a query, mutation, fetch or Node action), so this caps
+      # in-flight HTTP requests and V8 actions together. 64 is the backend's own
+      # default; the old 16 (copied from upstream's example compose) let a few
+      # slow upstream calls queue every other request. Query/mutation limits are
+      # separate, so this adds no database concurrency.
+      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=${APPLICATION_MAX_CONCURRENT_V8_ACTIONS:-64}
       - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
       - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN}
       - DISABLE_BEACON=${DISABLE_BEACON:-true}
@@ -148,8 +187,30 @@ services:
       interval: 10s
       start_period: 15s
     depends_on:
+      data-perms:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
+
+  # One-shot, before the backend: give the data volume to the backend's uid.
+  # Idempotent and cheap after the first run (it only touches files that are
+  # not already owned by 10001), so it is safe on every `up`. It needs only
+  # `find`, so it borrows the stack's pinned Postgres image (a fourth Convex ref
+  # would break scripts/convex-repin.sh's counts); no network, and only the
+  # capabilities chown needs.
+  data-perms:
+    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    pids_limit: 64
+    restart: 'no'
+    logging: *log
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH, FOWNER]
+    security_opt: ['no-new-privileges:true']
+    entrypoint: ['/bin/sh', '-c']
+    command: ['find /convex/data ! -user 10001 -exec chown -h 10001:10001 {} +']
+    volumes:
+      - data:/convex/data
 
   # Postgres 18: the production datastore (exercised on beta before prod). The
   # backend connects to a database named after INSTANCE_NAME with hyphens
@@ -171,6 +232,12 @@ services:
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
+    # What the official entrypoint needs to own the data dir and drop to the
+    # postgres user; nothing else.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: ['no-new-privileges:true']
+    networks: [data]
     environment:
       - POSTGRES_USER=convex
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.beta}
@@ -198,11 +265,19 @@ services:
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
+    cap_drop: [ALL]
+    # Read access to the bind-mounted signing key whoever owns it on the host
+    # (created mode 600, see docs/beta-deploy.md); grants no write or chown.
+    cap_add: [DAC_READ_SEARCH]
+    security_opt: ['no-new-privileges:true']
+    # `data` reaches Postgres; `backup_egress` is the route to the S3 endpoint.
+    networks: [data, backup_egress]
     environment:
       - POSTGRES_HOST=postgres
-      - POSTGRES_USER=convex
+      # The read-only role `db-roles` maintains, never the superuser.
+      - POSTGRES_USER=fcp_backup
       - POSTGRES_DB=${POSTGRES_DB:-freesocks_beta}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.beta}
+      - POSTGRES_PASSWORD=${BACKUP_DB_PASSWORD:?run bun scripts/bootstrap-secrets.mjs to set BACKUP_DB_PASSWORD}
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - BACKUP_RETRY_SECONDS=${BACKUP_RETRY_SECONDS:-300}
       - BACKUP_RETENTION=${BACKUP_RETENTION:-7}
@@ -245,6 +320,33 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-roles:
+        condition: service_completed_successfully
+
+  # One-shot: create or refresh the read-only `fcp_backup` role the backup
+  # sidecar dumps as (pg_read_all_data: SELECT on every table, including the
+  # ones Convex creates later). Idempotent; it re-applies the password from
+  # BACKUP_DB_PASSWORD on every `up`, so rotating it is: change the value, `up`.
+  db-roles:
+    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    pids_limit: 64
+    restart: 'no'
+    logging: *log
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    networks: [data]
+    entrypoint: ['/bin/sh', '/db-roles.sh']
+    environment:
+      - PGHOST=postgres
+      - PGUSER=convex
+      - PGPASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.beta}
+      - PGDATABASE=${POSTGRES_DB:-freesocks_beta}
+      - BACKUP_DB_PASSWORD=${BACKUP_DB_PASSWORD:?run bun scripts/bootstrap-secrets.mjs to set BACKUP_DB_PASSWORD}
+    volumes:
+      - ./docker/db-roles.sh:/db-roles.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
@@ -260,6 +362,13 @@ services:
     logging: *log
     stop_grace_period: 10s
     stop_signal: SIGINT
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    # `edge`: the optional Caddy exposure (Caddyfile) proxies to dashboard:6791.
+    networks: [edge]
     ports:
       - '127.0.0.1:${DASHBOARD_PORT:-6791}:6791'
     environment:
@@ -287,6 +396,10 @@ services:
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    # `edge`: Caddy proxies /cap here and the backend verifies tokens; `cache`: Valkey.
+    networks: [edge, cache]
     ports:
       # Fallback admin access with no edge/auth layer in the path (loopback
       # only; ssh -L 3000:127.0.0.1:3000 <host>). Useful if the fronting
@@ -326,6 +439,11 @@ services:
     logging: *log
     stop_grace_period: 10s
     command: ['valkey-server', '--save', '60', '1', '--appendonly', 'no']
+    # The entrypoint chowns /data and drops to the valkey user.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    security_opt: ['no-new-privileges:true']
+    networks: [cache]
     volumes:
       - valkey_data:/data
     healthcheck:
@@ -351,6 +469,15 @@ services:
     pids_limit: 256
     restart: unless-stopped
     logging: *log
+    # Caddy runs as root in its image; binding :80/:443 is the one capability it
+    # needs. Certificates and config live on the caddy_* volumes.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ['no-new-privileges:true']
+    networks: [edge]
     ports:
       - '80:80'
       - '443:443'
@@ -417,6 +544,9 @@ services:
       - /tmp
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
+    # Its own network with the backend (which calls it) and a route out to the
+    # proxies it checks; it cannot reach Postgres, Valkey, Cap or Caddy.
+    networks: [checks]
     environment:
       - EDGE_CLIENT_CHECK_SECRET=${EDGE_CLIENT_CHECK_SECRET:-}
       # The egress-IP page (plain text, one address). Empty = the service's default.
@@ -444,8 +574,16 @@ services:
     pids_limit: 128
     restart: 'no'
     logging: *log
+    # An offline derivation: no network, no capabilities, and the key file is
+    # readable by its owner only.
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     entrypoint: ['/bin/bash', '-c']
-    command: ["./generate_admin_key.sh | grep '|' | tail -n1 > /keys/admin_key"]
+    command:
+      [
+        "umask 077 && ./generate_admin_key.sh | grep '|' | tail -n1 > /keys/admin_key && chmod 600 /keys/admin_key",
+      ]
     environment:
       - INSTANCE_NAME=${INSTANCE_NAME}
       - INSTANCE_SECRET=${INSTANCE_SECRET:?set INSTANCE_SECRET in .env.beta}
@@ -468,6 +606,11 @@ services:
     pids_limit: 256
     restart: 'no'
     logging: *log
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    # `ops`: the deploy API on backend:3210; `epoch_keys`: the epoch-seed store
+    # it initializes.
+    networks: [ops, epoch_keys]
     environment:
       - CONVEX_SELF_HOSTED_URL=http://backend:3210
       - HPKE_EPOCH_STORE_URL=http://hpke-epoch-store:8080
@@ -487,7 +630,25 @@ services:
       hpke-epoch-store:
         condition: service_healthy
 
+# Who can reach whom (see the isolation note at the top). `internal: true` =
+# no route out of the host.
 networks:
+  # Caddy, the backend's HTTP-actions port, Cap and the dashboard; the route out
+  # for ACME and the backend's outbound calls.
+  edge: {}
+  # Postgres and the services that talk to it.
+  data:
+    internal: true
+  # Cap and its Valkey.
+  cache:
+    internal: true
+  # The backend and the client-check sidecar (which needs a route out).
+  checks: {}
+  # The one-shot deployer and the deploy API.
+  ops: {}
+  # The backup sidecar's route to the S3 endpoint.
+  backup_egress: {}
+  # The backend and deployer to the in-memory HPKE epoch-seed store.
   epoch_keys:
     internal: true
 

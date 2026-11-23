@@ -697,3 +697,160 @@ describe('what the images take from the checkout', () => {
     expect(copies).toEqual(['--from=build /app/dist /srv/dist', 'Caddyfile /etc/caddy/Caddyfile']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Isolation and hardening (the note at the top of docker-compose.stack.yml).
+
+interface ComposeService {
+  restart?: string;
+  user?: string;
+  read_only?: boolean;
+  cap_drop?: string[];
+  cap_add?: string[];
+  security_opt?: string[];
+  networks?: string[];
+  network_mode?: string;
+  ports?: string[];
+  environment?: string[];
+  command?: string | string[];
+}
+const stackDoc = YAML.parse(stack) as {
+  services: Record<string, ComposeService>;
+  networks?: Record<string, { internal?: boolean } | null>;
+};
+const services = stackDoc.services;
+const envOf = (svc: ComposeService) =>
+  Object.fromEntries(
+    (svc.environment ?? []).map((e) => {
+      const i = e.indexOf('=');
+      return i < 0 ? [e, ''] : [e.slice(0, i), e.slice(i + 1)];
+    }),
+  );
+
+describe('stack privacy defaults', () => {
+  test('the backend redacts errors to clients and sends no beacon by default', () => {
+    const env = envOf(services.backend);
+    expect(env.REDACT_LOGS_TO_CLIENT).toBe('${REDACT_LOGS_TO_CLIENT:-true}');
+    expect(env.DISABLE_BEACON).toBe('${DISABLE_BEACON:-true}');
+    const dev = (YAML.parse(devCompose) as { services: Record<string, ComposeService> }).services;
+    expect(envOf(dev.backend).DISABLE_BEACON).toBe('${DISABLE_BEACON:-true}');
+  });
+});
+
+describe('stack isolation', () => {
+  const longLived = Object.entries(services).filter(([, s]) => s.restart === 'unless-stopped');
+  const all = Object.entries(services);
+
+  test('every service runs with no-new-privileges and drops all capabilities', () => {
+    expect(longLived.length).toBeGreaterThan(5);
+    for (const [name, svc] of all) {
+      expect(svc.security_opt, `${name}: no-new-privileges`).toContain('no-new-privileges:true');
+      expect(svc.cap_drop, `${name}: cap_drop [ALL]`).toEqual(['ALL']);
+    }
+  });
+
+  test('capabilities are added back only where an entrypoint needs them', () => {
+    const added = Object.fromEntries(
+      all.filter(([, s]) => s.cap_add?.length).map(([n, s]) => [n, [...s.cap_add!].sort()]),
+    );
+    expect(added).toEqual({
+      backup: ['DAC_READ_SEARCH'],
+      'data-perms': ['CHOWN', 'DAC_READ_SEARCH', 'FOWNER'],
+      postgres: ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'],
+      valkey: ['CHOWN', 'SETGID', 'SETUID'],
+      web: ['NET_BIND_SERVICE'],
+    });
+  });
+
+  test('the backend runs as an unprivileged uid on a read-only root filesystem', () => {
+    const backend = services.backend;
+    expect(backend.user).toBe('10001:10001');
+    expect(backend.read_only).toBe(true);
+    // data-perms hands the volume to the same uid before the backend starts.
+    const chown = String(services['data-perms'].command);
+    expect(chown).toContain('-user 10001');
+    expect(chown).toContain('chown -h 10001:10001');
+    // The image overlay makes upstream's owner-only binaries executable by that uid.
+    expect(convexNodeDockerfile).toMatch(/chmodSync\(p, 0o755\)/);
+    for (const name of ['web', 'dashboard', 'edge-client-check']) {
+      expect(services[name].read_only, `${name}: read_only`).toBe(true);
+    }
+  });
+
+  test('Postgres and Valkey are on internal networks only, reachable by their users only', () => {
+    const nets = stackDoc.networks ?? {};
+    const internal = (n: string) => nets[n]?.internal === true;
+    for (const name of ['postgres', 'valkey']) {
+      const own = services[name].networks ?? [];
+      expect(own.length, `${name} has networks`).toBeGreaterThan(0);
+      for (const n of own) expect(internal(n), `${name} on ${n}`).toBe(true);
+      expect(services[name].ports, `${name} publishes no port`).toBeUndefined();
+    }
+    const membersOf = (net: string) =>
+      all
+        .filter(([, s]) => (s.networks ?? []).includes(net))
+        .map(([n]) => n)
+        .sort();
+    expect(membersOf('data')).toEqual(['backend', 'backup', 'db-roles', 'postgres']);
+    expect(membersOf('cache')).toEqual(['cap', 'valkey']);
+    // The internet-facing proxy and the client-check sidecar stay off both.
+    for (const name of ['web', 'edge-client-check']) {
+      const own = services[name].networks ?? [];
+      expect(own.includes('data') || own.includes('cache'), name).toBe(false);
+    }
+    expect(services['edge-client-check'].networks).toEqual(['checks']);
+    // The epoch-seed store: internal, reachable by the backend and deployer only.
+    expect(internal('epoch_keys')).toBe(true);
+    expect(services['hpke-epoch-store'].networks).toEqual(['epoch_keys']);
+    expect(membersOf('epoch_keys')).toEqual(['backend', 'deployer', 'hpke-epoch-store']);
+    expect(membersOf('checks')).toEqual(['backend', 'edge-client-check']);
+  });
+
+  test('every service names its networks (nothing lands on a flat default)', () => {
+    for (const [name, svc] of all) {
+      expect(Boolean(svc.networks?.length) || svc.network_mode === 'none', name).toBe(true);
+    }
+    expect(services.keygen.network_mode).toBe('none');
+    expect(services['data-perms'].network_mode).toBe('none');
+  });
+
+  test('backups dump as the read-only role, never with the superuser password', () => {
+    const env = envOf(services.backup);
+    expect(env.POSTGRES_USER).toBe('fcp_backup');
+    expect(env.POSTGRES_PASSWORD).toMatch(/^\$\{BACKUP_DB_PASSWORD:\?/);
+    expect(JSON.stringify(services.backup)).not.toContain('${POSTGRES_PASSWORD');
+    const roles = read('../docker/db-roles.sh');
+    expect(roles).toContain('GRANT pg_read_all_data TO fcp_backup');
+    expect(roles).toMatch(/NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
+    expect(envBetaExample).toMatch(/^BACKUP_DB_PASSWORD=CHANGE_ME/m);
+    expect(read('../scripts/bootstrap-secrets.mjs')).toContain("['BACKUP_DB_PASSWORD', 24]");
+  });
+
+  test('HTTP actions get the backend default of 64 V8 action slots', () => {
+    // HTTP actions count against this limit and hold a slot while they wait.
+    expect(envOf(services.backend).APPLICATION_MAX_CONCURRENT_V8_ACTIONS).toBe(
+      '${APPLICATION_MAX_CONCURRENT_V8_ACTIONS:-64}',
+    );
+  });
+
+  test('the admin key file is written owner-only', () => {
+    expect(String(services.keygen.command)).toMatch(/umask 077 .*chmod 600 \/keys\/admin_key/);
+  });
+});
+
+describe('the Caddy request-body cap', () => {
+  test('bounds /api bodies above the largest route limit', async () => {
+    const caddy = read('../Caddyfile');
+    const api = caddy.slice(caddy.indexOf('handle @api {'));
+    const m = /request_body\s*\{\s*max_size\s+(\d+)(KB|MB)\s*\}/.exec(api);
+    expect(m, 'request_body max_size inside handle @api').toBeTruthy();
+    const capBytes = Number(m![1]) * (m![2] === 'MB' ? 1_000_000 : 1_000);
+    const { MAX_SITE_IMAGE_BYTES } = await import('./lib/siteImage');
+    const { MAX_BODY_BYTES } = await import('./lib/http');
+    // The home-image route's own cap (convex/http.ts): base64 of the image + slack.
+    const imageRoute = Math.ceil(MAX_SITE_IMAGE_BYTES / 3) * 4 + 1024;
+    expect(capBytes).toBeGreaterThan(imageRoute);
+    expect(capBytes).toBeGreaterThan(MAX_BODY_BYTES);
+    expect(capBytes).toBeLessThanOrEqual(4_000_000);
+  });
+});

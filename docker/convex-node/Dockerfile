@@ -21,3 +21,8 @@ FROM ${CONVEX_IMAGE}
 COPY --from=node /usr/local/bin/node /usr/bin/node
 # Fails the build if the binary cannot load against the image's libraries.
 RUN ["node", "--version"]
+# Let the backend run as an unprivileged user (docker-compose.stack.yml sets
+# `user:`): upstream ships its binaries and scripts owner-only executable
+# (0744, root), so a non-root uid could not start them. Node does the chmod so
+# the same file works for the dashboard image, which has none of these files.
+RUN ["node", "-e", "const fs = require('node:fs'); for (const f of ['convex-local-backend', 'generate_key', 'run_backend.sh', 'read_credentials.sh', 'generate_admin_key.sh']) { const p = '/convex/' + f; if (fs.existsSync(p)) fs.chmodSync(p, 0o755); }"]

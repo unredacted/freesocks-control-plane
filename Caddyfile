@@ -233,6 +233,14 @@
 		request_header @untrustedCfHeader -CF-IPCountry
 		request_header @untrustedCfHeader -CF-Region-Code
 		request_header @untrustedCfHeader -CF-IPCity
+		# Bound request bodies at the edge. Convex buffers a whole HTTP-action body
+		# (up to its own ~20 MB limit) before a handler can refuse it, so the
+		# handlers' 64 KiB cap saves CPU but not ingress. The largest real body is
+		# an admin home-page image upload (about 700 KiB of base64);
+		# convex/deployPins.test.ts keeps this above that route's own limit.
+		request_body {
+			max_size 1MB
+		}
 		reverse_proxy backend:3211
 	}
 
