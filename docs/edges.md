@@ -5632,9 +5632,12 @@ walk order`. Meant for still wins for its own countries, and a blocked address s
   location (`<provider>:<placeKey>`) and country, the median of the last 7 days of non-control,
   successful IPv4 results from Globalping's TCP ping and check-host's TCP check (RIPE Atlas
   includes the TLS handshake; the internal source is FCP's own host). Each pass merges only the
-  runs requested since the last one (up to half an hour ago), one job per location, into the
+  runs requested since the last one (up to half an hour ago), location by location (one driver,
+  two at a time: docs/convex-self-hosting.md "Background work in lanes"), into the
   kept samples (`edgeLatencySamples`: at most 12 per clock hour, so a week stays bounded and
-  even however often the location is probed); the first pass reads two days back. A figure
+  even however often the location is probed); the first pass reads two days back. Passes run
+  only while latency ordering and steering are both on (the only time a figure is read); turning
+  either on takes a pass at once, and a pass after a longer gap also reads two days back. A figure
   counts from 5 samples from 2 networks with the newest under 48 hours old. What delivery reads
   (`edgeLatency.ms`) moves only by more than 15% and more than 10 ms, or when the figure
   appears or lapses; when it moves while latency ordering is on, every origin with an address

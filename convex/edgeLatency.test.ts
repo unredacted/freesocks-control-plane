@@ -308,18 +308,80 @@ describe('measured member legs', () => {
     expect(await epoch(w)).toBe(before + 1);
   });
 
-  test('with latency ordering off figures are kept but move no epoch', async () => {
+  test('with latency ordering off no pass runs; turning it on takes the legs at once', async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(NOW);
     const w = await setup({ latency: false });
     await run(
       w,
       w.far,
       Array.from({ length: 5 }, (_, i) => ({ country: 'IR', rttMs: 50, asn: `AS${i}` })),
     );
-    const before = await epoch(w);
-    await pass(w, NOW);
-    expect(await rows(w)).toHaveLength(1);
-    expect(await epoch(w)).toBe(before);
+    // Off: nothing is read or written, and the mark stays where it was.
+    expect(await w.t.mutation(internal.edgeLatency.refresh, { now: NOW })).toEqual({
+      locations: 0,
+      off: true,
+    });
+    await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await rows(w)).toEqual([]);
+    const mark = () =>
+      w.t.run(
+        async (ctx) =>
+          await ctx.db
+            .query('appState')
+            .withIndex('by_key', (q) => q.eq('key', 'edgeLatency:through'))
+            .unique(),
+      );
+    expect(await mark()).toBeNull();
+    // On: the pass runs now, not up to an hour later.
+    await w.t.mutation(internal.appSettings.setMany, {
+      entries: [{ key: 'delivery.country.latency', value: 'true' }],
+    });
+    await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await rows(w)).map((r) => [r.country, r.ms])).toEqual([['IR', 50]]);
+    // Read up to half an hour ago (the settle lag), from two days back.
+    expect(Number((await mark())!.value)).toBeGreaterThanOrEqual(NOW - 30 * 60_000);
+    expect(Number((await mark())!.value)).toBeLessThan(NOW - 29 * 60_000);
+  });
+
+  test('a mark older than two days (ordering was off) reads only two days back', async () => {
+    vi.useFakeTimers();
+    const w = await setup();
+    await w.t.run((ctx) =>
+      ctx.db.insert('appState', {
+        key: 'edgeLatency:through',
+        value: String(NOW - 20 * 86_400_000),
+        updatedAt: NOW - 20 * 86_400_000,
+      }),
+    );
+    // A run three days old is not read; one a day old is.
+    await run(
+      w,
+      w.far,
+      Array.from({ length: 5 }, (_, i) => ({ country: 'IR', rttMs: 90, asn: `AS${i}` })),
+      { at: NOW - 3 * 86_400_000 },
+    );
+    await run(
+      w,
+      w.far,
+      Array.from({ length: 5 }, (_, i) => ({ country: 'IR', rttMs: 50, asn: `AS${i}` })),
+      { at: NOW - 86_400_000 },
+    );
+    expect(await w.t.mutation(internal.edgeLatency.refresh, { now: NOW })).toMatchObject({
+      from: NOW - 2 * 86_400_000,
+    });
+    await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await rows(w)).map((r) => [r.ms, r.samples])).toEqual([[50, 5]]);
+  });
+
+  test('a pass is one driver over the locations, never a job per location', async () => {
+    vi.useFakeTimers();
+    const w = await setup();
+    await w.t.mutation(internal.edgeLatency.refresh, { now: NOW });
+    const jobs = await w.t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).map((f) => f.name),
+    );
+    expect(jobs.filter((n) => n.includes('edgeLatency'))).toEqual(['edgeLatency:refreshLocations']);
   });
 
   test('rollback: every figure, every kept sample and the switch go', async () => {

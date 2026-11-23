@@ -22,7 +22,7 @@
  * Infrastructure only: addresses and third-party vantages, nothing about a
  * member.
  */
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
@@ -35,6 +35,7 @@ import type { PublishedEdge } from './lib/edges/assignment';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { MEMBER_COUNTRY_KEYS, type MemberCountryConfig } from './lib/memberCountry';
 import { resolveMemberCountryConfig } from './memberCountry';
+import { inLanes } from './lib/lanes';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -60,6 +61,14 @@ const LOCATION_SCAN = 1000;
 const EDGE_SCAN = 1000;
 const RUNS_PER_PASS = 2000;
 const ROW_SCAN = 5000;
+/**
+ * Locations refreshed at once (mutations in flight): a pass is one driver
+ * working through them (`refreshLocations`), never a job per location, so it
+ * never fills the backend's mutation pool or its scheduled-job slots.
+ */
+export const LOCATION_LANES = 2;
+/** How long one driver run starts locations before it hands the rest to the next. */
+const DRIVER_BUDGET_MS = 60_000;
 
 /** One kept sample: when, the round trip, and the vantage's network (null: none named). */
 export interface LegSample {
@@ -145,42 +154,90 @@ export function figureMoves(committed: number, fresh: number): boolean {
 
 /**
  * `edge-latency` (hourly): the probe runs requested since the last pass (up to
- * half an hour ago, so they have finished) are merged location by location,
- * one job per L4 location (`refreshLocation`). The first pass reads two days
- * back (as long as a figure stays fresh); after that each pass reads only what
- * is new, so nothing caps how much of the week a figure rests on.
+ * half an hour ago, so they have finished) are merged location by location
+ * (`refreshLocation`, `LOCATION_LANES` at a time). The first pass reads two
+ * days back (as long as a figure stays fresh); after that each pass reads only
+ * what is new, so nothing caps how much of the week a figure rests on.
+ *
+ * Only while latency ordering is on (with steering: the only time a figure is
+ * read, `latencyInputsFor`). While it is off nothing is read or written and
+ * the mark stays put; the pass that runs when it is turned on
+ * (`appSettings.setMany`) reads at most two days back, like a first pass.
  */
 export const refresh = internalMutation({
   args: { now: v.optional(v.number()) },
   handler: async (ctx, a) => {
     await recordHeartbeat(ctx, 'edge-latency');
     const now = a.now ?? Date.now();
+    const cfg = await resolveMemberCountryConfig(ctx.db);
+    if (!cfg.steer || !cfg.latency) return { locations: 0, off: true };
     const state = await ctx.db
       .query('appState')
       .withIndex('by_key', (q) => q.eq('key', THROUGH_KEY))
       .unique();
-    const through = state ? Number(state.value) : now - FIRST_PASS_MS;
+    // A mark older than a first pass reaches (latency ordering was off for a
+    // while) reads only as far back as a first pass.
+    const through = Math.max(state ? Number(state.value) : 0, now - FIRST_PASS_MS);
     const to = Math.max(through, now - SETTLE_LAG_MS);
     if (!state)
       await ctx.db.insert('appState', { key: THROUGH_KEY, value: String(to), updatedAt: now });
-    else if (to > through) await ctx.db.patch(state._id, { value: String(to), updatedAt: now });
+    else if (to > Number(state.value))
+      await ctx.db.patch(state._id, { value: String(to), updatedAt: now });
     const keys = new Set<string>();
+    const locationIds: Id<'edgeLocations'>[] = [];
     for (const loc of await ctx.db.query('edgeLocations').take(LOCATION_SCAN)) {
       if (edgeLayerOf(loc.provider) !== 'l4') continue;
       keys.add(locationKeyOf(loc.provider, loc.placeKey));
-      await ctx.scheduler.runAfter(0, internal.edgeLatency.refreshLocation, {
-        locationId: loc._id,
+      locationIds.push(loc._id);
+    }
+    if (locationIds.length > 0)
+      await ctx.scheduler.runAfter(0, internal.edgeLatency.refreshLocations, {
+        locationIds,
         from: through,
         to,
         now,
       });
-    }
     // A location that is gone leaves nothing behind.
     for (const r of await ctx.db.query('edgeLatencySamples').take(ROW_SCAN))
       if (!keys.has(r.groupKey)) await ctx.db.delete(r._id);
     for (const r of await ctx.db.query('edgeLatency').take(ROW_SCAN))
       if (!keys.has(r.groupKey)) await ctx.db.delete(r._id);
     return { locations: keys.size, from: through, to };
+  },
+});
+
+/**
+ * One pass's driver: `refreshLocation` for each location, `LOCATION_LANES` at
+ * a time, for at most `DRIVER_BUDGET_MS`; what is left goes to a new run. A
+ * location whose job throws is skipped this pass (its window is not read
+ * again), as when each location was its own job.
+ */
+export const refreshLocations = internalAction({
+  args: {
+    locationIds: v.array(v.id('edgeLocations')),
+    from: v.number(),
+    to: v.number(),
+    now: v.number(),
+  },
+  handler: async (ctx, a): Promise<{ done: number; failed: number; left: number }> => {
+    const { done, failed, rest } = await inLanes(
+      a.locationIds,
+      LOCATION_LANES,
+      (locationId) =>
+        ctx.runMutation(internal.edgeLatency.refreshLocation, {
+          locationId,
+          from: a.from,
+          to: a.to,
+          now: a.now,
+        }),
+      Date.now() + DRIVER_BUDGET_MS,
+    );
+    if (rest.length > 0)
+      await ctx.scheduler.runAfter(0, internal.edgeLatency.refreshLocations, {
+        ...a,
+        locationIds: rest,
+      });
+    return { done, failed, left: rest.length };
   },
 });
 
