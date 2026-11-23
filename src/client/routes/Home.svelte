@@ -26,6 +26,7 @@
   import TierComparison from '../components/TierComparison.svelte';
   import HomeImage from '../components/HomeImage.svelte';
   import CountUp from '../components/CountUp.svelte';
+  import TelegramShopCard from '../components/TelegramShopCard.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { t, getLocale, type MessageKey } from '../lib/i18n/index.svelte';
@@ -122,8 +123,10 @@
   const memberInfo = $derived(tierLimits(memberTier));
   const membershipLimits = $derived(limitsText(memberInfo, deviceLimitsShown(config.data)));
   // The support section (and the hero line linking to it) shows when it has a
-  // card to show: donations on, or a membership tier to sell.
-  const supportShown = $derived(donationsLive || (billingEnabled && !!memberTier));
+  // card to show: donations on, a membership tier to sell, or the Telegram shop open.
+  const supportShown = $derived(
+    donationsLive || (billingEnabled && !!memberTier) || !!config.data?.telegram,
+  );
   // The membership's monthly price (the shortest term's per-month, as on the
   // plan cards), for the support section's membership card.
   const memberPrice = $derived.by(() => {
@@ -457,6 +460,9 @@
           </article>
         {/if}
       </div>
+
+      <!-- The official Telegram gift shop: renders only while the bot is open. -->
+      <TelegramShopCard />
     </div>
   </section>
 {/if}

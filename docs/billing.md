@@ -307,9 +307,14 @@ showed, which matches the ref prefix in Admin -> Billing -> Orders.
 
 4. Turn on the methods, then **Shop open**. While the bot would answer as open
    (switched on, billing on, something to sell, and the webhook registered for
-   the bot whose token is saved; Remove or a new token hides it), the
-   site footer and the gift card link it (`publicConfig.telegram`), so buyers can
-   tell the real bot from a copy.
+   the bot whose token is saved; Remove or a new token hides it), the site shows
+   it (`publicConfig.telegram`): a footer link, a card in the Home page's support
+   section, and a short version in the member's gift codes card
+   (`TelegramShopCard.svelte`). The card names the exact @username (the one set
+   on the admin card) as the only official bot, so buyers can tell it from a
+   copy, and links it twice: `tg://resolve?domain=<bot>` opens the Telegram app
+   (it works where t.me is blocked) and `https://t.me/<bot>` is the web fallback.
+   It shows no Stars prices; the bot is the one place prices appear.
 
 **Webhook.** `POST /api/webhooks/telegram` checks the
 `x-telegram-bot-api-secret-token` header against the webhook secret

@@ -695,8 +695,7 @@
       "ack": "I have saved these codes",
       "saved": "I've saved them",
       "leaveWarning": "Your codes are still on screen. If you leave now without saving them, you will not be able to see them again."
-    },
-    "telegramShop": "You can also buy gift codes in our official Telegram bot, @{bot}. It never asks for your account number."
+    }
   },
   "error": {
     "offline": "You appear to be offline. Check your connection and try again.",
@@ -1234,5 +1233,20 @@
     "priceChanged": "The price changed. Here is the current price; nothing was charged.",
     "deleteFailed": "Telegram could not delete the message just now. Tap the button again in a moment.",
     "deleteYourself": "Telegram no longer lets the bot delete that message. Please delete it yourself."
+  },
+  "telegramShop": {
+    "title": "Buy gift codes on Telegram",
+    "body": "Our Telegram bot sells FreeSocks membership gift codes, paid in Telegram Stars. Each code adds membership to any FreeSocks account, so you can keep it or give it away.",
+    "officialLabel": "Our only official bot",
+    "officialNote": "It is linked only from this site, and it never asks for your account number. Ignore any other bot that uses our name.",
+    "copyHandle": "Copy the bot's username",
+    "openApp": "Open in Telegram",
+    "openWeb": "Open t.me link",
+    "stepsTitle": "How it works",
+    "step1": "Open the bot and choose a length and how many codes you want.",
+    "step2": "Accept the terms and pay with Telegram Stars. Your codes appear in the chat.",
+    "step3": "Redeem a code in FreeSocks: Account, then Redeem a code.",
+    "privacy": "Telegram sees that you paid. The bot keeps no chat, and the codes are not linked to you or to your Telegram account.",
+    "compact": "You can also buy gift codes for Telegram Stars in our official bot."
   }
 }

@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**327 of 934 strings are missing** (the app currently shows English for
+**339 of 946 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -621,7 +621,7 @@ review.
 | `upgrade.underpaidBody` | We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out. | ⚠️ **MISSING** |
 | `upgrade.cardReachHint` | If the payment page doesn't load, connect with your free FreeSocks key first, then try again. | ⚠️ **MISSING** |
 
-## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming. *(1 missing)*
+## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -643,7 +643,6 @@ review.
 | `gift.reveal.ack` | I have saved these codes | لقد حفظت هذه الرموز |
 | `gift.reveal.saved` | I've saved them | لقد احتفظت بها |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | لا تزال رموزك معروضة على الشاشة. إذا غادرت الآن دون حفظها، فلن تتمكن من رؤيتها مرة أخرى. |
-| `gift.telegramShop` | You can also buy gift codes in our official Telegram bot, @{bot}. It never asks for your account number. | ⚠️ **MISSING** |
 
 ## `error` — API error messages shown to members. *(5 missing)*
 
@@ -1167,3 +1166,21 @@ review.
 | `bot.priceChanged` | The price changed. Here is the current price; nothing was charged. | ⚠️ **MISSING** |
 | `bot.deleteFailed` | Telegram could not delete the message just now. Tap the button again in a moment. | ⚠️ **MISSING** |
 | `bot.deleteYourself` | Telegram no longer lets the bot delete that message. Please delete it yourself. | ⚠️ **MISSING** |
+
+## `telegramShop` — Miscellaneous strings. *(13 missing)*
+
+| Key | English | Arabic (العربية) |
+| --- | --- | --- |
+| `telegramShop.title` | Buy gift codes on Telegram | ⚠️ **MISSING** |
+| `telegramShop.body` | Our Telegram bot sells FreeSocks membership gift codes, paid in Telegram Stars. Each code adds membership to any FreeSocks account, so you can keep it or give it away. | ⚠️ **MISSING** |
+| `telegramShop.officialLabel` | Our only official bot | ⚠️ **MISSING** |
+| `telegramShop.officialNote` | It is linked only from this site, and it never asks for your account number. Ignore any other bot that uses our name. | ⚠️ **MISSING** |
+| `telegramShop.copyHandle` | Copy the bot's username | ⚠️ **MISSING** |
+| `telegramShop.openApp` | Open in Telegram | ⚠️ **MISSING** |
+| `telegramShop.openWeb` | Open t.me link | ⚠️ **MISSING** |
+| `telegramShop.stepsTitle` | How it works | ⚠️ **MISSING** |
+| `telegramShop.step1` | Open the bot and choose a length and how many codes you want. | ⚠️ **MISSING** |
+| `telegramShop.step2` | Accept the terms and pay with Telegram Stars. Your codes appear in the chat. | ⚠️ **MISSING** |
+| `telegramShop.step3` | Redeem a code in FreeSocks: Account, then Redeem a code. | ⚠️ **MISSING** |
+| `telegramShop.privacy` | Telegram sees that you paid. The bot keeps no chat, and the codes are not linked to you or to your Telegram account. | ⚠️ **MISSING** |
+| `telegramShop.compact` | You can also buy gift codes for Telegram Stars in our official bot. | ⚠️ **MISSING** |
