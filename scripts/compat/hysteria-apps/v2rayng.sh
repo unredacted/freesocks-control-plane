@@ -116,9 +116,27 @@ fresh() {
   adb shell appops set "$PKG" ACTIVATE_VPN allow
   adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 }
-# updates: how many subscription updates the app has logged as done (it logs
-# one only after it fetched the raw config and parsed entries from it).
-updates() { grep -c 'Subscription updated:' "$LOGCAT" 2>/dev/null || true; }
+# delete_udp: the `· UDP` entry deleted from the app's list (its row's own
+# Delete, and the confirmation if one is asked). Only the app's updater,
+# fetching and parsing the raw config again, brings it back.
+delete_udp() {
+  sub_tab || return 1
+  scroll_top
+  local at i
+  for i in 1 2 3 4 5 6; do
+    dump
+    at=$(python3 "$DIR/ui.py" "$UI" row '· UDP$' Delete) && break
+    ((i == 6)) && { echo 'no Delete on the · UDP entry'; return 1; }
+    scroll_down
+  done
+  tap_at "$at"
+  sleep 1
+  dump
+  tap_text '^(OK|Ok|Yes|Delete|Confirm)$' && sleep 1
+  local left="$HY_WORK/app-names-deleted.txt"
+  names_on_screen "$left"
+  ! grep -q '· UDP$' "$left" || { echo 'the · UDP entry is still listed'; return 1; }
+}
 # dns_on_device (beta): the device itself looks a fresh name up and fetches it
 # (toybox nc, inside the VPN the app runs), and the name was looked up by a
 # resolver that is not the runner's own.
@@ -139,7 +157,7 @@ declare -A ok=([rawImport]=false [import]=false [connection]=false [udp]=false
 adb install -r "$APK" >/dev/null
 fresh
 adb forward tcp:10808 tcp:10808 >/dev/null
-# The app's own log: read for its updates; kept for the fixture only (on beta
+# The app's own log, kept for the fixture only (on beta
 # it names the canary's URL).
 LOGCAT="$HY_WORK/logcat.txt"
 adb logcat -c
@@ -168,22 +186,23 @@ if start_udp && through_until 45 && carried_more "$before"; then
 fi
 stop_app
 
-# Refresh from the app's own menu: the same entries.
+# Refresh from the app's own menu: an entry deleted in the app comes back,
+# so the update fetched and parsed the raw config, and every entry is there.
 launch
-dump
-if tap_text '^More options$'; then
-  sleep 1
+if delete_udp; then
+  snap deleted
   dump
-  was=$(updates)
-  if tap_text '(?i)update subscription'; then
-    end=$((SECONDS + 45))
-    until [ "$(updates)" -gt "$was" ] || ((SECONDS > end)); do sleep 2; done
-    [ "$(updates)" -gt "$was" ] && updated=true || updated=false
-    stop_app
-    launch
-    again="$HY_WORK/app-names-again.txt"
-    names_on_screen "$again"
-    $updated && has_all_names "$again" && ok[refresh]=true
+  if tap_text '^More options$'; then
+    sleep 1
+    dump
+    if tap_text '(?i)update subscription'; then
+      sleep 15
+      stop_app
+      launch
+      again="$HY_WORK/app-names-again.txt"
+      names_on_screen "$again"
+      grep -q '· UDP$' "$again" && has_all_names "$again" && ok[refresh]=true
+    fi
   fi
 fi
 snap refreshed
