@@ -80,9 +80,9 @@ describe('the V8 path is pinned', () => {
 
 describe('static key memo', () => {
   test('one build per env value; a changed seed rebuilds', async () => {
-    const first = staticServerKey();
-    expect(staticServerKey()).toBe(first);
-    const a = await first;
+    const [a, again] = await Promise.all([staticServerKey(), staticServerKey()]);
+    expect(again).toBe(a);
+    expect(await staticServerKey()).toBe(a);
     vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(SEED_B));
     const b = await staticServerKey();
     expect(b.kid).not.toBe(a.kid);

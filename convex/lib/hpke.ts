@@ -31,6 +31,9 @@
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
 import { openSealedRequest, sealRevealResponse } from './hpkeServer';
+import { postureKnob } from './hpkePosture';
+
+export { postureKnob };
 import {
   ADMIN_COOKIE,
   errorJson,
@@ -48,18 +51,6 @@ import {
 } from '../../src/shared/crypto/envelope';
 
 type RawHandler = (ctx: ActionCtx, req: Request) => Promise<Response>;
-
-/**
- * Read a sealing-posture knob from the deployment env. Also honors the
- * pre-2026-09-16 `FS_E2EE_*` spelling (the E2EE -> HPKE rename) so a deploy that
- * lands before the operator renames the deployment env cannot silently reopen
- * dual-mode and let account numbers transit in plaintext. Drop the legacy read
- * once every deployment's env carries the `FS_HPKE_*` names.
- */
-export function postureKnob(name: 'FS_HPKE_REQUIRED' | 'FS_HPKE_ADMIN_REQUIRED'): boolean {
-  const legacy = name.replace('FS_HPKE_', 'FS_E2EE_');
-  return process.env[name] === 'true' || process.env[legacy] === 'true';
-}
 
 /**
  * A Request-like view over the transport request with a replacement parsed body.

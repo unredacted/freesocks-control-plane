@@ -154,7 +154,7 @@ same image and driven with sealed requests from a client using the same shared c
 | --- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | G1  | Suite composes + full round-trip                         | **PASS**: `importKey('raw', …, 'HKDF')` ok; X-Wing derand keygen deterministic; seal+reveal channel round trip ok (action and httpAction)                                                                                                                                                          |
 | G2  | X25519 via noble, not subtle                             | **PASS** (unchanged dependency tree)                                                                                                                                                                                                                                                               |
-| G3  | CSPRNG                                                   | **PASS**: `getRandomValues`, `Math.random` and fresh ephemeral keys differ on every httpAction call                                                                                                                                                                                                |
+| G3  | CSPRNG                                                   | **PASS** in httpActions and in internalActions: random bytes, `Math.random`, ephemeral keys, HPKE `enc` and a hedged ML-DSA-65 signature (fixed key) all differ on every call                                                                                                                      |
 | G5  | 16 concurrent round trips incl. keygen                   | **PASS**                                                                                                                                                                                                                                                                                           |
 | G7  | Implicit rejection                                       | **PASS**: tampered `ct` and tampered `enc` both fail as `OpenError`                                                                                                                                                                                                                                |
 | —   | Manifest signing (Ed25519, ML-DSA-65)                    | **PASS** (pure-JS noble), so rotation and revocation need no Node either                                                                                                                                                                                                                           |
@@ -166,3 +166,12 @@ endpoint and `maintainEpoch` read the live epoch directly; `convex/lib/hpkeCrypt
 revocation, self-test) drops `"use node"`. Sealed member requests no longer use the Node action pool.
 `convex/lib/hpkeServer.test.ts` pins this: it fails if a server HPKE module regains `"use node"` or the
 wrapper regains a `runAction`.
+
+Queries and mutations are the one place this code must never run: Convex seeds their randomness per
+execution, so a retried execution would repeat an ephemeral key and nonce. `convex/hpkeRuntimeBoundary.test.ts`
+walks the import graph and fails if any module that registers a query or mutation reaches the seal/open,
+keygen or signing modules by any chain. The sealing-posture knob lives in `convex/lib/hpkePosture.ts` for
+that reason (`adminApi` reports it).
+
+Cost: one sealed-request open (X-Wing decapsulation + ChaCha20-Poly1305) is about 1.0 ms of V8 CPU,
+measured over 200 opens in an action on the pinned image.

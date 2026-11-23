@@ -48,7 +48,10 @@ export async function epochSeedRequest(kid: string, init: RequestInit): Promise<
 /** The static server identity: private key + the kid baked into the bundle. */
 export type StaticServerKey = { keyPair: CryptoKeyPair; kid: string };
 
-let staticMemo: { seedB64: string; value: Promise<StaticServerKey> } | null = null;
+// Module-private: never exported, logged or returned. `staticMemo` holds only a
+// key whose build succeeded; `inflight` shares one build among concurrent callers.
+let staticMemo: { seedB64: string; key: StaticServerKey } | null = null;
+let inflight: { seedB64: string; value: Promise<StaticServerKey> } | null = null;
 
 async function buildStaticKey(seedB64: string): Promise<StaticServerKey> {
   const keyPair = await serverKeyPairFromSeed(b64UrlToBytes(seedB64));
@@ -58,26 +61,33 @@ async function buildStaticKey(seedB64: string): Promise<StaticServerKey> {
 
 /**
  * The static keypair, rebuilt from the env seed at most once per isolate and
- * env value. Fails closed when FS_SERVER_HPKE_SK is unset.
+ * env value. Fails closed when FS_SERVER_HPKE_SK is unset; a failed build is
+ * never kept, so the next call tries again.
  */
-export function staticServerKey(): Promise<StaticServerKey> {
+export async function staticServerKey(): Promise<StaticServerKey> {
   const seedB64 = process.env.FS_SERVER_HPKE_SK;
   if (!seedB64) {
     staticMemo = null;
-    return Promise.reject(
-      new Error('FS_SERVER_HPKE_SK must be set (bunx convex env set FS_SERVER_HPKE_SK ...)'),
+    throw new Error('FS_SERVER_HPKE_SK must be set (bunx convex env set FS_SERVER_HPKE_SK ...)');
+  }
+  if (staticMemo?.seedB64 === seedB64) return staticMemo.key;
+  let build = inflight;
+  if (build?.seedB64 !== seedB64) {
+    const started = { seedB64, value: buildStaticKey(seedB64) };
+    inflight = build = started;
+    started.value.then(
+      (key) => {
+        if (inflight === started) {
+          staticMemo = { seedB64, key };
+          inflight = null;
+        }
+      },
+      () => {
+        if (inflight === started) inflight = null;
+      },
     );
   }
-  let memo = staticMemo;
-  if (!memo || memo.seedB64 !== seedB64) {
-    const built = { seedB64, value: buildStaticKey(seedB64) };
-    staticMemo = memo = built;
-    // A failed build (malformed seed) is retried on the next call, never kept.
-    built.value.catch(() => {
-      if (staticMemo === built) staticMemo = null;
-    });
-  }
-  return memo.value;
+  return build!.value;
 }
 
 /** The epoch fields the key endpoint publishes. */

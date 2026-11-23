@@ -24,7 +24,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { blockSimulatorAllowedIn } from './lib/edges/simulation';
 import { mirrorSyncSummary } from './mirrorCopies';
-import { postureKnob } from './lib/hpke';
+import { postureKnob } from './lib/hpkePosture';
 import { resolveRange } from './lib/timeRange';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
