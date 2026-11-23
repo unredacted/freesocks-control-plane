@@ -7,6 +7,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, billingOrderQuery } from '../lib/queries';
   import { router } from '../stores/router.svelte';
+  import DirectPaymentPanel from '../components/DirectPaymentPanel.svelte';
 
   /**
    * Public donate page: the one URL every donate CTA points an ANONYMOUS
@@ -90,6 +91,13 @@
           {t('common.retry')}
         </Button>
       </section>
+    {:else if order.data?.payment && (order.data.status === 'pending' || order.data.status === 'confirming')}
+      <!-- Direct checkout: the payment details on our own page. -->
+      <DirectPaymentPanel
+        payment={order.data.payment}
+        status={order.data.status}
+        onRestart={clearOrder}
+      />
     {:else}
       <section class="panel">
         <p class="flex items-center gap-2 font-bold text-foreground">

@@ -49,6 +49,9 @@ const CODE_MESSAGES: Record<string, () => string> = {
   'hpke.sealed_required': () => t('error.serverError'),
   'server.error': () => t('error.serverError'),
   'billing.error': () => t('error.billing'),
+  // Direct crypto checkout: the picked coin can't take this amount / isn't offered.
+  'billing.coin_minimum': () => t('error.coinMinimum'),
+  'billing.invalid_coin': () => t('error.coinUnavailable'),
   'content.unavailable': () => t('error.backendUnavailable'),
   // The raw-config view under edge-required delivery (the same refusals as the subscription).
   'delivery.unavailable': () => t('error.configUnavailable'),

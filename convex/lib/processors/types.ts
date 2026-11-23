@@ -40,6 +40,8 @@ export interface CheckoutResult {
   redirectUrl: string;
   /** The processor's invoice/session/order id (stored for reconciliation). */
   processorRef: string;
+  /** BTCPay only: the invoice's expirationTime (unix seconds), for the direct checkout timer. */
+  expiresAt?: number;
 }
 
 /** A verified + parsed webhook event. */

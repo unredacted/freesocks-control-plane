@@ -2438,6 +2438,7 @@ http.route({
       quantity?: number;
       donationCents?: number;
       captchaToken?: string;
+      payCurrency?: string;
     }>(req);
     if (
       body.processor !== 'nowpayments' &&
@@ -2539,6 +2540,14 @@ http.route({
     if (kind === 'donation' && (donationCents === undefined || donationCents < 1)) {
       return errorJson('validation', 'a donation requires a positive donationCents', 400);
     }
+    // Direct NOWPayments checkout: the picked coin (checked against the
+    // admin's allowlist in the action). Shape only here.
+    if (
+      body.payCurrency !== undefined &&
+      (typeof body.payCurrency !== 'string' || !/^[a-z0-9]{2,20}$/i.test(body.payCurrency))
+    ) {
+      return errorJson('validation', 'payCurrency must be a coin ticker', 400);
+    }
     try {
       const result = await ctx.runAction(internal.billing.createCheckout, {
         userId: member?.userId,
@@ -2547,6 +2556,7 @@ http.route({
         kind,
         quantity: kind === 'gift' ? body.quantity : 1,
         donationCents,
+        payCurrency: body.processor === 'nowpayments' ? body.payCurrency : undefined,
       });
       return json(result);
     } catch (err) {
@@ -2566,6 +2576,19 @@ http.route({
       );
       return errorJson('billing.error', 'Checkout could not be started', 500);
     }
+  }),
+});
+
+// The coins a member may pick for a direct NOWPayments checkout (public: the
+// anonymous donate page needs it too). One cached appState read, no processor
+// call. Empty when direct checkout is off or has no coins.
+http.route({
+  path: '/api/v1/billing/coins',
+  method: 'GET',
+  handler: httpAction(async (ctx) => {
+    return json(await ctx.runQuery(internal.billing.publicDirectCoins, {}), 200, {
+      'cache-control': 'public, max-age=60',
+    });
   }),
 });
 
@@ -4368,6 +4391,17 @@ http.route({
         processor: body.processor,
       }),
     );
+  }),
+});
+
+// Read-only check of the direct-checkout coin allowlist against the
+// NOWPayments account (Admin -> Billing "Check coins"). Creates nothing.
+http.route({
+  path: '/api/v1/admin/billing/check-coins',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runAction(internal.billing.checkDirectCoins, {}));
   }),
 });
 

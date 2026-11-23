@@ -7,6 +7,7 @@ import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { realityClientRefusalFields, realityClientRefusalV } from './lib/realityClients';
 import { edgeClientCheckV, sniAutoTestCheckV } from './lib/edges/clientCheck/validators';
 import { mirrorFormatValidator } from './lib/mirrorFormats';
+import { directPaymentValidator } from './lib/directPayment';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -1431,6 +1432,12 @@ export default defineSchema({
     // gift's bucket and leave the refunded money live. Absent on orders granted
     // before this field existed; the unwind then falls back to the day.
     donationBucketExpiresAt: v.optional(v.number()),
+    // Direct checkout (a crypto rail set to `direct`): what the payer needs to
+    // pay from FreeSocks' own page, read from the processor API at checkout.
+    // The deposit address is unique to this payer, so it is WIPED as soon as
+    // the order leaves pending/confirming (lib/directPayment.ts), leaving no
+    // lasting address-to-member link here. Absent on hosted orders.
+    directPayment: v.optional(directPaymentValidator),
     updatedAt: v.number(),
   })
     .index('by_opaque_ref', ['opaqueRef'])
