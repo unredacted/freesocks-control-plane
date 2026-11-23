@@ -270,20 +270,27 @@ showed, which matches the ref prefix in Admin -> Billing -> Orders.
 
 **Setup.**
 
-1. Create the bot with BotFather and set `TELEGRAM_BOT_TOKEN` and
-   `TELEGRAM_WEBHOOK_SECRET` (random, 1-256 of `A-Za-z0-9_-`) in the deployment
-   env. `PUBLIC_BASE_URL` must be set.
-2. In the card, enter the bot username, set Stars prices if you sell for Stars,
-   and press **Register webhook**. That points Telegram at
-   `/api/webhooks/telegram` with the secret and sets the command menu in every
-   language. The card shows whether Telegram reaches the webhook.
-3. Turn on the methods, then **Shop open**. While open, the site footer and the
+1. Create the bot with BotFather. `PUBLIC_BASE_URL` must be set.
+2. In the card, enter the bot username and paste the bot token, set Stars prices
+   if you sell for Stars, and save. The token is write-only, like the processor
+   credentials: it is stored as `telegram.secret.botToken`, the card only says
+   whether one is saved, and a blank field keeps it.
+3. Press **Register webhook**. With no webhook secret saved, it makes one (32
+   random bytes, `telegram.secret.webhookSecret`) and saves it first. It then
+   points Telegram at `/api/webhooks/telegram` with that secret and sets the
+   command menu in every language. Registering again reuses the secret. The card
+   shows whether Telegram reaches the webhook.
+
+   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` in the deployment env still
+   work as fallbacks; a saved value wins.
+
+4. Turn on the methods, then **Shop open**. While open, the site footer and the
    gift card link the bot (`publicConfig.telegram`), so buyers can tell the real
    bot from a copy.
 
 **Webhook.** `POST /api/webhooks/telegram` checks the
-`x-telegram-bot-api-secret-token` header against `TELEGRAM_WEBHOOK_SECRET`
-(constant time; 503 while unset, 401 on a mismatch), caps the body at 64 KiB, and
+`x-telegram-bot-api-secret-token` header against the webhook secret
+(constant time; 503 while none is set, 401 on a mismatch), caps the body at 64 KiB, and
 dedupes on `update_id` (`telegramUpdates`, ids only, swept after two days). It
 answers 200 to everything else, except a Stars payment whose grant failed, which
 gets a 500 so Telegram redelivers it. Group chats are ignored (codes would be

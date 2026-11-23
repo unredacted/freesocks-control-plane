@@ -1,7 +1,9 @@
 /**
  * Admin -> Billing -> Telegram bot: the gift shop's settings, its webhook,
- * and the bot's command menu. Secrets stay in env (TELEGRAM_BOT_TOKEN,
- * TELEGRAM_WEBHOOK_SECRET); the view says only whether each is set.
+ * and the bot's command menu. The bot token is saved write-only from the card
+ * (env TELEGRAM_BOT_TOKEN is the fallback); the webhook secret is made by
+ * Register webhook when none is set (env TELEGRAM_WEBHOOK_SECRET is the
+ * fallback). The view says only whether each is set, never a value.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -9,7 +11,16 @@ import { internal } from './_generated/api';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { resolveProcessorSecrets } from './lib/billingConfig';
-import { resolveTelegramConfig, telegramConfigWrites, type StarsPrice } from './lib/telegramConfig';
+import { randomHex } from './lib/crypto';
+import {
+  resolveTelegramConfig,
+  resolveTelegramSecrets,
+  telegramConfigWrites,
+  TELEGRAM_SECRET_KEYS,
+  WEBHOOK_SECRET_RE,
+  type StarsPrice,
+  type TelegramSecrets,
+} from './lib/telegramConfig';
 import * as tg from './lib/telegram/api';
 import { BOT_LOCALES, trPlain, type BotLocale } from './lib/telegram/flow';
 
@@ -31,17 +42,39 @@ export interface TelegramAdminView {
 export const view = internalQuery({
   args: {},
   handler: async (ctx): Promise<TelegramAdminView> => {
-    const [cfg, secrets] = await Promise.all([
+    const [cfg, secrets, tgSecrets] = await Promise.all([
       resolveTelegramConfig(ctx.db),
       resolveProcessorSecrets(ctx.db),
+      resolveTelegramSecrets(ctx.db),
     ]);
     const base = (secrets.publicBaseUrl ?? '').replace(/\/$/, '');
     return {
       ...cfg,
-      tokenSet: !!process.env.TELEGRAM_BOT_TOKEN,
-      secretSet: !!process.env.TELEGRAM_WEBHOOK_SECRET,
+      tokenSet: tgSecrets.botToken !== '',
+      secretSet: tgSecrets.webhookSecret !== '',
       webhookUrl: base ? `${base}${WEBHOOK_PATH}` : null,
     };
+  },
+});
+
+/** The bot's credentials, for the webhook route and the bot's actions only. */
+export const secrets = internalQuery({
+  args: {},
+  handler: (ctx): Promise<TelegramSecrets> => resolveTelegramSecrets(ctx.db),
+});
+
+/**
+ * Keep a freshly made webhook secret unless one is already saved (two
+ * concurrent registers agree on the first). Returns the secret in force.
+ */
+export const saveWebhookSecret = internalMutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }): Promise<string> => {
+    const cur = await resolveTelegramSecrets(ctx.db);
+    if (cur.webhookSecret) return cur.webhookSecret;
+    if (!WEBHOOK_SECRET_RE.test(secret)) throw new Error('bad webhook secret');
+    await upsertSettingRow(ctx, TELEGRAM_SECRET_KEYS.webhookSecret, JSON.stringify(secret));
+    return secret;
   },
 });
 
@@ -52,6 +85,7 @@ export const setConfig = internalMutation({
     starsEnabled: v.optional(v.boolean()),
     starsPrices: v.optional(v.array(v.object({ months: v.number(), stars: v.number() }))),
     cryptoEnabled: v.optional(v.boolean()),
+    botToken: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { actorAdminId, ...patch }): Promise<null> => {
@@ -90,6 +124,7 @@ export const setConfig = internalMutation({
         cryptoEnabled: next.cryptoEnabled,
         starsPriceCount: next.starsPrices.length,
         usernameChanged: next.botUsername !== cur.botUsername,
+        tokenChanged: writes.some((w) => w.key === TELEGRAM_SECRET_KEYS.botToken),
       },
     });
     return null;
@@ -114,7 +149,7 @@ export interface TelegramWebhookStatus {
 export const webhookStatus = internalAction({
   args: {},
   handler: async (ctx): Promise<TelegramWebhookStatus | null> => {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const { botToken: token } = await ctx.runQuery(internal.telegramAdmin.secrets, {});
     if (!token) return null;
     const view = await ctx.runQuery(internal.telegramAdmin.view, {});
     try {
@@ -157,6 +192,8 @@ function commandsFor(locale: BotLocale) {
  * Point Telegram's webhook at this deployment (with the secret header) and
  * set the command menu in every language, or remove the webhook. Pending
  * updates are dropped either way: they may predate the current settings.
+ * Registering with no webhook secret set makes one (32 random bytes) and
+ * saves it first, so the operator never has to pick one.
  */
 export const setWebhook = internalAction({
   args: {
@@ -164,25 +201,24 @@ export const setWebhook = internalAction({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a): Promise<{ ok: true }> => {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    const saved = await ctx.runQuery(internal.telegramAdmin.secrets, {});
+    const token = saved.botToken;
     if (!token) {
-      throw new ConvexError({ code: 'validation', message: 'TELEGRAM_BOT_TOKEN is not set' });
+      throw new ConvexError({ code: 'validation', message: 'Save the bot token first' });
     }
     try {
       if (a.action === 'remove') {
         await tg.deleteWebhook(token);
       } else {
         const view = await ctx.runQuery(internal.telegramAdmin.view, {});
-        if (!secret || !/^[A-Za-z0-9_-]{1,256}$/.test(secret)) {
-          throw new ConvexError({
-            code: 'validation',
-            message: 'TELEGRAM_WEBHOOK_SECRET must be set (1-256 of A-Z, a-z, 0-9, _ and -)',
-          });
-        }
         if (!view.webhookUrl) {
           throw new ConvexError({ code: 'validation', message: 'PUBLIC_BASE_URL is not set' });
         }
+        const secret =
+          saved.webhookSecret ||
+          (await ctx.runMutation(internal.telegramAdmin.saveWebhookSecret, {
+            secret: randomHex(32),
+          }));
         await tg.setWebhook(token, view.webhookUrl, secret, ALLOWED_UPDATES);
         await tg.setMyCommands(token, commandsFor('en'));
         for (const l of BOT_LOCALES) {

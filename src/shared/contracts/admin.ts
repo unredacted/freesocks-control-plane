@@ -816,6 +816,8 @@ export const AdminTelegramPatch = z.object({
   starsEnabled: z.boolean().optional(),
   starsPrices: z.array(AdminTelegramStarsPrice).optional(),
   cryptoEnabled: z.boolean().optional(),
+  /** Write-only: omit or leave blank to keep the saved token. */
+  botToken: z.string().optional(),
 });
 export type AdminTelegramPatch = z.infer<typeof AdminTelegramPatch>;
 

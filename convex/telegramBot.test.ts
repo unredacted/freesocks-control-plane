@@ -12,12 +12,12 @@ import { internal } from './_generated/api';
 import { hmacSha512Hex } from './lib/crypto';
 
 const modules = import.meta.glob('./**/*.*s');
-const TOKEN = '123456:SECRET-bot-token';
+const TOKEN = '123456789:SECRET_bot_token_abcdefghijklmnopqrstuv';
 const SECRET = 'hook-secret_123';
 const CHAT = 918273645;
 const IPN_SECRET = 'test-ipn-secret';
 
-type Call = { method: string; body: Record<string, unknown> };
+type Call = { method: string; body: Record<string, unknown>; url: string };
 
 function stubFetch() {
   const calls: Call[] = [];
@@ -27,7 +27,7 @@ function stubFetch() {
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
     if (u.startsWith('https://api.telegram.org/')) {
       const method = u.split('/').pop()!;
-      calls.push({ method, body });
+      calls.push({ method, body, url: u });
       const result =
         method === 'sendMessage'
           ? { message_id: nextMessageId++ }
@@ -360,5 +360,71 @@ describe('update retention', () => {
     const res = await t.mutation(internal.telegramBot.sweepUpdates, {});
     vi.useRealTimers();
     expect(res.removed).toBe(1);
+  });
+});
+
+describe('credentials saved from the admin card', () => {
+  const SAVED = '987654321:SAVED_token_from_admin_card_abcdefghij';
+
+  test('the token is write-only: saved, audited as a boolean, never shown', async () => {
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', '');
+    const t = convexTest(schema, modules);
+    await seed(t);
+    expect((await t.query(internal.telegramAdmin.view, {})).tokenSet).toBe(false);
+    await t.mutation(internal.telegramAdmin.setConfig, { botToken: ` ${SAVED} ` });
+    const view = await t.query(internal.telegramAdmin.view, {});
+    expect(view.tokenSet).toBe(true);
+    expect(JSON.stringify(view)).not.toContain('SAVED_token');
+    // A blank token leaves the saved one alone; a malformed one is refused.
+    await t.mutation(internal.telegramAdmin.setConfig, { botToken: '', enabled: true });
+    expect((await t.query(internal.telegramAdmin.secrets, {})).botToken).toBe(SAVED);
+    await expect(
+      t.mutation(internal.telegramAdmin.setConfig, { botToken: 'not-a-token' }),
+    ).rejects.toThrow(/BotFather/);
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      const changes = audits.filter((a) => a.action === 'admin.telegram.change');
+      expect(changes.map((a) => (a.payload as { tokenChanged?: boolean }).tokenChanged)).toEqual([
+        true,
+        false,
+      ]);
+      expect(JSON.stringify(audits)).not.toContain('SAVED_token');
+    });
+  });
+
+  test('a saved token wins over the env fallback', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    await t.mutation(internal.telegramAdmin.setConfig, { botToken: SAVED });
+    const { calls } = stubFetch();
+    expect((await post(t, message('/start'))).status).toBe(200);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect(c.url).toContain(`/bot${SAVED}/`);
+  });
+
+  test('register makes, saves and reuses the webhook secret', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', '');
+    const t = convexTest(schema, modules);
+    await seed(t);
+    expect((await t.query(internal.telegramAdmin.view, {})).secretSet).toBe(false);
+    expect((await post(t, message('/start'), 'anything')).status).toBe(503);
+
+    const { sent } = stubFetch();
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
+    const made = (await t.query(internal.telegramAdmin.secrets, {})).webhookSecret;
+    expect(made).toMatch(/^[0-9a-f]{64}$/);
+    expect(sent('setWebhook')[0]!.body.secret_token).toBe(made);
+    expect((await t.query(internal.telegramAdmin.view, {})).secretSet).toBe(true);
+
+    // Telegram's deliveries now carry it; anything else is refused.
+    expect((await post(t, message('/start'), made)).status).toBe(200);
+    expect((await post(t, message('/start'), SECRET)).status).toBe(401);
+
+    // Registering again keeps the same secret.
+    await t.action(internal.telegramAdmin.setWebhook, { action: 'register' });
+    expect(sent('setWebhook')[1]!.body.secret_token).toBe(made);
+    await t.run(async (ctx) => {
+      expect(JSON.stringify(await ctx.db.query('auditLog').collect())).not.toContain(made);
+    });
   });
 });

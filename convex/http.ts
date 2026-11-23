@@ -3047,7 +3047,7 @@ http.route({
   path: '/api/webhooks/telegram',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    const { webhookSecret: secret } = await ctx.runQuery(internal.telegramAdmin.secrets, {});
     if (!secret) {
       return errorJson('webhook.not_configured', 'The Telegram bot is not configured', 503);
     }
@@ -3986,8 +3986,9 @@ http.route({
 });
 
 // --- admin: Telegram gift shop (Admin -> Billing -> Telegram bot) --------------
-// Settings + the webhook's state at Telegram. The bot token and webhook secret
-// are env only: the view says whether each is set, never the values.
+// Settings + the webhook's state at Telegram. The bot token is write-only
+// (sealed PATCH, blank = unchanged); the webhook secret is made by Register.
+// The view says whether each is set, never the values.
 
 http.route({
   path: '/api/v1/admin/telegram',
@@ -4022,6 +4023,7 @@ http.route({
         ...bool('starsEnabled'),
         ...bool('cryptoEnabled'),
         ...(typeof body.botUsername === 'string' ? { botUsername: body.botUsername } : {}),
+        ...(typeof body.botToken === 'string' ? { botToken: body.botToken } : {}),
         ...(prices ? { starsPrices: prices } : {}),
         actorAdminId: admin.adminUserId,
       });

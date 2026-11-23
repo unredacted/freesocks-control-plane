@@ -16,7 +16,7 @@
  * - Nothing here logs a chat id or a message: errors log a kind only.
  *
  * Bot API calls go through lib/telegram/api.ts (the token is part of the URL,
- * so errors there never carry one). TELEGRAM_BOT_TOKEN is env only.
+ * so errors there never carry one). The token comes from telegramAdmin.secrets.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -521,7 +521,7 @@ class PaymentRetry extends Error {
 export const handleUpdate = internalAction({
   args: { rawBody: v.string() },
   handler: async (ctx, { rawBody }): Promise<{ handled: boolean }> => {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const { botToken: token } = await ctx.runQuery(internal.telegramAdmin.secrets, {});
     const update = parseUpdate(rawBody);
     if (!token || !update) return { handled: false };
     const claim = await ctx.runMutation(internal.telegramBot.claimUpdate, {

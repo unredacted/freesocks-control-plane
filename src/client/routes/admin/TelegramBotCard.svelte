@@ -2,8 +2,9 @@
   /**
    * Admin -> Billing: the Telegram gift shop. The bot sells gift codes only,
    * to nobody in particular (no account, no chat kept), through Telegram Stars
-   * and/or the crypto rails. The token and webhook secret are env only; this
-   * card shows whether each is set and how the webhook stands at Telegram.
+   * and/or the crypto rails. The bot token is write-only here (blank keeps the
+   * saved one); Register webhook makes the webhook secret. The card shows only
+   * whether each is set, and how the webhook stands at Telegram.
    */
   import { Button } from '@client/components/ui/button';
   import { Checkbox } from '@client/components/ui/checkbox';
@@ -32,6 +33,8 @@
 
   let enabled = $state(false);
   let botUsername = $state('');
+  // Write-only: never filled from the server, cleared after a save.
+  let botToken = $state('');
   let starsEnabled = $state(false);
   let cryptoEnabled = $state(false);
   // Stars per code, by months, as typed ('' = not sold for Stars).
@@ -52,6 +55,7 @@
     mutationFn: (patch: AdminTelegramPatch) =>
       apiClient.patch('/api/v1/admin/telegram', patch, AdminTelegramConfig),
     onSuccess: () => {
+      botToken = '';
       void qc.invalidateQueries({ queryKey: queryKeys.adminTelegram });
       toast.success('Telegram shop settings saved');
     },
@@ -84,6 +88,7 @@
       starsEnabled,
       cryptoEnabled,
       starsPrices,
+      ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
     });
   }
 
@@ -111,12 +116,12 @@
       <li
         class={view.tokenSet ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}
       >
-        TELEGRAM_BOT_TOKEN: {view.tokenSet ? 'set' : 'not set'}
+        Bot token: {view.tokenSet ? 'saved' : 'not saved'}
       </li>
       <li
         class={view.secretSet ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}
       >
-        TELEGRAM_WEBHOOK_SECRET: {view.secretSet ? 'set' : 'not set'}
+        Webhook secret: {view.secretSet ? 'set' : 'made when you register the webhook'}
       </li>
       {#if webhook}
         <li
@@ -149,6 +154,17 @@
     <label class="block space-y-1">
       <span class="text-xs text-muted-foreground">Bot username (from BotFather)</span>
       <Input placeholder="FreeSocksShopBot" bind:value={botUsername} autocomplete="off" />
+    </label>
+    <label class="block space-y-1">
+      <span class="text-xs text-muted-foreground">
+        Bot token (from BotFather){view?.tokenSet ? ', leave blank to keep the saved one' : ''}
+      </span>
+      <Input
+        type="password"
+        placeholder={view?.tokenSet ? 'Saved' : '123456789:AA...'}
+        bind:value={botToken}
+        autocomplete="off"
+      />
     </label>
   </div>
 
@@ -198,7 +214,7 @@
     <Button
       variant="outline"
       onclick={() => hook.mutate('register')}
-      disabled={hook.isPending || !view?.tokenSet || !view?.secretSet || !view?.webhookUrl}
+      disabled={hook.isPending || !view?.tokenSet || !view?.webhookUrl}
     >
       {hook.isPending ? 'Working…' : 'Register webhook'}
     </Button>
