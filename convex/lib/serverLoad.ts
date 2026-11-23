@@ -18,9 +18,15 @@
  * never sees a per-issuance write.
  *
  * Until `seed:migrateServerLoad` has run (seedCutover, on deploy) a server may
- * have no side row yet and still carry the legacy fields on its own row; every
- * read here falls back to those, so the moment between pushing the code and
- * the migration reads the same numbers as before.
+ * have no side row yet; every read here falls back to the legacy fields on its
+ * own row, so the moment between pushing the code and the migration reads the
+ * same numbers as before.
+ *
+ * Rollback: the legacy fields are COPIED, never cleared, and a new server row
+ * still gets `keyCount: 0`, because the build before the split requires
+ * `keyCount` on every row and reads the stamps there. Rolled back, it resumes
+ * from the figures as of the copy (an estimate the next healthcheck and
+ * issuances move on from). A later release clears and drops them.
  */
 import type { DatabaseReader, MutationCtx } from '../_generated/server';
 import type { Doc, Id } from '../_generated/dataModel';
@@ -163,27 +169,23 @@ export async function deleteServerLoad(ctx: MutationCtx, id: Id<'backendServers'
 }
 
 /**
- * Move one server's legacy fields into its side rows and clear them from the
- * server row. A side row that already exists is newer than the legacy field
- * (something wrote it since the split), so it is kept. Returns whether the
- * server row changed.
+ * Copy one server's legacy fields into its side rows. A side row that already
+ * exists is newer than the legacy field (something wrote it since the split),
+ * so it is kept. The server row is left as it is (rollback, above). Returns
+ * whether a side row was created.
  */
 export async function migrateServerLoadRow(ctx: MutationCtx, server: Server): Promise<boolean> {
-  const legacy =
-    server.keyCount !== undefined ||
-    server.lastHealthOkAt !== undefined ||
-    server.lastHealthRttMs !== undefined ||
-    server.fleetStats !== undefined ||
-    server.fleetStatsAt !== undefined;
-  if (!legacy) return false;
   const now = Date.now();
-  if (!(await loadRow(ctx.db, server._id)))
+  let created = false;
+  if (!(await loadRow(ctx.db, server._id))) {
     await ctx.db.insert('backendServerLoad', {
       backendServerId: server._id,
       keyCount: server.keyCount ?? 0,
       updatedAt: now,
     });
-  if (!(await healthRow(ctx.db, server._id)))
+    created = true;
+  }
+  if (!(await healthRow(ctx.db, server._id))) {
     await ctx.db.insert('backendServerHealth', {
       backendServerId: server._id,
       lastHealthOkAt: server.lastHealthOkAt,
@@ -192,12 +194,7 @@ export async function migrateServerLoadRow(ctx: MutationCtx, server: Server): Pr
       fleetStatsAt: server.fleetStatsAt,
       updatedAt: now,
     });
-  await ctx.db.patch(server._id, {
-    keyCount: undefined,
-    lastHealthOkAt: undefined,
-    lastHealthRttMs: undefined,
-    fleetStats: undefined,
-    fleetStatsAt: undefined,
-  });
-  return true;
+    created = true;
+  }
+  return created;
 }

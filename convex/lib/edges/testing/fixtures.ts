@@ -171,6 +171,7 @@ export async function insertPanelServer(
           : { type: 'outline', apiUrl: 'https://outline.example/secret', websocketEnabled: false },
       isActive: true,
       priority: 0,
+      keyCount: 0,
       updatedAt: Date.now(),
     }),
   );

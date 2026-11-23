@@ -191,7 +191,10 @@ what it read, and the server row is read for its name, location and config by ca
 the row, every issuance evicted all of them and concurrent issuances on one instance conflicted.
 The two side tables are separate so the readers that need the online bit (the location catalog,
 the status page) never see a per-issuance write. `seed:migrateServerLoad` (run by `seedCutover`)
-moved rows written before the split; until it runs, reads fall back to the old fields on the row.
+copies rows written before the split; until it runs, reads fall back to the old fields on the row.
+The row keeps its copy, and a new row still gets `keyCount: 0` at creation, so a rollback to the
+build before the split finds valid rows (it resumes from the copied figures). A later release
+clears and drops those fields.
 
 **Pool scoring**: `pickCandidatesForIssue` prefers instances health-checked within ~30 min (else
 falls back to all active), then scores `latency_weight * lastHealthRttMs + key_count_weight *

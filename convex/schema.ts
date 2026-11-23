@@ -1489,9 +1489,11 @@ export default defineSchema({
     // (or null-cleared) = uncapped. The count itself is in `backendServerLoad`.
     maxKeys: v.optional(v.number()),
     // LEGACY, read only as a fallback until `seed:migrateServerLoad` (run by
-    // seedCutover on deploy) moves them into backendServerLoad /
-    // backendServerHealth and clears them here. Nothing writes them any more;
-    // a later release drops them from the schema.
+    // seedCutover on deploy) copies them into backendServerLoad /
+    // backendServerHealth. Kept (not cleared) so a rollback to the build before
+    // the split finds valid rows: that build requires `keyCount`, so a new row
+    // still gets `keyCount: 0` once at creation. Nothing else writes them; a
+    // later release clears and drops them.
     keyCount: v.optional(v.number()),
     lastHealthOkAt: v.optional(v.number()),
     lastHealthRttMs: v.optional(v.number()),

@@ -232,7 +232,7 @@ describe('backend server load and health live in side tables', () => {
     });
   });
 
-  test('legacy fields read until the migration moves them; the migration is idempotent', async () => {
+  test('legacy fields read until the migration copies them; the migration is idempotent', async () => {
     const t = convexTest(schema, modules);
     const okAt = Date.now() - 60_000;
     const serverId = await seedServer(t, { keyCount: 7, lastHealthOkAt: okAt });
@@ -247,8 +247,10 @@ describe('backend server load and health live in side tables', () => {
     expect(await t.mutation(internal.seed.migrateServerLoad, {})).toEqual({ moved: 1 });
     await t.run(async (ctx) => {
       const server = (await ctx.db.get(serverId))!;
-      expect(server.keyCount).toBeUndefined();
-      expect(server.lastHealthOkAt).toBeUndefined();
+      // The row keeps its copy: the build before the split requires keyCount,
+      // so a rollback still finds a valid row.
+      expect(server.keyCount).toBe(7);
+      expect(server.lastHealthOkAt).toBe(okAt);
       // The load row written by the bump is newer than the legacy field: kept.
       expect(await readKeyCount(ctx.db, server)).toBe(8);
       expect((await readHealth(ctx.db, server)).lastHealthOkAt).toBe(okAt);

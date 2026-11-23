@@ -1488,6 +1488,9 @@ export const createBackendServer = internalMutation({
       config,
       isActive: a.isActive ?? true,
       priority: a.priority ?? 0,
+      // Rollback compatibility only (the build before the side tables requires
+      // it); the live count is in backendServerLoad (lib/serverLoad.ts).
+      keyCount: 0,
       maxKeys: a.maxKeys ?? undefined,
       updatedAt: Date.now(),
     });
@@ -1696,6 +1699,7 @@ export const upsertBackendServerBySlug = internalMutation({
         config,
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
+        keyCount: 0, // rollback compatibility only, as in createBackendServer
         maxKeys: a.maxKeys ?? undefined,
         updatedAt: Date.now(),
       });
