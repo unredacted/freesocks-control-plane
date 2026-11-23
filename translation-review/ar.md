@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**339 of 946 strings are missing** (the app currently shows English for
+**379 of 986 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -331,7 +331,7 @@ review.
 | `hero.resetsInDays [countPlural=one]` | Resets in 1 day | تتم إعادة التعيين في يوم واحد |
 | `hero.resetsInDays [countPlural=other]` | Resets in {count} days | يُعاد ضبطه في {count} يومًا |
 
-## `location` — Miscellaneous strings. *(2 missing)*
+## `location` — Miscellaneous strings. *(11 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -341,6 +341,15 @@ review.
 | `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | أين يقع خادم إعدادك. الخيار التلقائي يختار الموقع الأقل ازدحامًا؛ واختر بنفسك موقعًا يعمل بشكل أفضل على شبكتك. |
 | `location.recommended` | Recommended for you | ⚠️ **MISSING** |
 | `location.pickerHintRecommended` | Automatic tries the locations recommended for your country first. Pick one yourself if another works better on your network. | ⚠️ **MISSING** |
+| `location.membersOnly` | Members | ⚠️ **MISSING** |
+| `location.current` | Current | ⚠️ **MISSING** |
+| `location.lockedTitle` | {location} is for members | ⚠️ **MISSING** |
+| `location.lockedBody` | Upgrade your membership to connect from {location}. Your key uses a location included in your plan until then. | ⚠️ **MISSING** |
+| `location.lockedCta` | See membership | ⚠️ **MISSING** |
+| `location.pickedLocked` | Members only | ⚠️ **MISSING** |
+| `location.keepsFirst` | Your free key stays in the location you picked first. Members can switch location at any time. | ⚠️ **MISSING** |
+| `location.autoShort` | Automatic | ⚠️ **MISSING** |
+| `location.autoHint` | Least busy | ⚠️ **MISSING** |
 
 ## `usage` — The 30-day usage trend under the traffic stats. *(1 missing)*
 
@@ -644,7 +653,7 @@ review.
 | `gift.reveal.saved` | I've saved them | لقد احتفظت بها |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | لا تزال رموزك معروضة على الشاشة. إذا غادرت الآن دون حفظها، فلن تتمكن من رؤيتها مرة أخرى. |
 
-## `error` — API error messages shown to members. *(5 missing)*
+## `error` — API error messages shown to members. *(9 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -670,10 +679,14 @@ review.
 | `error.billing` | The payment service couldn't process this. Please try again later. | لم تتمكن خدمة الدفع من معالجة هذه العملية. يرجى المحاولة مرة أخرى لاحقاً. |
 | `error.serverError` | The server had a problem handling this. Please try again in a few minutes. | واجه الخادم مشكلة في معالجة هذا الطلب. يرجى المحاولة مرة أخرى بعد بضع دقائق. |
 | `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | وضع الاتصال الحالي لم يعد متاحًا. بدّل إلى وضع آخر أولًا، ثم أعد المحاولة. |
-| `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
+| `error.noOtherServer` | There is no other server in this location right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 | `error.coinMinimum` | This amount is below that coin's minimum. Pick another coin or a longer term. | ⚠️ **MISSING** |
 | `error.coinUnavailable` | That coin isn't available right now. Pick another one. | ⚠️ **MISSING** |
+| `error.locationMembersOnly` | That location is for members. Upgrade your membership to use it. | ⚠️ **MISSING** |
+| `error.locationSwitchMembership` | Changing your location is part of membership. | ⚠️ **MISSING** |
+| `error.locationUnavailable` | That location cannot take your key right now. Please try again later. | ⚠️ **MISSING** |
+| `error.locationSame` | Your key is already in that location. | ⚠️ **MISSING** |
 
 ## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(9 missing)*
 
@@ -866,7 +879,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(18 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(23 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -922,6 +935,11 @@ review.
 | `home.support.memberBodyUnlimited` | No monthly cap, faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
 | `home.support.memberBody` | Faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
 | `home.support.perMonth` | a month | ⚠️ **MISSING** |
+| `home.locations.title` | Where our servers are | ⚠️ **MISSING** |
+| `home.locations.subtitle` | You pick a location when you create your key. Members can switch between all of them at any time. | ⚠️ **MISSING** |
+| `home.locations.everyone` | Free and members | ⚠️ **MISSING** |
+| `home.locations.members` | Members only | ⚠️ **MISSING** |
+| `home.locations.statusLink` | Live network status | ⚠️ **MISSING** |
 
 ## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 
@@ -1014,14 +1032,14 @@ review.
 | `status.incidentsPast` | Past incidents | الحوادث السابقة |
 | `status.report` | Report a problem | الإبلاغ عن مشكلة |
 
-## `switchServer` — Miscellaneous strings. *(17 missing)*
+## `switchServer` — Miscellaneous strings. *(20 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `switchServer.action` | Switch server | ⚠️ **MISSING** |
-| `switchServer.title` | Move to a different server? | ⚠️ **MISSING** |
-| `switchServer.body` | For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
-| `switchServer.bodyWithServer` | For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.title` | Move to another server in the same location? | ⚠️ **MISSING** |
+| `switchServer.body` | For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server in the same location; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.bodyWithServer` | For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server in the same location; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
 | `switchServer.reasonLegend` | What's wrong with your current server? | ⚠️ **MISSING** |
 | `switchServer.reasonSlow` | It's slow | ⚠️ **MISSING** |
 | `switchServer.reasonBlocked` | It's blocked where I am | ⚠️ **MISSING** |
@@ -1029,12 +1047,15 @@ review.
 | `switchServer.reasonOther` | Something else | ⚠️ **MISSING** |
 | `switchServer.point1` | Your apps pick up the new server on their next refresh | ⚠️ **MISSING** |
 | `switchServer.point2` | Your account and the data you have left are unchanged | ⚠️ **MISSING** |
-| `switchServer.point3` | If your key has to move to another location, your devices reconnect and register again | ⚠️ **MISSING** |
+| `switchServer.point3` | If your key has to be recreated on another server, your devices reconnect and register again | ⚠️ **MISSING** |
 | `switchServer.confirm` | Move my key | ⚠️ **MISSING** |
 | `switchServer.working` | Moving… | ⚠️ **MISSING** |
 | `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
+| `switchServer.actionIn` | Switch server in {location} | ⚠️ **MISSING** |
+| `switchServer.titleIn` | Move to another server in {location}? | ⚠️ **MISSING** |
+| `switchServer.vsLocation` | Want to connect from a different city instead? Use "Switch location". | ⚠️ **MISSING** |
 
 ## `report` — Miscellaneous strings. *(20 missing)*
 
@@ -1184,3 +1205,27 @@ review.
 | `telegramShop.step3` | Redeem a code in FreeSocks: Account, then Redeem a code. | ⚠️ **MISSING** |
 | `telegramShop.privacy` | Telegram sees that you paid. The bot keeps no chat, and the codes are not linked to you or to your Telegram account. | ⚠️ **MISSING** |
 | `telegramShop.compact` | You can also buy gift codes for Telegram Stars in our official bot. | ⚠️ **MISSING** |
+
+## `switchLocation` — Miscellaneous strings. *(19 missing)*
+
+| Key | English | Arabic (العربية) |
+| --- | --- | --- |
+| `switchLocation.action` | Switch location | ⚠️ **MISSING** |
+| `switchLocation.title` | Switch location | ⚠️ **MISSING** |
+| `switchLocation.body` | Pick where your key connects from. Your subscription URL stays the same, so there is nothing to re-import: your apps pick up the new location on their next refresh. | ⚠️ **MISSING** |
+| `switchLocation.legend` | Move my key to | ⚠️ **MISSING** |
+| `switchLocation.current` | You are here | ⚠️ **MISSING** |
+| `switchLocation.point1` | Your account and the data you have left are unchanged | ⚠️ **MISSING** |
+| `switchLocation.point2` | Your devices reconnect and register again | ⚠️ **MISSING** |
+| `switchLocation.confirm` | Move my key | ⚠️ **MISSING** |
+| `switchLocation.working` | Moving… | ⚠️ **MISSING** |
+| `switchLocation.done` | Your key has moved to {location}. | ⚠️ **MISSING** |
+| `switchLocation.failed` | Could not move your key | ⚠️ **MISSING** |
+| `switchLocation.noOther` | There is no other location to move to right now. | ⚠️ **MISSING** |
+| `switchLocation.memberTitle` | Choosing your location is part of membership | ⚠️ **MISSING** |
+| `switchLocation.memberBody` | Members can move their key to any of our locations, whenever they like. | ⚠️ **MISSING** |
+| `switchLocation.memberBodyFrom` | Your free key stays in {location}. Members can move their key to any of our locations, whenever they like. | ⚠️ **MISSING** |
+| `switchLocation.memberLocations` | Members can also use: {list} | ⚠️ **MISSING** |
+| `switchLocation.memberCta` | See membership | ⚠️ **MISSING** |
+| `switchLocation.serverAlt` | Is your server blocked or slow? Switching to another server in the same location is free. | ⚠️ **MISSING** |
+| `switchLocation.serverAltCta` | Switch server instead | ⚠️ **MISSING** |

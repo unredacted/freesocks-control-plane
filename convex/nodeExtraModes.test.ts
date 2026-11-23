@@ -10,6 +10,8 @@
  *  - then the transport is on for the node, its address is made with the pin
  *    and the rewrites that make every format verify by pin, and it serves only
  *    once the rehearsal saw it pinned in every body;
+ *  - the node is restarted ONCE per transport, before the address goes on (a
+ *    running node does not load an inbound added beside its own by itself);
  *  - a new certificate closes ONLY this mode, then it is rehearsed again under
  *    the new pin, while the REALITY address never goes off;
  *  - a rehearsal that fails turns the address off again;
@@ -30,6 +32,7 @@ import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBa
 import { signValue } from './lib/cookies';
 import { generateHysteriaCertificate } from './lib/backend/hysteriaCert';
 import { NodeIntentView } from '../src/shared/contracts/servers';
+import { restartSent } from './nodeExtraModes';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -288,6 +291,76 @@ describe('a node serving Hysteria beside its own REALITY', () => {
     expect(creds.filter((c) => c.modeSlug === 'privacy-hysteria')).toHaveLength(1);
   });
 
+  test('the node is restarted once to load the transport, before its address goes on', async () => {
+    const s = await seed();
+    const node = s.panel.nodes.find((n) => n.name === 'node-a')!;
+    const restarts = () =>
+      s.panel.writes.filter((w) => w.call === `POST /api/nodes/${node.uuid}/actions/restart`);
+    const e = await bringToServing(s);
+    expect(e).toMatchObject({ state: 'serving', loadedFor: s.hyUuid });
+    // One restart, forced (a node skips one whose config hashes look unchanged).
+    expect(restarts()).toHaveLength(1);
+    expect(restarts()[0]!.body).toMatchObject({ forceRestart: true });
+    // It came before the address was turned on: no enable of the address
+    // precedes it among the writes.
+    const at = s.panel.writes.indexOf(restarts()[0]!);
+    const [host] = hyHosts(s);
+    const enabledAt = s.panel.writes.findIndex(
+      (w) =>
+        w.call === 'PATCH /api/hosts' &&
+        (w.body as { uuid?: string }).uuid === host!.uuid &&
+        (w.body as { isDisabled?: boolean }).isDisabled === false,
+    );
+    expect(enabledAt).toBeGreaterThan(at);
+    const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.map((a) => a.action)).toContain('servers.node.extra_mode_restarted');
+    // A later run for the same transport (here a new certificate) does not restart again.
+    const fresh = generateHysteriaCertificate('quic.example');
+    const ib = (s.panel.profiles[0].config.inbounds as any[]).find((i) => i.tag === HY);
+    ib.streamSettings.tlsSettings.certificates = [
+      { certificate: fresh.certificate, key: fresh.key },
+    ];
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    await s.t.action(internal.nodeExtraModes.run, { intentId: s.intentId });
+    await until(
+      () => extraOf(s),
+      (x) => x?.state === 'serving' && x.evidence!.revision.includes(fresh.pinHex),
+    );
+    expect(restarts()).toHaveLength(1);
+  });
+
+  test('a restart the backend refused is sent again, and the address waits for it', async () => {
+    const s = await seed();
+    const node = s.panel.nodes.find((n) => n.name === 'node-a')!;
+    const restarts = () =>
+      s.panel.writes.filter((w) => w.call === `POST /api/nodes/${node.uuid}/actions/restart`);
+    s.panel.refuseNodeActions = 1;
+    expect((await extraMode(s, 'add')).status).toBe(200);
+    expect(
+      (
+        await report(s, [
+          { port: 443, protocol: 'tcp' },
+          { port: 443, protocol: 'udp' },
+        ])
+      ).status,
+    ).toBe(200);
+    const refused = await until(
+      () => extraOf(s),
+      (x) => x?.code === 'servers.extra_mode_restart_failed',
+    );
+    // Not taken as loaded, its op let go, and its address never turned on.
+    expect(refused!.loadedFor).toBeUndefined();
+    expect(refused!.restartOp).toBeUndefined();
+    expect(hyHosts(s).every((h) => h.isDisabled)).toBe(true);
+    await s.t.action(internal.nodeExtraModes.run, { intentId: s.intentId });
+    const e = await until(
+      () => extraOf(s),
+      (x) => x?.state === 'serving',
+    );
+    expect(e).toMatchObject({ loadedFor: s.hyUuid });
+    expect(restarts()).toHaveLength(2);
+  });
+
   test('a new certificate closes only this mode, then it serves again under the new pin', async () => {
     const s = await seed();
     await bringToServing(s);
@@ -357,6 +430,8 @@ describe('a node serving Hysteria beside its own REALITY', () => {
       firewall: { port: 8443, protocol: 'udp', confirmedBy: 'role' },
     });
     expect(hyHosts(s)[0]!.isDisabled).toBe(true);
+    // The transport goes off the node: turning it on again needs a restart again.
+    expect(e!.loadedFor).toBeUndefined();
     // Listed for the firewall (still `serving` until the reconcile turns it off).
     expect(
       (await roleView(s)).firewall.ports.some((p) => p.port === 8443 && p.protocol === 'udp'),
@@ -418,6 +493,28 @@ describe('an extra mode taken away and asked for again', () => {
     expect(again).toMatchObject({ state: 'serving' });
     expect(again!.code).toBeUndefined();
     expect(hyHosts(s)).toHaveLength(1);
+  });
+});
+
+describe('where a node restart stands', () => {
+  test('sent once taken or maybe taken; pending while sending; failed when refused or gone', () => {
+    expect(restartSent({ request: 'acknowledged' })).toBe('sent');
+    expect(restartSent({ request: 'uncertain' })).toBe('sent');
+    expect(restartSent({ request: 'pending' })).toBe('pending');
+    expect(restartSent({ request: 'rejected_pre_mutation' })).toBe('failed');
+    expect(restartSent(null)).toBe('failed');
+    expect(
+      restartSent({
+        request: 'pending',
+        recovery: {
+          credentialsRevoked: true,
+          noInFlightExecutor: true,
+          queueDrained: true,
+          freshReadAt: 1,
+          at: 1,
+        },
+      }),
+    ).toBe('failed');
   });
 });
 

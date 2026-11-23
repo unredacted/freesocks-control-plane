@@ -167,6 +167,7 @@ export const publicConfigReturns = v.object({
         v.literal('unknown'),
       ),
       coords: v.union(v.object({ lat: v.number(), lng: v.number() }), v.null()),
+      tiers: v.union(v.array(v.string()), v.null()),
     }),
   ),
   clients: v.array(

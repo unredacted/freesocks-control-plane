@@ -334,6 +334,8 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/account/switch-backend': REVEAL,
   'POST /api/v1/account/switch-mode': REVEAL,
   'POST /api/v1/account/switch-server': { ...SEAL_BOTH, requireSealWith: ['telemetry'] },
+  // The response carries the subscription URL; the location code is public.
+  'POST /api/v1/account/switch-location': REVEAL,
   'POST /api/v1/account/report-issue': { ...SEAL_REQ, requireSealWith: ['telemetry'] },
   'POST /api/v1/account/account-id/rotate': REVEAL,
   // The raw proxy config (server addresses, UUIDs, the Reality material) for the

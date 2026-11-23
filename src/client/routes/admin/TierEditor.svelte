@@ -67,6 +67,7 @@
     isActive: true,
     priority: 100,
     expirationDaysAfterMembershipLapse: 90,
+    canSwitchLocation: true,
   };
 
   // Snapshot once at init (an open editor keeps its own copy; prop changes
@@ -93,6 +94,10 @@
       return { ...CREATE_DEFAULTS };
     })(tier),
   );
+
+  // Set once the admin changes "Can switch location" by hand; until then it
+  // follows "Default free tier" (free = keeps its first location).
+  let switchTouched = $state(false);
 
   // Card features live beside the draft: sent only once touched, so saving an
   // unrelated field never freezes the built-in defaults into a stored list.
@@ -372,9 +377,34 @@
       <label class="flex items-center gap-3 text-sm">
         <Checkbox
           checked={draft.isDefaultFree}
-          onCheckedChange={(v) => (draft = { ...draft, isDefaultFree: v === true })}
+          onCheckedChange={(v) =>
+            (draft = {
+              ...draft,
+              isDefaultFree: v === true,
+              // A free tier keeps its first location by default: follow the
+              // flag until the admin sets "Can switch location" themselves.
+              ...(switchTouched ? {} : { canSwitchLocation: v !== true }),
+            })}
         />
         <span>Default free tier for its backend (new sign-ups land here)</span>
+      </label>
+      <label class="flex items-start gap-3 text-sm">
+        <Checkbox
+          checked={draft.canSwitchLocation}
+          onCheckedChange={(v) => {
+            switchTouched = true;
+            draft = { ...draft, canSwitchLocation: v === true };
+          }}
+          class="mt-0.5"
+        />
+        <span>
+          Can switch location
+          <span class="block text-xs text-muted-foreground">
+            Members on this tier get "Switch location" and can change location when they create a
+            new key. Without it they keep the location of their first key, and the button offers
+            membership instead. Which locations a tier can use is set on each backend.
+          </span>
+        </span>
       </label>
     </div>
 

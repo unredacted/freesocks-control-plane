@@ -45,6 +45,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Cross-backend and fallback reissues need an operational audit trail.
   // Their reason, node and optional network details are discarded.
   'subscription.switch_server': ['inPlace', 'movedPlacement', 'movedNodePin'],
+  // A key moved off an instance its tier may no longer use (account.relocateForTier)
+  // could not be moved after its retries: why (a closed set of codes).
+  'subscription.relocate_failed': ['reason'],
   // Member revokes one HWID device (truncated identifier only, never the full hwid).
   'subscription.device_revoke': ['hwidPrefix'],
   // A key was issued with no placement (no Remnawave pool bound anywhere) — a
@@ -378,6 +381,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.extra_mode_serving': ['backendSlug', 'name', 'mode', 'code'],
   'servers.node.extra_mode_closed': ['backendSlug', 'name', 'mode', 'code'],
   'servers.node.extra_mode_rehearsal_failed': ['backendSlug', 'name', 'mode', 'code'],
+  'servers.node.extra_mode_restarted': ['backendSlug', 'name', 'mode'],
   'servers.node.extra_mode_removed': ['backendSlug', 'name', 'mode'],
   // `kept`: how many addresses it already had the approval took it live on (no setup run).
   'servers.node.approved': ['backendSlug', 'name', 'mode', 'kept'],

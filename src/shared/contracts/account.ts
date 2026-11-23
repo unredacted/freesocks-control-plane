@@ -36,6 +36,10 @@ export const AccountResponse = z.object({
        *  AND the global toggle is on). The SPA gates app-compatibility copy on
        *  it. Optional/defaulted for forward-compat. */
       deviceLimited: z.boolean().optional().default(false),
+      /** May this member move their key to another location ("Switch
+       *  location", or a location change on "Create a new key")? Paid tiers by
+       *  default. Defaulted for forward-compat. */
+      canSwitchLocation: z.boolean().optional().default(false),
     }),
     membership: z
       .object({
@@ -357,6 +361,20 @@ export const SwitchServerResponse = z.object({
   oldSubscriptionDeletedAt: z.string().datetime().nullable(),
 });
 export type SwitchServerResponse = z.infer<typeof SwitchServerResponse>;
+
+/**
+ * POST /api/v1/account/switch-location: move the key to another location
+ * (a PublicConfig.locations code), keeping the member's link. Paid tiers by
+ * default (`user.tier.canSwitchLocation`); a location the tier is not allowed
+ * on answers `location.members_only`. The answer has the switch-server shape.
+ */
+export const SwitchLocationRequest = z.object({
+  location: z.string().min(1).max(32),
+  confirm: z.literal(true),
+});
+export type SwitchLocationRequest = z.infer<typeof SwitchLocationRequest>;
+export const SwitchLocationResponse = SwitchServerResponse;
+export type SwitchLocationResponse = SwitchServerResponse;
 
 /**
  * Revoke one of the member's HWID devices (frees a slot under the tier's device

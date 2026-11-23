@@ -12,8 +12,9 @@
    * and band backgrounds, each separated by a top rule. In order: the hero
    * with its picture, the support section (what donations are doing for free
    * accounts right now, then donate and membership side by side),
-   * how it works, what we store, membership, the FAQ (general + threat
-   * model), and the donate box. Each claim appears exactly once.
+   * how it works, where the servers are (the live location catalog),
+   * what we store, membership, the FAQ (general + threat model), and the
+   * donate box. Each claim appears exactly once.
    *
    * Fully localized: every visible string resolves through t() so the
    * censored-region (mostly non-English) audience gets the page in their
@@ -40,6 +41,8 @@
   import { formatMoney } from '../lib/i18n/format';
   import { baselinePerMonth } from '../lib/billing';
   import Minus from '@lucide/svelte/icons/minus';
+  import MapPin from '@lucide/svelte/icons/map-pin';
+  import Lock from '@lucide/svelte/icons/lock';
 
   const me = meQuery();
   const config = configQuery();
@@ -135,6 +138,18 @@
       ? formatMoney(Math.round(cents), config.data?.billing?.currency ?? 'USD')
       : null;
   });
+
+  // Where the servers are: the live location catalog (Admin -> Servers ->
+  // Backends, one location per backend). A location open to some tiers only
+  // reads "Members only", never hidden.
+  const locations = $derived(config.data?.locations ?? []);
+  const anyMembersOnly = $derived(locations.some((l) => l.tiers != null));
+  function loadWord(load: string | undefined): string {
+    if (load === 'quiet') return t('status.loadQuiet');
+    if (load === 'busy') return t('status.loadBusy');
+    if (load === 'crowded') return t('status.loadCrowded');
+    return '';
+  }
 
   // Step numbers in the visitor's own digits (Persian and Arabic included).
   const stepNumber = $derived(new Intl.NumberFormat(getLocale()));
@@ -489,6 +504,60 @@
     </div>
   </div>
 </section>
+
+<!-- LOCATIONS: where the servers are, from the live catalog. -->
+{#if locations.length > 0}
+  <section id="locations" class="scroll-mt-6 {SECTION}">
+    <div class="site-wrap {PAD}">
+      <div class="max-w-2xl">
+        <h2 class={H2}>{t('home.locations.title')}</h2>
+        <p class="mt-4 text-body">{t('home.locations.subtitle')}</p>
+      </div>
+      <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {#each locations as loc (loc.code)}
+          {@const load = loc.online ? loadWord(loc.load) : ''}
+          <li class="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
+            <p class="flex items-start gap-2.5">
+              <MapPin class="mt-1 size-5 shrink-0 text-primary" aria-hidden="true" />
+              <span class="font-display text-[21px] font-bold leading-tight">{loc.label}</span>
+            </p>
+            <p class="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+              <span
+                class="size-2.5 shrink-0 rounded-full {loc.online
+                  ? 'bg-primary'
+                  : 'bg-muted-foreground/50'}"
+                aria-hidden="true"
+              ></span>
+              {loc.online ? t('status.online') : t('status.offline')}{load ? ` · ${load}` : ''}
+            </p>
+            <p
+              class="mt-auto flex items-center gap-1.5 text-sm font-semibold {loc.tiers
+                ? 'text-primary'
+                : 'text-foreground'}"
+            >
+              {#if loc.tiers}
+                <Lock class="size-4" aria-hidden="true" />
+                {t('home.locations.members')}
+              {:else}
+                {t('home.locations.everyone')}
+              {/if}
+            </p>
+          </li>
+        {/each}
+      </ul>
+      <div class="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+        {#if anyMembersOnly && billingEnabled && memberTier}
+          <Button size="lg" class="text-base" onclick={goUpgrade}>
+            {t('home.cta.getMembership')}
+          </Button>
+        {/if}
+        <Link href="/status" class="link-brand text-foreground">
+          {t('home.locations.statusLink')}
+        </Link>
+      </div>
+    </div>
+  </section>
+{/if}
 
 <!-- WHAT WE STORE: the privacy case, as plain statements in a ruled list. -->
 <section id="privacy" class="scroll-mt-6 {BAND}">

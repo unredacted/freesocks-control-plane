@@ -48,6 +48,9 @@ export const RATE_LIMIT_DEFAULTS = {
   // key, and a member hopping nodes all day is a node-thrash signal rather than a
   // real need. Generous enough to escape a genuinely bad node a few times over.
   'account.switch-server': { max: 4, windowMs: DAY, enabled: true },
+  // Member moves their key to another location (members by default). Every
+  // move re-issues the key, so it is DAY-scoped like switch-server.
+  'account.switch-location': { max: 6, windowMs: DAY, enabled: true },
   // Shared bucket across ALL THREE issuance routes: every re-issue mints a
   // fresh backend traffic counter, so per-route buckets alone let a member
   // triple their effective quota rate by rotating routes. 12/hour ≈ every 5

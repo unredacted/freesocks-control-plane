@@ -535,6 +535,12 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.extra_mode_drifted':
     'Its certificate, SNI, port or address changed since the check. It is checked again before members get it.',
   'servers.extra_mode_failed': 'Turning it on stopped. It is tried again shortly.',
+  'servers.extra_mode_loading':
+    'The node was restarted to load the transport. It is checked in a few seconds.',
+  'servers.extra_mode_restart_failed':
+    'The backend did not take the restart that loads the transport. It is tried again shortly.',
+  'servers.extra_mode_client_failed':
+    'A real client could not connect through it. Check that the port is open on the node and at the provider. It is tried again shortly.',
   'servers.extra_mode_port_moved':
     'Its transport moved to another port. The node’s firewall must let the new one in first.',
   'servers.extra_mode_close_failed':

@@ -642,6 +642,12 @@ export default defineSchema({
     isActive: v.boolean(),
     priority: v.number(),
     expirationDaysAfterMembershipLapse: v.number(),
+    // May a member on this tier move their key to another location
+    // ("Switch location", or a location change on "Create a new key")?
+    // Absent = the default: paid tiers yes, the default-free tier no
+    // (lib/locationAccess.ts tierCanSwitchLocation). The first key's location
+    // is always the member's pick.
+    canSwitchLocation: v.optional(v.boolean()),
     // Plan-card feature lines (src/shared/contracts/tierFeatures.ts), in
     // order. Absent = the built-in defaults for the tier's kind; [] = none.
     features: v.optional(
@@ -1505,6 +1511,12 @@ export default defineSchema({
     // admin mutations (lat -90..90, lng -180..180).
     locationLat: v.optional(v.number()),
     locationLng: v.optional(v.number()),
+    // Which tiers may get a key on this instance (lib/locationAccess.ts).
+    // Absent or empty = every tier. A HARD issuance filter (unlike the soft
+    // location preference): a tier not listed is never placed here, and a key
+    // left here after a downgrade is moved off (account.relocateForTier).
+    // Edited in the CMS only; the by-slug upsert never touches it.
+    allowedTierIds: v.optional(v.array(v.id('tiers'))),
     isActive: v.boolean(),
     priority: v.number(),
     // Optional hard capacity cap: at keyCount >= maxKeys the instance is skipped
@@ -5140,6 +5152,16 @@ export default defineSchema({
           // runs asks for another when it ends (`rerun`).
           lease: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
           rerun: v.optional(v.boolean()),
+          // The transport the node was restarted for once it was turned on:
+          // a running node takes an inbound added beside its own without
+          // loading it (its config check sees nothing new while the inbound
+          // has no users), so FCP restarts it once, before the first check.
+          // Cleared when the mode waits for its firewall again (the transport
+          // goes off the node, so the next time on needs a restart again).
+          loadedFor: v.optional(v.string()),
+          // That restart's op while it is being sent: a later run looks at the
+          // same op instead of sending another one.
+          restartOp: v.optional(v.id('panelOps')),
           // Failed runs in a row: the next try waits 1, 2, 4… minutes (at most
           // an hour). Reset once it serves.
           retries: v.optional(v.number()),

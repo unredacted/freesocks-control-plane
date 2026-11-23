@@ -385,6 +385,10 @@ export const PublicConfig = z.object({
         // Coarse city coordinates for the account-page map (null until the
         // operator sets them; the label already names the city publicly).
         coords: z.object({ lat: z.number(), lng: z.number() }).nullable().optional().default(null),
+        // The tier slugs this location is open to; null = every tier. A
+        // members-only location is listed (as "Members"), never issued to
+        // another tier.
+        tiers: z.array(z.string()).nullable().optional().default(null),
       }),
     )
     .optional()

@@ -40,6 +40,10 @@ export async function issueNewSubscription(
     // Pin to one instance — set when node placement resolved the (placement,
     // backend) pair together (the mode group only exists on that backend).
     pinServerId?: Id<'backendServers'> | null;
+    // The tier the key is issued under: an instance that does not take it is
+    // never picked, pinned or not (lib/locationAccess.ts). Every member path
+    // passes it.
+    tierId?: Id<'tiers'>;
     // The node the PREVIOUS key was pinned to (regenerate) — stored on the new
     // row and avoided on the next fetch's pin pick (different node guaranteed).
     excludeNode?: string;
@@ -66,6 +70,7 @@ export async function issueNewSubscription(
     backend: input.backend,
     spec: input.spec,
     pinServerId: input.pinServerId ?? undefined,
+    ...(input.tierId ? { tierId: input.tierId } : {}),
   });
   let subscriptionId: Id<'subscriptions'> | null = null;
   try {

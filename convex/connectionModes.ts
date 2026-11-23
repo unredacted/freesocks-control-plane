@@ -204,10 +204,13 @@ export const resolveIssueTarget = internalQuery({
     // A [0,1) float minted by the calling ACTION (CSPRNG): the anti-herding
     // pick needs randomness, but a query must stay deterministic for OCC.
     rand: v.optional(v.number()),
+    // The member's tier: instances that do not take it are never a target
+    // (lib/locationAccess.ts). Absent = no tier filter.
+    tierId: v.optional(v.id('tiers')),
   },
   handler: async (
     ctx,
-    { backend, modeId, location, exitLocations, onlyServerId, excludePlacement, rand },
+    { backend, modeId, location, exitLocations, onlyServerId, excludePlacement, rand, tierId },
   ) => {
     const t = await resolverFor(backend).resolveTarget(ctx.db, modeId, {
       location: location ?? null,
@@ -215,6 +218,7 @@ export const resolveIssueTarget = internalQuery({
       onlyServerId: (onlyServerId as string | null | undefined) ?? null,
       excludePlacement: excludePlacement ?? null,
       rand: typeof rand === 'number' ? () => rand : undefined,
+      tierId: tierId ?? null,
     });
     const withBackup = { ...t, ...(await fallbackPlacementOf(ctx.db, backend, modeId, t)) };
     if (!withBackup.fallbackUnresolved || onlyServerId) return withBackup;
@@ -231,6 +235,7 @@ export const resolveIssueTarget = internalQuery({
         onlyServerId: sid,
         excludePlacement: excludePlacement ?? null,
         rand: typeof rand === 'number' ? () => rand : undefined,
+        tierId: tierId ?? null,
       });
       if (!alt.placement) continue;
       const f = await fallbackPlacementOf(ctx.db, backend, modeId, alt);

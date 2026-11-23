@@ -40,6 +40,11 @@ export const TierAdmin = z.object({
   isActive: z.boolean(),
   priority: z.number().int(),
   expirationDaysAfterMembershipLapse: z.number().int().nonnegative(),
+  /**
+   * May members on this tier move their key to another location ("Switch
+   * location")? Resolved: an unset tier reads paid = yes, default-free = no.
+   */
+  canSwitchLocation: z.boolean().optional().default(false),
   /** Plan-card feature lines, resolved (the defaults while none are set). */
   features: z.array(TierFeatureSchema).optional().default([]),
   /** True while the tier shows the built-in defaults (no list saved). */
@@ -190,6 +195,9 @@ export const BackendServerAdmin = z.object({
   // cleared as a pair; null = no dot. Optional for forward-compat.
   locationLat: z.number().nullable().optional().default(null),
   locationLng: z.number().nullable().optional().default(null),
+  // Tiers allowed a key here (tier ids); [] = every tier. A hard issuance
+  // filter: a members-only location never takes a free key.
+  allowedTierIds: z.array(z.string()).optional().default([]),
   isActive: z.boolean(),
   priority: z.number().int(),
   keyCount: z.number().int().nonnegative(),
@@ -219,6 +227,8 @@ export const BackendServerUpsert = z.object({
   // Map coordinates: both set (city-level is enough) or both null to clear.
   locationLat: z.number().min(-90).max(90).nullable().optional(),
   locationLng: z.number().min(-180).max(180).nullable().optional(),
+  // Tiers allowed a key here; null or [] = every tier, absent keeps the current.
+  allowedTierIds: z.array(z.string()).max(32).nullable().optional(),
   isActive: z.boolean().default(true),
   priority: z.number().int().default(0),
   // Capacity cap: positive integer; null clears, absent keeps the current cap.

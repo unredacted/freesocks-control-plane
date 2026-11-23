@@ -270,6 +270,7 @@ describe('getAccountView golden answers', () => {
             "supportId": "SUP-FIXED",
             "tier": {
               "backend": "remnawave",
+              "canSwitchLocation": false,
               "deviceLimit": 1,
               "deviceLimited": false,
               "monthlyTrafficGb": 50,
@@ -338,6 +339,7 @@ describe('getAccountView golden answers', () => {
             "supportId": "SUP-FIXED",
             "tier": {
               "backend": "remnawave",
+              "canSwitchLocation": false,
               "deviceLimit": 1,
               "deviceLimited": false,
               "monthlyTrafficGb": 50,
@@ -427,6 +429,7 @@ describe('getAccountView golden answers', () => {
           "supportId": "SUP-FIXED",
           "tier": {
             "backend": "remnawave",
+            "canSwitchLocation": false,
             "deviceLimit": 1,
             "deviceLimited": false,
             "monthlyTrafficGb": 50,
@@ -534,6 +537,7 @@ describe('getAccountView with the backend unreachable', () => {
             "supportId": "SUP-FIXED",
             "tier": {
               "backend": "remnawave",
+              "canSwitchLocation": false,
               "deviceLimit": 1,
               "deviceLimited": false,
               "monthlyTrafficGb": 50,
@@ -626,6 +630,7 @@ describe('GET /api/v1/account golden answers', () => {
             "supportId": "SUP-FIXED",
             "tier": {
               "backend": "remnawave",
+              "canSwitchLocation": false,
               "deviceLimit": 1,
               "deviceLimited": false,
               "monthlyTrafficGb": 50,
@@ -671,6 +676,7 @@ describe('GET /api/v1/account golden answers', () => {
           "supportId": "SUP-FIXED",
           "tier": {
             "backend": "remnawave",
+            "canSwitchLocation": false,
             "deviceLimit": 1,
             "deviceLimited": false,
             "monthlyTrafficGb": 50,

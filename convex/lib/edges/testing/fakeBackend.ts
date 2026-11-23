@@ -28,6 +28,8 @@ export interface FakeBackend {
   users: any[];
   writes: { call: string; body: any }[];
   seq: number;
+  /** Refuse this many node actions (restart / enable / disable) first, with a 403 (refused before any change). */
+  refuseNodeActions?: number;
   /** The subscription body per user agent (replaceable, e.g. to drop an entry). */
   bodyFor: (ua: string) => string;
   /** Answers the backend's own calls; null for any other host. */
@@ -439,6 +441,18 @@ export function createFakeBackend(
       };
       panel.users.push(made);
       return json(made, 201);
+    }
+    const nodeAction = path.match(/^\/api\/nodes\/([^/]+)\/actions\/(restart|enable|disable)$/);
+    if (nodeAction && method === 'POST') {
+      const n = panel.nodes.find((x) => x.uuid === nodeAction[1]);
+      if (!n) return jsonRes({ statusCode: 404, message: 'Node not found' }, 404);
+      if (panel.refuseNodeActions) {
+        panel.refuseNodeActions--;
+        return jsonRes({ statusCode: 403, message: 'Forbidden' }, 403);
+      }
+      if (nodeAction[2] !== 'restart') n.isDisabled = nodeAction[2] === 'disable';
+      if (opts.applyNodeUpdates) n.lastStatusChange = `t${++panel.seq}`;
+      return json({ eventSent: true });
     }
     const userDelete = path.match(/^\/api\/users\/([^/]+)$/);
     if (userDelete && method === 'DELETE') {
