@@ -84,7 +84,7 @@ export const byBackendUserId = internalQuery({
 /**
  * Resolve a subscription by its opaque FCP-fronted token (the capability in
  * GET /api/v1/sub/<subToken>). Returns the full row or null (the cached bodies
- * are not on it: subscriptionBodies.forUa). Internal — the row carries the live proxy key.
+ * are not on it: deliveryContext.forToken). Internal — the row carries the live proxy key.
  *
  * A `deleted` row resolves as NOT FOUND (Review D-#12): its backend user is
  * gone, so the route would otherwise fetch → backend 404 → answer a misleading

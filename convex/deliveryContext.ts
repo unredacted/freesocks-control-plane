@@ -11,7 +11,7 @@
  *  - the row: `subscriptions.bySubToken` (a deleted row is not found);
  *  - the answer's title and refresh hint: `subscriptions.responseHints`;
  *  - the HWID switch: `appSettings.resolved['devices.enforcementEnabled']`;
- *  - this UA's cached body: `subscriptionBodies.forUa`;
+ *  - this UA's cached body: `subscriptionBodies` (lib/subscriptionBodies.ts `entriesForUa`);
  *  - the country context: `memberCountry.contextFor` (once: a guess the route
  *    writes changes the row's country fields, never what this reads);
  *  - the place's render context: `edgeRender.renderContextFor`;

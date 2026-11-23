@@ -483,7 +483,7 @@ function sameCountryFields(a: CountryFields, b: Partial<Record<keyof CountryFiel
   );
 }
 
-/** The serialized cache entries a lookup returned (deliveryContext / subscriptionBodies.forUa). */
+/** The serialized cache entries a lookup returned (deliveryContext.forToken). */
 function parseEntries(raw: string[]): SubCacheEntry[] {
   const out: SubCacheEntry[] = [];
   for (const one of raw) {
