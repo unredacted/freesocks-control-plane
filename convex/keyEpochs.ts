@@ -1,7 +1,7 @@
 /**
  * Epoch-key store (CDN-blinding Phase 3). Rows are minted by the rotate cron
- * (which calls the "use node" generator in lib/hpkeCrypto.ts, the only place the
- * X-Wing keypair + manifest signature can be produced) and read on the login
+ * (which calls the generator in lib/hpkeCrypto.ts, the only place the X-Wing
+ * keypair + manifest signature are produced) and read on the login
  * path: the current epoch public key is published by the key endpoint.
  * Private seeds live in the separate volatile seed store.
  */
@@ -19,9 +19,9 @@ export const EPOCH_SWEEP_GRACE_MS = 10 * 60_000;
 const MAX_DRAIN_ROUNDS = 50;
 
 /**
- * Cron entry point for epoch rotation. Gates in the ISOLATE runtime: while
- * HPKE ships dark (FS_MANIFEST_SK unset) each cron tick would cold-start a
- * Node action just to early-return. Per-tick gating (not conditional
+ * Cron entry point for epoch rotation. Gates in a mutation: while HPKE ships
+ * dark (FS_MANIFEST_SK unset) each cron tick would otherwise schedule an
+ * action just to early-return. Per-tick gating (not conditional
  * cron registration) so `convex env set FS_MANIFEST_SK` activates rotation on
  * the next tick without a redeploy; rotateEpochKey keeps its own skip as
  * belt-and-braces.

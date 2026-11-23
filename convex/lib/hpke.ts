@@ -1,11 +1,10 @@
 /**
  * Isolate-side sealing wrapper for the CDN-blinding channel. `sealed(handler)`
  * wraps a public httpAction: it opens a sealed request and/or seals the response
- * by delegating the actual HPKE to the "use node" action in ./hpkeCrypto.ts (the
- * default isolate lacks subtle HKDF, Phase 0 finding).
+ * inline, in this same V8 httpAction, through ./hpkeServer.ts (no ctx.runAction:
+ * the isolate has subtle HKDF since the pinned backend, docs/hpke-phase0-spike.md).
  *
- * Per-route behavior comes from SEALED_ROUTES (envelope.ts). This module imports
- * only the pure ./envelope helpers, never ./hpke, so it is isolate-safe.
+ * Per-route behavior comes from SEALED_ROUTES (envelope.ts).
  *
  * Dual-mode (so this rolls out without a flag day): a request that is not sealed
  * (no envelope on a 'seal' route, no fsRespEph on a 'reveal' route) passes
@@ -31,7 +30,7 @@
  */
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
-import { internal } from '../_generated/api';
+import { openSealedRequest, sealRevealResponse } from './hpkeServer';
 import {
   ADMIN_COOKIE,
   errorJson,
@@ -212,11 +211,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     if (wire) {
       // A mandatory request envelope must not also carry cleartext application fields.
       if (policy.required && Object.keys(wire).length !== 1) return sealedRequired();
-      const opened = await ctx.runAction(internal.lib.hpkeCrypto.openRequest, {
-        method,
-        path,
-        wireBody: wire,
-      });
+      const opened = await openSealedRequest(ctx, { method, path, wireBody: wire });
       if ('unavailable' in opened) {
         return errorJson(
           'hpke.key_unavailable',
@@ -278,7 +273,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     const ct = res.headers.get('content-type') ?? '';
     if (ct.includes('json')) {
       const responseObj = await res.json();
-      const sealedWire: SealedWire = await ctx.runAction(internal.lib.hpkeCrypto.sealResponse, {
+      const sealedWire: SealedWire = await sealRevealResponse({
         method,
         path,
         respEphPubB64,

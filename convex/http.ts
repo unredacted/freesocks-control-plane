@@ -57,6 +57,7 @@ import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
 import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
 import { requestWasSealed, sealed, sealedRequiredResponse } from './lib/hpke';
+import { readLiveEpoch } from './lib/hpkeServer';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import { isBackendId, type BackendId } from './lib/backendIds';
 import { isSwitchServerReason } from '../src/shared/contracts/switchServerReasons';
@@ -684,7 +685,7 @@ const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> 
   const limited = await throttlePublicGet(ctx, req, 'hpke.keys.fetch');
   if (limited) return limited;
   const [candidate, revocation] = await Promise.all([
-    ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {}),
+    readLiveEpoch(ctx),
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
   const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;

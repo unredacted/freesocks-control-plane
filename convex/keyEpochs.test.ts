@@ -3,7 +3,7 @@
  * CDN-blinding wiring tests (Phase 3/3c): the epoch-key store semantics
  * (validity window + sweep grace = forward secrecy), the monotonic
  * revoked-kid list, and the hpkeCrypto actions end-to-end — epoch rotation
- * produces a manifest-signed key the client can verify, and openRequest
+ * produces a manifest-signed key the client can verify, and openSealedRequest
  * round-trips a sealed login against BOTH the static and an epoch key.
  * (The shared primitives — HPKE, channel, manifest — have their own suites
  * under src/shared/crypto; this covers the Convex wiring around them.)
@@ -13,7 +13,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import schema from './schema';
 import { internal } from './_generated/api';
-import { b64UrlToBytes, bytesToB64Url, kidFromPublicKey } from '../src/shared/crypto/envelope';
+import type { ActionCtx } from './_generated/server';
+import {
+  b64UrlToBytes,
+  bytesToB64Url,
+  kidFromPublicKey,
+  type SealedWire,
+} from '../src/shared/crypto/envelope';
 import {
   deserializePublicKey,
   serializePublicKey,
@@ -23,12 +29,18 @@ import { clientPrepareRequest } from '../src/shared/crypto/channel';
 import { epochStatement, revocationStatement, verifyManifest } from '../src/shared/crypto/manifest';
 import { EPOCH_SWEEP_GRACE_MS } from './keyEpochs';
 import { createSeedStore } from '../docker/epoch-seed-store.mjs';
+import { openSealedRequest, readLiveEpoch } from './lib/hpkeServer';
 
 const modules = import.meta.glob('./**/*.*s');
 
 const SERVER_SEED = new Uint8Array(32).fill(7);
 const manifestSk = ed25519.keygen().secretKey;
 const manifestPk = ed25519.getPublicKey(manifestSk);
+
+/** The query half of an action ctx, for calling the inline V8 HPKE helpers. */
+function queryCtx(t: ReturnType<typeof convexTest>) {
+  return { runQuery: t.query.bind(t) } as unknown as Pick<ActionCtx, 'runQuery'>;
+}
 
 async function serverIdentity() {
   const kp = await serverKeyPairFromSeed(SERVER_SEED);
@@ -111,7 +123,7 @@ describe('keyRevocations store', () => {
   });
 });
 
-describe('hpkeCrypto actions (node runtime)', () => {
+describe('hpkeCrypto actions + inline open (V8 runtime)', () => {
   const token = 'a'.repeat(64);
 
   function restartSeedStore() {
@@ -127,12 +139,12 @@ describe('hpkeCrypto actions (node runtime)', () => {
     vi.stubEnv('FS_MANIFEST_SK', bytesToB64Url(manifestSk));
     const t = convexTest(schema, modules);
     await t.action(internal.lib.hpkeCrypto.maintainEpoch, {});
-    const old = await t.action(internal.lib.hpkeCrypto.liveEpoch, {});
+    const old = await readLiveEpoch(queryCtx(t));
     expect(old).not.toBeNull();
     restartSeedStore();
-    expect(await t.action(internal.lib.hpkeCrypto.liveEpoch, {})).toBeNull();
+    expect(await readLiveEpoch(queryCtx(t))).toBeNull();
     await t.action(internal.lib.hpkeCrypto.maintainEpoch, {});
-    const next = await t.action(internal.lib.hpkeCrypto.liveEpoch, {});
+    const next = await readLiveEpoch(queryCtx(t));
     expect(next).not.toBeNull();
     expect(next?.kid).not.toBe(old?.kid);
   });
@@ -215,7 +227,7 @@ describe('hpkeCrypto actions (node runtime)', () => {
     ).toBe(true);
   });
 
-  test('openRequest round-trips a sealed login against the STATIC key', async () => {
+  test('openSealedRequest round-trips a sealed login against the STATIC key', async () => {
     const t = convexTest(schema, modules);
     const srv = await serverIdentity();
     const prepared = await clientPrepareRequest({
@@ -226,16 +238,16 @@ describe('hpkeCrypto actions (node runtime)', () => {
       policy: { request: 'seal', response: 'plain' },
       bodyObj: { accountId: '1'.repeat(32), captchaToken: 'tok' },
     });
-    const out = await t.action(internal.lib.hpkeCrypto.openRequest, {
+    const out = await openSealedRequest(queryCtx(t), {
       method: 'POST',
       path: '/api/v1/auth/account-login',
-      wireBody: prepared.body,
+      wireBody: prepared.body as SealedWire,
     });
     if ('unavailable' in out) throw new Error('expected the recipient to be available');
     expect(out.plaintext).toEqual({ accountId: '1'.repeat(32), captchaToken: 'tok' });
   });
 
-  test('openRequest routes an epoch-sealed login to the epoch key', async () => {
+  test('openSealedRequest routes an epoch-sealed login to the epoch key', async () => {
     vi.stubEnv('FS_MANIFEST_SK', bytesToB64Url(manifestSk));
     const t = convexTest(schema, modules);
     const rotated = await t.action(internal.lib.hpkeCrypto.rotateEpochKey, {});
@@ -249,10 +261,10 @@ describe('hpkeCrypto actions (node runtime)', () => {
       policy: { request: 'seal', response: 'plain' },
       bodyObj: { accountId: '2'.repeat(32), captchaToken: 'tok2' },
     });
-    const out = await t.action(internal.lib.hpkeCrypto.openRequest, {
+    const out = await openSealedRequest(queryCtx(t), {
       method: 'POST',
       path: '/api/v1/auth/account-login',
-      wireBody: prepared.body,
+      wireBody: prepared.body as SealedWire,
     });
     if ('unavailable' in out) throw new Error('expected the recipient to be available');
     expect(out.plaintext).toEqual({ accountId: '2'.repeat(32), captchaToken: 'tok2' });
