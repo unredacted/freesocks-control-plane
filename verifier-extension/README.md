@@ -12,10 +12,9 @@ channel.
 The extension ships through the **browser web store**, whose review + update
 channel is independent of our CDN. Inside the extension is a **pinned hash** of
 the reproducible build. On every load of the app origin the extension fetches the
-served `index.html`, hashes it, and compares. `index.html` carries Subresource
-Integrity for every script and stylesheet, so pinning its hash transitively pins
-the whole bundle: if the CDN serves anything other than the published build, the
-hashes diverge and the user is warned (red badge + a notification).
+served `index.html`, hashes it, and compares. The `HTML` badge confirms that
+this fetch matched the pinned HTML. A mismatch triggers a warning. The browser
+enforces the integrity metadata carried by its own document when supported.
 
 This is the MEGA model (the verifier is self-contained and pins our own build),
 not Cloudflare/Meta's Code Verify (which trusts a third-party witness). Here the

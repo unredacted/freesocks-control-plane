@@ -46,7 +46,7 @@ import { SETTINGS_DEFAULTS } from './appSettings';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
-import { sanitizeUmamiUrl } from './lib/analyticsConfig';
+import { sanitizeGeoMode, sanitizeUmamiUrl } from './lib/analyticsConfig';
 import {
   checkSiteImage,
   decodeBase64,
@@ -681,12 +681,26 @@ http.route({
 // public key before sealing the login to it, so a CDN that tampers is caught.
 // Briefly cacheable (the epoch is valid for ~30 min and carries its own notAfter).
 const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> => {
-  const limited = await throttlePublicGet(ctx, req, 'hpke.keys.fetch');
-  if (limited) return limited;
-  const [epoch, revocation] = await Promise.all([
-    ctx.runQuery(internal.keyEpochs.current, {}),
+  // Never refuse a key lookup: a manifest-pinned client cannot seal a login,
+  // sign-up or bootstrap without an epoch, and the per-IP bucket is shared by
+  // everyone behind a carrier NAT, so a 429 here would let one neighbour lock
+  // the rest out. Past the budget the answer comes from the datastore alone
+  // (no seed-store check, no re-mint), which bounds what a flood can drive;
+  // a published epoch the store lost still recovers through the client's
+  // retry on 503 hpke.key_unavailable.
+  const overBudget = (await throttlePublicGet(ctx, req, 'hpke.keys.fetch')) !== null;
+  const [candidate, revocation] = await Promise.all([
+    overBudget
+      ? ctx.runQuery(internal.keyEpochs.current, {})
+      : ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {}),
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
+  const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;
+  // No live epoch while signing is on: mint one now (throttled), not at the
+  // next cron tick, so pinned clients can seal again within seconds.
+  if (!epoch && !overBudget && process.env.FS_MANIFEST_SK) {
+    await ctx.runMutation(internal.keyEpochs.requestRemint, {}).catch(() => {});
+  }
   return json(
     {
       epoch: epoch
@@ -716,7 +730,10 @@ const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> 
     // normally has >=20 min left, so this clamp only ever bites if that ratio
     // changes -- it is the guarantee, not a hot path. A rotation gap (epoch null)
     // is not cached at all, so it clears the moment the rotate cron catches up.
-    { 'cache-control': epochCacheControl(epoch?.notAfter) },
+    {
+      'cache-control': epochCacheControl(epoch?.notAfter),
+      ...(overBudget ? { 'x-fs-keys-throttled': '1' } : {}),
+    },
   );
 };
 http.route({ path: '/api/v1/hpke/keys', method: 'GET', handler: httpAction(hpkeKeysHandler) });
@@ -739,8 +756,35 @@ function epochCacheControl(notAfter: number | undefined): string {
 // Anonymous sign-up: Cap captcha -> mint a user + account number + member session.
 // NO proxy backend is touched here (the proxy key is created separately, once
 // signed in, via POST /api/v1/account/regenerate), so a missing/empty backend
-// can never block account creation. The account-number reveal is sealed (the
-// '/api/v1/account' reveal policy in src/shared/crypto/envelope.ts).
+// can never block account creation. Both legs are sealed, including the
+// response recipient and proof-of-possession enrollment metadata.
+
+async function admitAccountCreation(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  if (!ip) {
+    return errorJson(
+      'freetier.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
+  // drive verify QPS (the per-day account cap is enforced later by the
+  // freetier.create rate limit inside createFreeAccount).
+  const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'account.create.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!createRl.allowed) {
+    return errorJson(
+      'rate_limit.exceeded',
+      'Too many attempts from your network. Please wait a bit and try again.',
+      429,
+      { retryAfterMs: createRl.retryAfterMs },
+    );
+  }
+  return null;
+}
 
 http.route({
   path: '/api/v1/account',
@@ -766,29 +810,8 @@ http.route({
     if (!captchaToken) {
       return errorJson('validation', 'Captcha token required', 400);
     }
-    const ip = resolveClientIp(req);
-    if (!ip) {
-      return errorJson(
-        'freetier.ip_unresolved',
-        'Unable to establish your network address. Try again later or contact support.',
-        503,
-      );
-    }
-    // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
-    // drive verify QPS (the per-day account cap is enforced later by the
-    // freetier.create rate limit inside createFreeAccount).
-    const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account.create.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!createRl.allowed) {
-      return errorJson(
-        'rate_limit.exceeded',
-        'Too many attempts from your network. Please wait a bit and try again.',
-        429,
-        { retryAfterMs: createRl.retryAfterMs },
-      );
-    }
+    // The admission callback already verified the same request headers.
+    const ip = resolveClientIp(req)!;
     const cap = await verifyCaptcha(captchaToken);
     if (!cap.configured) return errorJson('config', 'Captcha not configured', 503);
     if (!cap.success) return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
@@ -867,7 +890,7 @@ http.route({
       200,
       { 'set-cookie': cookie },
     );
-  }),
+  }, admitAccountCreation),
 });
 
 // --- member auth ------------------------------------------------------------
@@ -2093,7 +2116,7 @@ http.route({
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, { recentSession: true });
-    if (!member) return recentMemberSessionRequired();
+    if (!member?.sid) return recentMemberSessionRequired();
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.rotate',
       subject: member.userId,
@@ -2106,12 +2129,17 @@ http.route({
         { retryAfterMs: rl.retryAfterMs },
       );
     }
-    const result = await ctx.runAction(internal.auth.rotateAccountId, {
-      userId: member.userId,
-      requestId: newRequestId(),
-      keepSid: member.sid,
-    });
-    return json(result);
+    try {
+      return json(
+        await ctx.runAction(internal.auth.rotateAccountId, {
+          userId: member.userId,
+          requestId: newRequestId(),
+          keepSid: member.sid,
+        }),
+      );
+    } catch (err) {
+      return convexError(err);
+    }
   }),
 });
 
@@ -2207,12 +2235,13 @@ http.route({
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, { recentSession: true });
-    if (!member) return recentMemberSessionRequired();
+    if (!member?.sid) return recentMemberSessionRequired();
     const body = await readJson<{ response?: unknown; deviceLabel?: string }>(req);
     if (!body.response) return errorJson('validation', 'response required', 400);
     try {
       await ctx.runAction(internal.memberWebauthn.registerVerify, {
         userId: member.userId,
+        registrationSessionSid: member.sid,
         response: body.response,
         deviceLabel: typeof body.deviceLabel === 'string' ? body.deviceLabel : undefined,
         requestId: newRequestId(),
@@ -2292,6 +2321,9 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    if (member.source === 'token' && !hasScope(member.scopes, 'subscription:read')) {
+      return errorJson('auth.forbidden', 'Mirror access requires subscription:read', 403);
+    }
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'mirror.request',
       subject: member.userId,
@@ -2650,35 +2682,41 @@ http.route({
   }),
 });
 
+// Apply the bootstrap IP budget before opening either enrollment envelope.
+async function admitAdminBootstrap(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  if (!ip) {
+    return errorJson(
+      'auth.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'admin.register.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!rl.allowed) {
+    return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
+  return null;
+}
+
 http.route({
   path: '/api/admin/auth/register-bootstrap/options',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
-    const body = await readJson<{ username?: string; displayName?: string }>(req);
+  handler: sealed(async (ctx, req) => {
+    const body = await readJson<{
+      bootstrapSecret?: string;
+      username?: string;
+      displayName?: string;
+    }>(req);
     if (!body.username) return errorJson('validation', 'username required', 400);
-    // Per-IP throttle: this endpoint is an ONLINE ORACLE for the bootstrap
-    // secret (unlimited guesses otherwise) until the first credential exists.
-    // Fail closed like the other auth surfaces.
-    const ip = resolveClientIp(req);
-    if (!ip) {
-      return errorJson(
-        'auth.ip_unresolved',
-        'Unable to establish your network address. Try again later or contact support.',
-        503,
-      );
-    }
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'admin.register.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!rl.allowed) {
-      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
-        retryAfterMs: rl.retryAfterMs,
-      });
-    }
     try {
       const out = await ctx.runAction(internal.webauthn.registerBootstrapOptions, {
-        bootstrapSecret: req.headers.get('x-admin-bootstrap-token') ?? '',
+        bootstrapSecret: typeof body.bootstrapSecret === 'string' ? body.bootstrapSecret : '',
         username: body.username,
         displayName: body.displayName,
       });
@@ -2686,20 +2724,24 @@ http.route({
     } catch (err) {
       return publicAuthError(err);
     }
-  }),
+  }, admitAdminBootstrap),
 });
 
 http.route({
   path: '/api/admin/auth/register-bootstrap/verify',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
-    const body = await readJson<{ adminId?: string; response?: unknown; deviceLabel?: string }>(
-      req,
-    );
+  handler: sealed(async (ctx, req) => {
+    const body = await readJson<{
+      bootstrapSecret?: string;
+      adminId?: string;
+      response?: unknown;
+      deviceLabel?: string;
+    }>(req);
     if (!body.adminId || !body.response)
       return errorJson('validation', 'adminId and response required', 400);
     try {
       const out = await ctx.runAction(internal.webauthn.registerBootstrapVerify, {
+        bootstrapSecret: typeof body.bootstrapSecret === 'string' ? body.bootstrapSecret : '',
         adminId: body.adminId as never,
         response: body.response,
         deviceLabel: body.deviceLabel,
@@ -2708,7 +2750,7 @@ http.route({
     } catch (err) {
       return publicAuthError(err);
     }
-  }),
+  }, admitAdminBootstrap),
 });
 
 http.route({
@@ -3850,6 +3892,10 @@ http.route({
       ipHeader?: string;
       geoMode?: string;
     }>(req);
+    const geoMode = sanitizeGeoMode(body.geoMode);
+    if (body.forwardIp === true && geoMode === 'full' && !admin.adminUserId) {
+      return errorJson('auth.forbidden', 'Forwarding visitor IPs requires an admin session', 403);
+    }
     // Hash the CLEANED url (what will actually be stored/used) — sanitize here
     // with the same function the mutation applies, so the hash matches.
     const cleanUrl = sanitizeUmamiUrl(typeof body.umamiUrl === 'string' ? body.umamiUrl : '');
@@ -3862,7 +3908,7 @@ http.route({
           websiteId: typeof body.websiteId === 'string' ? body.websiteId : '',
           forwardIp: body.forwardIp === true,
           ipHeader: typeof body.ipHeader === 'string' ? body.ipHeader : '',
-          geoMode: typeof body.geoMode === 'string' ? body.geoMode : 'full',
+          geoMode,
           umamiUrlHash: cleanUrl === '' ? '' : (await sha256Hex(cleanUrl)).slice(0, 8),
           actorAdminId: admin.adminUserId,
         }),

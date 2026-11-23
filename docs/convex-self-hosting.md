@@ -142,7 +142,7 @@ optional one-time bootstrap.)
 | `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`                                                                                                                                                                                                       | none                                 | card rail (Phase 2). Required once the Stripe rail is enabled.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_API_BASE`                                                                                                                                                                     | none                                 | PayPal rail (Phase 3). Required once the PayPal rail is enabled. `PAYPAL_API_BASE` = `https://api-m.paypal.com` (live) or the sandbox host.                                                                                                                                                                                                                                                                                                                                                               |
 | `BILLING_PENDING_TTL_HOURS`, `BILLING_ORDER_RETENTION_DAYS`                                                                                                                                                                                     | `48`, `365`                          | abandoned-checkout expiry window + terminal-order retention.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `FS_SERVER_HPKE_SK`, `FS_MANIFEST_SK`, `FS_MANIFEST_SK_PQ`                                                                                                                                                                                      | none                                 | CDN-blinding sealed channel (user-facing label "HPKE"): the server HPKE private key + the classical/post-quantum manifest signing keys. Generate all of them with `bun scripts/gen-hpke-keys.mjs` (the printed `VITE_FS_*` public halves bake into the SPA build). Unset = the deployment runs **dark** (plaintext dual-mode over TLS). Full runbook: `docs/secrets.md` §2 + `docs/threat-model-cdn-blinding.md`.                                                                                         |
+| `FS_SERVER_HPKE_SK`, `FS_MANIFEST_SK`, `FS_MANIFEST_SK_PQ`                                                                                                                                                                                      | Generated                            | `FS_SERVER_HPKE_SK` (with the matching `VITE_FS_SERVER_HPKE_*` pins in the browser app) is required for sealed signup and first-admin enrollment. The manifest keys turn on signed epoch keys: they need the HPKE epoch store, and a build with `VITE_FS_MANIFEST_PK` refuses to seal without a live epoch. See [Secrets](secrets.md).                                                                                                                                                                    |
 | `WEBAUTHN_CHALLENGE_RETENTION_DAYS`                                                                                                                                                                                                             | `1`                                  | retention (days past `expiresAt`) for consumed/expired passkey challenge rows before the daily sweeps delete them.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `EDGE_RETENTION_DAYS`, `EDGE_ROTATION_RETENTION_DAYS`, `PANEL_OP_RETENTION_DAYS`, `SNI_ROLLOUT_RETENTION_DAYS`, `EDGE_SETUP_RUN_RETENTION_DAYS`, `ACTIVATION_RUN_RETENTION_DAYS`, `EDGE_HOST_HIDE_RETENTION_DAYS`, `PORT_CHANGE_RETENTION_DAYS` | `30`, then `90` each                 | retention of destroyed edges, terminal rotations and the servers/edges workflow rows (ledger ops, name rollouts, setup and activation runs, released Host hides, port changes). A row something still reads is never deleted (`docs/edges.md` "Reconcile cron", Retention).                                                                                                                                                                                                                               |
 | `MAINTENANCE_HOLD_RETENTION_DAYS`, `OBLIGATION_RETENTION_DAYS`                                                                                                                                                                                  | `90` each                            | retention of released maintenance holds and settled obligations (an open hold, an outstanding obligation and the confirmed create of an origin name's DNS record are never deleted).                                                                                                                                                                                                                                                                                                                      |
@@ -216,6 +216,17 @@ members to carry). On a fresh backend:
    ```sh
    bunx convex run seed:seedCutover '{}'
    ```
+
+   Manifest-enabled deployments require the volatile HPKE epoch store. The
+   stack Compose file places it on a private network with the Convex backend.
+   Run the normal secrets bootstrap for the deployment's env file to generate
+   `HPKE_EPOCH_STORE_TOKEN` before upgrading. When using a manually managed
+   backend, run the sidecar on a private backend network, set
+   `HPKE_EPOCH_STORE_URL` and `HPKE_EPOCH_STORE_TOKEN` in the Convex deployment
+   environment, and run `bunx convex run lib/hpkeCrypto:initializeEpochStore '{}'`
+   after deploying. The Compose deployer automates initialization. The next maintenance tick
+   replenishes the store after a restart. Operators can run the initialization
+   action to publish a new epoch immediately.
 
    `seedCutover` seeds the default-free + member tiers, app settings (including the
    device-limit enforcement default, OFF), the primary Remnawave instance (from
@@ -306,12 +317,12 @@ app.freesocks.org {
     # Security headers. The captcha (self-hosted Cap) is bundled + served
     # same-origin, so the CSP is pure 'self' — ZERO third-party origins. Inline
     # STYLES are allowed (Svelte style bindings); inline SCRIPTS are not (the FOUC
-    # theme logic is the external /theme-init.js). worker-src 'self' covers both
-    # the PoP signing worker and Cap's proof-of-work solver worker;
+    # theme logic is the external /theme-init.js). worker-src allows blob: for
+    # the bundled PoP signer and Cap's proof-of-work solver;
     # 'wasm-unsafe-eval' lets Cap's WASM compile (served same-origin via /cap).
     header {
         # Add the site policy so proxied subscription documents keep their sandbox.
-        +Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+        +Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
         # COOP/CORP isolate the context; COEP require-corp is now ENFORCEABLE
         # (every subresource is same-origin — the Turnstile iframe that blocked it
         # is gone). Permissions-Policy denies features the app never uses.
@@ -327,9 +338,8 @@ app.freesocks.org {
     }
     # Integrity-Policy "blocked-destinations=(script)" stays DEFERRED. Every chunk
     # now carries SRI (entry/css in index.html + an import map covering all dynamic
-    # chunks), but the enforcing header would block the PoP signing WORKER's module
-    # imports (a worker realm doesn't inherit the document import map → no integrity
-    # source → blocked → auth breaks). Flip only after an in-browser beta check.
+    # chunks), and the PoP signer ships inline. Check both the signing and
+    # captcha workers in supported browsers before enabling the header.
 
     # API + health/readiness → Convex HTTP actions (:3211)
     @api path /api/* /healthz /readyz

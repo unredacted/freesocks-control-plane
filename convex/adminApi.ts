@@ -791,7 +791,9 @@ export const activeSubForUser = internalQuery({
       .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
       .order('desc')
       .first();
-    return sub ? { backend: sub.backend, backendUserId: sub.backendUserId } : null;
+    return sub
+      ? { subscriptionId: sub._id, backend: sub.backend, backendUserId: sub.backendUserId }
+      : null;
   },
 });
 
@@ -952,6 +954,17 @@ export const runUserOp = internalAction({
             code: 'backend.reset_failed',
             message: 'The backend did not reset this key’s traffic. Try again later.',
           });
+        }
+        // A reset hands the member their whole quota back, so the bytes a
+        // re-issued key carried from earlier keys go too (lib/quotaCarry.ts).
+        await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+          subscriptionId: sub.subscriptionId,
+        });
+        try {
+          await ctx.runAction(internal.lifecycle.pushTierToBackend, { userId });
+        } catch {
+          // The carry is gone locally; the next tier push or the expiry cron
+          // restores the provider limit.
         }
       }
       await ctx.runMutation(internal.adminApi.recordUserOpAudit, {
@@ -2005,15 +2018,25 @@ export const billingOverview = internalQuery({
 export const setBillingConfig = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
-    let writes: Array<{ key: string; value: string }>;
+    let configWrites: Array<{ key: string; value: string }>;
+    let secretWrites: Array<{ key: string; value: string }>;
     try {
-      writes = [...billingConfigWrites(patch), ...(await billingSecretWrites(ctx.db, patch))];
+      configWrites = billingConfigWrites(patch);
+      secretWrites = await billingSecretWrites(ctx.db, patch);
     } catch (e) {
       throw new ConvexError({
         code: 'validation',
         message: e instanceof Error ? e.message : 'invalid billing config',
       });
     }
+    // publicBaseUrl included: it builds the IPN and post-payment redirect URLs.
+    if (!actorAdminId && secretWrites.length > 0) {
+      throw new ConvexError({
+        code: 'auth.forbidden',
+        message: 'Changing processor credentials and endpoints requires an admin session',
+      });
+    }
+    const writes = [...configWrites, ...secretWrites];
     if (writes.length === 0) {
       throw new ConvexError({ code: 'validation', message: 'no recognized billing fields' });
     }

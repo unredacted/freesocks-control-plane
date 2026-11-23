@@ -25,6 +25,7 @@ import { readUserCounts } from './lib/statusCounters';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import { keyTrafficLimit, liveCarryBytes } from './lib/quotaCarry';
 
 /** One page of active free users' active subs (shared by the query + the action,
  *  and annotated at the call site to break Convex's self-file inference cycle). */
@@ -33,6 +34,8 @@ type ActiveFreeSubsPage = {
     backend: BackendId;
     backendUserId: string;
     backendServerId: Id<'backendServers'> | null;
+    periodCarryBytes?: number;
+    periodCarryUntil?: number;
   }[];
   isDone: boolean;
   continueCursor: string;
@@ -155,11 +158,7 @@ export const findActiveFreeSubs = internalQuery({
       .query('users')
       .withIndex('by_tier_status_freekey', (q) => q.eq('tierId', tierId).eq('status', 'active'))
       .paginate({ cursor, numItems });
-    const subs: {
-      backend: BackendId;
-      backendUserId: string;
-      backendServerId: Id<'backendServers'> | null;
-    }[] = [];
+    const subs: ActiveFreeSubsPage['subs'] = [];
     for (const u of res.page) {
       const sub = await ctx.db
         .query('subscriptions')
@@ -171,6 +170,8 @@ export const findActiveFreeSubs = internalQuery({
           backend: sub.backend,
           backendUserId: sub.backendUserId,
           backendServerId: sub.backendServerId ?? null,
+          periodCarryBytes: sub.periodCarryBytes,
+          periodCarryUntil: sub.periodCarryUntil,
         });
       }
     }
@@ -227,8 +228,13 @@ export const applyFreeBonus = internalAction({
           );
           // Group this page's Remnawave keys by hosting instance, then bulk-update.
           const byServer = new Map<Id<'backendServers'>, string[]>();
+          // A key still carrying earlier keys' spending this period gets its own
+          // reduced limit (lib/quotaCarry.ts), so it leaves the bulk call.
+          const now = Date.now();
+          const ownLimit = (s: ActiveFreeSubsPage['subs'][number]) =>
+            !capabilitiesOf(s.backend).bulkTrafficUpdate || liveCarryBytes(s, now) > 0;
           for (const s of res.subs) {
-            if (!capabilitiesOf(s.backend).bulkTrafficUpdate) continue;
+            if (ownLimit(s)) continue;
             // No recorded hosting instance → can't route the bulk call. Tally it
             // (no silent coverage gaps) — issuance always records the instance,
             // so anything here is a legacy/abnormal row worth surfacing.
@@ -258,16 +264,16 @@ export const applyFreeBonus = internalAction({
               }
             }
           }
-          // Outline keys (no bulk endpoint): per-user data-limit updates, with the
-          // same per-key isolation (a throw leaves the applied marker unset so the
-          // next run retries, but must not abort the rest of the fleet).
+          // Outline keys (no bulk endpoint) and carrying keys: per-user limit
+          // updates, with the same per-key isolation (a throw leaves the applied
+          // marker unset so the next run retries, but must not abort the fleet).
           for (const s of res.subs) {
-            if (capabilitiesOf(s.backend).bulkTrafficUpdate) continue;
+            if (!ownLimit(s)) continue;
             try {
               await ctx.runAction(internal.backends.updateUser, {
                 backend: s.backend,
                 backendUserId: s.backendUserId,
-                patch: { trafficLimitBytes: limitBytes },
+                patch: { trafficLimitBytes: keyTrafficLimit(limitBytes, s, now) },
               });
             } catch (err) {
               failedChunks++;

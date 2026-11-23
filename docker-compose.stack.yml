@@ -34,7 +34,30 @@ x-logging: &log
 # `pids_limit` stays: it caps fork-bomb blast radius and throttles nothing.
 
 services:
+  hpke-epoch-store:
+    build:
+      context: .
+      dockerfile: docker/deploy.Dockerfile
+      target: epoch-seed-store
+    restart: unless-stopped
+    logging: *log
+    read_only: true
+    environment:
+      - HPKE_EPOCH_STORE_TOKEN=${HPKE_EPOCH_STORE_TOKEN:?run bootstrap to set HPKE_EPOCH_STORE_TOKEN}
+    networks: [epoch_keys]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          'const r = await fetch("http://127.0.0.1:8080/healthz"); if (!r.ok) process.exit(1)',
+        ]
+      interval: 10s
+      timeout: 2s
+      retries: 5
   backend:
+    networks: [default, epoch_keys]
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
     # (`precompiled-<date>-<sha7>` in convex/convex-backend). So the tag here
     # is the git sha of a release: 1447815 = precompiled-2026-10-22-1447815 (the npm 1.48.0 anchor).
@@ -184,12 +207,18 @@ services:
       # Explicit risk-acceptance opt-out: without BACKUP_S3_*, the sidecar
       # exits fatally unless this is 'true' (see docker/backup.sh).
       - BACKUP_ALLOW_LOCAL_ONLY=${BACKUP_ALLOW_LOCAL_ONLY:-}
-      # age recipient for client-side dump encryption (recommended); the warning
-      # is silenced with BACKUP_ALLOW_UNENCRYPTED=true.
+      # Offsite uploads require an age recipient or explicit plaintext opt-in.
       - BACKUP_AGE_PUBLIC_KEY=${BACKUP_AGE_PUBLIC_KEY:-}
       - BACKUP_ALLOW_UNENCRYPTED=${BACKUP_ALLOW_UNENCRYPTED:-}
+      - BACKUP_SIGNING_KEY_FILE=/run/backup-signing.pem
     volumes:
       - backups:/backups
+      - type: bind
+        source: ${BACKUP_SIGNING_KEY_FILE:-/dev/null}
+        target: /run/backup-signing.pem
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       # Liveness = the last SUCCESSFUL cycle finished within the last interval
       # (+1h slack): backup.sh touches /backups/.heartbeat only when the dump AND
@@ -433,6 +462,8 @@ services:
     logging: *log
     environment:
       - CONVEX_SELF_HOSTED_URL=http://backend:3210
+      - HPKE_EPOCH_STORE_URL=http://hpke-epoch-store:8080
+      - HPKE_EPOCH_STORE_TOKEN=${HPKE_EPOCH_STORE_TOKEN:?run bootstrap to set HPKE_EPOCH_STORE_TOKEN}
       # FCP's own client check: the same secret the edge-client-check service
       # holds, set on the deployment by the entrypoint (one place to set it).
       - EDGE_CLIENT_CHECK_SECRET=${EDGE_CLIENT_CHECK_SECRET:-}
@@ -445,6 +476,12 @@ services:
         condition: service_healthy
       keygen:
         condition: service_completed_successfully
+      hpke-epoch-store:
+        condition: service_healthy
+
+networks:
+  epoch_keys:
+    internal: true
 
 volumes:
   data:

@@ -37,6 +37,22 @@ export const byTokenHash = internalQuery({
   },
 });
 
+/** Invoke through the instance-admin client after restore, with ingress closed. */
+export const revokeRestoredTokens = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const batch = await ctx.db.query('apiTokens').paginate({ cursor, numItems: 200 });
+    const now = Date.now();
+    let revoked = 0;
+    for (const token of batch.page) {
+      if (token.revokedAt) continue;
+      await ctx.db.patch(token._id, { revokedAt: now, updatedAt: now });
+      revoked++;
+    }
+    return { revoked, isDone: batch.isDone, cursor: batch.continueCursor };
+  },
+});
+
 // --- resolve path (P6d) ---
 
 type ResolvedToken = {

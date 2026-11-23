@@ -692,6 +692,7 @@ export default defineSchema({
     .index('by_active', ['isActive']),
 
   users: defineTable({
+    legacySessionsRevoked: v.optional(v.boolean()),
     tierId: v.id('tiers'),
     currentSubscriptionId: v.optional(v.id('subscriptions')),
     status: userStatus,
@@ -705,6 +706,7 @@ export default defineSchema({
     // Unset on pre-existing rows → the vest check falls back to
     // membershipExpiresAt.
     membershipPaidThroughAt: v.optional(v.number()),
+    lastGenericBillingEventAt: v.optional(v.number()),
     suspendedAt: v.optional(v.number()),
     // Account-number auth: store only a peppered keyed hash
     // (HMAC-SHA256(ACCOUNT_ID_PEPPER, number)) + a 4-digit plaintext prefix
@@ -998,8 +1000,22 @@ export default defineSchema({
     // and an in-place switch away, so the revocation watch covers the key by
     // what it was issued into, not by the current mode pools.
     hysteriaGroups: v.optional(v.array(v.string())),
+    // Quota carryover (Review D-M3, lib/quotaCarry.ts). Bytes the member spent
+    // on earlier keys in this traffic period, taken off this key's limit by
+    // every limit writer and added to by the tombstone sweep's grace
+    // settlement, until `periodCarryUntil` (the next period start). A re-issue
+    // counts them with this key's own usage, so churning keys cannot reset a
+    // period; the quota-carry-expire cron restores the full limit after it.
+    periodCarryBytes: v.optional(v.number()),
+    periodCarryUntil: v.optional(v.number()),
+    // On a superseded key: the usage already counted toward its successor.
+    // The tombstone sweep charges anything spent after that (during the grace)
+    // to the member's current key before deleting this one.
+    graceBaseUsedBytes: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
+    // The quota-carry-expire cron's range: rows whose carry period has ended.
+    .index('by_period_carry_until', ['periodCarryUntil'])
     // (userId, state): the active-subscription resolvers hit this directly
     // instead of collecting every historical row for the user (tombstones
     // accrue with each regenerate/switch and, for paid users, otherwise
@@ -1188,6 +1204,8 @@ export default defineSchema({
     // Only this grant may enroll the first passkey. Older rows without a
     // recorded grant require an operator to reissue the invitation.
     pendingInviteId: v.optional(v.id('adminInvites')),
+    legacySessionsRevoked: v.optional(v.boolean()),
+    sessionGeneration: v.optional(v.number()),
     username: v.string(),
     displayName: v.string(),
     isActive: v.boolean(),
@@ -5714,6 +5732,9 @@ export default defineSchema({
     kind: v.union(v.literal('member'), v.literal('admin')),
     userId: v.optional(v.id('users')),
     adminUserId: v.optional(v.id('adminUsers')),
+    adminPasskeyId: v.optional(v.id('passkeyCredentials')),
+    adminSessionGeneration: v.optional(v.number()),
+    memberPasskeyId: v.optional(v.union(v.id('memberPasskeyCredentials'), v.null())),
     expiresAt: v.number(),
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
@@ -5748,7 +5769,8 @@ export default defineSchema({
   keyEpochs: defineTable({
     kid: v.string(),
     publicKey: v.string(),
-    seed: v.string(),
+    // Compatibility with snapshots from before volatile seed storage.
+    seed: v.optional(v.string()),
     manifestSig: v.string(),
     // Phase 4: the ML-DSA-65 half of the hybrid manifest signature (Ed25519 is
     // `manifestSig`). Optional so a deployment without FS_MANIFEST_SK_PQ still

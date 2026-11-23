@@ -2,13 +2,8 @@
  * Epoch-key store (CDN-blinding Phase 3). Rows are minted by the rotate cron
  * (which calls the "use node" generator in lib/hpkeCrypto.ts, the only place the
  * X-Wing keypair + manifest signature can be produced) and read on the login
- * path: the current epoch key is published via /config, and openRequest resolves
- * a transport envelope's epoch kid back to its seed here.
- *
- * The `seed` field is a short-lived secret destroyed by sweepExpired; never log
- * it or return it from a public query. `current`/`byKid` deliberately return the
- * fields the caller needs (public key, sig, validity) plus the seed only to the
- * internal open path.
+ * path: the current epoch public key is published by the key endpoint.
+ * Private seeds live in the separate volatile seed store.
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -25,8 +20,8 @@ const MAX_DRAIN_ROUNDS = 50;
 
 /**
  * Cron entry point for epoch rotation. Gates in the ISOLATE runtime: while
- * HPKE ships dark (FS_MANIFEST_SK unset) the 10-min cron used to cold-start a
- * Node action 144x/day just to early-return. Per-tick gating (not conditional
+ * HPKE ships dark (FS_MANIFEST_SK unset) each cron tick would cold-start a
+ * Node action just to early-return. Per-tick gating (not conditional
  * cron registration) so `convex env set FS_MANIFEST_SK` activates rotation on
  * the next tick without a redeploy; rotateEpochKey keeps its own skip as
  * belt-and-braces.
@@ -36,20 +31,23 @@ export const maybeRotate = internalMutation({
   handler: async (ctx) => {
     await recordHeartbeat(ctx, 'epoch-key-rotate');
     if (!process.env.FS_MANIFEST_SK) return null;
-    // Rotation-gap alarm: epochs EXIST but none is currently valid — at least
-    // 3 consecutive rotates failed (10-min cadence, 30-min validity), and
-    // clients are silently falling back to the static key. (First-ever run,
-    // zero rows, is fine: the rotate below mints the first epoch.)
+    // Rotation-gap alarm: epochs EXIST but none is currently valid — every
+    // re-mint for 20+ min failed (an epoch is re-minted at 10 min of age and
+    // checked every minute; validity is 30 min), and
+    // manifest-pinned clients cannot send sealed requests. (First-ever run,
+    // zero rows, is fine: maintenance mints the first epoch.)
     const now = Date.now();
     const latest = await ctx.db
       .query('keyEpochs')
       .withIndex('by_not_before', (q) => q.lte('notBefore', now))
       .order('desc')
       .first();
-    if (latest && latest.notAfter <= now) {
+    // The cron ticks every minute: alarm at the start of a gap, then hourly.
+    const gapMinutes = latest ? Math.floor((now - latest.notAfter) / 60_000) : -1;
+    if (latest && latest.notAfter <= now && gapMinutes % 60 === 0) {
       console.warn(
         `[keyEpochs] no currently-valid epoch while FS_MANIFEST_SK is set — ` +
-          `rotation appears wedged; clients fall back to the static key`,
+          `rotation appears wedged; manifest-pinned clients cannot send sealed requests`,
       );
       await writeAuditLog(ctx, {
         actorType: 'system',
@@ -58,7 +56,33 @@ export const maybeRotate = internalMutation({
         payload: { lastNotAfter: latest.notAfter },
       });
     }
-    await ctx.scheduler.runAfter(0, internal.lib.hpkeCrypto.rotateEpochKey, {});
+    await ctx.scheduler.runAfter(0, internal.lib.hpkeCrypto.maintainEpoch, {});
+    return null;
+  },
+});
+
+const REMINT_KEY = 'hpke:remintRequestedAt';
+const REMINT_THROTTLE_MS = 20_000;
+
+/**
+ * The key endpoint found no live epoch (the volatile store restarted, or a
+ * rotation failed): mint one now instead of at the next cron tick, since a
+ * manifest-pinned client cannot seal a login until one exists. Throttled so a
+ * burst of clients schedules one maintenance run, not one each.
+ */
+export const requestRemint = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    if (!process.env.FS_MANIFEST_SK) return null;
+    const now = Date.now();
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', REMINT_KEY))
+      .unique();
+    if (row && now - Number(row.value) < REMINT_THROTTLE_MS) return null;
+    if (row) await ctx.db.patch(row._id, { value: String(now), updatedAt: now });
+    else await ctx.db.insert('appState', { key: REMINT_KEY, value: String(now), updatedAt: now });
+    await ctx.scheduler.runAfter(0, internal.lib.hpkeCrypto.maintainEpoch, {});
     return null;
   },
 });
@@ -67,7 +91,6 @@ export const insert = internalMutation({
   args: {
     kid: v.string(),
     publicKey: v.string(),
-    seed: v.string(),
     manifestSig: v.string(),
     manifestSigPq: v.optional(v.string()),
     notBefore: v.number(),
@@ -89,7 +112,7 @@ export const current = internalQuery({
       .withIndex('by_not_before', (q) => q.lte('notBefore', now))
       .order('desc')
       .first();
-    if (!row || row.notAfter <= now) return null;
+    if (!row || row.seed !== undefined || row.notAfter <= now) return null;
     return {
       kid: row.kid,
       publicKey: row.publicKey,
@@ -101,7 +124,7 @@ export const current = internalQuery({
   },
 });
 
-/** Resolve an epoch by kid for the open path (returns the seed). Null if unknown. */
+/** Resolve the public lifetime for a kid before using the separate seed store. */
 export const byKid = internalQuery({
   args: { kid: v.string() },
   handler: async (ctx, { kid }) => {
@@ -109,12 +132,25 @@ export const byKid = internalQuery({
       .query('keyEpochs')
       .withIndex('by_kid', (q) => q.eq('kid', kid))
       .unique();
-    if (!row) return null;
-    return { seed: row.seed, notAfter: row.notAfter };
+    if (!row || row.seed !== undefined || row.notAfter + EPOCH_SWEEP_GRACE_MS <= Date.now())
+      return null;
+    return { notAfter: row.notAfter };
   },
 });
 
-/** Cron: destroy epochs whose validity + grace has elapsed (forward secrecy).
+/** Purge private seed fields left by older deployments or an old snapshot. */
+export const stripLegacySeeds = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const batch = await ctx.db.query('keyEpochs').paginate({ cursor, numItems: 200 });
+    for (const row of batch.page) {
+      if (row.seed !== undefined) await ctx.db.delete(row._id);
+    }
+    return { cursor: batch.continueCursor, isDone: batch.isDone };
+  },
+});
+
+/** Cron: remove public metadata after an epoch's validity and grace have elapsed.
  *  A FULL page re-runs immediately (drain-chain, same pattern as retention.ts)
  *  — 144 epochs mint/day vs a 100-row page means one page/day falls behind. */
 export const sweepExpired = internalMutation({

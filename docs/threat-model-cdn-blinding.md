@@ -54,8 +54,8 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   server seal/open runs in a `"use node"` action (`convex/lib/hpkeCrypto.ts`); the public
   `httpAction`s delegate via `ctx.runAction`. The browser uses native WebCrypto.
 - **Login request leg:** the client HPKE-seals the login body (the account number). It seals to the
-  current **epoch key** when one is available (Layer 3), else to the pinned static key. Defeats a
-  passive log of the login. The membership-code redeem (`POST /api/v1/account/redeem-code`) seals
+  current **epoch key** when a manifest is pinned (Layer 3). Builds configured only with a
+  static recipient seal to that static key. This defeats passive logging of the login. The membership-code redeem (`POST /api/v1/account/redeem-code`) seals
   its request the same way: the code is a bearer secret.
 - **Reveal response leg:** for every sensitive response (issuance / account view with the
   subscription URL / regenerate / rotate / switch-backend / switch-mode / switch-server / the raw
@@ -189,8 +189,8 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   keypair every 10 min (validity ~30 min), manifest-signs the public key, and publishes it at
   `GET /api/v1/hpke/keys`. The client verifies the signature against the baked manifest key
   (`VITE_FS_MANIFEST_PK`) and seals the login to it instead of the multi-day static key. Retired
-  epoch seeds are destroyed by the sweep, so a later key compromise cannot decrypt a swept epoch's
-  logins. Any failure falls back to the static key (dual-mode). See `convex/keyEpochs.ts`,
+  private seeds live only in a volatile sidecar and expire after the epoch grace period.
+  The datastore and new backups contain only public epoch metadata. Manifest-pinned builds require a signed, unexpired epoch for sealed requests. See `convex/keyEpochs.ts`,
   `rotateEpochKey` / `openRequest` in `convex/lib/hpkeCrypto.ts`.
 - **Anti-rollback revoked-kid list.** A manifest-signed, monotonic-versioned list
   (`hpkeCrypto.signRevocation`, served alongside the epoch key). The client persists the last-seen
@@ -254,9 +254,9 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 
 - **Recipient-key compromise is a retroactive (classical) oracle within the key epoch** for the
   request direction. Now bounded to the epoch validity + sweep grace (tens of minutes) by the Phase 3
-  epoch keys (the login seals to the epoch key, whose seed is destroyed on sweep), and eliminated for
+  epoch keys (the login seals to the epoch key, whose private seed expires in the volatile store), and eliminated for
   the account-number reveals by the reveal leg. The residual shrinks to a client that seals to the
-  static key because no verified epoch key was available (fallback).
+  static key on deployments explicitly configured without an epoch manifest.
 - **The PQ leg is unaudited; the hybrid backstops it.** `mlkem` (ML-KEM-768) and
   `@hpke/hybridkem-x-wing` are young / pre-standardization, whereas the X25519 leg is audited and
   decades-hardened. X-Wing is secure if either holds, so an attacker must defeat both.

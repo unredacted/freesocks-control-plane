@@ -23,6 +23,8 @@ import { POP_ALG, POP_ALG_ED } from '../src/shared/crypto/pop';
 
 /** Matches retention.ts: bound the immediate re-run chain (see sweepExpired). */
 const MAX_DRAIN_ROUNDS = 50;
+// Only a newly established member session can manage login credentials.
+const CREDENTIAL_MANAGEMENT_WINDOW_MS = 5 * 60_000;
 
 /** True when the base64url raw public key decodes to the byte length its PoP
  *  algorithm requires (Ed25519 = 32, P-256 uncompressed point = 65). */
@@ -51,11 +53,82 @@ export const create = internalMutation({
     // The public per-session token (binds each PoP signature to this session).
     // Stored only when the session is PoP-bound (popPublicKey present).
     popSessionToken: v.optional(v.string()),
+    verifiedMemberPasskey: v.optional(
+      v.object({
+        id: v.id('memberPasskeyCredentials'),
+        previousCounter: v.number(),
+        newCounter: v.number(),
+      }),
+    ),
+    verifiedAdminPasskey: v.optional(
+      v.object({
+        id: v.id('passkeyCredentials'),
+        previousCounter: v.number(),
+        newCounter: v.number(),
+      }),
+    ),
   },
   handler: async (
     ctx,
-    { sid, kind, userId, adminUserId, ttlMs, popPublicKey, popAlg, popSessionToken },
+    {
+      sid,
+      kind,
+      userId,
+      adminUserId,
+      ttlMs,
+      popPublicKey,
+      popAlg,
+      popSessionToken,
+      verifiedAdminPasskey,
+      verifiedMemberPasskey,
+    },
   ) => {
+    let adminSessionGeneration: number | undefined;
+    // Verify the assertion's credential still exists and belongs to an active
+    // admin in the same transaction as session creation.
+    if (verifiedAdminPasskey) {
+      const credential = await ctx.db.get(verifiedAdminPasskey.id);
+      const admin = adminUserId ? await ctx.db.get(adminUserId) : null;
+      if (
+        kind !== 'admin' ||
+        !admin?.isActive ||
+        !credential ||
+        credential.adminUserId !== admin._id ||
+        credential.counter !== verifiedAdminPasskey.previousCounter
+      ) {
+        throw new ConvexError({
+          code: 'auth.forbidden',
+          message: 'Passkey is no longer authorized',
+        });
+      }
+      adminSessionGeneration = admin.sessionGeneration ?? 0;
+      await ctx.db.patch(credential._id, {
+        counter: verifiedAdminPasskey.newCounter,
+        lastUsedAt: Date.now(),
+      });
+    }
+    if (verifiedMemberPasskey) {
+      const credential = await ctx.db.get(verifiedMemberPasskey.id);
+      const user = userId ? await ctx.db.get(userId) : null;
+      if (
+        kind !== 'member' ||
+        !user ||
+        user.status === 'deleted' ||
+        (user.status === 'disabled' && user.disabledReason !== 'membership_lapsed') ||
+        !credential ||
+        credential.userId !== user._id ||
+        credential.counter !== verifiedMemberPasskey.previousCounter
+      ) {
+        throw new ConvexError({
+          code: 'auth.forbidden',
+          message: 'Passkey is no longer authorized',
+        });
+      }
+      await ctx.db.patch(credential._id, {
+        counter: verifiedMemberPasskey.newCounter,
+        lastUsedAt: Date.now(),
+      });
+    }
     // PoP binding (CDN-blinding Phase 2). Normalize the client-reported algorithm
     // to the allowlist (unknown → ES256, the P-256 fallback). A supplied key that
     // does not decode to its scheme's length is a client bug or a mangled proxy:
@@ -84,6 +157,9 @@ export const create = internalMutation({
       userId,
       adminUserId,
       expiresAt: Date.now() + ttlMs,
+      adminPasskeyId: verifiedAdminPasskey?.id,
+      adminSessionGeneration,
+      memberPasskeyId: kind === 'member' ? (verifiedMemberPasskey?.id ?? null) : undefined,
       ...(bound ? { popPublicKey, popAlg: boundAlg, popSessionToken } : {}),
     });
     // Counter bump keyed on the row's own _creationTime (the reconcile journal
@@ -99,13 +175,44 @@ export const create = internalMutation({
 });
 
 export const bySid = internalQuery({
-  args: { sid: v.string() },
-  handler: async (ctx, { sid }) => {
+  args: { sid: v.string(), recentMember: v.optional(v.boolean()) },
+  handler: async (ctx, { sid, recentMember }) => {
     const row = await ctx.db
       .query('sessions')
       .withIndex('by_sid', (q) => q.eq('sid', sid))
       .unique();
-    if (!row || row.expiresAt < Date.now()) return null;
+    const now = Date.now();
+    if (!row || row.expiresAt <= now) return null;
+    if (
+      recentMember &&
+      (row.kind !== 'member' || row._creationTime <= now - CREDENTIAL_MANAGEMENT_WINDOW_MS)
+    )
+      return null;
+    if (row.kind === 'admin' && row.adminUserId) {
+      const admin = await ctx.db.get(row.adminUserId);
+      if (!admin || (row.adminSessionGeneration ?? 0) !== (admin.sessionGeneration ?? 0)) {
+        return null;
+      }
+      if (row.adminPasskeyId) {
+        const credential = await ctx.db.get(row.adminPasskeyId);
+        if (!credential || credential.adminUserId !== row.adminUserId) return null;
+      } else if (admin.legacySessionsRevoked) {
+        // Earlier admin sessions lack credential provenance.
+        return null;
+      }
+    }
+    if (row.kind === 'member' && row.userId) {
+      if (row.memberPasskeyId) {
+        const credential = await ctx.db.get(row.memberPasskeyId);
+        if (!credential || credential.userId !== row.userId) return null;
+      } else if (
+        row.memberPasskeyId === undefined &&
+        (await ctx.db.get(row.userId))?.legacySessionsRevoked
+      ) {
+        // Older member sessions do not distinguish passkey and account-number login.
+        return null;
+      }
+    }
     return row;
   },
 });

@@ -13,6 +13,19 @@ This is additive to the two pre-existing entitlement paths: the generic
 redemption codes (`convex/membershipCodes.ts`). All three converge on the same
 core: `lifecycle.applyMembership`.
 
+The optional generic billing callback at `/api/webhooks/billing` accepts
+`eventId`, the member's non-secret `supportId`, `tierSlug`, `issuedAtMs` (Unix
+milliseconds), and optional `expiresAtMs`. The sender signs the raw body with
+`WEBHOOK_SIGNING_SECRET`. The origin accepts events issued within the past 24
+hours, with one minute of future clock skew, and applies newer grants only.
+An event dated further ahead is refused (400) so the sender retries once the
+clocks agree. An older one is acknowledged unapplied and audited once as
+`billing.webhook.stale_event` for a manual grant (its eventId is claimed, so a
+replay is a silent duplicate). Events with the same issuance time all apply. Keep the original issuance
+time when retrying a delivery.
+Migrate older senders to the support ID before enabling the callback on an
+updated deployment. Keep the member's account number out of billing payloads.
+
 ## Architecture
 
 ```
@@ -43,7 +56,7 @@ SPA UpgradeMembership ──POST /api/v1/billing/checkout──▶ billing.creat
 - **Credentials** — processor API keys/secrets + the public base URL live in the
   same `appSettings` table under `billing.secret.*` (the same trust model as the
   proxy-backend secrets in `backendServers.config`): **set them in Admin →
-  Billing → Processor credentials** (write-only — the API never returns a secret,
+  Billing → Processor credentials** with a signed-in admin session (write-only — the API never returns a secret,
   only set/not-set booleans). Each field falls back to its env var
   (`NOWPAYMENTS_API_KEY`, …) when the DB row is unset, so an env-configured deploy
   keeps working; `resolveProcessorSecrets` (internal-only) reads DB-then-env.

@@ -75,8 +75,9 @@ through as many of these independent channels as are available:
    `verifier-extension/pinned.js` from the built `dist/`: SHA-384 of a NONCE-NORMALIZED
    `index.html` (Caddy templates a per-request CSP nonce into `<meta name="csp-nonce">`,
    so the generator and the extension's `background.js` canonicalize that one tag before
-   hashing; the SRI `integrity=` attributes pin every chunk, so the normalized-index hash
-   pins the whole bundle). Once published to a web store, set the listing URL in Admin →
+   hashing). The badge confirms the HTML probe. It does not attest what ran in the tab.
+   The proof-of-possession signer is bundled into an integrity-covered script.
+   Once published to a web store, set the listing URL in Admin →
    Settings → verification (`verification.extensionUrl`) and the in-app backend links to it;
    until then the backend says "planned, not available yet." A native app reusing the
    existing proxy clients is the stronger sibling (the extension's own self-fetch can be
@@ -107,14 +108,14 @@ failed, because only some failures mean someone swapped a key:
 | `stale`       | the endpoint answered but has no live epoch: none published, or the one served had expired | backend detail only                                                                             |
 | `unreachable` | the endpoint could not be reached                                                          | backend detail only                                                                             |
 
-`stale` and `unreachable` are quiet on purpose. In both the client keeps sealing to the
-manifest-**pinned static key** baked into the bundle, so nothing is sent unprotected and
-neither state is evidence of tampering: they mean epoch rotation is behind (check the
-`epoch-key-rotate` heartbeat and the `hpke.epoch_gap` audit action) or that a cache
-handed the client an old response. Escalating them to the loud bar was a real bug — it
-fired at users over a wedged cron and taught them to dismiss the one alarm that matters.
-Neither state hands an attacker anything new either: a CDN that wants the static-key
-fallback can already force it by simply blocking the endpoint (`unreachable`).
+A client with a pinned manifest waits for a valid signed epoch when sealing a
+request. If the endpoint is unavailable or all published epochs have expired,
+the browser reports the failure without sending the request. It judges expiry on
+the server's clock (the `/healthz` offset PoP already uses, bounded to two hours),
+so a device whose clock runs fast still sees a current epoch as current. When the
+key endpoint finds no live epoch it asks for one at once (`keyEpochs.requestRemint`,
+throttled) instead of waiting for the next rotation tick. Builds configured
+with only a static recipient have no client-side epoch or revocation guarantee.
 
 `warn`, by contrast, is **sticky**: once a swapped or revoked key has been seen, only a
 later poll that positively attests clears it. Otherwise re-attesting would hand a caught
@@ -128,12 +129,18 @@ rotation gap. That clamp is load-bearing — raising `max-age` past the epoch va
 reintroduce the bug — and it is why the client can then read the endpoint under normal
 cache rules.
 
-The client deliberately does **not** force revalidation. The fetch-spec cache modes
-(`no-store`, `no-cache`) send `max-age=0`, which punches every request past the CDN to the
-origin, where the per-IP `hpke.keys.fetch` policy lives; and a per-browser cache saves
-nothing for many distinct clients sharing one carrier-grade NAT, which only the shared CDN
-cache can absorb. Bypassing it would trade a bounded, now-quiet staleness for 429s and a
-silent static-key fallback precisely where censorship makes NAT sharing the norm.
+The client deliberately does **not** force revalidation on routine lookups (only the
+one retry after `503 hpke.key_unavailable` does). The fetch-spec cache modes (`no-store`,
+`no-cache`) send `max-age=0`, which punches every request past the CDN to the origin; and a
+per-browser cache saves nothing for many distinct clients sharing one carrier-grade NAT,
+which only the shared CDN cache can absorb.
+
+The origin never refuses the key route. The per-IP `hpke.keys.fetch` policy only decides
+how it answers: within the budget it checks the volatile seed store and can trigger a
+re-mint; past it, it answers from the datastore alone (header `x-fs-keys-throttled: 1`).
+Everyone behind a carrier NAT shares one budget, so a 429 would let one neighbour sending
+cache-busting requests keep the rest from ever getting an epoch, which a manifest-pinned
+client needs to seal a login, sign-up or bootstrap.
 
 The client also re-attests every 5 minutes and on refocus or regained connectivity
 (throttled to one check per minute), so a long-lived tab's verdict is current rather than
