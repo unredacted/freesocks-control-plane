@@ -10,6 +10,7 @@ import { createQuery, createInfiniteQuery } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
+import { DirectCoinsResponse } from '../../shared/contracts/billing';
 import {
   AccountResponse,
   AccountUsageResponse,
@@ -92,6 +93,7 @@ export const queryKeys = {
   adminMembershipCodes: (status: string) => ['admin', 'membership-codes', status] as const,
   adminBilling: (status: string) => ['admin', 'billing', status] as const,
   billingOrder: (ref: string) => ['billing', 'order', ref] as const,
+  billingCoins: ['billing', 'coins'] as const,
   accountCodes: ['account', 'codes'] as const,
   accountUsage: ['account', 'usage'] as const,
   telemetryContext: ['account', 'telemetry-context'] as const,
@@ -391,14 +393,29 @@ export const billingOrderQuery = (refGetter: () => string | null) =>
         // polls the sealed member endpoint every 4s forever.
         if (query.state.status === 'error') return false;
         const s = query.state.data?.status;
-        return s === 'paid' || s === 'failed' || s === 'expired' || s === 'underpaid'
-          ? false
-          : 4000;
+        if (s === 'paid' || s === 'failed' || s === 'expired' || s === 'underpaid') return false;
+        // A direct-checkout payer sits on this page while they go and pay (can
+        // be an hour): poll gently until a payment is seen.
+        const direct = (query.state.data as { payment?: unknown } | undefined)?.payment;
+        return direct && s === 'pending' ? 10_000 : 4000;
       },
       staleTime: 0,
       retry: false,
     };
   });
+
+/**
+ * The direct NOWPayments coin picker (public; the anonymous donate page uses it
+ * too). Fetched only when direct checkout is on: the list can be long, so it
+ * stays out of the public config bootstrap.
+ */
+export const directCoinsQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.billingCoins,
+    enabled: enabled(),
+    queryFn: () => apiClient.get('/api/v1/billing/coins', DirectCoinsResponse),
+    staleTime: 5 * 60_000,
+  }));
 
 /**
  * Gift codes the member has purchased (masked: prefix + status). For the "codes

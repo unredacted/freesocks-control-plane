@@ -78,6 +78,10 @@ export const publicConfigReturns = v.object({
     durations: v.array(v.object({ months: v.number(), amountCents: v.number() })),
     cryptoMinMonths: v.number(),
     btcpayMinMonths: v.number(),
+    direct: v.object({
+      nowpayments: v.object({ enabled: v.boolean() }),
+      btcpay: v.object({ enabled: v.boolean() }),
+    }),
     donation: v.object({
       enabled: v.boolean(),
       suggestedAmountsCents: v.array(v.number()),

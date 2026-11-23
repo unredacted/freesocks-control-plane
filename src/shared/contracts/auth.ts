@@ -65,6 +65,18 @@ export const AdminAuthStatus = z.object({
 });
 export type AdminAuthStatus = z.infer<typeof AdminAuthStatus>;
 
+/** Public projection of the direct-checkout config (see PublicConfig.billing.direct). */
+export const PublicDirectCheckout = z.object({
+  /** The coin list itself is GET /api/v1/billing/coins (DirectCoinsResponse). */
+  nowpayments: z.object({ enabled: z.boolean() }),
+  btcpay: z.object({ enabled: z.boolean() }),
+});
+export type PublicDirectCheckout = z.infer<typeof PublicDirectCheckout>;
+const PUBLIC_DIRECT_DEFAULT: PublicDirectCheckout = {
+  nowpayments: { enabled: false },
+  btcpay: { enabled: false },
+};
+
 export const PublicConfig = z.object({
   membersJoinUrl: z.string().url().optional(),
   membersAccountUrl: z.string().url().optional(),
@@ -188,6 +200,13 @@ export const PublicConfig = z.object({
     /** Minimum term (months) the BTCPay rail accepts (default 1; Lightning has
      * no per-coin floor — this is an operator-tunable hygiene knob). */
     btcpayMinMonths: z.number().int().default(1),
+    /**
+     * Direct checkout per crypto rail: when `enabled`, the payment details show
+     * on our own page instead of the processor's (the coins come from
+     * GET /api/v1/billing/coins). Defaulted for deploy skew (older backends
+     * omit it = everything hosted).
+     */
+    direct: PublicDirectCheckout.default(PUBLIC_DIRECT_DEFAULT),
     /**
      * Optional donations. Public so the picker can render preset amounts and the
      * "adds ~N GB to every free user" copy. `currentBonusGb` is the bonus live on

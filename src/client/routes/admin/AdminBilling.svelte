@@ -7,6 +7,7 @@
   import * as AlertDialog from '@client/components/ui/alert-dialog';
   import AdminLayout from './AdminLayout.svelte';
   import BillingRevenueChart from './BillingRevenueChart.svelte';
+  import AdminDirectCheckout from './AdminDirectCheckout.svelte';
   import AdminListState from './AdminListState.svelte';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
@@ -590,6 +591,9 @@
           </span>
         </label>
       </div>
+
+      <!-- Direct (on-our-page) checkout for the crypto rails. -->
+      <AdminDirectCheckout bind:direct={draft.direct} currency={draft.currency} />
 
       <!-- Donations: an optional add-on at checkout + a standalone give. Donations
            this month raise every free user's monthly bandwidth cap. -->

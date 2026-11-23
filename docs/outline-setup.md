@@ -117,6 +117,8 @@ A tier is bound to a single backend. To offer Outline as a paid tier:
    - `monthlyTrafficGb`: the per-key data limit (Outline enforces this server-side via
      `PUT /access-keys/{id}/data-limit`).
    - `deviceLimit`: informational only; Outline doesn't enforce HWID.
+   - `speedLimitMbps`: not applied; Outline has no speed limit (see `docs/backends.md`
+     § "Speed limits").
 
 The `hwidLimit` and `trafficStrategy` fields disappear from the form when the backend is
 Outline because they don't apply.

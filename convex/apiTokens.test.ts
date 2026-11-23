@@ -76,6 +76,34 @@ describe('createToken', () => {
   });
 });
 
+test('restore revokes existing bearer tokens and allows new ones afterward', async () => {
+  const t = convexTest(schema, modules);
+  const createdByAdminId = await seedAdmin(t);
+  const mint = (name: string) =>
+    t.action(internal.apiTokens.createToken, {
+      name,
+      subjectType: 'service',
+      scopes: ['admin:tiers:read'],
+      createdByAdminId,
+    });
+  const restored = await mint('restored');
+  expect(await t.mutation(internal.apiTokens.revokeRestoredTokens, { cursor: null })).toMatchObject(
+    {
+      revoked: 1,
+      isDone: true,
+    },
+  );
+  expect(
+    await t.action(internal.apiTokens.resolveToken, { plaintext: restored.plaintext }),
+  ).toBeNull();
+  const replacement = await mint('replacement');
+  expect(
+    await t.action(internal.apiTokens.resolveToken, { plaintext: replacement.plaintext }),
+  ).toMatchObject({
+    id: replacement.id,
+  });
+});
+
 describe('registration boundary (admin:edges:register)', () => {
   const server = (t: ReturnType<typeof convexTest>, slug: string) =>
     t.run((ctx) =>

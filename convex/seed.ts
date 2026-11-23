@@ -24,6 +24,7 @@ const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { FAKE_ZONES, FAKE_ZONE_ID, fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { upsertLocation } from './edgeLocations';
 import { mockBackendEnabled } from './lib/backends/mock';
+import { DEFAULT_FREE_SPEED_LIMIT_MBPS } from './lib/backends/types';
 import { restoreLegacyKeys, retireLegacyKeys } from './censoredCountries';
 import { EDGE_KEYS, LEGACY_PREFER_EYEBALL_KEY, resolveEdgeConfig } from './lib/edgeConfig';
 import {
@@ -48,6 +49,7 @@ export const seedDefaultFreeTier = internalMutation({
       description: 'Anonymous, captcha-gated access for users in censored regions',
       backend: 'remnawave',
       monthlyTrafficGb: 50,
+      speedLimitMbps: DEFAULT_FREE_SPEED_LIMIT_MBPS,
       deviceLimit: 1,
       hwidLimit: 1,
       hwidEnabled: true,
@@ -63,7 +65,8 @@ export const seedDefaultFreeTier = internalMutation({
 
 /**
  * The single paid tier: the FreeSocks membership. Unlimited bandwidth
- * (`monthlyTrafficGb: 0` → null traffic limit at issuance) and unlimited
+ * (`monthlyTrafficGb: 0` → null traffic limit at issuance), no speed cap
+ * (`speedLimitMbps: 0`) and unlimited
  * devices (`hwidEnabled: false` → null device limit). `deviceLimit: 0` is the
  * display sentinel the SPA renders as "Unlimited". Slug stays `'member'` so the
  * billing config + existing references keep resolving it.
@@ -74,6 +77,7 @@ const MEMBERSHIP_TIER = {
   description: 'Unlimited bandwidth and devices for FreeSocks supporters',
   backend: 'remnawave' as const,
   monthlyTrafficGb: 0,
+  speedLimitMbps: 0,
   deviceLimit: 0,
   hwidLimit: 0,
   hwidEnabled: false,
@@ -94,6 +98,29 @@ export const seedMemberTier = internalMutation({
       .unique();
     if (existing) return existing._id;
     return ctx.db.insert('tiers', { ...MEMBERSHIP_TIER, updatedAt: Date.now() });
+  },
+});
+
+/**
+ * Give every tier that has never had a speed cap its default, once: the
+ * default-free tiers DEFAULT_FREE_SPEED_LIMIT_MBPS, every other tier 0
+ * (unlimited). A stored value, including an admin's 0, is never touched, so
+ * re-running at every deploy (seedCutover) keeps the operator's edits. The
+ * tiers table is a handful of operator-made rows, so reading it whole is fine.
+ */
+export const seedTierSpeedLimits = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ filled: number }> => {
+    let filled = 0;
+    for (const t of await ctx.db.query('tiers').collect()) {
+      if (t.speedLimitMbps !== undefined) continue;
+      // No updatedAt bump: this fills a reserved field, it is not an edit of the tier.
+      await ctx.db.patch(t._id, {
+        speedLimitMbps: t.isDefaultFree ? DEFAULT_FREE_SPEED_LIMIT_MBPS : 0,
+      });
+      filled++;
+    }
+    return { filled };
   },
 });
 
@@ -729,6 +756,8 @@ export const seedCutover = internalAction({
     const freedom = await ctx.runMutation(internal.seed.seedFreedomEdgesOnly, {});
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
+    // Speed caps for tiers made before the field existed (once per tier).
+    await ctx.runMutation(internal.seed.seedTierSpeedLimits, {});
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
     await ctx.runMutation(internal.seed.renameAppSettingKeys, {});
     // The retired "Prefer residential networks" switch becomes the probe network

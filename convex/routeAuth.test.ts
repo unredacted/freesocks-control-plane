@@ -22,7 +22,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { convexTest } from 'convex-test';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import http from './http';
 
@@ -39,6 +39,7 @@ const PUBLIC_ROUTES: Record<string, string> = {
   'GET /api/v1/config': 'the public bootstrap (publicConfig.get), per-IP rate limited',
   'GET /api/v1/status': 'the public status page, per-IP rate limited',
   'GET /api/v1/site/home-image': 'the public home page image',
+  'GET /api/v1/billing/coins': 'the public direct-checkout coin list (prices only, no user data)',
   'POST /api/v1/telemetry': 'anonymous pageview relay, allowlisted routes, per-IP rate limited',
   'GET /api/v1/hpke/keys': 'public HPKE keys',
   'GET /api/v1/e2ee/keys': 'public HPKE keys (alias)',
@@ -163,7 +164,13 @@ describe('edges and servers sections', () => {
 });
 
 describe('anonymous requests', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   test('every non-public route refuses a request with no credentials', async () => {
+    // A resolvable client IP, so routes that fail closed on an unknown IP get
+    // past that gate and reach their auth check.
+    vi.stubEnv('TRUSTED_PROXY', 'true');
+    vi.stubEnv('IP_HASH_SALT', 'route-auth-test-salt');
     const t = convexTest(schema, modules);
     const publicKeys = new Set(Object.keys(PUBLIC_ROUTES));
     const accepted: string[] = [];
@@ -176,7 +183,10 @@ describe('anonymous requests', () => {
       const hasBody = method !== 'GET';
       const res = await t.fetch(url, {
         method,
-        headers: hasBody ? { 'content-type': 'application/json' } : {},
+        headers: {
+          'x-forwarded-for': '203.0.113.7',
+          ...(hasBody ? { 'content-type': 'application/json' } : {}),
+        },
         body: hasBody ? '{}' : undefined,
       });
       checked++;

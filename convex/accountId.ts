@@ -7,7 +7,7 @@
  */
 import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { accountIdPrefix, generateAccountId, hashAccountId } from './lib/accountId';
 
 /**
@@ -52,6 +52,31 @@ export const setAccountId = internalMutation({
     keepSid: v.optional(v.string()),
   },
   handler: async (ctx, { userId, hash, prefix, rotate, keepSid }): Promise<null> => {
+    if (rotate) {
+      const session = keepSid
+        ? await ctx.runQuery(internal.sessions.bySid, { sid: keepSid, recentMember: true })
+        : null;
+      const user = session?.userId === userId ? await ctx.db.get(userId) : null;
+      if (
+        !session ||
+        !user ||
+        user.status === 'deleted' ||
+        (user.status === 'disabled' && user.disabledReason !== 'membership_lapsed')
+      ) {
+        throw new ConvexError({
+          code: 'auth.reauthentication_required',
+          message: 'Sign in again to manage account credentials.',
+        });
+      }
+      const passkeys = await ctx.db
+        .query('memberPasskeyCredentials')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect();
+      for (const passkey of passkeys) await ctx.db.delete(passkey._id);
+      // Keep only the session that completed recovery. It no longer depends on
+      // a passkey that was just removed.
+      await ctx.db.patch(session._id, { memberPasskeyId: null });
+    }
     const existing = await ctx.db
       .query('users')
       .withIndex('by_account_id_hash', (q) => q.eq('accountIdHash', hash))

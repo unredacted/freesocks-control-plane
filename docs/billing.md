@@ -4,14 +4,29 @@ FreeSocks members can buy a fixed-term **FreeSocks membership** (the single paid
 tier: unlimited bandwidth + devices) by paying with **Bitcoin** (on-chain or
 Lightning, settled to the org's own **BTCPay Server** — no intermediary), crypto
 (Bitcoin, Monero, Zcash + many coins, via **NOWPayments**), card (**Stripe**), or
-**PayPal**. Every rail is a full-page **redirect to a processor-hosted page** —
-the strict CSP forbids an embedded payment SDK, and a redirect is also the
-lower-PCI-scope option.
+**PayPal**. By default every rail is a full-page **redirect to a processor-hosted
+page**: the strict CSP forbids an embedded payment SDK, and a redirect is also
+the lower-PCI-scope option. The two crypto rails can instead run **direct**: the
+deposit address, amount, network, memo and QR show on FreeSocks' own page, for
+payers who can't reach the processor's domain (see "Direct checkout" below).
 
 This is additive to the two pre-existing entitlement paths: the generic
 `/api/webhooks/billing` HMAC seam (`convex/webhooks.ts`) and admin-minted
 redemption codes (`convex/membershipCodes.ts`). All three converge on the same
 core: `lifecycle.applyMembership`.
+
+The optional generic billing callback at `/api/webhooks/billing` accepts
+`eventId`, the member's non-secret `supportId`, `tierSlug`, `issuedAtMs` (Unix
+milliseconds), and optional `expiresAtMs`. The sender signs the raw body with
+`WEBHOOK_SIGNING_SECRET`. The origin accepts events issued within the past 24
+hours, with one minute of future clock skew, and applies newer grants only.
+An event dated further ahead is refused (400) so the sender retries once the
+clocks agree. An older one is acknowledged unapplied and audited once as
+`billing.webhook.stale_event` for a manual grant (its eventId is claimed, so a
+replay is a silent duplicate). Events with the same issuance time all apply. Keep the original issuance
+time when retrying a delivery.
+Migrate older senders to the support ID before enabling the callback on an
+updated deployment. Keep the member's account number out of billing payloads.
 
 ## Architecture
 
@@ -43,7 +58,7 @@ SPA UpgradeMembership ──POST /api/v1/billing/checkout──▶ billing.creat
 - **Credentials** — processor API keys/secrets + the public base URL live in the
   same `appSettings` table under `billing.secret.*` (the same trust model as the
   proxy-backend secrets in `backendServers.config`): **set them in Admin →
-  Billing → Processor credentials** (write-only — the API never returns a secret,
+  Billing → Processor credentials** with a signed-in admin session (write-only — the API never returns a secret,
   only set/not-set booleans). Each field falls back to its env var
   (`NOWPAYMENTS_API_KEY`, …) when the DB row is unset, so an env-configured deploy
   keeps working; `resolveProcessorSecrets` (internal-only) reads DB-then-env.
@@ -283,6 +298,126 @@ dependency-free Bayer-ordered-dither canvas — no chart library, CSP-safe): the
 account Membership tab's impact backend (`MemberImpact.svelte`, every membership
 state, with a personal-contribution block for donors) and a home-page impact
 section, both gated on donations being enabled and non-empty history.
+
+## Direct checkout (crypto rails)
+
+Members in censored countries often can't load `nowpayments.io` (or a BTCPay
+host), or the processor geo-blocks them. A crypto payment needs no script on the
+payer's side, only an address and an amount, so both crypto rails can show those
+on our own origin instead. Admin → Billing → **Direct checkout**:
+
+- `billing.nowpayments.checkoutStyle` / `billing.btcpay.checkoutStyle`:
+  `hosted` (default) or `direct`. Shipped dormant: both default hosted.
+- `billing.nowpayments.coinSource`: where the member's coin list comes from.
+  - `account` (default): **every coin switched on in the NOWPayments dashboard's
+    coin settings**, so the dashboard is the one place coins are managed. The
+    list is read from `/v1/merchant/coins` (enabled tickers) joined with
+    `/v1/full-currencies` (each coin's `network` code and `extra_id_exists`),
+    cached in `appState` (`billing:nowpayments:accountCoins`) and re-read by the
+    hourly `billing-nowpayments-coins` cron, right after an Admin → Billing save,
+    and by **Check coins**. A failed read keeps the last good list; with no list
+    yet the rail stays hosted. A coin without a readable network is left out.
+    Memo coins are included (switching one on in the dashboard is the opt-in) and
+    flagged "needs memo" in the picker. `billing.nowpayments.coinPinned` (default
+    `btc, xmr, usdttrc20, ltc`) is shown first, in order; the rest sort by unit
+    then network. `billing.nowpayments.coinExclude` leaves tickers out.
+  - `list`: only `billing.nowpayments.directCoins`, at most 24 entries of
+    `{ ticker, label, network, allowMemo }`, with `label` (the unit) and `network`
+    shown verbatim and memo coins refused unless `allowMemo`.
+- **Network names** (`convex/lib/cryptoNetworks.ts`): for `account`, the network a
+  member sees is OUR text for known NOWPayments codes (Tron (TRC-20), Ethereum
+  (ERC-20), BNB Smart Chain (BEP-20), Solana, TON, Polygon, ...), never the
+  processor's free-text coin name; an unknown code shows as the bare code in
+  capitals, and Check coins lists those codes so the operator can exclude them.
+  The unit is the ticker minus that network's suffix (`usdttrc20` → `USDT`).
+- The member picker reads `GET /api/v1/billing/coins` (public, one cached read,
+  `max-age=60`), not the public config: the list can run to hundreds. The first
+  pinned coins are buttons; every coin is in a searchable list (coin, ticker or
+  network, punctuation ignored: "usdt", "trc20" and "tron" all find USDT on Tron). Submit waits for the
+  list, so a quick click never falls back to hosted by accident.
+- `billing.btcpay.directMethods`: BTCPay payment method ids shown, in order
+  (default `BTC-CHAIN`, `BTC-LN`).
+- **Check coins** (`POST /api/v1/admin/billing/check-coins`, read-only at
+  NOWPayments): for `account` it re-reads the list and reports how many coins are
+  on and which networks have no name; then, for the first 16 coins members see
+  (`account`) or the whole list (`list`), whether each is switched on, its network
+  and memo use, and an indicative minimum (`/v1/min-amount` with
+  `fiat_equivalent`) against the cheapest crypto term. Run it before switching
+  direct on.
+
+Card rails stay hosted: Stripe.js and PayPal's scripts can't be proxied (their
+terms and PCI forbid it), and a separate `pay.` subdomain would isolate scripts
+without fixing reachability. When Card or PayPal is selected the form says to
+connect with the member's free FreeSocks key first if the payment page doesn't load.
+
+### Flow
+
+```
+form (rail + term + coin) ──POST /billing/checkout {payCurrency}──▶ billing.createCheckout
+   NOWPayments: POST /v1/invoice (unchanged) → POST /v1/invoice-payment {iid, pay_currency}
+   BTCPay:      POST …/invoices (unchanged)  → GET …/invoices/{id}/payment-methods
+   → validate → store billingOrders.directPayment → { orderRef, redirectUrl, direct: true }
+SPA: direct → /account?order=<ref> (/donate for anonymous donations), no redirect
+return page poll (GET /billing/order/<ref>, unchanged route) also returns `payment`
+   pending → the payment panel; confirming → "payment seen" + details on demand;
+   paid / underpaid / failed / expired → the existing cards, unchanged
+```
+
+- **NOWPayments uses `/v1/invoice-payment`, not `/v1/payment`.** It creates the
+  payment on the invoice we already minted, so every IPN still carries
+  `invoice_id` = the order's stored `processorRef`. The IPN verifier, dedupe,
+  `checkoutRef` / `price_amount` cross-checks, `paidRatio` and the underpayment
+  tolerance are the hosted ones, untouched. (A bare `/v1/payment` IPN carries
+  `invoice_id: null`, which would have needed a special case in the ref check.)
+  The payment is the standard (not fixed-rate) flow: a fixed rate expires in 10
+  minutes, too short for someone who has to go buy crypto first.
+- **BTCPay** reads the invoice's payment methods with the `canviewinvoices`
+  permission the settle path already needs, keeping each allowlisted, activated
+  method's `destination`, `due` (falls back to `amount`) and `paymentLink`. A store
+  with lazy payment methods leaves them unactivated, so the page falls back to hosted.
+- `redirectUrl` is still the hosted page for the same invoice. The panel offers
+  it as a fallback link, and an older SPA that ignores `direct` just redirects.
+- **Failures.** A coin not on the list → `billing.invalid_coin` before any invoice
+  exists. Below the coin's minimum (NOWPayments' "less than minimal") →
+  `billing.coin_minimum` ("pick another coin or a longer term"), nothing stored.
+  A coin that needs a memo without `allowMemo` → `billing.invalid_coin`, logged.
+  Anything else (API error, unexpected coin, a payment whose `order_id` is
+  missing or not ours (its IPNs find the order by `order_id`, so without it the
+  payment could never grant),
+  malformed address/amount/expiry, no usable BTCPay method) → the order is stored
+  as a normal hosted order and the member is redirected, logged
+  `[billing] <rail> direct checkout (unavailable)`.
+
+### Safety
+
+- Processor output is validated before it is stored (`convex/lib/directPayment.ts`):
+  address / memo / BOLT11 printable ASCII without spaces and bounded; amount a
+  positive plain decimal string kept **exactly as the API spelled it** (NOWPayments
+  JSON is parsed with a source-text reviver, so `0.00012000` is never re-spelled);
+  the coin must be the one asked for; the expiry must be in the future (and within
+  30 days); a BTCPay link must be `bitcoin:` or `lightning:` AND pay exactly what
+  the page shows (`btcpay.ts:linkMatches`: same destination, and a BIP21 `amount`
+  equal to the shown amount), else the checkout falls back to hosted.
+- The network is named in the picker, next to the amount and in a warning line.
+  A memo gets its own boxed warning and copy button.
+- The QR is drawn same-origin by the bundled `qrcode` package (CSP stays
+  `'self'`). NOWPayments: the address only (wallet URI schemes differ per coin);
+  BTCPay: its BIP21 / Lightning link.
+- The timer counts to NOWPayments' `expiration_estimate_date` (else `valid_until`)
+  or BTCPay's `expirationTime`; at zero the panel says not to send and offers a
+  fresh start. The poll runs every 10 s while a direct order is pending, through
+  our own API only; nothing calls the processor per poll.
+- **Privacy.** The deposit address is unique to the payer, so `directPayment` is
+  wiped the moment the order leaves pending/confirming: paid, underpaid,
+  failed/dismissed, expired (webhook or the stale sweep). The checkout audit
+  records only `direct: true`. No payer data is added.
+- `billing.checkout` (10/hr per member) still bounds the processor calls: a
+  direct checkout makes two (invoice + payment / payment methods).
+
+**Confirm on the NOWPayments sandbox before going live** (not provable from the
+docs alone): `/v1/invoice-payment` is enabled on the account, its IPN carries the
+parent `invoice_id` and `order_id`, and which coins return a `payin_extra_id`.
+The code fails safe on each (hosted fallback, or a refusal for an unallowed memo).
 
 ## NOWPayments setup (crypto rail — ship first)
 
@@ -538,7 +673,8 @@ the balance frequently, and treat the account as expendable.
 
 ## Rate limits
 
-- `billing.checkout` — 10/hr per member (each call creates a hosted invoice).
+- `billing.checkout` — 10/hr per member (each call creates a hosted invoice; a
+  direct checkout also creates the payment on it).
 - `webhook.nowpayments.ip` — 120/min per IP (one payment fires several IPNs).
 - `webhook.btcpay.ip` — 120/min per IP (several invoice events per payment).
 
@@ -546,6 +682,8 @@ These policies are admin-tunable in Admin → Rate limits. NOWPayments fallback 
 
 ## Tests
 
+`convex/directCheckout.test.ts` (direct checkout: stored details, exact amounts,
+memo refusal, minimum error, hosted fallbacks, single grant + wipe, BTCPay methods),
 `convex/billing.test.ts` (domain) + the billing blocks in `convex/http.test.ts`
 (routes): HMAC-SHA512 vector, checkout order binding, finished→single grant,
 dedupe, confirming-no-grant, bad-signature rejection, unknown-ref ACK, payload

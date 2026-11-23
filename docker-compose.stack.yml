@@ -54,6 +54,31 @@ x-logging: &log
 #   convex/deployPins.test.ts holds all of this in place.
 
 services:
+  hpke-epoch-store:
+    build:
+      context: .
+      dockerfile: docker/deploy.Dockerfile
+      target: epoch-seed-store
+    restart: unless-stopped
+    logging: *log
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    environment:
+      - HPKE_EPOCH_STORE_TOKEN=${HPKE_EPOCH_STORE_TOKEN:?run bootstrap to set HPKE_EPOCH_STORE_TOKEN}
+    # Only the backend and the deployer can reach it, and it has no route out.
+    networks: [epoch_keys]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          'const r = await fetch("http://127.0.0.1:8080/healthz"); if (!r.ok) process.exit(1)',
+        ]
+      interval: 10s
+      timeout: 2s
+      retries: 5
   backend:
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
     # (`precompiled-<date>-<sha7>` in convex/convex-backend). So the tag here
@@ -105,7 +130,7 @@ services:
       - /tmp
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
-    networks: [edge, data, checks, ops]
+    networks: [edge, data, checks, ops, epoch_keys]
     ports:
       - '127.0.0.1:${PORT:-3210}:3210'
     volumes:
@@ -126,6 +151,14 @@ services:
       - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
       - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN}
       - DISABLE_BEACON=${DISABLE_BEACON:-true}
+      # How long Convex keeps every past revision of every document (its write
+      # log; reads "at an older timestamp" need it). Unset, the backend keeps 14
+      # days, and FCP rewrites some rows on nearly every request (rateLimits,
+      # replayGuard, subscriptions with their cached bodies), so that history is
+      # most of the Postgres database and of every pg_dump. 2 days matches the
+      # dev compose and upstream's sample. Nothing in FCP reads older than a
+      # paginated drain, which finishes in minutes.
+      - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
       - DO_NOT_REQUIRE_SSL=true
       - INSTANCE_NAME=${INSTANCE_NAME}
       - INSTANCE_SECRET=${INSTANCE_SECRET}
@@ -233,6 +266,9 @@ services:
     logging: *log
     stop_grace_period: 10s
     cap_drop: [ALL]
+    # Read access to the bind-mounted signing key whoever owns it on the host
+    # (created mode 600, see docs/beta-deploy.md); grants no write or chown.
+    cap_add: [DAC_READ_SEARCH]
     security_opt: ['no-new-privileges:true']
     # `data` reaches Postgres; `backup_egress` is the route to the S3 endpoint.
     networks: [data, backup_egress]
@@ -254,12 +290,18 @@ services:
       # Explicit risk-acceptance opt-out: without BACKUP_S3_*, the sidecar
       # exits fatally unless this is 'true' (see docker/backup.sh).
       - BACKUP_ALLOW_LOCAL_ONLY=${BACKUP_ALLOW_LOCAL_ONLY:-}
-      # age recipient for client-side dump encryption (recommended); the warning
-      # is silenced with BACKUP_ALLOW_UNENCRYPTED=true.
+      # Offsite uploads require an age recipient or explicit plaintext opt-in.
       - BACKUP_AGE_PUBLIC_KEY=${BACKUP_AGE_PUBLIC_KEY:-}
       - BACKUP_ALLOW_UNENCRYPTED=${BACKUP_ALLOW_UNENCRYPTED:-}
+      - BACKUP_SIGNING_KEY_FILE=/run/backup-signing.pem
     volumes:
       - backups:/backups
+      - type: bind
+        source: ${BACKUP_SIGNING_KEY_FILE:-/dev/null}
+        target: /run/backup-signing.pem
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       # Liveness = the last SUCCESSFUL cycle finished within the last interval
       # (+1h slack): backup.sh touches /backups/.heartbeat only when the dump AND
@@ -566,10 +608,13 @@ services:
     logging: *log
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
-    # `ops`: reaches the deploy API on backend:3210, and nothing else.
-    networks: [ops]
+    # `ops`: the deploy API on backend:3210; `epoch_keys`: the epoch-seed store
+    # it initializes.
+    networks: [ops, epoch_keys]
     environment:
       - CONVEX_SELF_HOSTED_URL=http://backend:3210
+      - HPKE_EPOCH_STORE_URL=http://hpke-epoch-store:8080
+      - HPKE_EPOCH_STORE_TOKEN=${HPKE_EPOCH_STORE_TOKEN:?run bootstrap to set HPKE_EPOCH_STORE_TOKEN}
       # FCP's own client check: the same secret the edge-client-check service
       # holds, set on the deployment by the entrypoint (one place to set it).
       - EDGE_CLIENT_CHECK_SECRET=${EDGE_CLIENT_CHECK_SECRET:-}
@@ -582,6 +627,8 @@ services:
         condition: service_healthy
       keygen:
         condition: service_completed_successfully
+      hpke-epoch-store:
+        condition: service_healthy
 
 # Who can reach whom (see the isolation note at the top). `internal: true` =
 # no route out of the host.
@@ -601,6 +648,9 @@ networks:
   ops: {}
   # The backup sidecar's route to the S3 endpoint.
   backup_egress: {}
+  # The backend and deployer to the in-memory HPKE epoch-seed store.
+  epoch_keys:
+    internal: true
 
 volumes:
   data:

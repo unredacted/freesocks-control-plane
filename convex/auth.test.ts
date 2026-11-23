@@ -95,7 +95,16 @@ describe('auth.accountLogin', () => {
 
     // Hold the pending request at the session-issuance boundary.
     const pending = { accountIdHash, sid: 'pending-session' };
-    const rotated = await t.action(internal.auth.rotateAccountId, { userId });
+    await t.mutation(internal.sessions.create, {
+      userId,
+      kind: 'member',
+      sid: 'rotation-session',
+      ttlMs: 60_000,
+    });
+    const rotated = await t.action(internal.auth.rotateAccountId, {
+      userId,
+      keepSid: 'rotation-session',
+    });
     expect(await t.mutation(internal.auth.completeAccountLogin, pending)).toBeNull();
     expect(await t.query(internal.sessions.bySid, { sid: pending.sid })).toBeNull();
     expect(
@@ -286,6 +295,12 @@ describe('auth.rotateAccountId', () => {
   test('rotation revokes every session EXCEPT the caller’s keepSid', async () => {
     const t = convexTest(schema, modules);
     const { userId, accountId } = await seedUserWithAccount(t);
+    await t.mutation(internal.memberPasskeys.insertCredential, {
+      userId,
+      credentialId: 'old-passkey',
+      publicKey: 'fixture-key',
+      counter: 0,
+    });
     await t.run(async (ctx) => {
       await ctx.db.insert('sessions', {
         sid: 's-current',
@@ -309,6 +324,7 @@ describe('auth.rotateAccountId', () => {
     await t.run(async (ctx) => {
       const sids = (await ctx.db.query('sessions').collect()).map((s) => s.sid);
       expect(sids).toEqual(['s-current']);
+      expect(await ctx.db.query('memberPasskeyCredentials').collect()).toHaveLength(0);
     });
   });
 
@@ -331,9 +347,9 @@ describe('auth.rotateAccountId', () => {
       sid: 'current',
       ttlMs: 60_000,
     });
-    await expect(t.action(internal.auth.rotateAccountId, { userId })).rejects.toThrow(
-      'revocation failed',
-    );
+    await expect(
+      t.action(internal.auth.rotateAccountId, { userId, keepSid: 'current' }),
+    ).rejects.toThrow('revocation failed');
     expect(
       (
         await t.query(internal.users.byAccountIdHash, {
@@ -344,20 +360,13 @@ describe('auth.rotateAccountId', () => {
     expect(await t.query(internal.sessions.bySid, { sid: 'current' })).toMatchObject({ userId });
   });
 
-  test('rotation with no keepSid revokes ALL sessions (token-authenticated caller)', async () => {
+  test('rotation requires a live session at commit time', async () => {
     const t = convexTest(schema, modules);
-    const { userId } = await seedUserWithAccount(t);
-    await t.run(async (ctx) => {
-      await ctx.db.insert('sessions', {
-        sid: 's-1',
-        kind: 'member',
-        userId,
-        expiresAt: Date.now() + 86_400_000,
-      });
-    });
-    await t.action(internal.auth.rotateAccountId, { userId });
-    await t.run(async (ctx) => {
-      expect(await ctx.db.query('sessions').collect()).toHaveLength(0);
-    });
+    const { userId, accountId } = await seedUserWithAccount(t);
+    await expect(
+      t.action(internal.auth.rotateAccountId, { userId, keepSid: 'revoked' }),
+    ).rejects.toThrow(/sign in again/i);
+    const accountIdHash = await hashAccountId(accountId);
+    expect((await t.query(internal.users.byAccountIdHash, { accountIdHash }))?._id).toBe(userId);
   });
 });

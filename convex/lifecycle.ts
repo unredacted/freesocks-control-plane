@@ -10,7 +10,7 @@
  * types to break Convex's self-reference inference cycle.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx, DatabaseReader } from './_generated/server';
+import type { ActionCtx, MutationCtx, DatabaseReader } from './_generated/server';
 import { internal } from './_generated/api';
 import { runWithCronOutcome } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
@@ -39,6 +39,7 @@ import { resolveDefaultFreeTier } from './tiers';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { forgetAccount } from './edgeTrust';
+import { keyTrafficLimit } from './lib/quotaCarry';
 
 // --- entitlement seam ------------------------------------------------------
 
@@ -348,7 +349,9 @@ export const activeSubAndTier = internalQuery({
       // The user's local status, so the push can re-enable a key the grace sweep
       // disabled (updateUser never touches enable/disable state). (Review #2.)
       userStatus: user.status,
-      trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+      // Less what earlier keys spent this period (lib/quotaCarry.ts): a tier
+      // push must not hand a re-issued key its spent bytes back.
+      trafficLimitBytes: keyTrafficLimit(resolveTrafficLimitBytes(tier, bonusGb), sub, Date.now()),
       trafficLimitStrategy: tier.trafficStrategy,
       // The CURRENT tier's slug, so the push re-tags the backend key on a tier
       // change (issuance stamps the slug — e.g. FREE — and nothing else ever
@@ -749,6 +752,7 @@ export const findTombstonedDue = internalQuery({
         subscriptionId: s._id,
         backend: s.backend,
         backendUserId: s.backendUserId,
+        graceBaseUsedBytes: s.graceBaseUsedBytes,
         attempts: s.tombstoneAttempts ?? 0,
         mirrors: s.subscriptionMirrors
           .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
@@ -784,6 +788,58 @@ export const deferTombstoneForDrain = internalMutation({
   },
 });
 
+/**
+ * Charge what the member spent on a superseded key during its grace to their
+ * current key (quota carryover, account.ts carriedTrafficLimit), so spending on
+ * old keys cannot get round the period quota. Best-effort: the delete that
+ * follows matters more, and a failed read or update only means the member
+ * keeps those bytes. The spend is recorded before the provider update, so a
+ * retry never charges it twice.
+ */
+async function settleGraceUsage(
+  ctx: ActionCtx,
+  d: {
+    subscriptionId: Id<'subscriptions'>;
+    backend: BackendId;
+    backendUserId: string;
+    graceBaseUsedBytes?: number;
+  },
+): Promise<void> {
+  if (d.graceBaseUsedBytes === undefined) return;
+  try {
+    const old = await ctx.runAction(internal.backends.getUser, {
+      backend: d.backend,
+      backendUserId: d.backendUserId,
+    });
+    const used = Math.max(0, Math.floor(old.usedTrafficBytes ?? 0));
+    // Below the base means the provider reset the counter during the grace:
+    // recordGraceSpend then charges everything since the reset.
+    if (used === d.graceBaseUsedBytes) return;
+    const charge = await ctx.runMutation(internal.subscriptions.recordGraceSpend, {
+      subscriptionId: d.subscriptionId,
+      usedBytes: used,
+    });
+    if (!charge) return;
+    try {
+      await ctx.runAction(internal.backends.updateUser, {
+        backend: charge.backend,
+        backendUserId: charge.backendUserId,
+        patch: { trafficLimitBytes: charge.trafficLimitBytes },
+      });
+    } catch {
+      // The spend is already recorded on the current key's carry, so a tier
+      // push sends the same reduced limit, with its own bounded retry + audit.
+      await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, {
+        userId: charge.userId,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      `[lifecycle] grace usage settlement failed: ${err instanceof Error ? err.message : 'unknown'}`,
+    );
+  }
+}
+
 /** Cron: hard-delete subscriptions whose 24h regenerate/switch grace has passed. */
 export const sweepTombstones = internalAction({
   args: { limit: v.optional(v.number()) },
@@ -795,6 +851,7 @@ export const sweepTombstones = internalAction({
       });
       let removed = 0;
       for (const d of due) {
+        await settleGraceUsage(ctx, d);
         try {
           const out = await deleteSubscriptionEverywhere(
             ctx,
@@ -850,6 +907,79 @@ export const sweepTombstones = internalAction({
         }
       }
       return { removed };
+    }),
+});
+
+// --- quota carry expiry ----------------------------------------------------
+
+const CARRY_RESTORE_GIVE_UP_MS = 7 * 24 * 3_600_000;
+
+/**
+ * Cron: once a key's carry period ends (lib/quotaCarry.ts), restore its full
+ * tier limit and drop the carry. Nothing else would: the donation re-cap runs
+ * only when the bonus moves, and a re-issued key's reduced limit would
+ * otherwise outlive the provider's own counter reset. A failed restore keeps
+ * the row for the next run.
+ */
+export const expireQuotaCarries = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ restored: number }> =>
+    runWithCronOutcome(ctx, 'quota-carry-expire', async () => {
+      const now = Date.now();
+      let restored = 0;
+      let cursor: string | null = null;
+      // Paginate past failures, so an unreachable backend's rows (retried next
+      // run) never hold back the rest of the index.
+      for (let round = 0; round < 50; round++) {
+        const page: {
+          rows: {
+            subscriptionId: Id<'subscriptions'>;
+            userId: Id<'users'>;
+            backend: BackendId;
+            backendUserId: string;
+            periodCarryUntil: number;
+            restoreLimitBytes: number | null;
+          }[];
+          isDone: boolean;
+          continueCursor: string;
+        } = await ctx.runQuery(internal.subscriptions.findExpiredCarries, {
+          now,
+          cursor,
+          numItems: 100,
+        });
+        for (const d of page.rows) {
+          try {
+            if (d.restoreLimitBytes !== null) {
+              await ctx.runAction(internal.backends.updateUser, {
+                backend: d.backend,
+                backendUserId: d.backendUserId,
+                patch: { trafficLimitBytes: d.restoreLimitBytes },
+              });
+              restored++;
+            }
+          } catch {
+            // Retried hourly for a week. After that the row leaves this index,
+            // but not silently: the carry is dropped and a tier push (bounded
+            // retry, audited when it gives up) sends the full limit.
+            if (now - d.periodCarryUntil < CARRY_RESTORE_GIVE_UP_MS) continue;
+            await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+              subscriptionId: d.subscriptionId,
+            });
+            if (d.restoreLimitBytes !== null) {
+              await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, {
+                userId: d.userId,
+              });
+            }
+            continue;
+          }
+          await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+            subscriptionId: d.subscriptionId,
+          });
+        }
+        if (page.isDone) break;
+        cursor = page.continueCursor;
+      }
+      return { restored };
     }),
 });
 
