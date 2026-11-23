@@ -352,17 +352,24 @@ export const noteSeenCountryForUser = internalMutation({
  * judged at `nodeName` (the node the body resolves to, default the stored pin),
  * the settings, the list and the own-exit set.
  */
+/** `contextFor` as a plain read over a row already in hand (convex/deliveryContext.ts). */
+export async function countryContextOf(
+  db: DatabaseReader,
+  sub: Doc<'subscriptions'> | null,
+  nodeName: string | undefined,
+) {
+  const { cfg, listed } = await settingsAndList(db);
+  const family: MemberFamily = sub
+    ? await memberFamilyOf(db, { ...sub, pinnedNode: nodeName ?? sub.pinnedNode })
+    : 'none';
+  const exits = cfg.detect ? await readOwnExits(db) : EMPTY_OWN_EXITS;
+  return { family, cfg, listed, ownExits: exits };
+}
+
 export const contextFor = internalQuery({
   args: { subscriptionId: v.id('subscriptions'), nodeName: v.optional(v.string()) },
-  handler: async (ctx, { subscriptionId, nodeName }) => {
-    const sub = await ctx.db.get(subscriptionId);
-    const { cfg, listed } = await settingsAndList(ctx.db);
-    const family: MemberFamily = sub
-      ? await memberFamilyOf(ctx.db, { ...sub, pinnedNode: nodeName ?? sub.pinnedNode })
-      : 'none';
-    const exits = cfg.detect ? await readOwnExits(ctx.db) : EMPTY_OWN_EXITS;
-    return { family, cfg, listed, ownExits: exits };
-  },
+  handler: async (ctx, { subscriptionId, nodeName }) =>
+    countryContextOf(ctx.db, await ctx.db.get(subscriptionId), nodeName),
 });
 
 /** The account route's reading: whether detection is on, and the own-exit set to compare with. */

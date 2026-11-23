@@ -35,6 +35,7 @@ import type * as countryListOps from "../countryListOps.js";
 import type * as countryLists from "../countryLists.js";
 import type * as cronHeartbeat from "../cronHeartbeat.js";
 import type * as crons from "../crons.js";
+import type * as deliveryContext from "../deliveryContext.js";
 import type * as deliveryRefusals from "../deliveryRefusals.js";
 import type * as dnsRecordMarks from "../dnsRecordMarks.js";
 import type * as donations from "../donations.js";
@@ -255,6 +256,7 @@ declare const fullApi: ApiFromModules<{
   countryLists: typeof countryLists;
   cronHeartbeat: typeof cronHeartbeat;
   crons: typeof crons;
+  deliveryContext: typeof deliveryContext;
   deliveryRefusals: typeof deliveryRefusals;
   dnsRecordMarks: typeof dnsRecordMarks;
   donations: typeof donations;

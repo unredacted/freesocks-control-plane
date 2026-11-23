@@ -18,7 +18,8 @@ import { registerEdgeRoutes } from './httpEdges';
 import { appNoticeContent } from './appNotices';
 import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
 import { checkInfraUrl } from './lib/urlSafety';
-import { suggestionCountry } from './lib/memberCountry';
+import { storedCountry, suggestionCountry, type CountryFields } from './lib/memberCountry';
+import { needsStoredCountry, nothingDue, planDelivery } from './lib/deliveryStamp';
 import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
@@ -28,6 +29,7 @@ import {
   finishMemberBody,
   guardBody,
   locateMember,
+  locateMemberWith,
   type DeliverySubscription,
   type RenderSnapshot,
 } from './lib/subscriptionDelivery';
@@ -474,7 +476,14 @@ function unavailableResponse(reason: string): Response {
   });
 }
 
-/** The serialized cache entries a lookup returned (subscriptionBodies.forUa). */
+/** Whether a request's located country fields are still the ones its row held. */
+function sameCountryFields(a: CountryFields, b: Partial<Record<keyof CountryFields, unknown>>) {
+  return (Object.keys(a) as (keyof CountryFields)[]).every(
+    (k) => (a[k] ?? null) === (b[k] ?? null),
+  );
+}
+
+/** The serialized cache entries a lookup returned (deliveryContext / subscriptionBodies.forUa). */
 function parseEntries(raw: string[]): SubCacheEntry[] {
   const out: SubCacheEntry[] = [];
   for (const one of raw) {
@@ -1265,12 +1274,26 @@ http.route({
         });
       }
     }
-    const sub = await ctx.runQuery(internal.subscriptions.bySubToken, { subToken: token });
-    if (!sub)
+    // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
+    // cache-bypass amplification vector (each distinct UA = a live backend
+    // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
+    const ua = (req.headers.get('user-agent') ?? '').slice(0, 256);
+    // Everything a cache hit needs, in ONE query (convex/deliveryContext.ts):
+    // the row, the answer's hints, the HWID switch, this UA's cached body, the
+    // country and place contexts, the address lane, the member-facing names
+    // and (only for a body holding Hysteria entries) the pins.
+    const xHwid = req.headers.get('x-hwid');
+    const dc = await ctx.runQuery(internal.deliveryContext.forToken, {
+      subToken: token,
+      ua,
+      hwidHeader: !!xHwid && xHwid.length <= 256,
+    });
+    if (!dc)
       return json({ error: { code: 'not_found', message: 'Not found' } }, 404, {
         'cache-control': 'private, no-store',
         vary: 'user-agent',
       });
+    const { sub, hints, lane } = dc;
     // Per-TOKEN bucket (Review B-F1): bounds UA-rotating cache-bypass
     // amplification and HWID device-stuffing per leaked/shared token — the
     // per-IP bucket above can't (the holder rotates IPs). Enforced only for a
@@ -1293,59 +1316,40 @@ http.route({
     }
 
     const now = Date.now();
-    const hints = await ctx.runQuery(internal.subscriptions.responseHints, {
-      subscriptionId: sub._id,
-    });
     // The validator the app holds, if any: a matching answer is a 304.
     const ifNoneMatch = req.headers.get('if-none-match');
-    // Member-facing names (docs/privacy.md) under the current settings, and
+    // A cached or stale body passes the Hysteria guard again
+    // (lib/hysteriaGuard.ts) against the pins the backend serves NOW: a node
+    // whose certificate changed since it was cached must not keep handing out
+    // an entry pinned to the old one. A body it cannot repair is refused. Then
+    // member-facing names (docs/privacy.md) under the current settings, and
     // the REALITY key share Mihomo must ask for (lib/realityKeyShares.ts). A
     // fetched body is finished before it is cached; a cached or stale one is
     // finished again when served, since it may predate a rename or this release
     // (a finished body comes back as it was, so this is a no-op otherwise).
-    const naming = () =>
-      ctx.runQuery(internal.subscriptions.entryNamingFor, {
-        backendServerId: sub.backendServerId ?? undefined,
-      });
-    // A cached or stale body also passes the Hysteria guard again
-    // (lib/hysteriaGuard.ts) against the pins the backend serves NOW: a node
-    // whose certificate changed since it was cached must not keep handing out
-    // an entry pinned to the old one. A body it cannot repair is refused.
     const memberServed = async <T extends { content: string }>(
       entry: T,
     ): Promise<{ entry: T } | { refuse: string }> => {
-      const guarded = await guardBody(ctx, entry.content, sub.backendServerId);
+      const guarded = await guardBody(ctx, entry.content, sub.backendServerId, dc.pins);
       if (guarded.kind === 'refuse') return { refuse: guarded.reason };
-      return { entry: { ...entry, content: finishMemberBody(guarded.content, await naming()) } };
+      return { entry: { ...entry, content: finishMemberBody(guarded.content, dc.naming) } };
     };
-    // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
-    // cache-bypass amplification vector (each distinct UA = a live backend
-    // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
-    const ua = (req.headers.get('user-agent') ?? '').slice(0, 256);
     // HWID headers are forwarded ONLY when device-limit enforcement is on
     // (Review B-F1): with the master toggle off FCP never sends a backend-side
     // hwidDeviceLimit, so forwarding would only REGISTER arbitrary devices
     // backend-side (the stuffing vector) with zero enforcement benefit. Values
     // are length-capped like the member device-revoke route.
-    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    const hwidEnabled = settings['devices.enforcementEnabled'] === true;
     const hwidHeaders: Record<string, string> = {};
-    if (hwidEnabled) {
+    if (dc.hwidEnabled) {
       for (const h of ['x-hwid', 'x-device-os', 'x-ver-os', 'x-device-model']) {
         const val = req.headers.get(h);
         if (val && val.length <= 256) hwidHeaders[h] = val;
       }
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
-    // This UA's cached body (subscriptionBodies): one indexed read, none at all
-    // for a device-bound request (never cached).
-    const cached = hasHwid
-      ? []
-      : servableEntries(
-          parseEntries(
-            await ctx.runQuery(internal.subscriptionBodies.forUa, { subscriptionId: sub._id, ua }),
-          ),
-        );
+    // This UA's cached body (subscriptionBodies), none for a device-bound
+    // request (never cached; the context read none for it either).
+    const cached = hasHwid ? [] : servableEntries(parseEntries(dc.entries));
     // Edge-required delivery (docs/edges.md): the cache token for this key's
     // resolved place (`<bindingVersion>:<epoch>` while an origin covers it, null
     // otherwise), compared against the token stored on the entry. Only bodies
@@ -1353,14 +1357,14 @@ http.route({
     // same read answers whether names are judged per country at that place.
     // Where the member is, for server-name selection (lib/memberCountry.ts),
     // decided by the function the raw-config view uses too
-    // (lib/subscriptionDelivery.ts `locateMember`): nothing for a key that is
-    // not freedom-family; else their own answer; else, with detection on, the
-    // STORED guess, which this request's CDN country may set or refresh first (a
-    // reading from one of FCP's own exits only keeps it alive; the client
-    // address never leaves that function). A stored country keys the cache
-    // (`source: 'override'`). With detection off the CDN country shapes this one
-    // response and is kept nowhere: not cached, served `private, no-store`
-    // (lib/edges/sni/country.ts).
+    // (lib/subscriptionDelivery.ts `locateMember`, here over the contexts
+    // already read): nothing for a key that is not freedom-family; else their
+    // own answer; else, with detection on, the STORED guess, which this
+    // request's CDN country may set or refresh first (a reading from one of
+    // FCP's own exits only keeps it alive; the client address never leaves
+    // that function). A stored country keys the cache (`source: 'override'`).
+    // With detection off the CDN country shapes this one response and is kept
+    // nowhere: not cached, served `private, no-store` (lib/edges/sni/country.ts).
     const place: DeliverySubscription = {
       subscriptionId: sub._id,
       backendServerId: sub.backendServerId ?? null,
@@ -1374,10 +1378,39 @@ http.route({
       countryRev: sub.countryRev ?? 0,
       deliveryRev: sub.deliveryRev ?? 0,
     };
-    const [location, lane] = await Promise.all([
-      locateMember(ctx, place, req),
-      ctx.runQuery(internal.edgeLanes.laneOf, { subscriptionId: sub._id }),
-    ]);
+    const location = await locateMemberWith(ctx, place, req, {
+      country: dc.country,
+      place: dc.place,
+    });
+    // A body served from the cache is recorded only when something is due
+    // (lib/deliveryStamp.ts, the plan `markDelivered` applies): judged here on
+    // the row the context read, so most polls call no mutation at all. A
+    // request whose reading just moved the row's country fields always asks
+    // (the write may have changed what the plan reads).
+    const noted = !sameCountryFields(location.fields, place);
+    const recordServed = async (entry: SubCacheEntry) => {
+      const facts = {
+        contentAt: entry.at,
+        renderedEpoch: entry.renderedEpoch ?? null,
+        render: entry.render ?? null,
+        deliveryRev: place.deliveryRev,
+        lane,
+      };
+      if (!noted) {
+        const at = Date.now();
+        const plan = planDelivery(sub, facts, at, {
+          laneNow: lane,
+          storedCountry: needsStoredCountry(sub, facts)
+            ? storedCountry(sub, dc.country.cfg, dc.country.listed, at)
+            : undefined,
+        });
+        if (nothingDue(plan)) return;
+      }
+      await ctx.runMutation(internal.subscriptions.markDelivered, {
+        subscriptionId: sub._id,
+        ...facts,
+      });
+    };
     const { edgeToken, sensitive, located } = location;
     const useCache = cacheIsServable(located.source, sensitive);
     // An entry answers THIS request only for this UA's format, under the current
@@ -1397,14 +1430,7 @@ http.route({
       if ('refuse' in served) return unavailableResponse(served.refuse);
       // Cache hit: the served body was generated at the entry's fetch time and
       // rendered against the entry's epoch token.
-      await ctx.runMutation(internal.subscriptions.markDelivered, {
-        subscriptionId: sub._id,
-        contentAt: fresh.at,
-        renderedEpoch: fresh.renderedEpoch ?? null,
-        render: fresh.render ?? null,
-        deliveryRev: place.deliveryRev,
-        lane,
-      });
+      await recordServed(fresh);
       // fresh + same format → cache hit
       return (await subscriptionResponse(served.entry, { hints, ifNoneMatch })).response;
     }
@@ -1422,14 +1448,7 @@ http.route({
           ifNoneMatch,
         });
         if (answer.notModified) {
-          await ctx.runMutation(internal.subscriptions.markDelivered, {
-            subscriptionId: sub._id,
-            contentAt: held.at,
-            renderedEpoch: held.renderedEpoch ?? null,
-            render: held.render ?? null,
-            deliveryRev: place.deliveryRev,
-            lane,
-          });
+          await recordServed(held);
           return answer.response;
         }
       }
@@ -1554,14 +1573,7 @@ http.route({
       if (stale && servesHere(stale)) {
         const served = await memberServed(stale);
         if ('refuse' in served) return unavailableResponse(served.refuse);
-        await ctx.runMutation(internal.subscriptions.markDelivered, {
-          subscriptionId: sub._id,
-          contentAt: stale.at,
-          renderedEpoch: stale.renderedEpoch ?? null,
-          render: stale.render ?? null,
-          deliveryRev: place.deliveryRev,
-          lane,
-        });
+        await recordServed(stale);
         return (await subscriptionResponse(served.entry, { hints, ifNoneMatch })).response;
       }
       console.error(
