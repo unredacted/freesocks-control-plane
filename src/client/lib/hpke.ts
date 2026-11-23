@@ -257,9 +257,19 @@ function applyRevocation(r: SignedRevocation): number | undefined {
  * so bypassing it trades a bounded, quiet staleness for 429s and a silent
  * missing epoch exactly where censorship makes NAT sharing the norm.
  */
+let _bypassKeysCacheOnce = false;
+
 function fetchKeys(): Promise<Response> {
-  // no-store: a refresh after a refused epoch must not reuse the browser's copy.
-  return fetch('/api/v1/hpke/keys', { credentials: 'omit', cache: 'no-store' });
+  // Routine lookups keep the shared CDN cache (see above). Only the refresh
+  // right after the server refused an epoch skips caches: no-store also sends
+  // Cache-Control: no-cache upstream, which would otherwise hit the origin's
+  // per-IP budget on every lookup behind a shared NAT.
+  const bypass = _bypassKeysCacheOnce;
+  _bypassKeysCacheOnce = false;
+  return fetch('/api/v1/hpke/keys', {
+    credentials: 'omit',
+    ...(bypass ? { cache: 'no-store' as const } : {}),
+  });
 }
 
 async function refreshEpoch(): Promise<void> {
@@ -470,7 +480,10 @@ export async function prepareOutbound(
 }
 
 export function invalidateEpoch(kid: string): void {
-  if (_epoch?.kid === kid) _epoch = null;
+  if (_epoch?.kid === kid) {
+    _epoch = null;
+    _bypassKeysCacheOnce = true;
+  }
 }
 
 /** Open a reveal-leg response and enforce required sealing on successful replies. */
