@@ -56,6 +56,10 @@ export async function issueNewSubscription(
     // regenerate: the member's answer given with this issuance (sign-up's first
     // key); stored on a freedom-family key only (subscriptions.insertSubscription).
     region?: string;
+    // Bytes spent on earlier keys this traffic period, already taken off
+    // spec.trafficLimitBytes, and when the period ends (lib/quotaCarry.ts).
+    periodCarryBytes?: number;
+    periodCarryUntil?: number;
   },
 ): Promise<IssueResult> {
   const issued = await ctx.runAction(internal.backends.issueUser, {
@@ -89,6 +93,8 @@ export async function issueNewSubscription(
       carrySubTokenFromId: input.carrySubTokenFromId,
       carryCountryFromId: input.carryCountryFromId,
       region: input.region,
+      periodCarryBytes: input.periodCarryBytes,
+      periodCarryUntil: input.periodCarryUntil,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,

@@ -291,11 +291,18 @@ export async function resolveCountryModes(db: DatabaseReader): Promise<CountryMo
  */
 export const suggestMode = internalQuery({
   args: { backend: backendIdValidator, country: v.union(v.string(), v.null()) },
-  handler: async (ctx, { backend, country }): Promise<string> => {
-    const code = country ? country.trim().toUpperCase() : null;
-    return suggestIn(await suggestionInputs(ctx.db, backend), code);
-  },
+  handler: (ctx, { backend, country }): Promise<string> => suggestModeOf(ctx.db, backend, country),
 });
+
+/** `suggestMode` for a caller already in a query (the account view). */
+export async function suggestModeOf(
+  db: DatabaseReader,
+  backend: BackendId,
+  country: string | null,
+): Promise<string> {
+  const code = country ? country.trim().toUpperCase() : null;
+  return suggestIn(await suggestionInputs(db, backend), code);
+}
 
 /**
  * Sign-up, before the first key: for each country the question offers, the
@@ -346,11 +353,8 @@ export const suggestionsForCountries = internalQuery({
  * view's flag behind the onboarding mirror suggestion. Only the verdict leaves;
  * the list stays server-side, and neither the country nor the verdict is stored.
  */
-export const isListed = internalQuery({
-  args: { country: v.union(v.string(), v.null()) },
-  handler: async (ctx, { country }): Promise<boolean> => {
-    const code = normalizeCode(country);
-    if (!code) return false;
-    return (await resolveCensoredCountries(ctx.db)).codes.includes(code);
-  },
-});
+export async function isListedOf(db: DatabaseReader, country: string | null): Promise<boolean> {
+  const code = normalizeCode(country);
+  if (!code) return false;
+  return (await resolveCensoredCountries(db)).codes.includes(code);
+}

@@ -72,7 +72,7 @@ describe('cronHeartbeat', () => {
   // This locks the two lists together (the reason the class of bug can't recur).
   test('CRON_META matches every job registered in crons.ts', () => {
     const src = readFileSync(new URL('./crons.ts', import.meta.url), 'utf8');
-    const registered = [...src.matchAll(/crons\.(?:interval|daily)\(\s*'([a-z-]+)'/g)].map(
+    const registered = [...src.matchAll(/crons\.(?:interval|daily|hourly)\(\s*'([a-z-]+)'/g)].map(
       (m) => m[1],
     );
     expect(new Set(registered).size).toBe(registered.length); // no dup names in crons.ts
@@ -90,7 +90,7 @@ describe('cronHeartbeat', () => {
     const src = readFileSync(new URL('./crons.ts', import.meta.url), 'utf8');
     const jobs = [
       ...src.matchAll(
-        /crons\.(?:interval|daily)\(\s*'([a-z-]+)',\s*\{[^}]*\},\s*internal\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)/g,
+        /crons\.(?:interval|daily|hourly)\(\s*'([a-z-]+)',\s*\{[^}]*\},\s*internal\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)/g,
       ),
     ].map((m) => ({ name: m[1]!, module: m[2]!, fn: m[3]! }));
     expect(jobs).toHaveLength(CRON_META.length); // the regex parsed every registration
@@ -101,7 +101,7 @@ describe('cronHeartbeat', () => {
       const end = target.indexOf('\nexport ', start + 1);
       const body = target.slice(start, end === -1 ? undefined : end);
       const stamp = new RegExp(
-        `(?:recordHeartbeat|runWithCronOutcome|heartbeatFromAction)\\(\\s*ctx,\\s*'${job.name}'`,
+        `(?:recordHeartbeat|recordSkippedRun|gate|runWithCronOutcome|heartbeatFromAction)\\(\\s*ctx,\\s*'${job.name}'`,
       );
       expect(
         stamp.test(body),

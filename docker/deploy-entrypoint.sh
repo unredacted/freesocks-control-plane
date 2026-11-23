@@ -19,6 +19,9 @@ AUTO_GEN_SECRETS="SESSION_SIGNING_KEY ADMIN_SESSION_SIGNING_KEY ADMIN_BOOTSTRAP_
 rand_hex32() {
   bun -e 'process.stdout.write([...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join(""))'
 }
+set_deployment_env() {
+  printf '%s' "$2" | bunx convex env set "$1" >/dev/null
+}
 is_auto_gen() {
   case " ${AUTO_GEN_SECRETS} " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
@@ -75,7 +78,7 @@ if [ -f "${CONVEX_ENV_FILE}" ]; then
       exit 1
       ;;
     esac
-    if ! bunx convex env set "${key}" "${val}" >/dev/null; then
+    if ! set_deployment_env "${key}" "${val}"; then
       echo "[deploy] ERROR: failed to set deployment env ${key}" >&2
       exit 1
     fi
@@ -94,11 +97,17 @@ if [ -n "${EDGE_CLIENT_CHECK_SECRET:-}" ]; then
     exit 1
     ;;
   esac
-  if ! bunx convex env set EDGE_CLIENT_CHECK_SECRET "${EDGE_CLIENT_CHECK_SECRET}" >/dev/null; then
+  if ! set_deployment_env EDGE_CLIENT_CHECK_SECRET "${EDGE_CLIENT_CHECK_SECRET}"; then
     echo "[deploy] ERROR: failed to set deployment env EDGE_CLIENT_CHECK_SECRET" >&2
     exit 1
   fi
   echo "[deploy]   env set EDGE_CLIENT_CHECK_SECRET (from the compose env)"
+fi
+
+if [ -n "${HPKE_EPOCH_STORE_URL:-}" ]; then
+  : "${HPKE_EPOCH_STORE_TOKEN:?missing private epoch seed store token}"
+  set_deployment_env HPKE_EPOCH_STORE_URL "$HPKE_EPOCH_STORE_URL"
+  set_deployment_env HPKE_EPOCH_STORE_TOKEN "$HPKE_EPOCH_STORE_TOKEN"
 fi
 
 # Auto-generate the pure-random secrets that are still unset. GENERATE-ONCE: only
@@ -113,7 +122,7 @@ if existing_env="$(bunx convex env list 2>/dev/null)"; then
     if printf '%s\n' "${existing_env}" | grep -q "^${name}="; then
       continue # already set — persisted in the deployment; leave it
     fi
-    if ! bunx convex env set "${name}" "$(rand_hex32)" >/dev/null; then
+    if ! rand_hex32 | bunx convex env set "${name}" >/dev/null; then
       echo "[deploy] ERROR: failed to generate deployment secret ${name}" >&2
       exit 1
     fi
@@ -169,6 +178,10 @@ if [ "${DEPLOY_SKIP_NODE_FLOOR:-false}" != "true" ]; then
     exit 1
   fi
   check_node_floor "${node_version}" "after push"
+fi
+
+if [ -n "${HPKE_EPOCH_STORE_URL:-}" ]; then
+  bunx convex run lib/hpkeCrypto:initializeEpochStore '{}'
 fi
 
 echo "[deploy] seeding tiers + settings (+ Remnawave instance if REMNAWAVE_* is set)"

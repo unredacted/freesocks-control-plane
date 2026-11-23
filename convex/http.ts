@@ -20,6 +20,7 @@ import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
 import { checkInfraUrl } from './lib/urlSafety';
 import { storedCountry, suggestionCountry, type CountryFields } from './lib/memberCountry';
 import { needsStoredCountry, nothingDue, planDelivery } from './lib/deliveryStamp';
+import { startAccountView } from './account';
 import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
@@ -48,7 +49,7 @@ import { SETTINGS_DEFAULTS } from './appSettings';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
-import { sanitizeUmamiUrl } from './lib/analyticsConfig';
+import { sanitizeGeoMode, sanitizeUmamiUrl } from './lib/analyticsConfig';
 import {
   checkSiteImage,
   decodeBase64,
@@ -692,12 +693,26 @@ http.route({
 // public key before sealing the login to it, so a CDN that tampers is caught.
 // Briefly cacheable (the epoch is valid for ~30 min and carries its own notAfter).
 const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> => {
-  const limited = await throttlePublicGet(ctx, req, 'hpke.keys.fetch');
-  if (limited) return limited;
-  const [epoch, revocation] = await Promise.all([
-    ctx.runQuery(internal.keyEpochs.current, {}),
+  // Never refuse a key lookup: a manifest-pinned client cannot seal a login,
+  // sign-up or bootstrap without an epoch, and the per-IP bucket is shared by
+  // everyone behind a carrier NAT, so a 429 here would let one neighbour lock
+  // the rest out. Past the budget the answer comes from the datastore alone
+  // (no seed-store check, no re-mint), which bounds what a flood can drive;
+  // a published epoch the store lost still recovers through the client's
+  // retry on 503 hpke.key_unavailable.
+  const overBudget = (await throttlePublicGet(ctx, req, 'hpke.keys.fetch')) !== null;
+  const [candidate, revocation] = await Promise.all([
+    overBudget
+      ? ctx.runQuery(internal.keyEpochs.current, {})
+      : ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {}),
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
+  const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;
+  // No live epoch while signing is on: mint one now (throttled), not at the
+  // next cron tick, so pinned clients can seal again within seconds.
+  if (!epoch && !overBudget && process.env.FS_MANIFEST_SK) {
+    await ctx.runMutation(internal.keyEpochs.requestRemint, {}).catch(() => {});
+  }
   return json(
     {
       epoch: epoch
@@ -727,7 +742,10 @@ const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> 
     // normally has >=20 min left, so this clamp only ever bites if that ratio
     // changes -- it is the guarantee, not a hot path. A rotation gap (epoch null)
     // is not cached at all, so it clears the moment the rotate cron catches up.
-    { 'cache-control': epochCacheControl(epoch?.notAfter) },
+    {
+      'cache-control': epochCacheControl(epoch?.notAfter),
+      ...(overBudget ? { 'x-fs-keys-throttled': '1' } : {}),
+    },
   );
 };
 http.route({ path: '/api/v1/hpke/keys', method: 'GET', handler: httpAction(hpkeKeysHandler) });
@@ -750,8 +768,35 @@ function epochCacheControl(notAfter: number | undefined): string {
 // Anonymous sign-up: Cap captcha -> mint a user + account number + member session.
 // NO proxy backend is touched here (the proxy key is created separately, once
 // signed in, via POST /api/v1/account/regenerate), so a missing/empty backend
-// can never block account creation. The account-number reveal is sealed (the
-// '/api/v1/account' reveal policy in src/shared/crypto/envelope.ts).
+// can never block account creation. Both legs are sealed, including the
+// response recipient and proof-of-possession enrollment metadata.
+
+async function admitAccountCreation(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  if (!ip) {
+    return errorJson(
+      'freetier.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
+  // drive verify QPS (the per-day account cap is enforced later by the
+  // freetier.create rate limit inside createFreeAccount).
+  const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'account.create.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!createRl.allowed) {
+    return errorJson(
+      'rate_limit.exceeded',
+      'Too many attempts from your network. Please wait a bit and try again.',
+      429,
+      { retryAfterMs: createRl.retryAfterMs },
+    );
+  }
+  return null;
+}
 
 http.route({
   path: '/api/v1/account',
@@ -777,29 +822,8 @@ http.route({
     if (!captchaToken) {
       return errorJson('validation', 'Captcha token required', 400);
     }
-    const ip = resolveClientIp(req);
-    if (!ip) {
-      return errorJson(
-        'freetier.ip_unresolved',
-        'Unable to establish your network address. Try again later or contact support.',
-        503,
-      );
-    }
-    // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
-    // drive verify QPS (the per-day account cap is enforced later by the
-    // freetier.create rate limit inside createFreeAccount).
-    const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account.create.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!createRl.allowed) {
-      return errorJson(
-        'rate_limit.exceeded',
-        'Too many attempts from your network. Please wait a bit and try again.',
-        429,
-        { retryAfterMs: createRl.retryAfterMs },
-      );
-    }
+    // The admission callback already verified the same request headers.
+    const ip = resolveClientIp(req)!;
     const cap = await verifyCaptcha(captchaToken);
     if (!cap.configured) return errorJson('config', 'Captcha not configured', 503);
     if (!cap.success) return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
@@ -878,7 +902,7 @@ http.route({
       200,
       { 'set-cookie': cookie },
     );
-  }),
+  }, admitAccountCreation),
 });
 
 // --- member auth ------------------------------------------------------------
@@ -1082,12 +1106,6 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const view = await ctx.runAction(internal.account.getAccountView, {
-      userId: member.userId,
-      includeSubscriptionCredentials:
-        member.source === 'cookie' || hasScope(member.scopes, 'subscription:read'),
-    });
-    if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"
     // picker AND drives the mode suggestion. Inside the sealed body; never
     // stored as such. With detection on it may set or refresh the GUESS on the
@@ -1099,31 +1117,45 @@ http.route({
     // availability matrix picks the mode (lib/modeSuggestion.ts), from modes
     // AVAILABLE on the member's own backend only; elsewhere the default. The
     // list and the matrix stay server-side: only the verdict ships.
+    // A stored answer stands even when it is no country ("Somewhere else"): the
+    // request's country is used only when nothing is stored at all.
+    // geoCountryCensored is THIS request's country only (never the stored
+    // answer): the onboarding mirror suggestion prefills it, so no country, no
+    // suggestion. Like geoCountry it is computed per request and never stored.
     const geoCountry = resolveCountry(req);
-    const reading = await ctx.runQuery(internal.memberCountry.readingContext, {});
-    const ownExit = isOwnExit(resolveClientIp(req), reading.ownExits);
-    const stored =
-      reading.detect && (geoCountry || ownExit)
+    // The view's database half, the reading context and both verdicts are ONE
+    // query (account.accountViewData), run beside the live backend read. When a
+    // reading is stored, that runs beside the live read too, and the suggestion
+    // is asked for again from what the reading stored.
+    const started = await startAccountView(ctx, {
+      userId: member.userId,
+      includeSubscriptionCredentials:
+        member.source === 'cookie' || hasScope(member.scopes, 'subscription:read'),
+      geoCountry,
+    });
+    if (!started) return errorJson('not_found', 'user not found', 404);
+    const { data } = started;
+    const { route } = data;
+    // Always present: the route passes geoCountry (a country or null).
+    if (!route) throw new Error('account view: no route part');
+    const suggestion = async (): Promise<string> => {
+      const ownExit = isOwnExit(resolveClientIp(req), route.ownExits);
+      const storing = route.detect && (!!geoCountry || ownExit);
+      if (!storing && route.suggestedModeId !== null) return route.suggestedModeId;
+      const stored = storing
         ? await ctx.runMutation(internal.memberCountry.noteSeenCountryForUser, {
             userId: member.userId,
             country: geoCountry,
             ownExit,
           })
         : await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId });
-    // A stored answer stands even when it is no country ("Somewhere else"): the
-    // request's country is used only when nothing is stored at all.
-    // geoCountryCensored is THIS request's country only (never the stored
-    // answer): the onboarding mirror suggestion prefills it, so no country, no
-    // suggestion. Like geoCountry it is computed per request and never stored.
-    const [suggestedModeId, geoCountryCensored] = await Promise.all([
-      ctx.runQuery(internal.censoredCountries.suggestMode, {
-        backend: view.user.tier.backend,
+      return ctx.runQuery(internal.censoredCountries.suggestMode, {
+        backend: data.view.user.tier.backend,
         country: suggestionCountry(stored, geoCountry),
-      }),
-      geoCountry
-        ? ctx.runQuery(internal.censoredCountries.isListed, { country: geoCountry })
-        : false,
-    ]);
+      });
+    };
+    const [view, suggestedModeId] = await Promise.all([started.finish(), suggestion()]);
+    const { geoCountryCensored } = route;
     return json({ ...view, geoCountry, suggestedModeId, geoCountryCensored });
   }),
 });
@@ -2124,7 +2156,7 @@ http.route({
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, { recentSession: true });
-    if (!member) return recentMemberSessionRequired();
+    if (!member?.sid) return recentMemberSessionRequired();
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.rotate',
       subject: member.userId,
@@ -2137,12 +2169,17 @@ http.route({
         { retryAfterMs: rl.retryAfterMs },
       );
     }
-    const result = await ctx.runAction(internal.auth.rotateAccountId, {
-      userId: member.userId,
-      requestId: newRequestId(),
-      keepSid: member.sid,
-    });
-    return json(result);
+    try {
+      return json(
+        await ctx.runAction(internal.auth.rotateAccountId, {
+          userId: member.userId,
+          requestId: newRequestId(),
+          keepSid: member.sid,
+        }),
+      );
+    } catch (err) {
+      return convexError(err);
+    }
   }),
 });
 
@@ -2238,12 +2275,13 @@ http.route({
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, { recentSession: true });
-    if (!member) return recentMemberSessionRequired();
+    if (!member?.sid) return recentMemberSessionRequired();
     const body = await readJson<{ response?: unknown; deviceLabel?: string }>(req);
     if (!body.response) return errorJson('validation', 'response required', 400);
     try {
       await ctx.runAction(internal.memberWebauthn.registerVerify, {
         userId: member.userId,
+        registrationSessionSid: member.sid,
         response: body.response,
         deviceLabel: typeof body.deviceLabel === 'string' ? body.deviceLabel : undefined,
         requestId: newRequestId(),
@@ -2323,6 +2361,9 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    if (member.source === 'token' && !hasScope(member.scopes, 'subscription:read')) {
+      return errorJson('auth.forbidden', 'Mirror access requires subscription:read', 403);
+    }
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'mirror.request',
       subject: member.userId,
@@ -2437,6 +2478,7 @@ http.route({
       quantity?: number;
       donationCents?: number;
       captchaToken?: string;
+      payCurrency?: string;
     }>(req);
     if (
       body.processor !== 'nowpayments' &&
@@ -2538,6 +2580,14 @@ http.route({
     if (kind === 'donation' && (donationCents === undefined || donationCents < 1)) {
       return errorJson('validation', 'a donation requires a positive donationCents', 400);
     }
+    // Direct NOWPayments checkout: the picked coin (checked against the
+    // admin's allowlist in the action). Shape only here.
+    if (
+      body.payCurrency !== undefined &&
+      (typeof body.payCurrency !== 'string' || !/^[a-z0-9]{2,20}$/i.test(body.payCurrency))
+    ) {
+      return errorJson('validation', 'payCurrency must be a coin ticker', 400);
+    }
     try {
       const result = await ctx.runAction(internal.billing.createCheckout, {
         userId: member?.userId,
@@ -2546,6 +2596,7 @@ http.route({
         kind,
         quantity: kind === 'gift' ? body.quantity : 1,
         donationCents,
+        payCurrency: body.processor === 'nowpayments' ? body.payCurrency : undefined,
       });
       return json(result);
     } catch (err) {
@@ -2565,6 +2616,19 @@ http.route({
       );
       return errorJson('billing.error', 'Checkout could not be started', 500);
     }
+  }),
+});
+
+// The coins a member may pick for a direct NOWPayments checkout (public: the
+// anonymous donate page needs it too). One cached appState read, no processor
+// call. Empty when direct checkout is off or has no coins.
+http.route({
+  path: '/api/v1/billing/coins',
+  method: 'GET',
+  handler: httpAction(async (ctx) => {
+    return json(await ctx.runQuery(internal.billing.publicDirectCoins, {}), 200, {
+      'cache-control': 'public, max-age=60',
+    });
   }),
 });
 
@@ -2681,35 +2745,41 @@ http.route({
   }),
 });
 
+// Apply the bootstrap IP budget before opening either enrollment envelope.
+async function admitAdminBootstrap(ctx: ActionCtx, req: Request): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  if (!ip) {
+    return errorJson(
+      'auth.ip_unresolved',
+      'Unable to establish your network address. Try again later or contact support.',
+      503,
+    );
+  }
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'admin.register.ip',
+    subject: await ipHashSubject(ip),
+  });
+  if (!rl.allowed) {
+    return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
+  return null;
+}
+
 http.route({
   path: '/api/admin/auth/register-bootstrap/options',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
-    const body = await readJson<{ username?: string; displayName?: string }>(req);
+  handler: sealed(async (ctx, req) => {
+    const body = await readJson<{
+      bootstrapSecret?: string;
+      username?: string;
+      displayName?: string;
+    }>(req);
     if (!body.username) return errorJson('validation', 'username required', 400);
-    // Per-IP throttle: this endpoint is an ONLINE ORACLE for the bootstrap
-    // secret (unlimited guesses otherwise) until the first credential exists.
-    // Fail closed like the other auth surfaces.
-    const ip = resolveClientIp(req);
-    if (!ip) {
-      return errorJson(
-        'auth.ip_unresolved',
-        'Unable to establish your network address. Try again later or contact support.',
-        503,
-      );
-    }
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'admin.register.ip',
-      subject: await ipHashSubject(ip),
-    });
-    if (!rl.allowed) {
-      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
-        retryAfterMs: rl.retryAfterMs,
-      });
-    }
     try {
       const out = await ctx.runAction(internal.webauthn.registerBootstrapOptions, {
-        bootstrapSecret: req.headers.get('x-admin-bootstrap-token') ?? '',
+        bootstrapSecret: typeof body.bootstrapSecret === 'string' ? body.bootstrapSecret : '',
         username: body.username,
         displayName: body.displayName,
       });
@@ -2717,20 +2787,24 @@ http.route({
     } catch (err) {
       return publicAuthError(err);
     }
-  }),
+  }, admitAdminBootstrap),
 });
 
 http.route({
   path: '/api/admin/auth/register-bootstrap/verify',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
-    const body = await readJson<{ adminId?: string; response?: unknown; deviceLabel?: string }>(
-      req,
-    );
+  handler: sealed(async (ctx, req) => {
+    const body = await readJson<{
+      bootstrapSecret?: string;
+      adminId?: string;
+      response?: unknown;
+      deviceLabel?: string;
+    }>(req);
     if (!body.adminId || !body.response)
       return errorJson('validation', 'adminId and response required', 400);
     try {
       const out = await ctx.runAction(internal.webauthn.registerBootstrapVerify, {
+        bootstrapSecret: typeof body.bootstrapSecret === 'string' ? body.bootstrapSecret : '',
         adminId: body.adminId as never,
         response: body.response,
         deviceLabel: body.deviceLabel,
@@ -2739,7 +2813,7 @@ http.route({
     } catch (err) {
       return publicAuthError(err);
     }
-  }),
+  }, admitAdminBootstrap),
 });
 
 http.route({
@@ -3881,6 +3955,10 @@ http.route({
       ipHeader?: string;
       geoMode?: string;
     }>(req);
+    const geoMode = sanitizeGeoMode(body.geoMode);
+    if (body.forwardIp === true && geoMode === 'full' && !admin.adminUserId) {
+      return errorJson('auth.forbidden', 'Forwarding visitor IPs requires an admin session', 403);
+    }
     // Hash the CLEANED url (what will actually be stored/used) — sanitize here
     // with the same function the mutation applies, so the hash matches.
     const cleanUrl = sanitizeUmamiUrl(typeof body.umamiUrl === 'string' ? body.umamiUrl : '');
@@ -3893,7 +3971,7 @@ http.route({
           websiteId: typeof body.websiteId === 'string' ? body.websiteId : '',
           forwardIp: body.forwardIp === true,
           ipHeader: typeof body.ipHeader === 'string' ? body.ipHeader : '',
-          geoMode: typeof body.geoMode === 'string' ? body.geoMode : 'full',
+          geoMode,
           umamiUrlHash: cleanUrl === '' ? '' : (await sha256Hex(cleanUrl)).slice(0, 8),
           actorAdminId: admin.adminUserId,
         }),
@@ -4353,6 +4431,17 @@ http.route({
         processor: body.processor,
       }),
     );
+  }),
+});
+
+// Read-only check of the direct-checkout coin allowlist against the
+// NOWPayments account (Admin -> Billing "Check coins"). Creates nothing.
+http.route({
+  path: '/api/v1/admin/billing/check-coins',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runAction(internal.billing.checkDirectCoins, {}));
   }),
 });
 

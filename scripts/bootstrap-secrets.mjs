@@ -19,7 +19,17 @@
 // rails) cannot be generated and must be filled by hand before `up`.
 //
 // Run from the repo root:  bun scripts/bootstrap-secrets.mjs
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fchmodSync,
+  fstatSync,
+  ftruncateSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { generateHpkeKeys } from './gen-hpke-keys.mjs';
 
@@ -45,19 +55,52 @@ const randHex = (n = 32) =>
 
 const isPlaceholder = (v) => v === undefined || v === '' || /CHANGE_ME/.test(v);
 
+// Open without following symlinks and check the exact file before reading or
+// writing secrets. O_NONBLOCK prevents an unexpected FIFO blocking this check.
+function withPrivateEnv(file, flags, operation) {
+  const fd = openSync(file, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.nlink !== 1 || (process.getuid && info.uid !== process.getuid())) {
+      throw new Error(`Expected an owned, regular environment file: ${path.basename(file)}`);
+    }
+    fchmodSync(fd, 0o600);
+    return operation(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function ensureFromExample(file) {
-  if (existsSync(file)) return;
+  try {
+    withPrivateEnv(file, constants.O_RDONLY, () => {});
+    return;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
   // Prefer the file's own example (.env.convex.example); the TARGET env file
   // falls back to .env.beta.example when it has none (.env.prod).
   const own = `${file}.example`;
   const example = existsSync(own) ? own : path.join(ROOT, TARGET_EXAMPLE);
-  copyFileSync(example, file);
+  const contents = readFileSync(example);
+  withPrivateEnv(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, (fd) => {
+    writeFileSync(fd, contents);
+  });
   console.log(`[bootstrap] created ${path.basename(file)} from ${path.basename(example)}`);
+}
+
+function writePrivateEnv(file, contents) {
+  withPrivateEnv(file, constants.O_WRONLY, (fd) => {
+    ftruncateSync(fd, 0);
+    writeFileSync(fd, contents);
+  });
 }
 
 /** Parse a KEY=VALUE file into { lines, get(key) }; preserves comments + order. */
 function readEnv(file) {
-  const lines = (existsSync(file) ? readFileSync(file, 'utf8') : '').split('\n');
+  const lines = withPrivateEnv(file, constants.O_RDONLY, (fd) => readFileSync(fd, 'utf8')).split(
+    '\n',
+  );
   const get = (key) => {
     for (const line of lines) {
       const m = /^([A-Z0-9_]+)=(.*)$/.exec(line);
@@ -97,6 +140,7 @@ for (const [key, n] of [
   // FCP's own client check: the edge-client-check service and (through the
   // deployer) the deployment read it from here.
   ['EDGE_CLIENT_CHECK_SECRET', 32],
+  ['HPKE_EPOCH_STORE_TOKEN', 32],
 ]) {
   if (isPlaceholder(beta.get(key))) {
     setEnv(beta, key, randHex(n));
@@ -139,8 +183,8 @@ if (!hpkeSet && !pinSet) {
   );
 }
 
-if (betaDirty) writeFileSync(ENV_BETA, beta.lines.join('\n'));
-if (convexDirty) writeFileSync(ENV_CONVEX, convex.lines.join('\n'));
+if (betaDirty) writePrivateEnv(ENV_BETA, beta.lines.join('\n'));
+if (convexDirty) writePrivateEnv(ENV_CONVEX, convex.lines.join('\n'));
 
 // Summary.
 console.log(

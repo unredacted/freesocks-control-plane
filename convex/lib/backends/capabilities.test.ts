@@ -40,6 +40,10 @@ describe('capability record ⇔ provider methods', () => {
     expect(caps.nodeRestart).toBe(
       !!provider.placementNodes && !!provider.backendWrites?.restartNode,
     );
+    // No provider sends a speed cap yet (no panel field, no Xray per-user
+    // rate): the flag stays false until one does, so nothing promises a cap
+    // a backend cannot apply.
+    expect(caps.speedLimit).toBe(false);
     // Hiding a Host is only meaningful where FCP manages Hosts at all.
     if (caps.hostDisable) expect(caps.hostManagement).toBe(true);
     // A UDP transport is set up through the profile template, so only a

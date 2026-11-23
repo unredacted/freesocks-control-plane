@@ -372,17 +372,19 @@ export const contextFor = internalQuery({
     countryContextOf(ctx.db, await ctx.db.get(subscriptionId), nodeName),
 });
 
-/** The account route's reading: whether detection is on, and the own-exit set to compare with. */
-export const readingContext = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const cfg = await resolveMemberCountryConfig(ctx.db);
-    return {
-      detect: cfg.detect,
-      ownExits: cfg.detect ? await readOwnExits(ctx.db) : EMPTY_OWN_EXITS,
-    };
-  },
-});
+/**
+ * The account route's reading: whether detection is on, and the own-exit set
+ * to compare with. Read inside the account view's query (account.accountViewData).
+ */
+export async function readingContextOf(
+  db: DatabaseReader,
+): Promise<{ detect: boolean; ownExits: OwnExits }> {
+  const cfg = await resolveMemberCountryConfig(db);
+  return {
+    detect: cfg.detect,
+    ownExits: cfg.detect ? await readOwnExits(db) : EMPTY_OWN_EXITS,
+  };
+}
 
 /** The client-ip diagnostic: the own-exit set whatever detection says. */
 export const ownExitsForDiagnostic = internalQuery({
@@ -420,28 +422,31 @@ export const memberView = internalQuery({
     // picked (it is stored only when the key is issued). Ignored once a key exists.
     modeSlug: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, modeSlug }) => {
-    const user = await ctx.db.get(userId);
-    const { cfg, listed } = await settingsAndList(ctx.db);
-    const subs = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
-      .collect();
-    const sub = subs.find((s) => s._id === user?.currentSubscriptionId) ?? subs[0] ?? null;
-    let family: MemberFamily = sub ? await memberFamilyOf(ctx.db, sub, user) : 'none';
-    if (!sub && modeSlug && user) {
-      const tier = await ctx.db.get(user.tierId);
-      family = tier ? await familyOfMode(ctx.db, tier.backend, modeSlug) : 'none';
-    }
-    const view = memberCountryView(family, sub ? fieldsOf(sub) : {}, cfg, listed, Date.now());
-    return {
-      ...view,
-      options: view.applies ? listed : [],
-      detect: cfg.detect,
-      stickyDays: cfg.stickyDays,
-    };
-  },
+  handler: (ctx, { userId, modeSlug }) => memberViewOf(ctx.db, userId, modeSlug),
 });
+
+/** `memberView` for a caller already in a query (the account view). */
+export async function memberViewOf(db: DatabaseReader, userId: Id<'users'>, modeSlug?: string) {
+  const user = await db.get(userId);
+  const { cfg, listed } = await settingsAndList(db);
+  const subs = await db
+    .query('subscriptions')
+    .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+    .collect();
+  const sub = subs.find((s) => s._id === user?.currentSubscriptionId) ?? subs[0] ?? null;
+  let family: MemberFamily = sub ? await memberFamilyOf(db, sub, user) : 'none';
+  if (!sub && modeSlug && user) {
+    const tier = await db.get(user.tierId);
+    family = tier ? await familyOfMode(db, tier.backend, modeSlug) : 'none';
+  }
+  const view = memberCountryView(family, sub ? fieldsOf(sub) : {}, cfg, listed, Date.now());
+  return {
+    ...view,
+    options: view.applies ? listed : [],
+    detect: cfg.detect,
+    stickyDays: cfg.stickyDays,
+  };
+}
 
 /** The answer a key holds (`sniRegion`), for a caller that just wrote one. */
 export const keyChoice = internalQuery({

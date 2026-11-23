@@ -13,6 +13,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { SwitchServerReason } from '../src/shared/contracts/switchServerReasons';
 import { signValue } from './lib/cookies';
+import { carryPeriodEnd } from './lib/quotaCarry';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -59,6 +60,145 @@ async function seedUser(
     ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
   );
 }
+
+describe('quota carryover across re-issues (Review D-M3)', () => {
+  const GB = 1024 * 1024 * 1024; // the mock backend reports 1 GB used on every key
+
+  test('a chain of regenerates keeps every earlier key in the period count', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+
+    await t.run(async (ctx) => {
+      const current = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      const subs = await ctx.db.query('subscriptions').collect();
+      const live = subs.find((s) => s._id === current)!;
+      const old = subs.filter((s) => s._id !== current);
+      // Two earlier keys of 1 GB each.
+      expect(live.periodCarryBytes).toBe(2 * GB);
+      expect(live.graceBaseUsedBytes).toBeUndefined();
+      expect(old.map((s) => s.periodCarryBytes ?? 0).sort()).toEqual([0, GB]);
+      // Each superseded key records the usage its successor already counted.
+      expect(old.map((s) => s.graceBaseUsedBytes)).toEqual([GB, GB]);
+    });
+  });
+
+  test('an unmetered tier carries nothing', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    await t.run((ctx) => ctx.db.patch(tierId, { monthlyTrafficGb: 0, isDefaultFree: false }));
+    const userId = await seedUser(t, tierId);
+
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+
+    await t.run(async (ctx) => {
+      for (const s of await ctx.db.query('subscriptions').collect()) {
+        expect(s.periodCarryBytes).toBeUndefined();
+        expect(s.graceBaseUsedBytes).toBeUndefined();
+      }
+    });
+  });
+
+  test('the tombstone sweep charges grace-period spending to the current key once', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const [oldId, currentId] = await t.run(async (ctx) => {
+      const current = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      const old = (await ctx.db.query('subscriptions').collect()).find((s) => s._id !== current)!;
+      // The old key had moved nothing when it was replaced; it then spent
+      // 1 GB (what the mock reports) during the grace. Make the grace elapse.
+      await ctx.db.patch(old._id, { graceBaseUsedBytes: 0, deletedAt: Date.now() - 60_000 });
+      return [old._id, current];
+    });
+
+    await t.action(internal.lifecycle.sweepTombstones, {});
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(currentId))!.periodCarryBytes).toBe(2 * GB);
+      expect((await ctx.db.get(oldId))!.graceBaseUsedBytes).toBe(GB);
+    });
+    // A second settlement of the same reading charges nothing more.
+    await t.mutation(internal.subscriptions.recordGraceSpend, {
+      subscriptionId: oldId,
+      usedBytes: GB,
+    });
+    expect((await t.run((ctx) => ctx.db.get(currentId)))!.periodCarryBytes).toBe(2 * GB);
+  });
+
+  test('grace spending after a provider counter reset is still charged', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const [oldId, currentId] = await t.run(async (ctx) => {
+      const current = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      const old = (await ctx.db.query('subscriptions').collect()).find((s) => s._id !== current);
+      // Replaced at 5 GB; the counter then reset and the old key moved 1 GB
+      // (what the mock reports) in the new period before the sweep.
+      await ctx.db.patch(old!._id, { graceBaseUsedBytes: 5 * GB, deletedAt: Date.now() - 60_000 });
+      await ctx.db.patch(current, { periodCarryBytes: undefined, periodCarryUntil: undefined });
+      return [old!._id, current];
+    });
+
+    await t.action(internal.lifecycle.sweepTombstones, {});
+
+    const current = await t.run((ctx) => ctx.db.get(currentId));
+    expect(current!.periodCarryBytes).toBe(GB);
+    expect((await t.run((ctx) => ctx.db.get(oldId)))?.graceBaseUsedBytes).toBe(GB);
+  });
+
+  test('a carry runs to the end of the period and the tier push respects it', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const current = await t.run(async (ctx) => {
+      const row = await ctx.db.get((await ctx.db.get(userId))!.currentSubscriptionId!);
+      return row!;
+    });
+    expect(current.periodCarryUntil).toBe(carryPeriodEnd('MONTH', current._creationTime));
+    const pushed = await t.query(internal.lifecycle.activeSubAndTier, { userId });
+    expect(pushed!.trafficLimitBytes).toBe(50 * GB - GB);
+  });
+
+  test('the expiry cron restores the full limit and drops the carry', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const currentId = await t.run(async (ctx) => {
+      const id = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      await ctx.db.patch(id, { periodCarryUntil: Date.now() - 1 });
+      return id;
+    });
+    const due = await t.query(internal.subscriptions.findExpiredCarries, {
+      now: Date.now(),
+      cursor: null,
+      numItems: 10,
+    });
+    expect(due.rows).toEqual([expect.objectContaining({ restoreLimitBytes: 50 * GB })]);
+
+    await t.action(internal.lifecycle.expireQuotaCarries, {});
+
+    const row = await t.run((ctx) => ctx.db.get(currentId));
+    expect(row!.periodCarryBytes).toBeUndefined();
+    expect(row!.periodCarryUntil).toBeUndefined();
+    expect(
+      (await t.query(internal.lifecycle.activeSubAndTier, { userId }))!.trafficLimitBytes,
+    ).toBe(50 * GB);
+  });
+});
 
 describe('account.regenerate saga', () => {
   test('first regenerate creates an active sub and repoints the user', async () => {

@@ -133,6 +133,7 @@ describe('registerBootstrapVerify', () => {
     const { adminId } = await seedAdminWithCredential(t);
     await expect(
       t.action(internal.webauthn.registerBootstrapVerify, {
+        bootstrapSecret: 'correct-secret',
         adminId,
         response: { id: 'x', rawId: 'x', response: {}, type: 'public-key' },
       }),
@@ -153,6 +154,7 @@ describe('registerBootstrapVerify', () => {
     );
     await expect(
       t.action(internal.webauthn.registerBootstrapVerify, {
+        bootstrapSecret: 'correct-secret',
         adminId,
         response: { id: 'x', rawId: 'x', response: {}, type: 'public-key' },
       }),
@@ -191,6 +193,7 @@ describe('registerBootstrapVerify', () => {
     } as unknown as Awaited<ReturnType<typeof verifyRegistrationResponse>>);
 
     const res = await t.action(internal.webauthn.registerBootstrapVerify, {
+      bootstrapSecret: 'correct-secret',
       adminId,
       response: { id: 'new-cred-id', rawId: 'new-cred-id', response: {}, type: 'public-key' },
       deviceLabel: 'My Key',
@@ -645,6 +648,7 @@ describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
     await t.action(internal.webauthn.registerInviteOptions, { invite: token });
     await expect(
       t.action(internal.webauthn.registerBootstrapVerify, {
+        bootstrapSecret: 'correct-secret',
         adminId: adminUserId,
         response: {},
       }),

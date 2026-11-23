@@ -190,18 +190,6 @@ export const credentialByCredentialId = internalQuery({
       .unique(),
 });
 
-export const bumpCredentialCounter = internalMutation({
-  args: { credentialId: v.string(), newCounter: v.number() },
-  handler: async (ctx, { credentialId, newCounter }) => {
-    const row = await ctx.db
-      .query('passkeyCredentials')
-      .withIndex('by_credential_id', (q) => q.eq('credentialId', credentialId))
-      .unique();
-    if (row) await ctx.db.patch(row._id, { counter: newCounter, lastUsedAt: Date.now() });
-    return null;
-  },
-});
-
 // --- assertion challenges (replaces the webauthn:assert:<id> KV entry) ---
 
 export const insertAuthChallenge = internalMutation({
@@ -389,7 +377,10 @@ export const revokeCredential = internalMutation({
           'Cannot revoke the last passkey that can sign in. Register another passkey (or admin) first.',
       });
     }
-    await ctx.db.patch(cred.adminUserId, { pendingInviteId: undefined });
+    await ctx.db.patch(cred.adminUserId, {
+      pendingInviteId: undefined,
+      legacySessionsRevoked: true,
+    });
     await ctx.db.delete(credentialId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -400,6 +391,77 @@ export const revokeCredential = internalMutation({
       payload: { deviceLabel: cred.deviceLabel ?? null },
     });
     return { ok: true as const, revoked: true };
+  },
+});
+
+/** Export the current approved administrator credentials through the instance-admin CLI. */
+export const recoveryPasskeyInventory = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const active = new Map(
+      (await ctx.db.query('adminUsers').collect())
+        .filter((admin) => admin.isActive)
+        .map((admin) => [admin._id, admin.username]),
+    );
+    const credentials = await ctx.db.query('passkeyCredentials').collect();
+    return {
+      approved: credentials.flatMap((credential) => {
+        const username = active.get(credential.adminUserId);
+        return username
+          ? [{ username, credentialId: credential.credentialId, publicKey: credential.publicKey }]
+          : [];
+      }),
+    };
+  },
+});
+
+/** Reconcile a restored snapshot against a separately maintained current inventory. */
+export const reconcileRestoredAdmins = internalMutation({
+  args: {
+    approved: v.array(
+      v.object({ username: v.string(), credentialId: v.string(), publicKey: v.string() }),
+    ),
+  },
+  handler: async (ctx, { approved }) => {
+    const credentials = await ctx.db.query('passkeyCredentials').collect();
+    const admins = await ctx.db.query('adminUsers').collect();
+    const usernames = new Map(admins.map((admin) => [admin._id, admin.username]));
+    const allowed = new Map(approved.map((credential) => [credential.credentialId, credential]));
+    if (allowed.size !== approved.length) throw new Error('Duplicate approved credential');
+
+    const retained = credentials.filter((credential) => {
+      const reference = allowed.get(credential.credentialId);
+      return (
+        reference &&
+        reference.username === usernames.get(credential.adminUserId) &&
+        reference.publicKey === credential.publicKey
+      );
+    });
+    if (retained.length === 0)
+      throw new Error('No approved administrator passkey in this snapshot');
+
+    const retainedIds = new Set(retained.map((credential) => credential._id));
+    const activeAdminIds = new Set(retained.map((credential) => credential.adminUserId));
+    for (const credential of credentials) {
+      if (!retainedIds.has(credential._id)) await ctx.db.delete(credential._id);
+    }
+    const now = Date.now();
+    for (const admin of admins) {
+      await ctx.db.patch(admin._id, {
+        isActive: activeAdminIds.has(admin._id),
+        pendingInviteId: undefined,
+        legacySessionsRevoked: true,
+        sessionGeneration: (admin.sessionGeneration ?? 0) + 1,
+        updatedAt: now,
+      });
+    }
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'admin.restore.reconciled',
+      targetType: 'adminUser',
+      payload: { activeAdmins: activeAdminIds.size, retainedPasskeys: retained.length },
+    });
+    return { activeAdmins: activeAdminIds.size, retainedPasskeys: retained.length };
   },
 });
 

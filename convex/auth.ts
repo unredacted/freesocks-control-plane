@@ -200,7 +200,7 @@ export const rotateAccountId = internalAction({
     requestId: v.optional(v.string()),
     /** The caller's current session sid (cookie auth): kept alive; every OTHER
      *  session is revoked, since the credential that minted them is now dead. */
-    keepSid: v.optional(v.string()),
+    keepSid: v.string(),
   },
   handler: async (ctx, { userId, requestId, keepSid }): Promise<{ accountId: string }> => {
     const minted = await ctx.runAction(internal.accountId.mintForUser, {
