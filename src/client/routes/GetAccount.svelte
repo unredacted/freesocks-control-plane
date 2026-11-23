@@ -786,6 +786,11 @@
   {:else}
     <!-- STEP 3 (key issued): the pass + setup. This is the flow's destination. -->
     <div id="get-key" class="scroll-mt-24 space-y-6">
+      {#if !isCurrentMember}
+        <!-- First on the step: what the free key includes, and what a
+             membership adds. -->
+        <MembershipNudge />
+      {/if}
       {#if suggestMirror && suggestCountry}
         <!-- Before the pass: it says the main link may be blocked here, and the
              link it lets the member pick is the one the pass shows. -->
@@ -863,9 +868,6 @@
         />
         <RawConfig />
       {/if}
-      {#if !isCurrentMember}
-        <MembershipNudge />
-      {/if}
       <p class="text-sm text-muted-foreground">
         {t('get.manageHintPrefix')}
         <Link href="/account" class="link-brand text-foreground">{t('get.manageLinkLabel')}</Link>.
@@ -891,7 +893,7 @@
   {/if}
 
   {#if config.data?.site?.supportEmail}
-    <p class="text-sm text-muted-foreground">
+    <p class="text-center text-sm text-muted-foreground">
       {t('support.getAccountLine')}
       <a class="link-brand text-foreground" href="mailto:{config.data.site.supportEmail}">
         {config.data.site.supportEmail}

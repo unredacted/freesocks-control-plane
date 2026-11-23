@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * A short membership strip shown once a free member's key is set up
-   * (/get-account, under the setup steps): the free allowance next to what a
+   * (/get-account, first on the final step): the free allowance next to what a
    * membership adds, and one action to the account's Membership tab. Renders
    * nothing unless billing is on and a membership tier exists.
    */

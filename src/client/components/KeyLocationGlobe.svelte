@@ -35,7 +35,7 @@
     currentLabel: string | null;
     size?: number;
   }
-  let { locations, currentCode, currentLabel, size = 240 }: Props = $props();
+  let { locations, currentCode, currentLabel, size = 288 }: Props = $props();
 
   const dotted = $derived(locations.filter((l) => l.coords != null));
   // Focus = the key's location when it has coordinates; otherwise the first
