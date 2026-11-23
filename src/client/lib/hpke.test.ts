@@ -199,15 +199,21 @@ test('connection attestation applies a signed revocation to the cached recipient
   vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
   vi.resetModules();
   const pinned = await import('./hpke');
-  const fetchKeys = vi.fn();
-  fetchKeys.mockImplementation(() => Response.json({ epoch, revocation }));
+  // The keys endpoint answers from this queue (then the default); /healthz
+  // answers the server clock.
+  const keyReplies: Array<() => Response> = [];
+  const fetchKeys = vi.fn((input: string | URL) =>
+    String(input) === '/healthz'
+      ? Response.json({ timestamp: new Date().toISOString() })
+      : (keyReplies.shift() ?? (() => Response.json({ epoch, revocation })))(),
+  );
   vi.stubGlobal('fetch', fetchKeys);
   try {
-    fetchKeys.mockImplementationOnce(() => new Response(null, { status: 503 }));
+    keyReplies.push(() => new Response(null, { status: 503 }));
     await expect(
       pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
     ).rejects.toThrow(/encryption key is unavailable/);
-    fetchKeys.mockImplementationOnce(() => Response.json({ epoch }));
+    keyReplies.push(() => Response.json({ epoch }));
     await expect(
       pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
     ).resolves.toBeDefined();
@@ -219,6 +225,39 @@ test('connection attestation applies a signed revocation to the cached recipient
     await expect(
       pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
     ).rejects.toThrow();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  }
+});
+
+test('a device clock an hour fast still seals to a current epoch', async () => {
+  const manifestSk = new Uint8Array(32).fill(12);
+  const publicKey = bytesToB64Url(await serializePublicKey(kp.publicKey));
+  const serverNow = Date.now() - 60 * 60_000; // the device runs an hour ahead
+  const notAfter = serverNow + 20 * 60_000; // already past on the device's clock
+  const epoch = {
+    kid,
+    publicKey,
+    notAfter,
+    sig: bytesToB64Url(
+      signManifest(manifestSk, epochStatement({ kid, publicKeyB64: publicKey, notAfter })),
+    ),
+  };
+  vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
+  vi.resetModules();
+  const pinned = await import('./hpke');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: string | URL) =>
+      String(input) === '/healthz'
+        ? Response.json({ timestamp: new Date(serverNow).toISOString() })
+        : Response.json({ epoch }),
+    ),
+  );
+  try {
+    const out = await pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}');
+    expect(out?.recipientKid).toBe(kid);
   } finally {
     vi.unstubAllGlobals();
     vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);

@@ -60,6 +60,32 @@ export const maybeRotate = internalMutation({
   },
 });
 
+const REMINT_KEY = 'hpke:remintRequestedAt';
+const REMINT_THROTTLE_MS = 20_000;
+
+/**
+ * The key endpoint found no live epoch (the volatile store restarted, or a
+ * rotation failed): mint one now instead of at the next cron tick, since a
+ * manifest-pinned client cannot seal a login until one exists. Throttled so a
+ * burst of clients schedules one maintenance run, not one each.
+ */
+export const requestRemint = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    if (!process.env.FS_MANIFEST_SK) return null;
+    const now = Date.now();
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', REMINT_KEY))
+      .unique();
+    if (row && now - Number(row.value) < REMINT_THROTTLE_MS) return null;
+    if (row) await ctx.db.patch(row._id, { value: String(now), updatedAt: now });
+    else await ctx.db.insert('appState', { key: REMINT_KEY, value: String(now), updatedAt: now });
+    await ctx.scheduler.runAfter(0, internal.lib.hpkeCrypto.maintainEpoch, {});
+    return null;
+  },
+});
+
 export const insert = internalMutation({
   args: {
     kid: v.string(),

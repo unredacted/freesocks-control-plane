@@ -688,6 +688,11 @@ const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> 
     ctx.runQuery(internal.keyRevocations.current, {}),
   ]);
   const epoch = candidate && !revocation?.revokedKids.includes(candidate.kid) ? candidate : null;
+  // No live epoch while signing is on: mint one now (throttled), not at the
+  // next cron tick, so pinned clients can seal again within seconds.
+  if (!epoch && process.env.FS_MANIFEST_SK) {
+    await ctx.runMutation(internal.keyEpochs.requestRemint, {}).catch(() => {});
+  }
   return json(
     {
       epoch: epoch

@@ -110,7 +110,11 @@ failed, because only some failures mean someone swapped a key:
 
 A client with a pinned manifest waits for a valid signed epoch when sealing a
 request. If the endpoint is unavailable or all published epochs have expired,
-the browser reports the failure without sending the request. Builds configured
+the browser reports the failure without sending the request. It judges expiry on
+the server's clock (the `/healthz` offset PoP already uses, bounded to two hours),
+so a device whose clock runs fast still sees a current epoch as current. When the
+key endpoint finds no live epoch it asks for one at once (`keyEpochs.requestRemint`,
+throttled) instead of waiting for the next rotation tick. Builds configured
 with only a static recipient have no client-side epoch or revocation guarantee.
 
 `warn`, by contrast, is **sticky**: once a swapped or revoked key has been seen, only a

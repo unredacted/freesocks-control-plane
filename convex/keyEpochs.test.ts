@@ -258,3 +258,21 @@ describe('hpkeCrypto actions (node runtime)', () => {
     expect(out.plaintext).toEqual({ accountId: '2'.repeat(32), captchaToken: 'tok2' });
   });
 });
+
+describe('requestRemint', () => {
+  test('schedules one maintenance run per throttle window, only while signing is on', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.keyEpochs.requestRemint, {});
+    expect(await t.run((ctx) => ctx.db.query('appState').collect())).toHaveLength(0);
+
+    vi.stubEnv('FS_MANIFEST_SK', 'set');
+    try {
+      await t.mutation(internal.keyEpochs.requestRemint, {});
+      await t.mutation(internal.keyEpochs.requestRemint, {});
+      const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+      expect(scheduled.filter((f) => f.name.includes('maintainEpoch'))).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

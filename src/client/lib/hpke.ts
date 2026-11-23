@@ -29,6 +29,7 @@ import {
   verifyManifestPq,
 } from '../../shared/crypto/manifest';
 import { markSealedResponse } from './hpke-status.svelte';
+import { serverTimeOffset } from './serverClock';
 
 const PK_B64 = import.meta.env.VITE_FS_SERVER_HPKE_PK as string | undefined;
 const KID = import.meta.env.VITE_FS_SERVER_HPKE_KID as string | undefined;
@@ -138,6 +139,23 @@ let _epoch: EpochKey | null = null;
 let _epochFetch: Promise<void> | null = null;
 /** Stop using an epoch this long before its notAfter (clock skew + in-flight margin). */
 const EPOCH_MARGIN_MS = 30_000;
+/**
+ * The most server-time correction the epoch freshness check accepts. Without
+ * it, a device clock running more than an epoch's lifetime (30 min) fast
+ * would treat every epoch as expired and, with no static fallback, could
+ * never seal a login. The bound keeps a relay that forges the clock source
+ * from reviving epochs older than this; their seeds are long destroyed.
+ */
+const EPOCH_CLOCK_CORRECTION_MAX_MS = 2 * 60 * 60_000;
+
+/** "Now" on the server's clock, for judging epoch expiry. */
+async function epochNow(): Promise<number> {
+  const offset = await serverTimeOffset();
+  return (
+    Date.now() +
+    Math.max(-EPOCH_CLOCK_CORRECTION_MAX_MS, Math.min(EPOCH_CLOCK_CORRECTION_MAX_MS, offset))
+  );
+}
 
 // --- revoked-kid list (Phase 3c): a manifest-signed, monotonic-versioned list
 // of compromised kids. Persisted so it survives reload and applies before the
@@ -268,7 +286,7 @@ async function refreshEpoch(): Promise<void> {
       e.sigPq,
     );
     // Ignore a tampered, expired, or revoked epoch key.
-    if (!ok || e.notAfter <= Date.now() || isRevoked(e.kid)) return;
+    if (!ok || e.notAfter <= (await epochNow()) || isRevoked(e.kid)) return;
     const pub = await deserializePublicKey(b64UrlToBytes(e.publicKey));
     if (isRevoked(e.kid)) return;
     _epoch = { kid: e.kid, pub, notAfter: e.notAfter };
@@ -279,10 +297,10 @@ async function refreshEpoch(): Promise<void> {
 
 /** The current verified, unexpired epoch key, or null. */
 async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
+  if (!MANIFEST_PK) return null; // a static-only build has no epochs
+  const now = await epochNow();
   const fresh = () =>
-    _epoch && _epoch.notAfter - EPOCH_MARGIN_MS > Date.now() && !isRevoked(_epoch.kid)
-      ? _epoch
-      : null;
+    _epoch && _epoch.notAfter - EPOCH_MARGIN_MS > now && !isRevoked(_epoch.kid) ? _epoch : null;
   if (fresh()) return { kid: _epoch!.kid, pub: _epoch!.pub };
   _epochFetch ??= refreshEpoch().finally(() => {
     _epochFetch = null;
@@ -362,7 +380,7 @@ export async function verifyConnection(): Promise<ConnectionAttestation> {
       ? 'signature'
       : isRevoked(e.kid)
         ? 'revoked'
-        : e.notAfter <= Date.now()
+        : e.notAfter <= (await epochNow())
           ? 'expired'
           : undefined;
     return {

@@ -656,7 +656,14 @@ minutes instead of a day later; a failed upload still prunes local copies to
 X25519 recipient; keep the private half offline) so dumps are encrypted
 client-side before upload. Offsite upload requires this recipient or an explicit
 `BACKUP_ALLOW_UNENCRYPTED=true` opt-in. A dump carries `accountIdHash` and live
-subscription tokens.
+subscription tokens, and **every Convex deployment env var**: Convex keeps them in
+its `_environment_variables` system table, so the session signing keys,
+`ACCOUNT_ID_PEPPER`, the HPKE static and manifest signing keys, processor
+credentials and `HPKE_EPOCH_STORE_TOKEN` are all inside, as are the panel API
+tokens in `backendServers`. Treat a dump as the whole secret set: keep the age
+private key offline, and after a suspected dump leak rotate those secrets and the
+panel tokens. The epoch seeds are the exception (they live only in the volatile
+store), which is why past sealed logins stay private even then.
 Also back up the **secret set** (the `bunx convex env` values, especially
 `ACCOUNT_ID_PEPPER` — losing it invalidates every account number). Export it
 alongside each dump, encrypted with the same age recipient, through the
@@ -682,8 +689,8 @@ Backup coverage notes:
 - The sidecar prunes **local** copies only — offsite bucket objects grow
   forever. Set an S3 lifecycle rule on the bucket (e.g. expire
   `db-backups/*` after 30 days) to match the local `BACKUP_RETENTION` intent.
-- `backup.sh` runs a **pre-dump sanity check** (`tiers` must exist and be
-  non-empty) so a `POSTGRES_DB`/`INSTANCE_NAME` mismatch fails the heartbeat
+- `backup.sh` runs a **pre-dump sanity check** (Convex's internal `documents`
+  table must exist and hold rows) so a `POSTGRES_DB`/`INSTANCE_NAME` mismatch fails the heartbeat
   instead of green-dumping the wrong (empty) database. `POSTGRES_DB` is an
   `.env.beta` var shared by the postgres env, its healthcheck, and the backup
   sidecar — set it there, never by editing the compose file.

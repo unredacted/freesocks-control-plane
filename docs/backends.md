@@ -655,27 +655,29 @@ the multi-backend / Outline case.
 ## Traffic quota across re-issues
 
 A regenerate, a backend, mode or server switch that re-issues, and a country-exit move all mint
-a new provider identity with a fresh traffic counter. On a tier with a traffic cap the new key's
-limit is the tier limit less what the member already spent this period
-(`account.ts` `carriedTrafficLimit`):
+a new provider identity with a fresh traffic counter. On a tier with a traffic cap, each key
+carries what earlier keys spent in the same traffic period (`convex/lib/quotaCarry.ts`):
 
-- **Spent this period** = the old key's live usage plus the bytes that key had itself carried
-  in (`subscriptions.periodCarryBytes`), so a chain of re-issues never forgets an earlier key.
-  The new row stores the total as its own `periodCarryBytes`.
+- **Spent this period** = the old key's live usage plus the bytes that key itself still carried
+  in, so a chain of re-issues never forgets an earlier key. The new row stores the total as
+  `subscriptions.periodCarryBytes`, with `periodCarryUntil` = the start of the next period in
+  UTC (calendar month for `MONTH`, Monday for `WEEK`, midnight for `DAY`, never for
+  `NO_RESET`).
+- **Every limit writer subtracts a live carry** through `keyTrafficLimit`: issuance, the tier
+  push (`lifecycle.activeSubAndTier`), the donation re-cap (a carrying key leaves the bulk call
+  and gets its own limit) and the grace settlement. None of them hands the spent bytes back
+  mid-period.
 - **The grace.** The superseded key keeps routing for 24 hours. Its tombstone records the usage
   already counted (`graceBaseUsedBytes`), and the tombstone sweep charges anything spent after
-  that to the member's current key before deleting the old one (`lifecycle.settleGraceUsage`):
-  it lowers the current key's provider limit and adds the bytes to its `periodCarryBytes`. The
-  spend is recorded before the provider update, so a retried sweep never charges it twice.
-- **A new period.** A carry is dropped once the old key's counter reset after the key was
-  issued (Remnawave's `lastTrafficResetAt`), or, for a resetting strategy with no reset stamp
-  (Outline), a month after issuance.
+  that to the member's current key before deleting the old one (`lifecycle.settleGraceUsage`).
+  The spend is recorded before the provider update, so a retried sweep never charges it twice.
+- **A new period.** The hourly `quota-carry-expire` cron restores the full tier limit on keys
+  whose `periodCarryUntil` has passed and drops the carry (index `by_period_carry_until`). The
+  provider resets its own counter on its own schedule, so the two can be apart by the panel's
+  timezone offset. An admin traffic reset drops the carry too.
 - **Best-effort.** A failed usage read issues at the full tier limit and a failed settlement
   leaves the member the bytes: a member replacing a key on a failing server must still get one.
   A fully spent quota carries as 1 byte, never 0 (0 means unlimited to Remnawave).
-
-The donation-bonus re-cap and a tier push set the tier limit outright, so they also clear a
-carried reduction until the next re-issue.
 
 ## Revoking a key with an open Hysteria connection
 
