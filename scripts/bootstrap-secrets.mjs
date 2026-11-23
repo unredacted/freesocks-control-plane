@@ -6,7 +6,8 @@
 //
 //   target env  (container infra, read by compose; .env.beta by default —
 //       override with `bun scripts/bootstrap-secrets.mjs .env.prod` or
-//       FCP_ENV_FILE): INSTANCE_SECRET, POSTGRES_PASSWORD, CAP_ADMIN_KEY
+//       FCP_ENV_FILE): INSTANCE_SECRET, POSTGRES_PASSWORD, BACKUP_DB_PASSWORD,
+//       CAP_ADMIN_KEY
 //       (random) + the CDN-blinding PUBLIC pins VITE_FS_* (baked into the SPA
 //       build)
 //   .env.convex (Convex deployment env, applied by the deployer):
@@ -93,6 +94,8 @@ const generated = [];
 for (const [key, n] of [
   ['INSTANCE_SECRET', 32],
   ['POSTGRES_PASSWORD', 24],
+  // The backup sidecar's read-only Postgres role (docker/db-roles.sh).
+  ['BACKUP_DB_PASSWORD', 24],
   ['CAP_ADMIN_KEY', 24],
   // FCP's own client check: the edge-client-check service and (through the
   // deployer) the deployment read it from here.

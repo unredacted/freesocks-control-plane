@@ -213,6 +213,21 @@ container log, which is the point when the change is a logging one
 docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --force-recreate --no-deps backend
 ```
 
+Changes to the compose file's isolation (networks, `user:`, capabilities,
+read-only roots; [`docs/convex-security.md`](convex-security.md)) apply to every
+service, so recreate the whole stack. A new required infra secret (such as
+`BACKUP_DB_PASSWORD`) has to exist first, or compose refuses to start anything:
+
+```sh
+git pull
+bun scripts/bootstrap-secrets.mjs .env.beta   # fills only missing secrets; never overwrites
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build --force-recreate --remove-orphans
+docker compose -f docker-compose.stack.yml --env-file .env.beta ps   # every service healthy / exited 0
+```
+
+The one-shots run first: `data-perms` hands the backend's data volume to its
+unprivileged uid and `db-roles` creates the backup role. Both are idempotent.
+
 Header-only Caddyfile tweaks need no rebuild:
 
 ```sh
@@ -655,6 +670,12 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta \
     && bunx convex env list' \
   | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "$HOME/fcp-snapshots/convex-env-$(date -u +%Y%m%d).txt.age"
 ```
+
+The sidecar dumps as the read-only `fcp_backup` role (`pg_read_all_data`),
+which the one-shot `db-roles` service creates and refreshes on every `up` from
+`BACKUP_DB_PASSWORD`; it never holds the superuser password. Restores (below)
+still run as the superuser `convex`. To rotate the role's password, change
+`BACKUP_DB_PASSWORD` in `.env.beta` and recreate `db-roles` and `backup`.
 
 Backup coverage notes:
 

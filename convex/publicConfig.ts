@@ -8,6 +8,7 @@
  */
 import { resolveTierFeatures, type TierFeature } from '../src/shared/contracts/tierFeatures';
 import { query } from './_generated/server';
+import { publicConfigReturns } from './lib/publicConfigReturns';
 import { resolveBillingConfig } from './lib/billingConfig';
 import {
   readDonationState,
@@ -36,6 +37,9 @@ import type { BackendId } from './lib/backendIds';
 
 export const get = query({
   args: {},
+  // The public projection is a declared shape: Convex rejects any field not
+  // listed in publicConfigReturns (see that file).
+  returns: publicConfigReturns,
   handler: async (ctx) => {
     const rows = await ctx.db.query('appSettings').collect();
     const settings: Record<string, unknown> = {
@@ -198,7 +202,8 @@ export const get = query({
       // development (nothing in the SPA consumes it at runtime, and the raw
       // value is minor deployment-tier fingerprinting). Kept required in the
       // contract for older clients; genuinely 'development' only when set.
-      environment: environment === 'development' ? environment : 'production',
+      environment:
+        environment === 'development' ? ('development' as const) : ('production' as const),
       tiers,
       freeTierDays: settings['freetier.expiryDays'] as number,
       backends: {
@@ -208,7 +213,9 @@ export const get = query({
         outlineEnabled: settings['outline.enabled'] as boolean,
         defaultBackend: settings['subscription.default_backend'] as BackendId,
         userChoiceEnabled: settings['subscription.user_choice_enabled'] as boolean,
-        labels,
+        // Built field by field: the stored setting is a free JSON object, and the
+        // declared return shape (publicConfigReturns) refuses any extra key.
+        labels: { remnawave: labels.remnawave, outline: labels.outline },
         list: BACKEND_IDS.map((id) => ({
           id,
           label: labels[id] ?? id,

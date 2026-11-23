@@ -15,6 +15,12 @@
  * deployment shape. Set ALLOW_INTERNAL_BACKENDS=true to lift the deny (dev
  * backends on the same host).
  *
+ * The stack's own compose service names (postgres, valkey, the deploy API on
+ * `backend`, the epoch-key store, …) are denied too: the fetch runs inside the
+ * backend container, where those names resolve to private peers that are never
+ * a proxy backend or bucket. Other single-label names stay allowed (a Tailscale
+ * MagicDNS short name is a legitimate backend address).
+ *
  * This is prefix filtering, not DNS pinning: a hostname that RESOLVES to a
  * denied address still passes (no DNS in mutations). It raises the bar from
  * "anything" to "no literal internal addresses"; full DNS-rebinding protection
@@ -23,6 +29,27 @@
 
 import { canonicalIp } from './edges/ip';
 
+/**
+ * Every service in docker-compose.stack.yml and the dev compose. A backend URL
+ * naming one of them is a probe into the private network, never a backend.
+ * urlSafety.test.ts keeps this list in step with the compose files.
+ */
+export const COMPOSE_SERVICE_NAMES: ReadonlySet<string> = new Set([
+  'backend',
+  'backup',
+  'cap',
+  'dashboard',
+  'data-perms',
+  'db-roles',
+  'deployer',
+  'edge-client-check',
+  'hpke-epoch-store',
+  'keygen',
+  'postgres',
+  'valkey',
+  'web',
+]);
+
 /** Compare IPs by address and DNS names without the optional root dot. */
 function isDeniedHost(hostname: string): boolean {
   const h = canonicalIp(hostname) ?? hostname.toLowerCase().replace(/\.$/, '');
@@ -30,6 +57,9 @@ function isDeniedHost(hostname: string): boolean {
   // Hostname denylist (exact or suffix): localhost + cloud metadata names.
   if (h === 'localhost' || h.endsWith('.localhost')) return true;
   if (h === 'metadata.google.internal' || h === 'metadata') return true;
+  // Docker's host aliases and this stack's own services (docker-compose.stack.yml).
+  if (h === 'host.docker.internal' || h === 'gateway.docker.internal') return true;
+  if (COMPOSE_SERVICE_NAMES.has(h)) return true;
 
   // IPv6: loopback, unspecified, link-local.
   if (h === '::1' || h === '::') return true;
@@ -77,7 +107,8 @@ export function checkInfraUrl(raw: string): UrlSafetyResult {
     return {
       ok: false,
       reason:
-        'points at a loopback/link-local/metadata address, which is not allowed for a backend ' +
+        "points at a loopback/link-local/metadata address or one of this stack's own " +
+        'services, which is not allowed for a backend ' +
         '(set ALLOW_INTERNAL_BACKENDS=true to override for local development)',
     };
   }

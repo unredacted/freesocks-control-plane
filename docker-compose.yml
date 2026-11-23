@@ -51,7 +51,8 @@ services:
       - CONVEX_RELEASE_VERSION_DEV
       - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:${SITE_PROXY_PORT:-3211}}
       - DATABASE_URL
-      - DISABLE_BEACON
+      # No usage beacon to Convex from dev machines either (like the stack).
+      - DISABLE_BEACON=${DISABLE_BEACON:-true}
       - DISABLE_METRICS_ENDPOINT=${DISABLE_METRICS_ENDPOINT:-true}
       - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
       - DO_NOT_REQUIRE_SSL=${DO_NOT_REQUIRE_SSL:-true}

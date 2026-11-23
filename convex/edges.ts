@@ -17,6 +17,7 @@
 import { locationEdgeCapOf } from './lib/edges/providers/capabilities';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { ConvexError, v } from 'convex/values';
+import { probeReachabilitySummary } from './lib/edges/reachabilityValidators';
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -741,7 +742,8 @@ export const patchEdge = internalMutation({
     ),
     stepStates: v.optional(v.array(v.object({ stepId: v.string(), state: v.string() }))),
     liveSnapshot: v.optional(v.string()),
-    reachability: v.optional(v.any()),
+    // The schema's own shape (it lands in edges.reachability as is).
+    reachability: v.optional(probeReachabilitySummary),
   },
   handler: async (ctx, a) => {
     const edge = await ctx.db.get(a.edgeId);
