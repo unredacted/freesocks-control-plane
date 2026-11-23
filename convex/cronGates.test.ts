@@ -167,7 +167,8 @@ describe('edge-reconcile reads the Node runtime version at most hourly', () => {
     expect(await t.query(internal.edgeReconcileMutations.runtimeCheckDue, { now })).toBe(false);
     expect(
       await t.query(internal.edgeReconcileMutations.runtimeCheckDue, {
-        now: now + RUNTIME_RECHECK_MS + 1,
+        // Well past the hour from when the row was written (after `now`).
+        now: Date.now() + RUNTIME_RECHECK_MS + 60_000,
       }),
     ).toBe(true);
   });
