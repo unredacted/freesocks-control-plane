@@ -794,7 +794,8 @@ shown the cap. What was checked (2026-11):
   profile change reloads the core on every node.
 - **Outline:** data limits only, no speed limit.
 
-Enforcing it therefore needs node-side work, chosen by the owner: the nodes already run
+For now the cap is a setting only (owner's call, 2026-11). Enforcing it would need node-side
+work; these are possible future work, not planned: the nodes already run
 `fq` as root qdisc (the Ansible role's BBR setup), and `fq maxrate` caps each socket's
 send rate, which is a per-connection (not per-user) cap that would apply to every user
 on the node. A per-tier cap built on it means placing capped tiers on their own nodes.
