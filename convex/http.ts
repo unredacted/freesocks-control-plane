@@ -19,6 +19,7 @@ import { appNoticeContent } from './appNotices';
 import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
 import { checkInfraUrl } from './lib/urlSafety';
 import { suggestionCountry } from './lib/memberCountry';
+import { startAccountView } from './account';
 import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
@@ -1094,12 +1095,6 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const view = await ctx.runAction(internal.account.getAccountView, {
-      userId: member.userId,
-      includeSubscriptionCredentials:
-        member.source === 'cookie' || hasScope(member.scopes, 'subscription:read'),
-    });
-    if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"
     // picker AND drives the mode suggestion. Inside the sealed body; never
     // stored as such. With detection on it may set or refresh the GUESS on the
@@ -1111,31 +1106,45 @@ http.route({
     // availability matrix picks the mode (lib/modeSuggestion.ts), from modes
     // AVAILABLE on the member's own backend only; elsewhere the default. The
     // list and the matrix stay server-side: only the verdict ships.
+    // A stored answer stands even when it is no country ("Somewhere else"): the
+    // request's country is used only when nothing is stored at all.
+    // geoCountryCensored is THIS request's country only (never the stored
+    // answer): the onboarding mirror suggestion prefills it, so no country, no
+    // suggestion. Like geoCountry it is computed per request and never stored.
     const geoCountry = resolveCountry(req);
-    const reading = await ctx.runQuery(internal.memberCountry.readingContext, {});
-    const ownExit = isOwnExit(resolveClientIp(req), reading.ownExits);
-    const stored =
-      reading.detect && (geoCountry || ownExit)
+    // The view's database half, the reading context and both verdicts are ONE
+    // query (account.accountViewData), run beside the live backend read. When a
+    // reading is stored, that runs beside the live read too, and the suggestion
+    // is asked for again from what the reading stored.
+    const started = await startAccountView(ctx, {
+      userId: member.userId,
+      includeSubscriptionCredentials:
+        member.source === 'cookie' || hasScope(member.scopes, 'subscription:read'),
+      geoCountry,
+    });
+    if (!started) return errorJson('not_found', 'user not found', 404);
+    const { data } = started;
+    const { route } = data;
+    // Always present: the route passes geoCountry (a country or null).
+    if (!route) throw new Error('account view: no route part');
+    const suggestion = async (): Promise<string> => {
+      const ownExit = isOwnExit(resolveClientIp(req), route.ownExits);
+      const storing = route.detect && (!!geoCountry || ownExit);
+      if (!storing && route.suggestedModeId !== null) return route.suggestedModeId;
+      const stored = storing
         ? await ctx.runMutation(internal.memberCountry.noteSeenCountryForUser, {
             userId: member.userId,
             country: geoCountry,
             ownExit,
           })
         : await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId });
-    // A stored answer stands even when it is no country ("Somewhere else"): the
-    // request's country is used only when nothing is stored at all.
-    // geoCountryCensored is THIS request's country only (never the stored
-    // answer): the onboarding mirror suggestion prefills it, so no country, no
-    // suggestion. Like geoCountry it is computed per request and never stored.
-    const [suggestedModeId, geoCountryCensored] = await Promise.all([
-      ctx.runQuery(internal.censoredCountries.suggestMode, {
-        backend: view.user.tier.backend,
+      return ctx.runQuery(internal.censoredCountries.suggestMode, {
+        backend: data.view.user.tier.backend,
         country: suggestionCountry(stored, geoCountry),
-      }),
-      geoCountry
-        ? ctx.runQuery(internal.censoredCountries.isListed, { country: geoCountry })
-        : false,
-    ]);
+      });
+    };
+    const [view, suggestedModeId] = await Promise.all([started.finish(), suggestion()]);
+    const { geoCountryCensored } = route;
     return json({ ...view, geoCountry, suggestedModeId, geoCountryCensored });
   }),
 });

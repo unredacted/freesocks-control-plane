@@ -9,7 +9,8 @@
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
+import type { DatabaseReader } from './_generated/server';
 import { v } from 'convex/values';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { resolveBillingConfig } from './lib/billingConfig';
@@ -44,15 +45,15 @@ type ActiveFreeSubsPage = {
 /** Live effective bonus GB — for issuance sites resolving the free limit in an action. */
 export const currentBonusGb = internalQuery({
   args: {},
-  handler: async (ctx): Promise<number> => {
-    const [state, cfg] = await Promise.all([
-      readDonationState(ctx.db),
-      resolveBillingConfig(ctx.db),
-    ]);
-    if (!cfg.donation.enabled) return 0;
-    return effectiveBonusGb(state, cfg.donation, Date.now());
-  },
+  handler: (ctx): Promise<number> => currentBonusGbOf(ctx.db),
 });
+
+/** `currentBonusGb` for a caller already in a query (the account view). */
+export async function currentBonusGbOf(db: DatabaseReader): Promise<number> {
+  const [state, cfg] = await Promise.all([readDonationState(db), resolveBillingConfig(db)]);
+  if (!cfg.donation.enabled) return 0;
+  return effectiveBonusGb(state, cfg.donation, Date.now());
+}
 
 /** A member's own settled donation totals (impact backend). Read from the
  *  MAINTAINED aggregates on the user row (fundDonation bumps them at grant
@@ -61,18 +62,27 @@ export const currentBonusGb = internalQuery({
  *  server-side (the raw rate itself never ships). */
 export const donationTotals = internalQuery({
   args: { userId: v.id('users') },
-  handler: async (
-    ctx,
-    { userId },
-  ): Promise<{ donatedCentsTotal: number; donationCount: number; donatedGbTotal: number }> => {
-    const user = await ctx.db.get(userId);
-    const donatedCentsTotal = user?.donatedCentsTotal ?? 0;
-    const donationCount = user?.donationCount ?? 0;
-    const cfg = await resolveBillingConfig(ctx.db);
-    const donatedGbTotal = (donatedCentsTotal / 100) * cfg.donation.bonusGbPerUsd;
-    return { donatedCentsTotal, donationCount, donatedGbTotal };
-  },
+  handler: async (ctx, { userId }): Promise<DonationTotals> =>
+    donationTotalsOf(ctx.db, await ctx.db.get(userId)),
 });
+
+export interface DonationTotals {
+  donatedCentsTotal: number;
+  donationCount: number;
+  donatedGbTotal: number;
+}
+
+/** `donationTotals` for a caller already holding the user row (the account view). */
+export async function donationTotalsOf(
+  db: DatabaseReader,
+  user: Doc<'users'> | null,
+): Promise<DonationTotals> {
+  const donatedCentsTotal = user?.donatedCentsTotal ?? 0;
+  const donationCount = user?.donationCount ?? 0;
+  const cfg = await resolveBillingConfig(db);
+  const donatedGbTotal = (donatedCentsTotal / 100) * cfg.donation.bonusGbPerUsd;
+  return { donatedCentsTotal, donationCount, donatedGbTotal };
+}
 
 /** Everything applyFreeBonus needs in one read: the effective vs last-pushed bonus
  *  and the free tiers (id + base GB) whose keys must be re-capped. */
