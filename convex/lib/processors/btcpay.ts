@@ -16,6 +16,15 @@
 import { z } from 'zod';
 import { hmacSha256Hex, timingSafeEqual } from '../crypto';
 import { fetchProcessorApi } from './apiFetch';
+import {
+  cleanAmount,
+  cleanExpiry,
+  cleanPaymentLink,
+  cleanToken,
+  DirectPaymentError,
+  type DirectMethod,
+  type DirectPayment,
+} from '../directPayment';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface BtcpayConfig {
@@ -63,6 +72,8 @@ export interface BtcpayConfig {
 const InvoiceResponse = z.object({
   id: z.string(),
   checkoutLink: z.string().url(),
+  // Unix seconds. Only the direct checkout reads it (the payer's timer).
+  expirationTime: z.number().optional(),
 });
 
 class BtcpayApiError extends Error {
@@ -155,7 +166,13 @@ export async function createCheckout(
         `BTCPay invoice schema mismatch: ${JSON.stringify(body).slice(0, 200)}`,
       );
     }
-    return { redirectUrl: parsed.data.checkoutLink, processorRef: parsed.data.id };
+    return {
+      redirectUrl: parsed.data.checkoutLink,
+      processorRef: parsed.data.id,
+      ...(parsed.data.expirationTime !== undefined
+        ? { expiresAt: parsed.data.expirationTime }
+        : {}),
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -451,4 +468,96 @@ export async function testConnection(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// --- direct checkout (Admin -> Billing: checkout style "direct") -------------
+
+const DirectMethods = z.array(
+  z
+    .object({
+      // Greenfield 2.x names it paymentMethodId; 1.x paymentMethod.
+      paymentMethodId: z.string().optional(),
+      paymentMethod: z.string().optional(),
+      currency: z.string().optional(),
+      cryptoCode: z.string().optional(),
+      destination: z.string().optional(),
+      paymentLink: z.string().nullable().optional(),
+      amount: z.string().optional(),
+      due: z.string().optional(),
+      activated: z.boolean().optional(),
+    })
+    .passthrough(),
+);
+
+/**
+ * Direct checkout: read the invoice createCheckout just minted
+ * (`GET …/invoices/{id}/payment-methods`, the `canviewinvoices` permission the
+ * settle path already requires) and keep each allowlisted, ACTIVATED method's
+ * destination, amount due and payment link. A store using lazy payment methods
+ * leaves them unactivated, which yields no method and falls back to hosted.
+ * The webhook / settle path is unchanged. Throws DirectPaymentError.
+ */
+export async function directPaymentMethods(
+  cfg: BtcpayConfig,
+  args: {
+    invoiceId: string;
+    allowed: string[];
+    hostedUrl: string;
+    /** The invoice's expirationTime (unix seconds) from createCheckout. */
+    expiresAt?: number;
+    now: number;
+  },
+): Promise<DirectPayment> {
+  const base = cfg.apiUrl.replace(/\/$/, '');
+  const path = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices/${encodeURIComponent(args.invoiceId)}/payment-methods`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  let list: z.infer<typeof DirectMethods>;
+  try {
+    const res = await fetchProcessorApi(`${base}${path}`, {
+      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new DirectPaymentError('unavailable', `BTCPay ${res.status} on payment-methods`);
+    }
+    const parsed = DirectMethods.safeParse(await res.json().catch(() => null));
+    if (!parsed.success) {
+      throw new DirectPaymentError('unavailable', 'BTCPay payment-methods schema mismatch');
+    }
+    list = parsed.data;
+  } catch (err) {
+    if (err instanceof DirectPaymentError) throw err;
+    throw new DirectPaymentError('unavailable', 'BTCPay payment-methods request failed');
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const methods: DirectMethod[] = [];
+  // Keep the operator's order, not BTCPay's.
+  for (const id of args.allowed) {
+    const m = list.find((x) => (x.paymentMethodId ?? x.paymentMethod) === id);
+    if (!m || m.activated === false) continue;
+    const address = cleanToken(m.destination, 2048);
+    // `due` is what is left to pay (the amount plus any method fee); fall back to amount.
+    const amount = cleanAmount(m.due) ?? cleanAmount(m.amount);
+    const unit = cleanToken(m.currency ?? m.cryptoCode, 16);
+    if (!address || !amount || !unit) {
+      throw new DirectPaymentError('unavailable', `BTCPay ${id}: incomplete payment method`);
+    }
+    // A link BTCPay built (BIP21 with the amount, or lightning:<bolt11>), else the bare destination.
+    const qr = m.paymentLink ? cleanPaymentLink(m.paymentLink) : address;
+    if (!qr) throw new DirectPaymentError('unavailable', `BTCPay ${id}: unexpected payment link`);
+    methods.push({ id, unit: unit.toUpperCase(), network: '', address, amount, qr });
+  }
+  if (methods.length === 0) {
+    throw new DirectPaymentError('unavailable', 'BTCPay: no allowlisted payment method is active');
+  }
+  const expiresAt = cleanExpiry(args.expiresAt, args.now);
+  if (expiresAt === null) throw new DirectPaymentError('unavailable', 'BTCPay: bad expirationTime');
+  return {
+    methods,
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+    hostedUrl: args.hostedUrl,
+  };
 }

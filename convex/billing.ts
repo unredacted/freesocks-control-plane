@@ -25,13 +25,25 @@ import { applyMembership } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
 import { recordDonation, subtractDonation } from './lib/donationBonus';
 import {
+  directEnabled,
   findDuration,
   minMonthsForProcessor,
   resolveBillingConfig,
   resolveProcessorSecrets,
   withinUnderpaymentTolerance,
 } from './lib/billingConfig';
-import type { BillingConfig, BtcpayCheckoutConfig, ProcessorSecrets } from './lib/billingConfig';
+import type {
+  BillingConfig,
+  BtcpayCheckoutConfig,
+  DirectCoin,
+  ProcessorSecrets,
+} from './lib/billingConfig';
+import {
+  DirectPaymentError,
+  directPaymentLive,
+  directPaymentValidator,
+  type DirectPayment,
+} from './lib/directPayment';
 import * as nowpayments from './lib/processors/nowpayments';
 import * as btcpay from './lib/processors/btcpay';
 import * as stripe from './lib/processors/stripe';
@@ -125,6 +137,42 @@ async function createCheckoutForProcessor(
       return paypal.createCheckout(pp, params);
     }
   }
+}
+
+/**
+ * The direct-checkout step on an invoice createCheckoutForProcessor just made:
+ * NOWPayments creates the payment on it in the picked coin; BTCPay reads its
+ * activated payment methods. Throws DirectPaymentError.
+ */
+async function directPaymentForProcessor(
+  processor: ProcessorId,
+  secrets: ProcessorSecrets,
+  config: BillingConfig,
+  result: CheckoutResult,
+  orderRef: string,
+  coin: DirectCoin | null,
+): Promise<DirectPayment> {
+  const now = Date.now();
+  if (processor === 'nowpayments' && coin && secrets.nowpayments.apiKey) {
+    return nowpayments.createInvoicePayment(
+      { apiUrl: secrets.nowpayments.apiUrl, apiKey: secrets.nowpayments.apiKey },
+      { invoiceId: result.processorRef, orderRef, coin, hostedUrl: result.redirectUrl, now },
+    );
+  }
+  const bp = secrets.btcpay;
+  if (processor === 'btcpay' && bp.apiUrl && bp.storeId && bp.apiKey) {
+    return btcpay.directPaymentMethods(
+      { apiUrl: bp.apiUrl, storeId: bp.storeId, apiKey: bp.apiKey },
+      {
+        invoiceId: result.processorRef,
+        allowed: config.direct.btcpay.methods,
+        hostedUrl: result.redirectUrl,
+        expiresAt: result.expiresAt,
+        now,
+      },
+    );
+  }
+  throw new DirectPaymentError('unavailable', `${processor}: direct checkout not configured`);
 }
 
 /** Verify + parse a processor webhook. Throws billing.not_configured if its secret is unset. */
@@ -245,6 +293,8 @@ export const insertOrder = internalMutation({
     months: v.number(),
     kind: orderKindValidator,
     quantity: v.number(),
+    // Direct checkout: the payment details shown on our own page.
+    directPayment: v.optional(directPaymentValidator),
   },
   handler: async (ctx, a): Promise<Id<'billingOrders'>> => {
     const now = Date.now();
@@ -261,6 +311,7 @@ export const insertOrder = internalMutation({
       status: 'pending',
       kind: a.kind,
       quantity: a.quantity,
+      ...(a.directPayment ? { directPayment: a.directPayment } : {}),
       updatedAt: now,
     });
     await writeAuditLog(ctx, {
@@ -275,6 +326,8 @@ export const insertOrder = internalMutation({
         kind: a.kind,
         quantity: a.quantity,
         donationCents: a.donationCents ?? 0,
+        // Which checkout style ran (no payment details: they are payer-specific).
+        direct: a.directPayment !== undefined,
       },
     });
     return orderId;
@@ -303,8 +356,12 @@ export const createCheckout = internalAction({
     // Optional donation in cents — added on top of a membership, or the whole
     // charge for kind:'donation'.
     donationCents: v.optional(v.number()),
+    // Direct NOWPayments checkout: the coin the member picked (a ticker on the
+    // admin's allowlist). Absent = hosted, which is also how an older SPA that
+    // never sends it keeps working against a direct-style rail.
+    payCurrency: v.optional(v.string()),
   },
-  handler: async (ctx, a): Promise<{ redirectUrl: string; orderRef: string }> => {
+  handler: async (ctx, a): Promise<{ redirectUrl: string; orderRef: string; direct: boolean }> => {
     const { config, tierId } = await ctx.runQuery(internal.billing.checkoutContext, {});
     if (!config.enabled) {
       throw new ConvexError({
@@ -410,6 +467,22 @@ export const createCheckout = internalAction({
     const orderDonationCents =
       kind === 'donation' ? donationCents : config.donation.enabled ? donationCents : 0;
 
+    // Direct checkout: resolve the picked coin BEFORE any invoice exists, so a
+    // crafted or stale ticker fails without leaving anything at the processor.
+    let directCoin: DirectCoin | null = null;
+    if (a.processor === 'nowpayments' && a.payCurrency && directEnabled(config, 'nowpayments')) {
+      const ticker = a.payCurrency.trim().toLowerCase();
+      directCoin = config.direct.nowpayments.coins.find((c) => c.ticker === ticker) ?? null;
+      if (!directCoin) {
+        throw new ConvexError({
+          code: 'billing.invalid_coin',
+          message: 'That coin is not available.',
+        });
+      }
+    }
+    const wantDirect =
+      directCoin !== null || (a.processor === 'btcpay' && directEnabled(config, 'btcpay'));
+
     const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
     const base = publicBaseUrl(secrets);
     const opaqueRef = randomHex(16);
@@ -448,6 +521,43 @@ export const createCheckout = internalAction({
       });
     }
 
+    // Direct style: read the payment details for our own page. The invoice
+    // above is unchanged (its id stays the order's processorRef, so the webhook
+    // and grant cross-checks don't change). A payer-fixable refusal (below the
+    // coin's minimum, a memo coin the operator hasn't allowed) is an error the
+    // form explains; any other failure falls back to the hosted page, logged.
+    let directPayment: DirectPayment | undefined;
+    if (wantDirect) {
+      try {
+        directPayment = await directPaymentForProcessor(
+          a.processor,
+          secrets,
+          config,
+          result,
+          opaqueRef,
+          directCoin,
+        );
+      } catch (err) {
+        const kind = err instanceof DirectPaymentError ? err.kind : 'unavailable';
+        console.warn(
+          `[billing] ${a.processor} direct checkout (${kind}):`,
+          err instanceof Error ? err.message : String(err),
+        );
+        if (kind === 'below_minimum') {
+          throw new ConvexError({
+            code: 'billing.coin_minimum',
+            message: 'This amount is below the minimum for that coin.',
+          });
+        }
+        if (kind === 'memo_refused') {
+          throw new ConvexError({
+            code: 'billing.invalid_coin',
+            message: 'That coin is not available.',
+          });
+        }
+      }
+    }
+
     await ctx.runMutation(internal.billing.insertOrder, {
       processor: a.processor,
       opaqueRef,
@@ -461,8 +571,11 @@ export const createCheckout = internalAction({
       months,
       kind,
       quantity,
+      directPayment,
     });
-    return { redirectUrl: result.redirectUrl, orderRef: opaqueRef };
+    // `redirectUrl` stays the hosted page even for a direct order: the SPA
+    // offers it as a fallback, and an older SPA simply redirects as before.
+    return { redirectUrl: result.redirectUrl, orderRef: opaqueRef, direct: !!directPayment };
   },
 });
 
@@ -573,6 +686,7 @@ async function grantOrder(
   if (order.kind === 'donation') {
     await ctx.db.patch(order._id, {
       status: 'paid',
+      directPayment: undefined,
       paidAt: now,
       processorRef: g.processorRef || order.processorRef,
       ...(g.paidRatio != null ? { paidRatio: g.paidRatio } : {}),
@@ -614,6 +728,7 @@ async function grantOrder(
     const codes = g.giftCodes ?? [];
     await ctx.db.patch(order._id, {
       status: 'paid',
+      directPayment: undefined,
       paidAt: now,
       processorRef: g.processorRef || order.processorRef,
       ...(g.paidRatio != null ? { paidRatio: g.paidRatio } : {}),
@@ -667,6 +782,7 @@ async function grantOrder(
   if (!user) return { applied: false, granted: false };
   await ctx.db.patch(order._id, {
     status: 'paid',
+    directPayment: undefined,
     paidAt: now,
     processorRef: g.processorRef || order.processorRef,
     ...(g.paidRatio != null ? { paidRatio: g.paidRatio } : {}),
@@ -974,6 +1090,9 @@ export const applyEvent = internalMutation({
         if (holds || order.status === 'underpaid') {
           await ctx.db.patch(order._id, {
             ...(holds ? { status: 'underpaid' as const } : {}),
+            // Money arrived short: the order is out of the payable states, so
+            // the payer-specific deposit details go (see lib/directPayment.ts).
+            directPayment: undefined,
             ...(bestRatio != null ? { paidRatio: bestRatio } : {}),
             updatedAt: now,
           });
@@ -997,7 +1116,11 @@ export const applyEvent = internalMutation({
     // FORWARD only, so an out-of-order or re-delivered webhook can't walk it
     // backward (e.g. a late 'pending' after 'confirming'). (Review #8.)
     if (STATUS_RANK[a.status] > STATUS_RANK[order.status]) {
-      await ctx.db.patch(order._id, { status: a.status, updatedAt: now });
+      await ctx.db.patch(order._id, {
+        status: a.status,
+        ...(directPaymentLive(a.status) ? {} : { directPayment: undefined }),
+        updatedAt: now,
+      });
     }
     return { applied: true, granted: false };
   },
@@ -1162,7 +1285,12 @@ export const dismissUnderpaidOrder = internalMutation({
   handler: async (ctx, a): Promise<{ ok: true }> => {
     const order = await loadOrderForAdmin(ctx, a.orderId, new Set<OrderStatus>(['underpaid']));
     const now = Date.now();
-    await ctx.db.patch(order._id, { status: 'failed', dismissedAt: now, updatedAt: now });
+    await ctx.db.patch(order._id, {
+      status: 'failed',
+      dismissedAt: now,
+      directPayment: undefined,
+      updatedAt: now,
+    });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId,
@@ -1262,6 +1390,43 @@ export const ingestEvent = internalAction({
   },
 });
 
+// --- admin: direct-checkout coin check (Admin → Billing "Check coins") --------
+
+/**
+ * Check the direct NOWPayments coin allowlist against the account, read-only:
+ * per coin, whether it is switched on in the NOWPayments dashboard, its network
+ * and memo use, and its minimum next to the cheapest crypto term. The SPA turns
+ * these into warnings (not enabled, needs a memo that isn't allowed, minimum
+ * above the cheapest term).
+ */
+export const checkDirectCoins = internalAction({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{
+    ok: boolean;
+    error: string | null;
+    cheapestCryptoCents: number | null;
+    coins: nowpayments.CoinCheck[];
+  }> => {
+    const [secrets, { config }] = await Promise.all([
+      ctx.runQuery(internal.billing.resolveSecrets, {}),
+      ctx.runQuery(internal.billing.checkoutContext, {}),
+    ]);
+    const cheapest = config.durations.find((d) => d.months >= config.cryptoMinMonths);
+    const cheapestCryptoCents = cheapest ? cheapest.amountCents : null;
+    if (!secrets.nowpayments.apiKey) {
+      return { ok: false, error: 'API key not configured', cheapestCryptoCents, coins: [] };
+    }
+    const coins = await nowpayments.checkCoins(
+      { apiUrl: secrets.nowpayments.apiUrl, apiKey: secrets.nowpayments.apiKey },
+      config.direct.nowpayments.coins.map((c) => c.ticker),
+      config.currency,
+    );
+    return { ok: true, error: null, cheapestCryptoCents, coins };
+  },
+});
+
 // --- admin: live credential probe (Admin → Billing "test connection") ---------
 
 /**
@@ -1318,6 +1483,30 @@ export const testProcessorConnection = internalAction({
  * member can only see their own order (cross-user ref → null → 404). Returns the
  * member's current membership expiry so the SPA can confirm the extension landed.
  */
+/** The direct-checkout details as the order poll returns them (see OrderPayment contract). */
+interface DirectPaymentView {
+  processor: ProcessorId;
+  methods: DirectPayment['methods'];
+  expiresAt: string | null;
+  hostedUrl: string;
+}
+
+/**
+ * The payment details for the return page, only while the order can still be
+ * paid (pending / confirming). The terminal transitions wipe the row's copy
+ * too; this check also covers an order whose wipe raced the poll.
+ */
+function directPaymentView(order: Doc<'billingOrders'>): DirectPaymentView | null {
+  const p = order.directPayment;
+  if (!p || !directPaymentLive(order.status)) return null;
+  return {
+    processor: order.processor,
+    methods: p.methods,
+    expiresAt: p.expiresAt !== undefined ? new Date(p.expiresAt).toISOString() : null,
+    hostedUrl: p.hostedUrl,
+  };
+}
+
 export const getOrderStatus = internalQuery({
   args: { opaqueRef: v.string(), userId: v.id('users') },
   handler: async (
@@ -1330,6 +1519,7 @@ export const getOrderStatus = internalQuery({
     // The freshly-minted gift codes, revealed ONCE on the return poll: present
     // only for a paid, not-yet-acknowledged gift order (cleared on ack/sweep).
     giftCodes: string[];
+    payment: DirectPaymentView | null;
   } | null> => {
     const order = await ctx.db
       .query('billingOrders')
@@ -1345,6 +1535,7 @@ export const getOrderStatus = internalQuery({
       membershipExpiresAt,
       kind: order.kind ?? 'self',
       giftCodes: order.kind === 'gift' && !order.giftRevealAck ? (order.giftReveal ?? []) : [],
+      payment: directPaymentView(order),
     };
   },
 });
@@ -1367,13 +1558,20 @@ export const getAnonOrderStatus = internalQuery({
     membershipExpiresAt: string | null;
     kind: 'self' | 'gift' | 'donation';
     giftCodes: string[];
+    payment: DirectPaymentView | null;
   } | null> => {
     const order = await ctx.db
       .query('billingOrders')
       .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', opaqueRef))
       .unique();
     if (!order || order.userId !== undefined || order.kind !== 'donation') return null;
-    return { status: order.status, membershipExpiresAt: null, kind: 'donation', giftCodes: [] };
+    return {
+      status: order.status,
+      membershipExpiresAt: null,
+      kind: 'donation',
+      giftCodes: [],
+      payment: directPaymentView(order),
+    };
   },
 });
 

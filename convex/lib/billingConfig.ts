@@ -88,6 +88,43 @@ export interface BillingConfig {
   underpaymentTolerancePct: number;
   /** Optional-donation config (add-on + standalone → free-user bandwidth pool). */
   donation: DonationConfig;
+  /** Direct (on-our-page) checkout for the crypto rails (see DirectCheckoutConfig). */
+  direct: DirectCheckoutConfig;
+}
+
+/**
+ * How a crypto rail takes the payment. `hosted` (the default) redirects to the
+ * processor's own page, as every rail always has. `direct` shows the deposit
+ * address, amount, network, memo, QR and expiry on FreeSocks' own page, so a
+ * payer who can't reach the processor's domain can still pay. The processor
+ * API is called server-side; the IPN / webhook and grant path are unchanged.
+ */
+export type CheckoutStyle = 'hosted' | 'direct';
+
+/**
+ * One coin a member may pick for a direct NOWPayments payment. Operator text
+ * (`label`, `network`) is shown verbatim, like tier feature lines.
+ */
+export interface DirectCoin {
+  /** NOWPayments ticker, which names the network too, e.g. `usdttrc20`. */
+  ticker: string;
+  /** Unit shown next to the amount, e.g. `USDT`. */
+  label: string;
+  /** Network shown everywhere the coin appears, e.g. `Tron (TRC-20)`. */
+  network: string;
+  /**
+   * Whether a payment that needs a memo / destination tag may be shown. A
+   * payment whose processor response carries a memo for a coin without this
+   * flag is refused before the order is stored: a payer who skips the memo
+   * loses the money, so the operator has to opt each memo coin in.
+   */
+  allowMemo: boolean;
+}
+
+export interface DirectCheckoutConfig {
+  nowpayments: { style: CheckoutStyle; coins: DirectCoin[] };
+  /** `methods`: BTCPay payment method ids shown on the direct page, e.g. `BTC-CHAIN`. */
+  btcpay: { style: CheckoutStyle; methods: string[] };
 }
 
 /**
@@ -139,6 +176,26 @@ export const BILLING_DEFAULTS: BillingConfig = {
     monthlyBonusCapGb: 100,
     bonusWindowDays: 30,
   },
+  direct: {
+    nowpayments: {
+      style: 'hosted',
+      // A starting list only (direct is off by default). Run Admin -> Billing ->
+      // Check coins against the account before switching direct on.
+      coins: [
+        { ticker: 'btc', label: 'BTC', network: 'Bitcoin', allowMemo: false },
+        { ticker: 'xmr', label: 'XMR', network: 'Monero', allowMemo: false },
+        { ticker: 'ltc', label: 'LTC', network: 'Litecoin', allowMemo: false },
+        { ticker: 'usdttrc20', label: 'USDT', network: 'Tron (TRC-20)', allowMemo: false },
+        {
+          ticker: 'usdtbsc',
+          label: 'USDT',
+          network: 'BNB Smart Chain (BEP-20)',
+          allowMemo: false,
+        },
+      ],
+    },
+    btcpay: { style: 'hosted', methods: ['BTC-CHAIN', 'BTC-LN'] },
+  },
 };
 
 /** The `appSettings` keys this config is persisted across (the `billing.` namespace). */
@@ -163,6 +220,10 @@ export const BILLING_KEYS = {
   donation_bonusGbPerUsd: 'billing.donation.bonusGbPerUsd',
   donation_monthlyBonusCapGb: 'billing.donation.monthlyBonusCapGb',
   donation_bonusWindowDays: 'billing.donation.bonusWindowDays',
+  nowpayments_checkoutStyle: 'billing.nowpayments.checkoutStyle',
+  nowpayments_directCoins: 'billing.nowpayments.directCoins',
+  btcpay_checkoutStyle: 'billing.btcpay.checkoutStyle',
+  btcpay_directMethods: 'billing.btcpay.directMethods',
 } as const;
 
 const MAX_MONTHS = 120; // 10 years — a sane upper bound on a single fixed term.
@@ -253,6 +314,73 @@ function asPaymentMethodId(raw: unknown, fallback: string): string {
   return /^[A-Za-z0-9_-]{1,32}$/.test(s) ? s : fallback;
 }
 
+function asCheckoutStyle(raw: unknown, fallback: CheckoutStyle): CheckoutStyle {
+  return raw === 'hosted' || raw === 'direct' ? raw : fallback;
+}
+
+export const MAX_DIRECT_COINS = 24;
+const MAX_DIRECT_METHODS = 8;
+/** Operator text shown to members: printable, no control characters, trimmed. */
+function asLabel(raw: unknown, max: number): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  // eslint-disable-next-line no-control-regex
+  if (s.length < 1 || s.length > max || /[\u0000-\u001f\u007f]/.test(s)) return null;
+  return s;
+}
+
+/**
+ * Coerce the direct-coin allowlist: drop malformed entries, dedupe by ticker
+ * (first wins, so the operator's order is kept), cap the count. Unlike the
+ * durations an EMPTY list is a real state (direct then falls back to hosted),
+ * so only a missing / non-array value takes the defaults.
+ */
+export function sanitizeDirectCoins(raw: unknown): DirectCoin[] {
+  if (!Array.isArray(raw)) return BILLING_DEFAULTS.direct.nowpayments.coins.map((c) => ({ ...c }));
+  const out: DirectCoin[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const o = entry as Record<string, unknown>;
+    const ticker = typeof o.ticker === 'string' ? o.ticker.trim().toLowerCase() : '';
+    if (!/^[a-z0-9]{2,20}$/.test(ticker) || seen.has(ticker)) continue;
+    const label = asLabel(o.label, 16);
+    const network = asLabel(o.network, 40);
+    if (!label || !network) continue;
+    seen.add(ticker);
+    out.push({ ticker, label, network, allowMemo: o.allowMemo === true });
+    if (out.length >= MAX_DIRECT_COINS) break;
+  }
+  return out;
+}
+
+/** BTCPay method ids for the direct page: shape-checked, deduped, capped. */
+export function sanitizeDirectMethods(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [...BILLING_DEFAULTS.direct.btcpay.methods];
+  const out: string[] = [];
+  for (const v of raw) {
+    const id = asPaymentMethodId(v, '');
+    if (id && !out.includes(id)) out.push(id);
+    if (out.length >= MAX_DIRECT_METHODS) break;
+  }
+  return out;
+}
+
+/**
+ * Whether a checkout on this rail should be direct. NOWPayments needs a coin
+ * list (and, at checkout, a picked coin); BTCPay needs a method list. Otherwise
+ * the rail stays hosted, so a half-configured direct setting never strands a payer.
+ */
+export function directEnabled(cfg: BillingConfig, processor: BillingProcessor): boolean {
+  if (processor === 'nowpayments') {
+    return cfg.direct.nowpayments.style === 'direct' && cfg.direct.nowpayments.coins.length > 0;
+  }
+  if (processor === 'btcpay') {
+    return cfg.direct.btcpay.style === 'direct' && cfg.direct.btcpay.methods.length > 0;
+  }
+  return false;
+}
+
 /** A whole number of days in [1, MAX_BONUS_WINDOW_DAYS]; else the fallback. */
 function asWindowDays(raw: unknown, fallback: number): number {
   return typeof raw === 'number' &&
@@ -318,6 +446,10 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     dRate,
     dCap,
     dWindow,
+    npStyle,
+    npCoins,
+    bpStyle,
+    bpMethods,
   ] = await Promise.all([
     readSetting(db, BILLING_KEYS.enabled),
     readSetting(db, BILLING_KEYS.rail_nowpayments),
@@ -339,6 +471,10 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.donation_bonusGbPerUsd),
     readSetting(db, BILLING_KEYS.donation_monthlyBonusCapGb),
     readSetting(db, BILLING_KEYS.donation_bonusWindowDays),
+    readSetting(db, BILLING_KEYS.nowpayments_checkoutStyle),
+    readSetting(db, BILLING_KEYS.nowpayments_directCoins),
+    readSetting(db, BILLING_KEYS.btcpay_checkoutStyle),
+    readSetting(db, BILLING_KEYS.btcpay_directMethods),
   ]);
   const d = BILLING_DEFAULTS.donation;
   const bpc = BILLING_DEFAULTS.btcpayCheckout;
@@ -372,6 +508,16 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
       bonusGbPerUsd: asNonNegNumber(dRate, d.bonusGbPerUsd, MAX_BONUS_GB_PER_USD),
       monthlyBonusCapGb: asNonNegNumber(dCap, d.monthlyBonusCapGb, MAX_MONTHLY_CAP_GB),
       bonusWindowDays: asWindowDays(dWindow, d.bonusWindowDays),
+    },
+    direct: {
+      nowpayments: {
+        style: asCheckoutStyle(npStyle, BILLING_DEFAULTS.direct.nowpayments.style),
+        coins: sanitizeDirectCoins(npCoins),
+      },
+      btcpay: {
+        style: asCheckoutStyle(bpStyle, BILLING_DEFAULTS.direct.btcpay.style),
+        methods: sanitizeDirectMethods(bpMethods),
+      },
     },
   };
 }
@@ -513,6 +659,34 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
         BILLING_KEYS.donation_bonusWindowDays,
         asWindowDays(dd.bonusWindowDays, def.bonusWindowDays),
       );
+    }
+  }
+
+  if (p.direct && typeof p.direct === 'object') {
+    const dc = p.direct as Record<string, unknown>;
+    const def = BILLING_DEFAULTS.direct;
+    if (dc.nowpayments && typeof dc.nowpayments === 'object') {
+      const np = dc.nowpayments as Record<string, unknown>;
+      if ('style' in np) {
+        put(
+          BILLING_KEYS.nowpayments_checkoutStyle,
+          asCheckoutStyle(np.style, def.nowpayments.style),
+        );
+      }
+      if ('coins' in np) {
+        if (!Array.isArray(np.coins)) throw new Error('direct.nowpayments.coins must be a list');
+        put(BILLING_KEYS.nowpayments_directCoins, sanitizeDirectCoins(np.coins));
+      }
+    }
+    if (dc.btcpay && typeof dc.btcpay === 'object') {
+      const bp = dc.btcpay as Record<string, unknown>;
+      if ('style' in bp) {
+        put(BILLING_KEYS.btcpay_checkoutStyle, asCheckoutStyle(bp.style, def.btcpay.style));
+      }
+      if ('methods' in bp) {
+        if (!Array.isArray(bp.methods)) throw new Error('direct.btcpay.methods must be a list');
+        put(BILLING_KEYS.btcpay_directMethods, sanitizeDirectMethods(bp.methods));
+      }
     }
   }
 

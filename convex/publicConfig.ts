@@ -8,7 +8,7 @@
  */
 import { resolveTierFeatures, type TierFeature } from '../src/shared/contracts/tierFeatures';
 import { query } from './_generated/server';
-import { resolveBillingConfig } from './lib/billingConfig';
+import { directEnabled, resolveBillingConfig } from './lib/billingConfig';
 import {
   readDonationState,
   readDonationHistory,
@@ -235,6 +235,22 @@ export const get = query({
         durations: billing.durations,
         cryptoMinMonths: billing.cryptoMinMonths,
         btcpayMinMonths: billing.btcpayMinMonths,
+        // Direct checkout: whether each crypto rail shows its payment details on
+        // our own page, and the coins a member may pick (no allowMemo: that is
+        // an operator decision the server enforces, not something to render).
+        direct: {
+          nowpayments: {
+            enabled: directEnabled(billing, 'nowpayments'),
+            coins: directEnabled(billing, 'nowpayments')
+              ? billing.direct.nowpayments.coins.map(({ ticker, label, network }) => ({
+                  ticker,
+                  label,
+                  network,
+                }))
+              : [],
+          },
+          btcpay: { enabled: directEnabled(billing, 'btcpay') },
+        },
         donation: {
           enabled: billing.donation.enabled,
           suggestedAmountsCents: billing.donation.suggestedAmountsCents,

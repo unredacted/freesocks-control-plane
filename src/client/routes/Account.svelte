@@ -73,6 +73,7 @@
   import { ownCountryOf } from '../lib/countries';
   import { sealingEnabled } from '../lib/hpke';
   import { router } from '../stores/router.svelte';
+  import DirectPaymentPanel from '../components/DirectPaymentPanel.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { AccountIdRevealResponse } from '../../shared/contracts/subscription';
@@ -907,6 +908,16 @@
                 </button>
               {/snippet}
             </MembershipCallout>
+          {:else if order.data?.payment && (order.data.status === 'pending' || order.data.status === 'confirming')}
+            <!-- Direct checkout: the payment details on our own page. -->
+            <DirectPaymentPanel
+              payment={order.data.payment}
+              status={order.data.status}
+              onRestart={() => {
+                activeTab = 'membership';
+                router.navigate('/account?tab=membership', { replace: true });
+              }}
+            />
           {:else}
             <div class="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
               <p class="flex items-center gap-2 text-sm font-semibold">

@@ -14,7 +14,10 @@ import {
   BILLING_DEFAULTS,
   BILLING_KEYS,
   billingConfigWrites,
+  directEnabled,
+  sanitizeDirectCoins,
   withinUnderpaymentTolerance,
+  type DirectCoin,
 } from './lib/billingConfig';
 
 /** The JSON-decoded value written for `key`, or undefined if not written. */
@@ -130,5 +133,76 @@ describe('withinUnderpaymentTolerance', () => {
     expect(withinUnderpaymentTolerance(1, 0)).toBe(true);
     expect(withinUnderpaymentTolerance(null, 10)).toBe(false);
     expect(withinUnderpaymentTolerance(Number.NaN, 10)).toBe(false);
+  });
+});
+
+describe('direct checkout config', () => {
+  const written = (patch: unknown, key: string): unknown => {
+    const row = billingConfigWrites(patch).find((w) => w.key === key);
+    return row ? JSON.parse(row.value) : undefined;
+  };
+
+  test('defaults are hosted on both crypto rails', () => {
+    expect(BILLING_DEFAULTS.direct.nowpayments.style).toBe('hosted');
+    expect(BILLING_DEFAULTS.direct.btcpay.style).toBe('hosted');
+    expect(directEnabled(BILLING_DEFAULTS, 'nowpayments')).toBe(false);
+    expect(directEnabled(BILLING_DEFAULTS, 'btcpay')).toBe(false);
+  });
+
+  test('direct needs a non-empty list; card rails are never direct', () => {
+    const on = (coins: DirectCoin[]) => ({
+      ...BILLING_DEFAULTS,
+      direct: {
+        nowpayments: { style: 'direct' as const, coins },
+        btcpay: { style: 'direct' as const, methods: [] },
+      },
+    });
+    expect(directEnabled(on(BILLING_DEFAULTS.direct.nowpayments.coins), 'nowpayments')).toBe(true);
+    expect(directEnabled(on([]), 'nowpayments')).toBe(false);
+    expect(directEnabled(on([]), 'btcpay')).toBe(false);
+    expect(directEnabled(on(BILLING_DEFAULTS.direct.nowpayments.coins), 'stripe')).toBe(false);
+  });
+
+  test('coins: lowercased, deduped (first wins), bad rows dropped, memo opt-in only', () => {
+    const coins = sanitizeDirectCoins([
+      { ticker: ' USDTTRC20 ', label: 'USDT', network: 'Tron (TRC-20)', allowMemo: 'yes' },
+      { ticker: 'usdttrc20', label: 'dup', network: 'dup' },
+      { ticker: 'x', label: 'too short', network: 'n' },
+      { ticker: 'xlm', label: 'XLM', network: 'Stellar', allowMemo: true },
+      { ticker: 'btc', label: '', network: 'Bitcoin' },
+      { ticker: 'ltc', label: 'LTC', network: 'bad\u0007bell' },
+      'garbage',
+    ]);
+    expect(coins).toEqual([
+      { ticker: 'usdttrc20', label: 'USDT', network: 'Tron (TRC-20)', allowMemo: false },
+      { ticker: 'xlm', label: 'XLM', network: 'Stellar', allowMemo: true },
+    ]);
+  });
+
+  test('an explicitly empty coin list is kept (direct then stays hosted)', () => {
+    expect(sanitizeDirectCoins([])).toEqual([]);
+    expect(sanitizeDirectCoins(undefined)).toEqual(BILLING_DEFAULTS.direct.nowpayments.coins);
+  });
+
+  test('admin writes: style is an enum, coins must be a list, methods are shape-checked', () => {
+    expect(
+      written(
+        { direct: { nowpayments: { style: 'direct' } } },
+        BILLING_KEYS.nowpayments_checkoutStyle,
+      ),
+    ).toBe('direct');
+    expect(
+      written(
+        { direct: { nowpayments: { style: 'iframe' } } },
+        BILLING_KEYS.nowpayments_checkoutStyle,
+      ),
+    ).toBe('hosted');
+    expect(() => billingConfigWrites({ direct: { nowpayments: { coins: 'btc' } } })).toThrow();
+    expect(
+      written(
+        { direct: { btcpay: { methods: ['BTC-LN', 'BTC-LN', 'bad id!', 'BTC-CHAIN'] } } },
+        BILLING_KEYS.btcpay_directMethods,
+      ),
+    ).toEqual(['BTC-LN', 'BTC-CHAIN']);
   });
 });

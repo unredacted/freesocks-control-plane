@@ -667,7 +667,8 @@
     "failedTitle": "Payment not completed",
     "failedBody": "Your payment did not go through, or the checkout expired. You can try again.",
     "underpaidTitle": "Your payment arrived short",
-    "underpaidBody": "We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out."
+    "underpaidBody": "We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out.",
+    "cardReachHint": "If the payment page doesn't load, connect with your free FreeSocks key first, then try again."
   },
   "gift": {
     "title": "Buy codes to share",
@@ -715,7 +716,9 @@
     "serverError": "The server had a problem handling this. Please try again in a few minutes.",
     "modeUnavailable": "Your current connection mode is no longer available. Switch to another mode first, then try again.",
     "noOtherServer": "There is no other server available right now. Please try again later.",
-    "switchServerUnsupported": "Switching servers is not available for this key."
+    "switchServerUnsupported": "Switching servers is not available for this key.",
+    "coinMinimum": "This amount is below that coin's minimum. Pick another coin or a longer term.",
+    "coinUnavailable": "That coin isn't available right now. Pick another one."
   },
   "setup": {
     "title": "Set up your VPN app",
@@ -1137,5 +1140,33 @@
     "asnLabel": "Network (ASN)",
     "notSet": "Not set",
     "editHint": "Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it."
+  },
+  "direct": {
+    "coinLabel": "Coin and network",
+    "coinHint": "Pick the network your wallet or exchange will send on. You pay on this page; you are not sent anywhere else.",
+    "title": "Send your payment",
+    "waiting": "Waiting for your payment. This page updates by itself.",
+    "timeLeft": "Time left",
+    "methodLabel": "Payment method",
+    "sendExactly": "Send exactly {amount} {unit} on {network}.",
+    "networkWarning": "Send only on {network}. Money sent on any other network is lost.",
+    "lightningOnly": "Pay this invoice from a Lightning wallet.",
+    "amountLabel": "Amount ({unit})",
+    "addressLabel": "{network} address",
+    "invoiceLabel": "Lightning invoice",
+    "memoLabel": "Memo / tag",
+    "memoWarning": "Include this memo (also called tag or destination tag). Without it the payment cannot be matched to you.",
+    "copyLabel": "Copy {what}",
+    "qrAddressOnly": "QR has the address only. Enter the amount yourself.",
+    "qrWithAmount": "QR includes the amount.",
+    "seenBody": "We have seen your payment. It activates automatically once it confirms.",
+    "showDetails": "Show payment details",
+    "expiredTitle": "This payment address has expired",
+    "expiredBody": "Don't send anything to it. Start again to get a fresh address and amount.",
+    "startAgain": "Start again",
+    "hostedFallback": "Prefer the payment provider's own page?",
+    "hostedFallbackLink": "Open it instead",
+    "lightning": "Lightning",
+    "bitcoinOnchain": "Bitcoin (on-chain)"
   }
 }

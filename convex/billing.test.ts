@@ -2684,6 +2684,7 @@ describe('anonymous donations', () => {
       membershipExpiresAt: null,
       kind: 'donation',
       giftCodes: [],
+      payment: null,
     });
 
     // A user-bound ref through the anonymous path stays invisible (sign in).
