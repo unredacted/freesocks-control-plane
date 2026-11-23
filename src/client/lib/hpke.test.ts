@@ -263,3 +263,39 @@ test('a device clock an hour fast still seals to a current epoch', async () => {
     vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
   }
 });
+
+test('only the refresh after a refused epoch bypasses the keys cache', async () => {
+  const manifestSk = new Uint8Array(32).fill(13);
+  const publicKey = bytesToB64Url(await serializePublicKey(kp.publicKey));
+  const notAfter = Date.now() + 20 * 60_000;
+  const epoch = {
+    kid,
+    publicKey,
+    notAfter,
+    sig: bytesToB64Url(
+      signManifest(manifestSk, epochStatement({ kid, publicKeyB64: publicKey, notAfter })),
+    ),
+  };
+  vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
+  vi.resetModules();
+  const pinned = await import('./hpke');
+  const keyFetches: Array<RequestInit | undefined> = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: string | URL, init?: RequestInit) => {
+      if (String(input) === '/healthz')
+        return Response.json({ timestamp: new Date().toISOString() });
+      keyFetches.push(init);
+      return Response.json({ epoch });
+    }),
+  );
+  try {
+    await pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}');
+    pinned.invalidateEpoch(kid);
+    await pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}');
+    expect(keyFetches.map((init) => init?.cache)).toEqual([undefined, 'no-store']);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  }
+});

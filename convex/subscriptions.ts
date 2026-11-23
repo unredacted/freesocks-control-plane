@@ -1366,9 +1366,12 @@ export const recordGraceSpend = internalMutation({
   handler: async (ctx, { subscriptionId, usedBytes }) => {
     const old = await ctx.db.get(subscriptionId);
     if (!old || old.state !== 'disabled' || old.graceBaseUsedBytes === undefined) return null;
-    const extraBytes = Math.floor(usedBytes) - old.graceBaseUsedBytes;
+    const used = Math.floor(usedBytes);
+    // A counter below the base was reset during the grace (a new period):
+    // everything on it now was spent since, in the new period.
+    const extraBytes = used >= old.graceBaseUsedBytes ? used - old.graceBaseUsedBytes : used;
     if (extraBytes <= 0) return null;
-    await ctx.db.patch(old._id, { graceBaseUsedBytes: Math.floor(usedBytes) });
+    await ctx.db.patch(old._id, { graceBaseUsedBytes: used });
     const user = await ctx.db.get(old.userId);
     const currentId = user?.currentSubscriptionId;
     const current = currentId && currentId !== old._id ? await ctx.db.get(currentId) : null;
@@ -1386,28 +1389,34 @@ export const recordGraceSpend = internalMutation({
     const tierLimit = resolveTrafficLimitBytes(tier, await resolveCurrentBonusGb(ctx.db, now));
     const trafficLimitBytes = keyTrafficLimit(tierLimit, carry, now);
     if (trafficLimitBytes === null) return null;
-    return { backend: current.backend, backendUserId: current.backendUserId, trafficLimitBytes };
+    return {
+      userId: old.userId,
+      backend: current.backend,
+      backendUserId: current.backendUserId,
+      trafficLimitBytes,
+    };
   },
 });
 
-/** Rows whose carry period has ended (the quota-carry-expire cron). */
+/** Rows whose carry period has ended (the quota-carry-expire cron), a page at a time. */
 export const findExpiredCarries = internalQuery({
-  args: { now: v.number(), limit: v.number() },
-  handler: async (ctx, { now, limit }) => {
-    const rows = await ctx.db
+  args: { now: v.number(), cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  handler: async (ctx, { now, cursor, numItems }) => {
+    const page = await ctx.db
       .query('subscriptions')
       .withIndex('by_period_carry_until', (q) =>
         q.gt('periodCarryUntil', 0).lte('periodCarryUntil', now),
       )
-      .take(limit);
-    const out = [];
-    for (const row of rows) {
+      .paginate({ cursor, numItems });
+    const rows = [];
+    for (const row of page.page) {
       const user = row.state === 'active' ? await ctx.db.get(row.userId) : null;
       const tier = user ? await ctx.db.get(user.tierId) : null;
-      out.push({
+      rows.push({
         subscriptionId: row._id,
         backend: row.backend,
         backendUserId: row.backendUserId,
+        periodCarryUntil: row.periodCarryUntil!,
         // The full tier limit to restore on a live key; null = just clear.
         restoreLimitBytes:
           tier && user?.currentSubscriptionId === row._id
@@ -1415,7 +1424,7 @@ export const findExpiredCarries = internalQuery({
             : null,
       });
     }
-    return out;
+    return { rows, isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });
 

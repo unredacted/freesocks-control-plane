@@ -143,7 +143,7 @@ describe('inline open / seal', () => {
     ).toEqual({ ok: true });
   });
 
-  test('a revoked recipient is refused before any key is touched', async () => {
+  test('a revoked recipient answers unavailable and is never opened', async () => {
     const t = convexTest(schema, modules);
     const { keyPair, kid } = await staticServerKey();
     await t.mutation(internal.keyRevocations.insert, {
@@ -156,13 +156,20 @@ describe('inline open / seal', () => {
       bytesToB64Url(await serializePublicKey(keyPair.publicKey)),
       kid,
     );
-    await expect(
-      openSealedRequest(queryCtx(t), {
+    expect(
+      await openSealedRequest(queryCtx(t), {
         method: 'POST',
         path: PATH,
         wireBody: prepared.body as SealedWire,
       }),
-    ).rejects.toThrow(/Unknown or revoked HPKE recipient/);
+    ).toEqual({ unavailable: true });
+    await expect(
+      openSealedRequest(queryCtx(t), {
+        method: 'POST',
+        path: PATH,
+        wireBody: { fsSealed: { v: 1, ct: 'AA' } } as unknown as SealedWire,
+      }),
+    ).rejects.toThrow(/Unknown HPKE recipient/);
   });
 
   test('an epoch whose seed is gone, or a store that is down, answers unavailable', async () => {

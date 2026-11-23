@@ -670,9 +670,14 @@ carries what earlier keys spent in the same traffic period (`convex/lib/quotaCar
 - **The grace.** The superseded key keeps routing for 24 hours. Its tombstone records the usage
   already counted (`graceBaseUsedBytes`), and the tombstone sweep charges anything spent after
   that to the member's current key before deleting the old one (`lifecycle.settleGraceUsage`).
-  The spend is recorded before the provider update, so a retried sweep never charges it twice.
+  The spend is recorded before the provider update, so a retried sweep never charges it twice;
+  a failed update schedules a tier push, which sends the same reduced limit with its own retry.
+  A counter below the base means the provider reset it during the grace, and everything on it
+  is charged as new-period spend.
 - **A new period.** The hourly `quota-carry-expire` cron restores the full tier limit on keys
-  whose `periodCarryUntil` has passed and drops the carry (index `by_period_carry_until`). The
+  whose `periodCarryUntil` has passed and drops the carry (index `by_period_carry_until`). It
+  pages past failed restores (retried hourly) and drops a carry it could not restore after a
+  week, so the next tier push sends the full limit. The
   provider resets its own counter on its own schedule, so the two can be apart by the panel's
   timezone offset. An admin traffic reset drops the carry too.
 - **Best-effort.** A failed usage read issues at the full tier limit and a failed settlement

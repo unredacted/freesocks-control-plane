@@ -107,19 +107,22 @@ export async function readLiveEpoch(ctx: QueryCtx): Promise<PublicEpoch | null> 
  * static key, or an epoch key fetched from the volatile seed store. The kid is
  * also bound into the HPKE `info`, so it must match what the client sealed with.
  *
- * Throws on an unknown/revoked recipient or a failed open (the wrapper turns a
- * throw into a generic 500). Returns `{ unavailable: true }` when an epoch's
- * seed is gone or the store cannot be reached (503 hpke.key_unavailable).
+ * Throws on a missing recipient or a failed open (the wrapper turns a throw
+ * into a generic 500). Returns `{ unavailable: true }` for a revoked kid, or
+ * when an epoch's seed is gone or the store cannot be reached
+ * (503 hpke.key_unavailable, which the client retries with a fresh epoch).
  */
 export async function openSealedRequest(
   ctx: QueryCtx,
   opts: { method: string; path: string; wireBody: SealedWire },
 ): Promise<{ plaintext: unknown } | { unavailable: true }> {
   const envKid = opts.wireBody?.fsSealed?.kid;
+  if (!envKid) throw new Error('Unknown HPKE recipient');
+  // A tab can still hold an epoch revoked after it cached it. Answer the
+  // retryable 503 so the client drops it and refetches (picking up the
+  // signed revocation and the replacement epoch); never open the body.
   const revoked = await ctx.runQuery(internal.keyRevocations.current, {});
-  if (!envKid || revoked?.revokedKids.includes(envKid)) {
-    throw new Error('Unknown or revoked HPKE recipient');
-  }
+  if (revoked?.revokedKids.includes(envKid)) return { unavailable: true };
   const { keyPair: staticKeys, kid: staticKid } = await staticServerKey();
   let priv = staticKeys.privateKey;
   if (envKid !== staticKid) {

@@ -271,6 +271,34 @@ describe('hpkeCrypto actions + inline open (V8 runtime)', () => {
   });
 });
 
+test('openSealedRequest answers a revoked recipient with the retryable unavailable result', async () => {
+  const t = convexTest(schema, modules);
+  const srv = await serverIdentity();
+  await t.run((ctx) =>
+    ctx.db.insert('keyRevocations', {
+      version: 1,
+      revokedKids: [srv.kid],
+      notAfter: Date.now() + 60_000,
+      manifestSig: 'sig',
+    }),
+  );
+  const prepared = await clientPrepareRequest({
+    serverPub: await deserializePublicKey(srv.pkBytes),
+    serverKid: srv.kid,
+    method: 'POST',
+    path: '/api/v1/auth/account-login',
+    policy: { request: 'seal', response: 'plain' },
+    bodyObj: { accountId: '3'.repeat(32), captchaToken: 'tok' },
+  });
+  expect(
+    await openSealedRequest(queryCtx(t), {
+      method: 'POST',
+      path: '/api/v1/auth/account-login',
+      wireBody: prepared.body as SealedWire,
+    }),
+  ).toEqual({ unavailable: true });
+});
+
 describe('requestRemint', () => {
   test('schedules one maintenance run per throttle window, only while signing is on', async () => {
     const t = convexTest(schema, modules);
