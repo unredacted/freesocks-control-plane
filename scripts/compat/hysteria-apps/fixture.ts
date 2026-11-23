@@ -112,11 +112,14 @@ function serverConfig(cert: { certificate: string; key: string }, password: stri
 
 type Pins = { pinHex: string; spkiB64: string };
 
-/** The backend's link for a pinned Host (its own pin, `fm` and `insecure`), with FCP's rewrites. */
+/**
+ * The backend's link for a pinned Host (its own pin, `fm` and `insecure`), with
+ * FCP's rewrites. No `alpn`: the panel writes none for a Hysteria Host (seen on
+ * beta, panel 3.4.11), so the app must do without it as it will for members.
+ */
 function hysteriaLink(password: string, host: string, port: number, pins: Pins): string {
   const q: Record<string, string> = {
     sni: SERVER_NAME,
-    alpn: 'h3',
     insecure: '1',
     pinSHA256: pins.pinHex,
     fm: JSON.stringify({ quicParams: { congestion: 'bbr' } }),
