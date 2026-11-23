@@ -12,7 +12,7 @@
  * P0d lands the key loader + a self-test. The real open/seal request/response
  * actions land in P1 (the OHTTP exporter flow).
  */
-import { internalAction } from '../_generated/server';
+import { internalAction, type ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import { v } from 'convex/values';
 import {
@@ -184,25 +184,30 @@ type PublicEpoch = {
   notAfter: number;
 };
 
+/** The current epoch, if the private store still holds its seed. A plain
+ *  function so callers already in this Node runtime (maintainEpoch, every
+ *  minute) check it inline instead of starting a second Node action. */
+async function readLiveEpoch(ctx: ActionCtx): Promise<PublicEpoch | null> {
+  const epoch = await ctx.runQuery(internal.keyEpochs.current, {});
+  if (!epoch) return null;
+  try {
+    const response = await epochSeedRequest(epoch.kid, { method: 'HEAD' });
+    return response.ok ? epoch : null;
+  } catch {
+    return null;
+  }
+}
+
 export const liveEpoch = internalAction({
   args: {},
-  handler: async (ctx): Promise<PublicEpoch | null> => {
-    const epoch = await ctx.runQuery(internal.keyEpochs.current, {});
-    if (!epoch) return null;
-    try {
-      const response = await epochSeedRequest(epoch.kid, { method: 'HEAD' });
-      return response.ok ? epoch : null;
-    } catch {
-      return null;
-    }
-  },
+  handler: (ctx): Promise<PublicEpoch | null> => readLiveEpoch(ctx),
 });
 
 /** Check for store restarts between scheduled epoch rotations. */
 export const maintainEpoch = internalAction({
   args: {},
   handler: async (ctx): Promise<null> => {
-    const epoch = await ctx.runAction(internal.lib.hpkeCrypto.liveEpoch, {});
+    const epoch = await readLiveEpoch(ctx);
     const revoked = await ctx.runQuery(internal.keyRevocations.current, {});
     if (
       !epoch ||

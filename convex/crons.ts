@@ -75,11 +75,14 @@ crons.daily(
   {},
 );
 
-// Mint a fresh manifest-signed HPKE epoch key (CDN-blinding Phase 3); the login
-// request seals to the current epoch key, not the multi-day static key. Each run
-// also destroys long-expired epoch seeds (forward secrecy). Gated in the isolate
-// (keyEpochs.maybeRotate) so a dark deployment doesn't cold-start a Node action
-// every 10 min just to no-op. A daily backstop sweep runs even if rotation stalls.
+// Keep a live manifest-signed HPKE epoch key (CDN-blinding Phase 3); the login
+// request seals to the current epoch key, not the multi-day static key. Every
+// minute the Node check (lib/hpkeCrypto.ts maintainEpoch) confirms the volatile
+// seed store still holds the current seed, and re-mints when it does not or when
+// the epoch is 10 min old; minting also destroys long-expired epoch seeds
+// (forward secrecy). Gated in the isolate (keyEpochs.maybeRotate) so a dark
+// deployment never starts that Node action. A daily backstop sweep runs even if
+// rotation stalls.
 crons.interval('epoch-key-rotate', { minutes: 1 }, internal.keyEpochs.maybeRotate, {});
 // Restore the full traffic limit of keys whose quota-carry period ended
 // (lib/quotaCarry.ts). Hourly, so the month roll lands within the hour.

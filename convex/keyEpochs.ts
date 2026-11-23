@@ -31,8 +31,9 @@ export const maybeRotate = internalMutation({
   handler: async (ctx) => {
     await recordHeartbeat(ctx, 'epoch-key-rotate');
     if (!process.env.FS_MANIFEST_SK) return null;
-    // Rotation-gap alarm: epochs EXIST but none is currently valid — at least
-    // 3 consecutive rotates failed (10-min cadence, 30-min validity), and
+    // Rotation-gap alarm: epochs EXIST but none is currently valid — every
+    // re-mint for 20+ min failed (an epoch is re-minted at 10 min of age and
+    // checked every minute; validity is 30 min), and
     // manifest-pinned clients cannot send sealed requests. (First-ever run,
     // zero rows, is fine: maintenance mints the first epoch.)
     const now = Date.now();
