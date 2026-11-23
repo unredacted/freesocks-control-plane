@@ -186,6 +186,15 @@ export const setMany = internalMutation({
       // Latency ordering turned on or off: the order members receive changes.
       if (key === 'delivery.country.latency' && (before === 'true') !== (value === 'true'))
         await ctx.scheduler.runAfter(0, internal.edgeRender.latencyChanged, {});
+      // Latency ordering (or the steering it needs) turned on: the measured
+      // legs are taken now (`edge-latency` passes only while both are on), so
+      // no figure from before it was off is read for up to an hour.
+      if (
+        (key === 'delivery.country.latency' || key === 'delivery.country.steer') &&
+        before !== 'true' &&
+        value === 'true'
+      )
+        await ctx.scheduler.runAfter(0, internal.edgeLatency.refresh, {});
       // Wide guesses ended (one of their switches went off): guesses off the
       // list and pending countries go.
       if (

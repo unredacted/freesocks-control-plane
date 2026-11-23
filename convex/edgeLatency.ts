@@ -22,7 +22,7 @@
  * Infrastructure only: addresses and third-party vantages, nothing about a
  * member.
  */
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
@@ -60,6 +60,53 @@ const LOCATION_SCAN = 1000;
 const EDGE_SCAN = 1000;
 const RUNS_PER_PASS = 2000;
 const ROW_SCAN = 5000;
+/**
+ * Locations refreshed at once (mutations in flight): a pass is one driver
+ * working through them (`refreshLocations`), never a job per location, so it
+ * never fills the backend's mutation pool or its scheduled-job slots.
+ */
+export const LOCATION_LANES = 2;
+/** How long one driver run starts locations before it hands the rest to the next. */
+const DRIVER_BUDGET_MS = 60_000;
+/**
+ * A pass's locations still to take, one `appState` row per lane (JSON
+ * `PendingLane`): durable, so a driver that dies leaves them for the next
+ * hourly tick, and the mark moves only once every lane is empty.
+ */
+export const PENDING_KEY_PREFIX = 'edgeLatency:pending:';
+/** A pass with no progress for this long has no driver left: the next tick resumes it. */
+const DRIVER_STALL_MS = 10 * 60_000;
+
+interface PendingLane {
+  from: number;
+  to: number;
+  now: number;
+  ids: Id<'edgeLocations'>[];
+}
+
+async function pendingLane(
+  db: DatabaseReader,
+  lane: number,
+): Promise<{ row: Doc<'appState'>; pending: PendingLane } | null> {
+  const row = await db
+    .query('appState')
+    .withIndex('by_key', (q) => q.eq('key', `${PENDING_KEY_PREFIX}${lane}`))
+    .unique();
+  return row ? { row, pending: JSON.parse(row.value) as PendingLane } : null;
+}
+
+/** Take `locationId` off its lane (the lane's row goes once empty). Idempotent. */
+async function takeOffLane(ctx: MutationCtx, lane: number, locationId: Id<'edgeLocations'>) {
+  const got = await pendingLane(ctx.db, lane);
+  if (!got || !got.pending.ids.includes(locationId)) return;
+  const ids = got.pending.ids.filter((id) => id !== locationId);
+  if (ids.length === 0) await ctx.db.delete(got.row._id);
+  else
+    await ctx.db.patch(got.row._id, {
+      value: JSON.stringify({ ...got.pending, ids }),
+      updatedAt: Date.now(),
+    });
+}
 
 /** One kept sample: when, the round trip, and the vantage's network (null: none named). */
 export interface LegSample {
@@ -145,42 +192,145 @@ export function figureMoves(committed: number, fresh: number): boolean {
 
 /**
  * `edge-latency` (hourly): the probe runs requested since the last pass (up to
- * half an hour ago, so they have finished) are merged location by location,
- * one job per L4 location (`refreshLocation`). The first pass reads two days
- * back (as long as a figure stays fresh); after that each pass reads only what
- * is new, so nothing caps how much of the week a figure rests on.
+ * half an hour ago, so they have finished) are merged location by location
+ * (`refreshLocation`, `LOCATION_LANES` at a time). The first pass reads two
+ * days back (as long as a figure stays fresh); after that each pass reads only
+ * what is new, so nothing caps how much of the week a figure rests on.
+ *
+ * The pass's locations are written to the pending lanes with the mark in one
+ * transaction, and each location's job takes itself off its lane in its own:
+ * every location takes each window exactly once, and a pass whose driver died
+ * is resumed (same window) by the next tick before the mark moves again.
+ *
+ * Only while latency ordering is on (with steering: the only time a figure is
+ * read, `latencyInputsFor`). While it is off no run is read, the mark stays
+ * put, and the committed figures are dropped (the kept samples stay), so
+ * turning it on never serves a figure from before; the pass that runs then
+ * (`appSettings.setMany`) reads at most two days back, like a first pass.
  */
 export const refresh = internalMutation({
   args: { now: v.optional(v.number()) },
   handler: async (ctx, a) => {
     await recordHeartbeat(ctx, 'edge-latency');
     const now = a.now ?? Date.now();
+    const lanes = [];
+    for (let lane = 0; lane < LOCATION_LANES; lane++) lanes.push(await pendingLane(ctx.db, lane));
+    const cfg = await resolveMemberCountryConfig(ctx.db);
+    if (!cfg.steer || !cfg.latency) {
+      for (const l of lanes) if (l) await ctx.db.delete(l.row._id);
+      for (const r of await ctx.db.query('edgeLatency').take(ROW_SCAN)) await ctx.db.delete(r._id);
+      return { locations: 0, off: true };
+    }
+    // A pass still being worked through: the mark waits for it. With no
+    // progress for a while its driver died, so it is picked up again.
+    const open = lanes.filter((l) => l !== null);
+    if (open.length > 0) {
+      const progress = Math.max(...open.map((l) => l.row.updatedAt));
+      const resumed = Date.now() - progress >= DRIVER_STALL_MS;
+      if (resumed) await ctx.scheduler.runAfter(0, internal.edgeLatency.refreshLocations, {});
+      return {
+        locations: 0,
+        pending: open.reduce((n, l) => n + l.pending.ids.length, 0),
+        resumed,
+      };
+    }
     const state = await ctx.db
       .query('appState')
       .withIndex('by_key', (q) => q.eq('key', THROUGH_KEY))
       .unique();
-    const through = state ? Number(state.value) : now - FIRST_PASS_MS;
+    // A mark older than a first pass reaches (latency ordering was off for a
+    // while) reads only as far back as a first pass.
+    const through = Math.max(state ? Number(state.value) : 0, now - FIRST_PASS_MS);
     const to = Math.max(through, now - SETTLE_LAG_MS);
     if (!state)
       await ctx.db.insert('appState', { key: THROUGH_KEY, value: String(to), updatedAt: now });
-    else if (to > through) await ctx.db.patch(state._id, { value: String(to), updatedAt: now });
+    else if (to > Number(state.value))
+      await ctx.db.patch(state._id, { value: String(to), updatedAt: now });
     const keys = new Set<string>();
+    const byLane: Id<'edgeLocations'>[][] = Array.from({ length: LOCATION_LANES }, () => []);
+    let n = 0;
     for (const loc of await ctx.db.query('edgeLocations').take(LOCATION_SCAN)) {
       if (edgeLayerOf(loc.provider) !== 'l4') continue;
       keys.add(locationKeyOf(loc.provider, loc.placeKey));
-      await ctx.scheduler.runAfter(0, internal.edgeLatency.refreshLocation, {
-        locationId: loc._id,
-        from: through,
-        to,
-        now,
-      });
+      byLane[n++ % LOCATION_LANES]!.push(loc._id);
     }
+    for (const [lane, ids] of byLane.entries())
+      if (ids.length > 0)
+        await ctx.db.insert('appState', {
+          key: `${PENDING_KEY_PREFIX}${lane}`,
+          value: JSON.stringify({ from: through, to, now, ids } satisfies PendingLane),
+          updatedAt: Date.now(),
+        });
+    if (n > 0) await ctx.scheduler.runAfter(0, internal.edgeLatency.refreshLocations, {});
     // A location that is gone leaves nothing behind.
     for (const r of await ctx.db.query('edgeLatencySamples').take(ROW_SCAN))
       if (!keys.has(r.groupKey)) await ctx.db.delete(r._id);
     for (const r of await ctx.db.query('edgeLatency').take(ROW_SCAN))
       if (!keys.has(r.groupKey)) await ctx.db.delete(r._id);
     return { locations: keys.size, from: through, to };
+  },
+});
+
+/** The pending lanes (`refreshLocations`). */
+export const pendingLanes = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const out: Array<PendingLane & { lane: number }> = [];
+    for (let lane = 0; lane < LOCATION_LANES; lane++) {
+      const got = await pendingLane(ctx.db, lane);
+      if (got) out.push({ ...got.pending, lane });
+    }
+    return out;
+  },
+});
+
+/** A location whose job threw is skipped this pass (its lane moves on). */
+export const skipPending = internalMutation({
+  args: { lane: v.number(), locationId: v.id('edgeLocations') },
+  handler: async (ctx, a) => {
+    await takeOffLane(ctx, a.lane, a.locationId);
+  },
+});
+
+/**
+ * A pass's driver: each lane's locations one after another (so
+ * `LOCATION_LANES` jobs in flight), for at most `DRIVER_BUDGET_MS`; what is
+ * left goes to a new run. A location whose job throws is skipped this pass,
+ * as when each location was its own job. Safe to run twice: a location's job
+ * does nothing once it is off its lane.
+ */
+export const refreshLocations = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ done: number; failed: number; left: number }> => {
+    const deadline = Date.now() + DRIVER_BUDGET_MS;
+    const lanes = await ctx.runQuery(internal.edgeLatency.pendingLanes, {});
+    let done = 0;
+    let failed = 0;
+    let left = 0;
+    await Promise.all(
+      lanes.map(async (p) => {
+        let i = 0;
+        for (; i < p.ids.length && Date.now() < deadline; i++) {
+          const locationId = p.ids[i]!;
+          try {
+            await ctx.runMutation(internal.edgeLatency.refreshLocation, {
+              locationId,
+              from: p.from,
+              to: p.to,
+              now: p.now,
+              lane: p.lane,
+            });
+          } catch {
+            failed++;
+            await ctx.runMutation(internal.edgeLatency.skipPending, { lane: p.lane, locationId });
+          }
+          done++;
+        }
+        left += p.ids.length - i;
+      }),
+    );
+    if (left > 0) await ctx.scheduler.runAfter(0, internal.edgeLatency.refreshLocations, {});
+    return { done, failed, left };
   },
 });
 
@@ -191,8 +341,21 @@ export const refresh = internalMutation({
  * is on, every origin with an address in use here then moves its epoch.
  */
 export const refreshLocation = internalMutation({
-  args: { locationId: v.id('edgeLocations'), from: v.number(), to: v.number(), now: v.number() },
+  args: {
+    locationId: v.id('edgeLocations'),
+    from: v.number(),
+    to: v.number(),
+    now: v.number(),
+    /** The pending lane it is on (`refreshLocations`): taken off it in this transaction. */
+    lane: v.optional(v.number()),
+  },
   handler: async (ctx, a) => {
+    if (a.lane !== undefined) {
+      // Off its lane already: this window was taken (a second driver).
+      const got = await pendingLane(ctx.db, a.lane);
+      if (!got || !got.pending.ids.includes(a.locationId)) return { committed: 0 };
+      await takeOffLane(ctx, a.lane, a.locationId);
+    }
     const loc = await ctx.db.get(a.locationId);
     if (!loc) return { committed: 0 };
     const groupKey = locationKeyOf(loc.provider, loc.placeKey);
@@ -389,6 +552,10 @@ export const purgeForRollback = internalMutation({
       .withIndex('by_key', (q) => q.eq('key', THROUGH_KEY))
       .unique();
     if (through) await ctx.db.delete(through._id);
+    for (let lane = 0; lane < LOCATION_LANES; lane++) {
+      const got = await pendingLane(ctx.db, lane);
+      if (got) await ctx.db.delete(got.row._id);
+    }
     return { deleted: 0, done: true };
   },
 });

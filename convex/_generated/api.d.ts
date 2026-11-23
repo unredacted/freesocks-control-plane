@@ -123,6 +123,7 @@ import type * as lib_http from "../lib/http.js";
 import type * as lib_hysteriaGroups from "../lib/hysteriaGroups.js";
 import type * as lib_issuance from "../lib/issuance.js";
 import type * as lib_issueTelemetry from "../lib/issueTelemetry.js";
+import type * as lib_lanes from "../lib/lanes.js";
 import type * as lib_legacyFields from "../lib/legacyFields.js";
 import type * as lib_loadBands from "../lib/loadBands.js";
 import type * as lib_locations from "../lib/locations.js";
@@ -343,6 +344,7 @@ declare const fullApi: ApiFromModules<{
   "lib/hysteriaGroups": typeof lib_hysteriaGroups;
   "lib/issuance": typeof lib_issuance;
   "lib/issueTelemetry": typeof lib_issueTelemetry;
+  "lib/lanes": typeof lib_lanes;
   "lib/legacyFields": typeof lib_legacyFields;
   "lib/loadBands": typeof lib_loadBands;
   "lib/locations": typeof lib_locations;
