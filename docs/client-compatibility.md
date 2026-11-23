@@ -378,6 +378,34 @@ To turn `privacy-hysteria` on: record an app, set its default to `true` in `DEFA
 
 It needs Docker and takes under two minutes once the images and engines are cached; it never prints a configuration or a log, and `FCP_HYSTERIA_KEEP=1` leaves the stack up for debugging. The Xray pin moves by hand with the other Xray-core pins of `docker-compose.compat.yml`.
 
+### Hysteria in real apps
+
+The engines above are not the apps. `.github/workflows/client-app-hysteria.yml` (**Hysteria in real apps**) runs the released apps themselves: v2rayNG on an Android emulator (API 34, KVM on the standard runner) and v2rayN on Linux in a virtual display, each pinned by version and SHA-256 in `tests/compat/hysteriaApps.ts`. Their drivers (`scripts/compat/hysteria-apps/`) do what a member does:
+
+- **import**: the app takes the raw config through its own importer. v2rayNG uses `v2rayng://install-sub`. v2rayN has no URL scheme, so the subscription row its dialog writes is written while it is stopped, and its own updater fetches and parses the config. Every entry must be in the app, `· UDP` and `· Direct` among them;
+- **connection**: the `· UDP` entry is chosen and started as from the app's list, and a request through the app's own listener goes through the node;
+- **UDP**: with the runner's UDP to the node dropped, nothing gets through;
+- **refresh**: the app's own update keeps the same entries;
+- **wrong pin**: a copy with one character of the entry's pin changed is refused;
+- **rogue**: the entry with the node's pin, pointed at a local rogue with another certificate for the same name that would accept the member's password, is refused, and the rogue's access log carries nothing for the member.
+
+It runs against two targets (`scripts/compat/hysteria-apps/fixture.ts`):
+
+- **fixture**, on every pull request that touches it, on main and weekly. The node image's Xray-core serves FCP's own transport on the runner, with a certificate pair and password made for the run. The raw config is the backend's entry with FCP's rewrites, through the delivery guard unchanged. A request goes through when a page only the servers reach answers and the node logged it for the member. Screens, UI dumps and the app's log are kept as the artifact (fixture data only). The apps' default routing sends private addresses straight out, so the page is fetched by name and the servers redirect every request to it.
+- **beta**, dispatched by hand on main with `target: beta`. The app imports the canary key's raw config from beta itself (`FCP_COMPAT_HYSTERIA_TARGET`, `{name, url}`, in the `client-compatibility` environment). A request goes through when an HTTPS page, its name resolved at the far end, sees an address that is not the runner's. Only `result.json` (booleans) is kept: a screen would show the node's name and address.
+
+The canary is a test account on beta (member tier, ten years) with its key in `privacy-hysteria`. Its account number and URL are root-only in `/root/fcp-canary-hysteria/` on the beta host. Issuing it needs the mode on and an app marked `true` on beta, so beta has v2rayNG and v2rayN marked there ahead of their records.
+
+A passing beta run is the record. Download its artifact, then for each app:
+
+```bash
+bun --no-env-file scripts/compat/evidence.ts --ci-result <app>/result.json \
+  --run-url <the run's URL> --os "Android 14 (emulator)" \
+  --backend-version <beta's panel version> --commit <the commit beta ran>
+```
+
+(`--os "Ubuntu 24.04"` for v2rayN.) It records only a run against beta where every check passed, with the Hysteria block, and needs no confirmation. Commit it with the app's `hysteria2: true` in `DEFAULT_CLIENTS` (§ "Hysteria in the client catalog").
+
 ### Hysteria on the backend
 
 Two more runs prove the backend side, with FCP's own transport, certificate and Host:

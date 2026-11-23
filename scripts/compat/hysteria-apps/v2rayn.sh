@@ -36,10 +36,8 @@ log() { if [ "$HY_KIND" = fixture ]; then cat >>"$OUT/app.log"; else cat >/dev/n
 start_app() {
   /usr/bin/v2rayn 2>&1 </dev/null | log &
 }
-stop_app() {
-  pkill -f /opt/v2rayN/v2rayN || true
-  pkill -x xray || true
-  pkill -x sing-box || true
+stop_app() { # the app and the core it started, nothing else (the fixture's servers run Xray too)
+  pkill -u "$(id -u)" -f '^/opt/v2rayN/' 2>/dev/null || true
   sleep 3
 }
 wait_for() { # wait_for <seconds> <command...>
@@ -75,7 +73,8 @@ run_udp() {
   start_app
   # The app's listener up, then a moment for the core behind it.
   wait_for 45 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10808' || { echo 'no listener on 10808'; return 1; }
-  sleep 4
+  sleep 6
+  snap running
 }
 declare -A ok=([rawImport]=false [import]=false [connection]=false [udp]=false
   [refresh]=false [wrongPinRefused]=false [rogueRefused]=false)
@@ -122,6 +121,8 @@ if fetch_sub "$HY_ROGUE_URL" "$HY_WORK/app-names-rogue.txt"; then
   run_udp && never && [ "$(carried rogue)" -eq 0 ] && ok[rogueRefused]=true
 fi
 stop_app
+# The app's own logs, for a failed step (fixture data only).
+[ "$HY_KIND" = fixture ] && cp -r "$DATA/guiLogs" "$OUT/guiLogs" 2>/dev/null
 
 pairs=()
 for k in rawImport import connection udp refresh wrongPinRefused rogueRefused; do pairs+=("$k=${ok[$k]}"); done

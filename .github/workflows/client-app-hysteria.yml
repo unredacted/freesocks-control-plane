@@ -99,6 +99,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb imagemagick >/dev/null
           bash scripts/compat/hysteria-apps/v2rayn.sh '${{ steps.app.outputs.path }}'
+      - name: The fixture servers' state
+        if: always()
+        run: |
+          out=test-results/compat/hysteria-apps/servers.txt
+          docker ps -a --filter label=com.docker.compose.project=fcp-hysteria-apps \
+            --format '{{.Names}} {{.Status}}' >"$out" 2>&1 || true
+          for s in compat-hysteria-node compat-hysteria-rogue; do
+            echo "== $s" >>"$out"
+            docker logs --tail 40 "fcp-hysteria-apps-$s-1" >>"$out" 2>&1 || true
+          done
       - if: always()
         run: bun --no-env-file scripts/compat/hysteria-apps/fixture.ts down
       - uses: actions/upload-artifact@v7

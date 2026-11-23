@@ -11,6 +11,14 @@
  *
  * --hysteria2 adds the Hysteria checks (a `privacy-hysteria` key): only a
  * record with them lets the catalog mark the app `hysteria2: true`.
+ *
+ * From a CI run instead of a person (the `beta` job of
+ * .github/workflows/client-app-hysteria.yml, docs/client-compatibility.md
+ * § "Hysteria in real apps"): --ci-result <its result.json> --run-url <the
+ * run> records it without asking, with the Hysteria checks, only when the run
+ * was against beta and every check in it passed. --client, --app-version and
+ * --tested-by come from the run; --os, --backend-version and --commit (what
+ * beta ran) are still given.
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
@@ -33,8 +41,40 @@ const { values } = parseArgs({
     evidence: { type: 'string' },
     'tested-at': { type: 'string' },
     hysteria2: { type: 'boolean' },
+    'ci-result': { type: 'string' },
+    'run-url': { type: 'string' },
   },
 });
+/** The checks a CI run's result.json must carry, all passed. */
+const CI_CHECKS = [
+  'rawImport',
+  'import',
+  'connection',
+  'udp',
+  'refresh',
+  'wrongPinRefused',
+  'rogueRefused',
+] as const;
+const ci = values['ci-result']
+  ? (JSON.parse(await readFile(values['ci-result'], 'utf8')) as {
+      client?: string;
+      appVersion?: string;
+      target?: string;
+      checks?: Record<string, boolean>;
+    })
+  : null;
+if (ci) {
+  if (ci.target !== 'beta') throw new Error('only a run against beta is evidence');
+  const missing = CI_CHECKS.filter((k) => ci.checks?.[k] !== true);
+  if (missing.length) throw new Error(`not recorded, these did not pass: ${missing.join(', ')}`);
+  if (!values['run-url']?.startsWith('https://github.com/'))
+    throw new Error('--run-url must be the GitHub run');
+  values.client = ci.client;
+  values['app-version'] = ci.appVersion;
+  values['tested-by'] = 'CI: Hysteria in real apps';
+  values.evidence = values['run-url'];
+  values.hysteria2 = true;
+}
 const client = clients.find((c) => c.name === values.client);
 if (!client)
   throw new Error(
@@ -74,7 +114,7 @@ const checks = [
       ] as const)
     : []),
 ] as const;
-for (const [, question] of checks) {
+for (const [, question] of ci ? [] : checks) {
   const answer = prompt(`${question}? [y/N]`);
   if (!/^y(es)?$/i.test(answer?.trim() ?? '')) {
     console.error('Not recorded: only a run where every check passed is evidence.');

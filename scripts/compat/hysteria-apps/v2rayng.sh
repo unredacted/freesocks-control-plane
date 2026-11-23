@@ -63,9 +63,17 @@ import_sub() {
   stop_app
   launch
 }
+# sub_tab: the list of the imported subscription (the app opens on its own
+# `Default` group, which holds nothing here).
+sub_tab() {
+  dump
+  tap_text '^import sub' || { echo 'no tab for the imported subscription'; return 1; }
+  sleep 1
+}
 # names_on_screen <file>: every entry name in the list, scrolled top to bottom.
 names_on_screen() {
   : >"$1"
+  sub_tab
   scroll_top
   for _ in 1 2 3 4 5 6; do
     dump
@@ -76,6 +84,7 @@ names_on_screen() {
 }
 # start_udp: the `· UDP` entry selected and started from the app's screen.
 start_udp() {
+  sub_tab || return 1
   scroll_top
   snap list
   local i
