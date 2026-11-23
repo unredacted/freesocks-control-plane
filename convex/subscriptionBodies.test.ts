@@ -215,20 +215,31 @@ describe('the move off the old blob', () => {
     expect(await t.mutation(internal.subscriptionBodies.migrateLegacy, {})).toEqual({ moved: 0 });
   });
 
-  test('clearForRollback empties the table and lets the move run again', async () => {
+  test('clearForRollback pauses writes, empties the table, and the move runs again after resume', async () => {
     const t = convexTest(schema, modules);
     const { subscriptionId } = await seed(t, { subCache: legacy });
     await t.mutation(internal.subscriptionBodies.migrateLegacy, {});
     expect(await uasOf(t, subscriptionId)).toEqual(['a', 'b', 'c']);
+    const status = () => t.query(internal.subscriptionBodies.rollbackStatus, {});
+    expect(await status()).toEqual({ paused: false, empty: false });
     expect(await t.mutation(internal.subscriptionBodies.clearForRollback, {})).toEqual({
       deleted: 3,
     });
+    expect(await status()).toEqual({ paused: true, empty: true });
+    // A fetch while the drain runs writes no body behind it, and no move runs.
+    await write(t, subscriptionId, entry('late', 9));
     expect(await uasOf(t, subscriptionId)).toEqual([]);
-    // The older build wrote a blob again; this build's move picks it up.
+    // The older build wrote a blob again.
     await t.run((ctx) =>
       ctx.db.patch(subscriptionId, { subCache: JSON.stringify([entry('x', 1)]) }),
     );
+    expect(await t.mutation(internal.subscriptionBodies.migrateLegacy, {})).toEqual({ moved: 0 });
+    expect(await status()).toEqual({ paused: true, empty: true });
+    // This build deployed again: the pause is lifted and the move picks the blob up.
+    expect(await t.mutation(internal.subscriptionBodies.resume, {})).toEqual({ resumed: true });
     expect(await t.mutation(internal.subscriptionBodies.migrateLegacy, {})).toEqual({ moved: 1 });
     expect(await uasOf(t, subscriptionId)).toEqual(['x']);
+    await write(t, subscriptionId, entry('late', 9));
+    expect(await uasOf(t, subscriptionId)).toEqual(['late', 'x']);
   });
 });

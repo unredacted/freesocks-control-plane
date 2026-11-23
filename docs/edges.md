@@ -8303,9 +8303,11 @@ for a key moves the rest of its blob, and `seedCutover` schedules
 `migration:subscriptionBodies` in `appState` (once; a no-op afterwards). No env change, and no
 app fetches again because of the move. Check it finished before the second deploy: the flag is
 set and `bunx convex logs` shows no `migrateLegacy` error. The second deploy drops the field. To
-roll the first back, run `subscriptionBodies:clearForRollback` (no arguments) before deploying
-the older build: it empties the table (apps fetch afresh at their next poll) and clears the flag,
-so the move runs again when this build returns.
+roll the first back, run `subscriptionBodies:clearForRollback` (no arguments): it pauses body
+writes, empties the table page by page (apps fetch afresh at their next poll) and clears the flag.
+Deploy the older build only once `subscriptionBodies:rollbackStatus` answers
+`{ paused: true, empty: true }`. Deploying this build again lifts the pause (`seedCutover`) and
+the move runs again.
 
 **Tencent EdgeOne fronts** (2026-11-15, § "EdgeOne fronts") add a provider id (`edgeone`), its
 credentials, settings and placement schema variants, two pinned packages
