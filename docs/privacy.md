@@ -527,13 +527,15 @@ What protects a Privacy-mode (`privacy-reality`) connection against a quantum co
 
 - **Recorded traffic: post-quantum when the app asks for it.** REALITY is TLS 1.3 between the
   app and the node. Its key exchange is the hybrid X25519MLKEM768 when the app's Client Hello
-  offers that key share: Xray-core apps on the chrome fingerprint, Mihomo (every Clash body FCP
-  hands out asks for it, `convex/lib/realityKeyShares.ts`), and Anywhere on iOS/macOS 26 or later.
-  sing-box never offers it (in every release so far), nor does Anywhere below 26; those
-  connections use X25519 alone. The node accepts either.
+  offers that key share. Measured in CI (the table in [client-compatibility.md](client-compatibility.md)
+  § "Post-quantum key exchange"): Xray-core apps on the chrome fingerprint and Mihomo (every
+  Clash body FCP hands out asks for it, `convex/lib/realityKeyShares.ts`) do; sing-box does not
+  (in every release so far), and those connections use X25519 alone. Apps on their own engines
+  are not measured: Anywhere's source sends the share only on iOS/macOS 26 or later
+  (`RealityClient.swift`), which no test has checked. The node accepts either.
 - **Why the node does not require it.** Xray v26.9.8 and later refuse a REALITY Client Hello
-  without the hybrid share, with no switch. That would cut off every sing-box app and older
-  Anywhere on the configurations they already hold, and a Privacy configuration is pasted by
+  without the hybrid share, with no switch. That would cut off every sing-box app (and, going
+  by its source, Anywhere below 26) on the configurations they already hold, and a Privacy configuration is pasted by
   hand and never refreshes. So the node image stays on Xray 26.7.28 until sing-box sends the
   share ([client-compatibility.md](client-compatibility.md) § "The X25519MLKEM768 key
   share"). That bump is what makes Privacy
