@@ -9,7 +9,8 @@
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
+import type { DatabaseReader } from './_generated/server';
 import { v } from 'convex/values';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { resolveBillingConfig } from './lib/billingConfig';
@@ -25,6 +26,7 @@ import { readUserCounts } from './lib/statusCounters';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import { keyTrafficLimit, liveCarryBytes } from './lib/quotaCarry';
 
 /** One page of active free users' active subs (shared by the query + the action,
  *  and annotated at the call site to break Convex's self-file inference cycle). */
@@ -33,6 +35,8 @@ type ActiveFreeSubsPage = {
     backend: BackendId;
     backendUserId: string;
     backendServerId: Id<'backendServers'> | null;
+    periodCarryBytes?: number;
+    periodCarryUntil?: number;
   }[];
   isDone: boolean;
   continueCursor: string;
@@ -41,15 +45,15 @@ type ActiveFreeSubsPage = {
 /** Live effective bonus GB — for issuance sites resolving the free limit in an action. */
 export const currentBonusGb = internalQuery({
   args: {},
-  handler: async (ctx): Promise<number> => {
-    const [state, cfg] = await Promise.all([
-      readDonationState(ctx.db),
-      resolveBillingConfig(ctx.db),
-    ]);
-    if (!cfg.donation.enabled) return 0;
-    return effectiveBonusGb(state, cfg.donation, Date.now());
-  },
+  handler: (ctx): Promise<number> => currentBonusGbOf(ctx.db),
 });
+
+/** `currentBonusGb` for a caller already in a query (the account view). */
+export async function currentBonusGbOf(db: DatabaseReader): Promise<number> {
+  const [state, cfg] = await Promise.all([readDonationState(db), resolveBillingConfig(db)]);
+  if (!cfg.donation.enabled) return 0;
+  return effectiveBonusGb(state, cfg.donation, Date.now());
+}
 
 /** A member's own settled donation totals (impact backend). Read from the
  *  MAINTAINED aggregates on the user row (fundDonation bumps them at grant
@@ -58,18 +62,27 @@ export const currentBonusGb = internalQuery({
  *  server-side (the raw rate itself never ships). */
 export const donationTotals = internalQuery({
   args: { userId: v.id('users') },
-  handler: async (
-    ctx,
-    { userId },
-  ): Promise<{ donatedCentsTotal: number; donationCount: number; donatedGbTotal: number }> => {
-    const user = await ctx.db.get(userId);
-    const donatedCentsTotal = user?.donatedCentsTotal ?? 0;
-    const donationCount = user?.donationCount ?? 0;
-    const cfg = await resolveBillingConfig(ctx.db);
-    const donatedGbTotal = (donatedCentsTotal / 100) * cfg.donation.bonusGbPerUsd;
-    return { donatedCentsTotal, donationCount, donatedGbTotal };
-  },
+  handler: async (ctx, { userId }): Promise<DonationTotals> =>
+    donationTotalsOf(ctx.db, await ctx.db.get(userId)),
 });
+
+export interface DonationTotals {
+  donatedCentsTotal: number;
+  donationCount: number;
+  donatedGbTotal: number;
+}
+
+/** `donationTotals` for a caller already holding the user row (the account view). */
+export async function donationTotalsOf(
+  db: DatabaseReader,
+  user: Doc<'users'> | null,
+): Promise<DonationTotals> {
+  const donatedCentsTotal = user?.donatedCentsTotal ?? 0;
+  const donationCount = user?.donationCount ?? 0;
+  const cfg = await resolveBillingConfig(db);
+  const donatedGbTotal = (donatedCentsTotal / 100) * cfg.donation.bonusGbPerUsd;
+  return { donatedCentsTotal, donationCount, donatedGbTotal };
+}
 
 /** Everything applyFreeBonus needs in one read: the effective vs last-pushed bonus
  *  and the free tiers (id + base GB) whose keys must be re-capped. */
@@ -155,11 +168,7 @@ export const findActiveFreeSubs = internalQuery({
       .query('users')
       .withIndex('by_tier_status_freekey', (q) => q.eq('tierId', tierId).eq('status', 'active'))
       .paginate({ cursor, numItems });
-    const subs: {
-      backend: BackendId;
-      backendUserId: string;
-      backendServerId: Id<'backendServers'> | null;
-    }[] = [];
+    const subs: ActiveFreeSubsPage['subs'] = [];
     for (const u of res.page) {
       const sub = await ctx.db
         .query('subscriptions')
@@ -171,6 +180,8 @@ export const findActiveFreeSubs = internalQuery({
           backend: sub.backend,
           backendUserId: sub.backendUserId,
           backendServerId: sub.backendServerId ?? null,
+          periodCarryBytes: sub.periodCarryBytes,
+          periodCarryUntil: sub.periodCarryUntil,
         });
       }
     }
@@ -227,8 +238,13 @@ export const applyFreeBonus = internalAction({
           );
           // Group this page's Remnawave keys by hosting instance, then bulk-update.
           const byServer = new Map<Id<'backendServers'>, string[]>();
+          // A key still carrying earlier keys' spending this period gets its own
+          // reduced limit (lib/quotaCarry.ts), so it leaves the bulk call.
+          const now = Date.now();
+          const ownLimit = (s: ActiveFreeSubsPage['subs'][number]) =>
+            !capabilitiesOf(s.backend).bulkTrafficUpdate || liveCarryBytes(s, now) > 0;
           for (const s of res.subs) {
-            if (!capabilitiesOf(s.backend).bulkTrafficUpdate) continue;
+            if (ownLimit(s)) continue;
             // No recorded hosting instance → can't route the bulk call. Tally it
             // (no silent coverage gaps) — issuance always records the instance,
             // so anything here is a legacy/abnormal row worth surfacing.
@@ -258,16 +274,16 @@ export const applyFreeBonus = internalAction({
               }
             }
           }
-          // Outline keys (no bulk endpoint): per-user data-limit updates, with the
-          // same per-key isolation (a throw leaves the applied marker unset so the
-          // next run retries, but must not abort the rest of the fleet).
+          // Outline keys (no bulk endpoint) and carrying keys: per-user limit
+          // updates, with the same per-key isolation (a throw leaves the applied
+          // marker unset so the next run retries, but must not abort the fleet).
           for (const s of res.subs) {
-            if (capabilitiesOf(s.backend).bulkTrafficUpdate) continue;
+            if (!ownLimit(s)) continue;
             try {
               await ctx.runAction(internal.backends.updateUser, {
                 backend: s.backend,
                 backendUserId: s.backendUserId,
-                patch: { trafficLimitBytes: limitBytes },
+                patch: { trafficLimitBytes: keyTrafficLimit(limitBytes, s, now) },
               });
             } catch (err) {
               failedChunks++;

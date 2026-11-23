@@ -9,7 +9,7 @@
  *   REMNAWAVE_TEST_URL=http://localhost:3000
  *   REMNAWAVE_TEST_TOKEN=<token>
  *
- * Usage:  eval "$(bun scripts/remnawave-test-bootstrap.mjs)"   (then run the test)
+ * The integration runners read the two labeled values as data.
  */
 const BASE = process.env.REMNAWAVE_TEST_URL || 'http://localhost:3000';
 // Remnawave requires a 24+ char password with upper + lower + digit.
@@ -97,7 +97,10 @@ async function main() {
   });
   if (!t.ok) throw new Error(`token mint failed: ${t.status} ${t.text.slice(0, 300)}`);
   const token = t.json.response.token;
-  if (!token) throw new Error(`token missing in response: ${t.text.slice(0, 300)}`);
+  if (typeof token !== 'string' || token.length === 0 || /\s/u.test(token)) {
+    throw new Error('Panel returned an invalid API token');
+  }
+  if (/\s/u.test(BASE)) throw new Error('Panel URL must be a single value');
   log('minted API token');
 
   // The two lines the wrapper captures (stdout only).

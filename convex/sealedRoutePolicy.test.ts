@@ -48,6 +48,8 @@ const INTENTIONALLY_UNSEALED: Record<string, string> = {
   // carry names and flags only.
   'POST /api/v1/admin/billing/test-connection':
     'processor NAME only; the processor keys are read server-side from stored config',
+  'POST /api/v1/admin/billing/check-coins':
+    'empty body; the response is per-ticker flags and minimums, the API key is read server-side',
   'PATCH /api/v1/admin/backends/*':
     'mode-placement patch (mode ids -> bound flags), no credentials',
   'POST /api/v1/admin/remnawave/harden-logging':

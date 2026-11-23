@@ -1,10 +1,10 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # Restore-verification drill (A3 follow-up): restores the LATEST local dump into
 # a SCRATCH database inside the compose postgres, asserts core-table row counts,
 # then drops the scratch DB. A backup that has never been restored is not a
 # backup — run this before launch and periodically after:
 #
-#   sh docker/restore-verify.sh
+#   bash docker/restore-verify.sh
 #
 # Reads the stack env file (ENV_FILE, default .env.beta — prod: ENV_FILE=.env.prod)
 # for POSTGRES_PASSWORD/POSTGRES_DB. If dumps are age-encrypted, point
@@ -12,19 +12,20 @@
 # needed only for the drill). The decrypt runs in the backup image, whose age
 # wrote the dump, so the host needs no age of its own. Idempotent: the scratch
 # DB is dropped either way.
-set -eu
+set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ENV_FILE="${ENV_FILE:-.env.beta}"
 COMPOSE="docker compose --env-file $ENV_FILE -f docker-compose.stack.yml"
-SCRATCH="restore_verify_$(date -u +%Y%m%d%H%M%S)"
+SCRATCH="restore_verify_$(date -u +%Y%m%d%H%M%S)_$$"
+: "${BACKUP_VERIFY_KEY_FILE:?set BACKUP_VERIFY_KEY_FILE to the independently pinned producer public key}"
 
 # shellcheck disable=SC1091
 PGDB="$(grep -E '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- || true)"
 PGDB="${PGDB:-freesocks_beta}"
 export PGPASSWORD="$(grep -E '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
 
-latest="$($COMPOSE exec -T backup sh -c 'ls -1t /backups/freesocks-*.sql.gz* 2>/dev/null | head -1')"
+latest="$($COMPOSE exec -T backup sh -c 'ls -1t /backups/freesocks-*.sql.gz /backups/freesocks-*.sql.gz.age 2>/dev/null | head -1')"
 if [ -z "$latest" ]; then
   echo "[restore-verify] FATAL: no dumps found in the backup volume" >&2
   exit 1
@@ -32,22 +33,32 @@ fi
 echo "[restore-verify] latest dump: $latest"
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"; $COMPOSE exec -T postgres psql -U convex -d postgres -c "DROP DATABASE IF EXISTS $SCRATCH" >/dev/null 2>&1 || true' EXIT
+created=
+cleanup() {
+  rm -rf "$tmp"
+  if [ -n "$created" ]; then
+    $COMPOSE exec -T postgres psql -U convex -d postgres -c "DROP DATABASE IF EXISTS $SCRATCH" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
+$COMPOSE cp "backup:$latest" "$tmp/verified"
+$COMPOSE cp "backup:$latest.sig" "$tmp/verified.sig"
+openssl dgst -sha256 -verify "$BACKUP_VERIFY_KEY_FILE" \
+  -signature "$tmp/verified.sig" "$tmp/verified"
+
+dump="$tmp/verified"
 if [ "${latest##*.}" = "age" ]; then
   : "${AGE_KEY_FILE:?set AGE_KEY_FILE to the age private-key file for encrypted dumps}"
-  # A one-off backup container reads the dump straight from its volume and the
-  # key from stdin (`-i -`): no age on the host, and the key never lands in a
-  # container filesystem or volume.
-  $COMPOSE run --rm --no-deps -T --entrypoint age backup -d -i - "$latest" <"$AGE_KEY_FILE" >"$tmp/dump.sql.gz"
+  # Decrypt the exact verified bytes. The private key still rides stdin.
+  $COMPOSE run --rm --no-deps -T --volume "$tmp/verified:/run/verified-dump:ro" \
+    --entrypoint age backup -d -i - /run/verified-dump <"$AGE_KEY_FILE" >"$tmp/dump.sql.gz"
   dump="$tmp/dump.sql.gz"
-else
-  $COMPOSE cp "backup:$latest" "$tmp/dump"
-  dump="$tmp/dump"
 fi
 
 echo "[restore-verify] creating scratch DB $SCRATCH"
 $COMPOSE exec -T postgres psql -U convex -d postgres -qAc "CREATE DATABASE $SCRATCH"
+created=true
 
 echo "[restore-verify] restoring…"
 # ON_ERROR_STOP: a dump that fails part-way must fail the drill, not leave a

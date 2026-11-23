@@ -15,7 +15,7 @@
   import { Button } from '@client/components/ui/button';
   import * as Collapsible from '@client/components/ui/collapsible';
   import CapWidget from './CapWidget.svelte';
-  import { configQuery } from '../lib/queries';
+  import { configQuery, directCoinsQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { t } from '../lib/i18n/index.svelte';
@@ -26,6 +26,8 @@
   import Heart from '@lucide/svelte/icons/heart';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import DonationAmountPicker from './DonationAmountPicker.svelte';
+  import CoinPicker from './CoinPicker.svelte';
+  import { followCheckout } from '../lib/checkoutReturn';
 
   interface Props {
     /** Render as a collapsed accordion for a secondary placement (e.g. between
@@ -50,6 +52,27 @@
   let selectedProcessorRaw = $state<BillingProcessor | null>(null);
   let selectedProcessor = $derived(selectedProcessorRaw ?? rails[0] ?? null);
   let cents = $state(0);
+
+  // Direct crypto checkout (Admin -> Billing): the donor picks the coin and
+  // network here and pays on our own page. Hosted otherwise (no picker).
+  const coinList = directCoinsQuery(() => !!billing?.direct?.nowpayments.enabled);
+  let directCoins = $derived(
+    billing?.direct?.nowpayments.enabled ? (coinList.data?.coins ?? []) : [],
+  );
+  let coinRaw = $state<string | null>(null);
+  let coin = $derived(
+    directCoins.some((c) => c.ticker === coinRaw) ? coinRaw : (directCoins[0]?.ticker ?? null),
+  );
+  let payCurrency = $derived(
+    selectedProcessor === 'nowpayments' && directCoins.length > 0 ? coin : null,
+  );
+  // Direct checkout is on but the list hasn't arrived: hold the submit, or a
+  // quick click would silently fall back to the hosted page.
+  let coinsPending = $derived(
+    selectedProcessor === 'nowpayments' &&
+      !!billing?.direct?.nowpayments.enabled &&
+      coinList.isPending,
+  );
 
   let minCents = $derived(donation?.minAmountCents ?? 0);
   let belowMin = $derived(cents < minCents);
@@ -78,7 +101,11 @@
   }
 
   const checkout = createMutation(() => ({
-    mutationFn: (vars: { processor: BillingProcessor; donationCents: number }) =>
+    mutationFn: (vars: {
+      processor: BillingProcessor;
+      donationCents: number;
+      payCurrency?: string;
+    }) =>
       apiClient.post(
         '/api/v1/billing/checkout',
         {
@@ -89,7 +116,8 @@
         CheckoutResponse,
       ),
     onSuccess: (res) => {
-      window.location.href = res.redirectUrl;
+      // Anonymous donors return to /donate (no /account), as the server's return URL does.
+      followCheckout(res, anonymous ? '/donate' : '/account');
     },
     onError: (err) => {
       toast.error(t('donate.startFailed'), { description: apiErrorMessage(err) });
@@ -105,7 +133,11 @@
   function submit() {
     if (anonymous && !captchaToken) return;
     if (selectedProcessor && cents > 0 && !belowMin) {
-      checkout.mutate({ processor: selectedProcessor, donationCents: cents });
+      checkout.mutate({
+        processor: selectedProcessor,
+        donationCents: cents,
+        payCurrency: payCurrency ?? undefined,
+      });
     }
   }
 </script>
@@ -132,6 +164,16 @@
     </div>
     {#if selectedProcessor === 'nowpayments' || selectedProcessor === 'btcpay'}
       <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.exchangeFeeNote')}</p>
+    {/if}
+    {#if selectedProcessor === 'nowpayments' && directCoins.length > 0}
+      <div class="mt-3">
+        <CoinPicker coins={directCoins} selected={coin} onSelect={(c) => (coinRaw = c)} />
+      </div>
+    {:else if coinsPending}
+      <p class="mt-3 text-xs text-muted-foreground">{t('direct.coinsLoading')}</p>
+    {/if}
+    {#if selectedProcessor === 'stripe' || selectedProcessor === 'paypal'}
+      <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.cardReachHint')}</p>
     {/if}
   </fieldset>
 
@@ -164,7 +206,8 @@
   <div class="flex justify-end">
     <Button
       onclick={submit}
-      disabled={!selectedProcessor ||
+      disabled={coinsPending ||
+        !selectedProcessor ||
         cents <= 0 ||
         belowMin ||
         checkout.isPending ||

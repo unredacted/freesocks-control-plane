@@ -11,7 +11,7 @@
    */
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
-  import { configQuery, accountCodesQuery } from '../lib/queries';
+  import { configQuery, accountCodesQuery, directCoinsQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { t } from '../lib/i18n/index.svelte';
@@ -21,6 +21,8 @@
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import Gift from '@lucide/svelte/icons/gift';
+  import CoinPicker from './CoinPicker.svelte';
+  import { followCheckout } from '../lib/checkoutReturn';
 
   const config = configQuery();
   let billing = $derived(config.data?.billing);
@@ -34,6 +36,27 @@
   let selectedProcessorRaw = $state<BillingProcessor | null>(null);
   let selectedProcessor = $derived(selectedProcessorRaw ?? rails[0] ?? null);
   let minMonths = $derived(selectedProcessor === 'nowpayments' ? cryptoMin : 1);
+
+  // Direct crypto checkout (Admin -> Billing): the member picks the coin and
+  // network here and pays on our own page. Hosted otherwise (no picker).
+  const coinList = directCoinsQuery(() => !!billing?.direct?.nowpayments.enabled);
+  let directCoins = $derived(
+    billing?.direct?.nowpayments.enabled ? (coinList.data?.coins ?? []) : [],
+  );
+  let coinRaw = $state<string | null>(null);
+  let coin = $derived(
+    directCoins.some((c) => c.ticker === coinRaw) ? coinRaw : (directCoins[0]?.ticker ?? null),
+  );
+  let payCurrency = $derived(
+    selectedProcessor === 'nowpayments' && directCoins.length > 0 ? coin : null,
+  );
+  // Direct checkout is on but the list hasn't arrived: hold the submit, or a
+  // quick click would silently fall back to the hosted page.
+  let coinsPending = $derived(
+    selectedProcessor === 'nowpayments' &&
+      !!billing?.direct?.nowpayments.enabled &&
+      coinList.isPending,
+  );
 
   let selectedMonthsRaw = $state<number | null>(null);
   let selectedMonths = $derived.by(() => {
@@ -59,14 +82,25 @@
   let codes = accountCodesQuery(() => !!billing?.enabled);
 
   const checkout = createMutation(() => ({
-    mutationFn: (vars: { processor: BillingProcessor; months: number; quantity: number }) =>
+    mutationFn: (vars: {
+      processor: BillingProcessor;
+      months: number;
+      quantity: number;
+      payCurrency?: string;
+    }) =>
       apiClient.post(
         '/api/v1/billing/checkout',
-        { processor: vars.processor, months: vars.months, kind: 'gift', quantity: vars.quantity },
+        {
+          processor: vars.processor,
+          months: vars.months,
+          kind: 'gift',
+          quantity: vars.quantity,
+          payCurrency: vars.payCurrency,
+        },
         CheckoutResponse,
       ),
     onSuccess: (res) => {
-      window.location.href = res.redirectUrl;
+      followCheckout(res, '/account');
     },
     onError: (err) => {
       toast.error(t('gift.startFailed'), { description: apiErrorMessage(err) });
@@ -75,7 +109,12 @@
 
   function submit() {
     if (selectedProcessor && selectedMonths) {
-      checkout.mutate({ processor: selectedProcessor, months: selectedMonths, quantity });
+      checkout.mutate({
+        processor: selectedProcessor,
+        months: selectedMonths,
+        quantity,
+        payCurrency: payCurrency ?? undefined,
+      });
     }
   }
 
@@ -137,6 +176,16 @@
       {/if}
       {#if selectedProcessor === 'nowpayments' || selectedProcessor === 'btcpay'}
         <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.exchangeFeeNote')}</p>
+      {/if}
+      {#if selectedProcessor === 'nowpayments' && directCoins.length > 0}
+        <div class="mt-3">
+          <CoinPicker coins={directCoins} selected={coin} onSelect={(c) => (coinRaw = c)} />
+        </div>
+      {:else if coinsPending}
+        <p class="mt-3 text-xs text-muted-foreground">{t('direct.coinsLoading')}</p>
+      {/if}
+      {#if selectedProcessor === 'stripe' || selectedProcessor === 'paypal'}
+        <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.cardReachHint')}</p>
       {/if}
     </fieldset>
 
@@ -205,7 +254,7 @@
       </div>
       <Button
         onclick={submit}
-        disabled={!selectedProcessor || !selectedMonths || checkout.isPending}
+        disabled={!selectedProcessor || !selectedMonths || checkout.isPending || coinsPending}
         class="w-full min-h-11 sm:w-auto"
       >
         {checkout.isPending ? t('gift.starting') : t('gift.buy')}

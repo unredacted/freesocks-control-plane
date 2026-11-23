@@ -165,6 +165,7 @@
     { q: 'faq.q8.question', a: 'faq.q8.answer' },
     { q: 'faq.q9.question', a: 'faq.q9.answer' },
     { q: 'faq.q10.question', a: 'faq.q10.answer' },
+    { q: 'faq.q11.question', a: 'faq.q11.answer' },
   ] as const;
   let openFaq = $state(0);
 

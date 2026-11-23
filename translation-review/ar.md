@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**236 of 843 strings are missing** (the app currently shows English for
+**238 of 845 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -24,7 +24,7 @@ review.
   ⚠️ MISSING have no translation yet.
 
 
-## `faq` — The landing-page FAQ (questions + answers).
+## `faq` — The landing-page FAQ (questions + answers). *(2 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -53,6 +53,8 @@ review.
 | `faq.q9.answer` | Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms. | نعم. يمكنك الدفع بالعملات الرقمية - بيتكوين، أو مونيرو وزيكاش لأقصى درجات الخصوصية - دون الحاجة إلى حساب أو بريد إلكتروني أو بطاقة. يتم تفعيل عضويتك تلقائيًا بمجرد تأكيد الدفع. |
 | `faq.q10.question` | Do you own your servers, or rent them? | هل تملكون خوادمكم أم تستأجرونها؟ |
 | `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | نملك أجهزتنا ونشغّلها بأنفسنا. كثير من شركات VPN تستأجر خوادمها من مراكز بيانات أو مزوّدي استضافة سحابية، فيصبح الجهاز الذي تمرّ عبره بياناتك في يد طرف آخر - يمكن الضغط عليه لتسليمه، أو نسخ ما عليه بصمت. هذا خطّ لا نقبل تجاوزه، لذلك نشتري معداتنا ونشغّلها بأنفسنا. يكلّفنا ذلك أكثر وينمو عملنا ببطء بسببه، لكنه الطريقة الوحيدة التي تجعل وعود الخصوصية في هذه الصفحة تعني شيئًا حقًا. |
+| `faq.q11.question` | My app says "encryption: none". Is my connection encrypted? | ⚠️ **MISSING** |
+| `faq.q11.answer` | Yes. Your app always encrypts the connection with TLS 1.3. The "encryption" field is for an optional extra layer inside that connection, and "none" only means that extra layer is off. On REALITY and Hysteria connections the TLS runs from your app to our server, so the extra layer is not needed. On connections that pass through a CDN, the TLS ends at the CDN: apps that support the extra layer get an entry with it on (a long value starting with "mlkem768x25519plus"), so the CDN cannot read what is inside, while an entry that shows "none" there is readable by the CDN. Many current apps also use a post-quantum key exchange, which protects recorded traffic from future quantum computers. | ⚠️ **MISSING** |
 
 ## `threat` — Miscellaneous strings.
 
