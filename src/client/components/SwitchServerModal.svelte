@@ -80,7 +80,10 @@
           : t('switchServer.title')}
       </Dialog.Title>
       <Dialog.Description>
-        {currentServer
+        <!-- Name the server only when it is more than the location the title
+             already names ("move your key off Kansas City, MO to a server in
+             the same location" reads as a contradiction). -->
+        {currentServer && currentServer !== locationLabel
           ? t('switchServer.bodyWithServer', { server: currentServer })
           : t('switchServer.body')}
       </Dialog.Description>

@@ -511,6 +511,8 @@ export type MessageKey =
   | "impact.yourGb"
   | "impact.yourGiven"
   | "location.auto"
+  | "location.autoHint"
+  | "location.autoShort"
   | "location.current"
   | "location.keepsFirst"
   | "location.lockedBody"

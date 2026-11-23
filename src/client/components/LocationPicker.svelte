@@ -50,13 +50,14 @@
   // The members-only row last tapped: shows the membership note under the list.
   let lockedPick = $state<PublicLocation | null>(null);
 
-  const ROW =
-    'flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-start text-sm transition-colors';
-  function rowClass(selected: boolean, locked: boolean): string {
-    if (selected) return `${ROW} border-primary bg-primary/10`;
-    if (locked)
-      return `${ROW} border-dashed border-border text-muted-foreground hover:bg-accent/40`;
-    return `${ROW} border-border hover:bg-accent/40`;
+  // Compact tiles in a grid (two per row on a phone, three from `sm`), so a
+  // short city name never stretches across the whole panel.
+  const TILE =
+    'flex min-h-14 w-full cursor-pointer flex-col items-start justify-center gap-0.5 rounded-md border px-3 py-2 text-start transition-colors disabled:cursor-not-allowed disabled:opacity-50';
+  function tileClass(selected: boolean, locked: boolean): string {
+    if (selected) return `${TILE} border-primary bg-primary/10 ring-1 ring-primary`;
+    if (locked) return `${TILE} border-dashed border-border hover:bg-accent/40`;
+    return `${TILE} border-border hover:bg-accent/40`;
   }
   function pick(next: string) {
     lockedPick = null;
@@ -72,16 +73,22 @@
     <MapPin class="size-3.5" aria-hidden="true" />
     {t('location.pickerLabel')}
   </p>
-  <div role="radiogroup" aria-labelledby="{id}-label" class="space-y-1.5" {id}>
+  <div
+    role="radiogroup"
+    aria-labelledby="{id}-label"
+    class="grid grid-cols-2 gap-2 sm:grid-cols-3"
+    {id}
+  >
     <button
       type="button"
       role="radio"
       aria-checked={value === 'auto'}
-      class={rowClass(value === 'auto', false)}
+      class={tileClass(value === 'auto', false)}
       {disabled}
       onclick={() => pick('auto')}
     >
-      <span class="flex-1">{t('location.auto')}</span>
+      <span class="text-sm font-semibold leading-tight">{t('location.autoShort')}</span>
+      <span class="text-xs text-muted-foreground">{t('location.autoHint')}</span>
     </button>
     {#each locations as loc (loc.code)}
       {@const open = locationOpenTo(loc, tierSlug)}
@@ -90,26 +97,24 @@
         type="button"
         role="radio"
         aria-checked={open && value === loc.code}
-        class={rowClass(open && value === loc.code, !open)}
+        class={tileClass(open && value === loc.code, !open)}
         {disabled}
         onclick={() => (open ? pick(loc.code) : (lockedPick = loc))}
       >
-        <span class="flex-1">
+        <span class="text-sm font-semibold leading-tight {open ? '' : 'text-muted-foreground'}">
           {loc.label}
-          {#if open && recommended.includes(loc.code)}
-            <span class="text-xs text-primary"> · {t('location.recommended')}</span>
-          {/if}
-          {#if !loc.online}
-            <span class="text-xs text-muted-foreground"> ({t('location.offline')})</span>
-          {/if}
         </span>
         {#if !open}
-          <span class="flex shrink-0 items-center gap-1 text-xs font-semibold">
-            <Lock class="size-3.5" aria-hidden="true" />
+          <span class="flex items-center gap-1 text-xs font-semibold text-primary">
+            <Lock class="size-3" aria-hidden="true" />
             {t('location.membersOnly')}
           </span>
+        {:else if !loc.online}
+          <span class="text-xs text-muted-foreground">{t('location.offline')}</span>
+        {:else if recommended.includes(loc.code)}
+          <span class="text-xs text-primary">{t('location.recommended')}</span>
         {:else if load}
-          <span class="shrink-0 text-xs text-muted-foreground">{load}</span>
+          <span class="text-xs text-muted-foreground">{load}</span>
         {/if}
       </button>
     {/each}

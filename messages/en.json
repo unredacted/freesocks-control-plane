@@ -393,7 +393,9 @@
     "lockedBody": "Upgrade your membership to connect from {location}. Your key uses a location included in your plan until then.",
     "lockedCta": "See membership",
     "pickedLocked": "Members only",
-    "keepsFirst": "Your free key stays in the location you picked first. Members can switch location at any time."
+    "keepsFirst": "Your free key stays in the location you picked first. Members can switch location at any time.",
+    "autoShort": "Automatic",
+    "autoHint": "Least busy"
   },
   "usage": {
     "show": "Show usage trend",
