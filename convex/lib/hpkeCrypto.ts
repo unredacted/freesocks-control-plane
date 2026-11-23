@@ -280,10 +280,12 @@ export const openRequest = internalAction({
   ): Promise<{ plaintext: unknown } | { unavailable: true }> => {
     const wire = wireBody as SealedWire;
     const envKid = wire?.fsSealed?.kid;
+    if (!envKid) throw new Error('Unknown HPKE recipient');
+    // A tab can still hold an epoch revoked after it cached it. Answer the
+    // retryable 503 so the client drops it and refetches (picking up the
+    // signed revocation and the replacement epoch); never open the body.
     const revoked = await ctx.runQuery(internal.keyRevocations.current, {});
-    if (!envKid || revoked?.revokedKids.includes(envKid)) {
-      throw new Error('Unknown or revoked HPKE recipient');
-    }
+    if (revoked?.revokedKids.includes(envKid)) return { unavailable: true };
     const { priv: staticPriv, kid: staticKid } = await serverContext();
     let priv = staticPriv;
     if (envKid !== staticKid) {

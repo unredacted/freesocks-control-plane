@@ -132,6 +132,29 @@ describe('quota carryover across re-issues (Review D-M3)', () => {
     expect((await t.run((ctx) => ctx.db.get(currentId)))!.periodCarryBytes).toBe(2 * GB);
   });
 
+  test('grace spending after a provider counter reset is still charged', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+    await t.action(internal.account.regenerate, { userId });
+    const [oldId, currentId] = await t.run(async (ctx) => {
+      const current = (await ctx.db.get(userId))!.currentSubscriptionId!;
+      const old = (await ctx.db.query('subscriptions').collect()).find((s) => s._id !== current);
+      // Replaced at 5 GB; the counter then reset and the old key moved 1 GB
+      // (what the mock reports) in the new period before the sweep.
+      await ctx.db.patch(old!._id, { graceBaseUsedBytes: 5 * GB, deletedAt: Date.now() - 60_000 });
+      await ctx.db.patch(current, { periodCarryBytes: undefined, periodCarryUntil: undefined });
+      return [old!._id, current];
+    });
+
+    await t.action(internal.lifecycle.sweepTombstones, {});
+
+    const current = await t.run((ctx) => ctx.db.get(currentId));
+    expect(current!.periodCarryBytes).toBe(GB);
+    expect((await t.run((ctx) => ctx.db.get(oldId)))?.graceBaseUsedBytes).toBe(GB);
+  });
+
   test('a carry runs to the end of the period and the tier push respects it', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
@@ -160,9 +183,10 @@ describe('quota carryover across re-issues (Review D-M3)', () => {
     });
     const due = await t.query(internal.subscriptions.findExpiredCarries, {
       now: Date.now(),
-      limit: 10,
+      cursor: null,
+      numItems: 10,
     });
-    expect(due).toEqual([expect.objectContaining({ restoreLimitBytes: 50 * GB })]);
+    expect(due.rows).toEqual([expect.objectContaining({ restoreLimitBytes: 50 * GB })]);
 
     await t.action(internal.lifecycle.expireQuotaCarries, {});
 

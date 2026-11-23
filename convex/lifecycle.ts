@@ -812,17 +812,27 @@ async function settleGraceUsage(
       backendUserId: d.backendUserId,
     });
     const used = Math.max(0, Math.floor(old.usedTrafficBytes ?? 0));
-    if (used <= d.graceBaseUsedBytes) return;
+    // Below the base means the provider reset the counter during the grace:
+    // recordGraceSpend then charges everything since the reset.
+    if (used === d.graceBaseUsedBytes) return;
     const charge = await ctx.runMutation(internal.subscriptions.recordGraceSpend, {
       subscriptionId: d.subscriptionId,
       usedBytes: used,
     });
     if (!charge) return;
-    await ctx.runAction(internal.backends.updateUser, {
-      backend: charge.backend,
-      backendUserId: charge.backendUserId,
-      patch: { trafficLimitBytes: charge.trafficLimitBytes },
-    });
+    try {
+      await ctx.runAction(internal.backends.updateUser, {
+        backend: charge.backend,
+        backendUserId: charge.backendUserId,
+        patch: { trafficLimitBytes: charge.trafficLimitBytes },
+      });
+    } catch {
+      // The spend is already recorded on the current key's carry, so a tier
+      // push sends the same reduced limit, with its own bounded retry + audit.
+      await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, {
+        userId: charge.userId,
+      });
+    }
   } catch (err) {
     console.warn(
       `[lifecycle] grace usage settlement failed: ${err instanceof Error ? err.message : 'unknown'}`,
@@ -902,6 +912,8 @@ export const sweepTombstones = internalAction({
 
 // --- quota carry expiry ----------------------------------------------------
 
+const CARRY_RESTORE_GIVE_UP_MS = 7 * 24 * 3_600_000;
+
 /**
  * Cron: once a key's carry period ends (lib/quotaCarry.ts), restore its full
  * tier limit and drop the carry. Nothing else would: the donation re-cap runs
@@ -913,14 +925,28 @@ export const expireQuotaCarries = internalAction({
   args: {},
   handler: async (ctx): Promise<{ restored: number }> =>
     runWithCronOutcome(ctx, 'quota-carry-expire', async () => {
+      const now = Date.now();
       let restored = 0;
-      for (let round = 0; round < 20; round++) {
-        const due = await ctx.runQuery(internal.subscriptions.findExpiredCarries, {
-          now: Date.now(),
-          limit: 100,
+      let cursor: string | null = null;
+      // Paginate past failures, so an unreachable backend's rows (retried next
+      // run) never hold back the rest of the index.
+      for (let round = 0; round < 50; round++) {
+        const page: {
+          rows: {
+            subscriptionId: Id<'subscriptions'>;
+            backend: BackendId;
+            backendUserId: string;
+            periodCarryUntil: number;
+            restoreLimitBytes: number | null;
+          }[];
+          isDone: boolean;
+          continueCursor: string;
+        } = await ctx.runQuery(internal.subscriptions.findExpiredCarries, {
+          now,
+          cursor,
+          numItems: 100,
         });
-        let failed = 0;
-        for (const d of due) {
+        for (const d of page.rows) {
           try {
             if (d.restoreLimitBytes !== null) {
               await ctx.runAction(internal.backends.updateUser, {
@@ -930,15 +956,17 @@ export const expireQuotaCarries = internalAction({
               });
               restored++;
             }
-            await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
-              subscriptionId: d.subscriptionId,
-            });
           } catch {
-            failed++;
+            // Retried hourly; after a week (a backend gone for good) the carry
+            // goes anyway, so the next tier push sends the full limit.
+            if (now - d.periodCarryUntil < CARRY_RESTORE_GIVE_UP_MS) continue;
           }
+          await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+            subscriptionId: d.subscriptionId,
+          });
         }
-        // A short page is the end; a page of failures waits for the next run.
-        if (due.length < 100 || failed === due.length) break;
+        if (page.isDone) break;
+        cursor = page.continueCursor;
       }
       return { restored };
     }),

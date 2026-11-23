@@ -200,6 +200,11 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build we
 
 Continue to the last command only after `wait deployer` exits successfully.
 
+Take the pre-upgrade export first: rolling back this release means restoring it.
+A functions-only rollback cannot apply the previous schema, since new epoch rows
+carry no `seed` and users, sessions, admin users and subscriptions gain fields
+the previous schema rejects.
+
 `--build` rebuilds both images from the pulled source; `--force-recreate web
 deployer` then recreates **both** containers — `web` restarts with the new SPA,
 and the **one-shot `deployer` actually re-runs** (a bare `up -d` rebuilds its
