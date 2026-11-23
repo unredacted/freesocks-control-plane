@@ -103,7 +103,41 @@ describe('webhooks.ingest', () => {
       reason: 'stale_event',
     });
     expect((await t.run((ctx) => ctx.db.get(userId)))?.tierId).toBe(freeTierId);
-    expect(await t.run((ctx) => ctx.db.query('webhookEvents').collect())).toHaveLength(0);
+    // Claimed once, so a replay is a silent duplicate and audits nothing more.
+    expect(await t.action(internal.webhooks.ingest, { rawBody, signature })).toMatchObject({
+      duplicate: true,
+    });
+    const stale = (await t.run((ctx) => ctx.db.query('auditLog').collect())).filter(
+      (a) => a.action === 'billing.webhook.stale_event',
+    );
+    expect(stale).toHaveLength(1);
+  });
+
+  test('two events with the same issuance time both apply', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, supportId } = await seedUserAndTiers(t);
+    const issuedAtMs = Date.now();
+    const first = Date.now() + 30 * 86_400_000;
+    for (const [eventId, expiresAtMs] of [
+      ['batch-1', first],
+      ['batch-2', first + 86_400_000],
+    ] as const) {
+      const rawBody = eventBody({
+        eventId,
+        supportId,
+        tierSlug: 'member',
+        issuedAtMs,
+        expiresAtMs,
+      });
+      const res = await t.action(internal.webhooks.ingest, {
+        rawBody,
+        signature: await hmacSha256Hex(SECRET, rawBody),
+      });
+      expect(res.applied).toBe(true);
+    }
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.membershipExpiresAt).toBe(
+      first + 86_400_000,
+    );
   });
 
   test('a stale event leaves an audit trace; a future-dated one is refused for retry', async () => {

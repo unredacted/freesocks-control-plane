@@ -76,21 +76,11 @@ export const ingest = internalAction({
       throw new Error('eventId, supportId, and tierSlug required');
     }
 
-    if (!isCurrentBillingEvent(issuedAtMs)) {
-      // Ahead of our clock: refuse (non-2xx) so the sender retries once the
-      // clocks agree, rather than dropping a paid grant.
-      if (typeof issuedAtMs === 'number' && issuedAtMs > Date.now()) {
-        throw new Error('billing event issued in the future');
-      }
-      // Too old to trust as fresh: ACK so the sender stops, but leave a trace
-      // for the operator to grant by hand if it was a real late delivery.
-      await ctx.runMutation(internal.audit.record, {
-        actorType: 'webhook',
-        action: 'billing.webhook.stale_event',
-        targetType: 'webhookEvent',
-        payload: { issuedAtMs: typeof issuedAtMs === 'number' ? issuedAtMs : null },
-      });
-      return { ok: true, applied: false, reason: 'stale_event' };
+    const current = isCurrentBillingEvent(issuedAtMs);
+    // Ahead of our clock: refuse (non-2xx, nothing claimed) so the sender
+    // retries once the clocks agree, rather than dropping a paid grant.
+    if (!current && typeof issuedAtMs === 'number' && issuedAtMs > Date.now()) {
+      throw new Error('billing event issued in the future');
     }
 
     // Claim the eventId first: a `processed` replay never reapplies, but a
@@ -111,6 +101,20 @@ export const ingest = internalAction({
       payload: safePayload,
     });
     if (!claim.proceed) return { ok: true, duplicate: true, applied: false };
+
+    if (!current) {
+      // Too old to trust as fresh: ACK so the sender stops, and leave one trace
+      // (the claim makes a replay of the same event a silent duplicate) for the
+      // operator to grant by hand if it was a real late delivery.
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'webhook',
+        action: 'billing.webhook.stale_event',
+        targetType: 'webhookEvent',
+        payload: { issuedAtMs: typeof issuedAtMs === 'number' ? issuedAtMs : null },
+      });
+      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
+      return { ok: true, applied: false, reason: 'stale_event' };
+    }
 
     try {
       // Validate/coerce expiresAtMs INSIDE the claim, before any side effect:
@@ -148,7 +152,7 @@ export const ingest = internalAction({
         userId: user._id,
         tierId: tier._id,
         expiresAtMs: expiryMs,
-        issuedAtMs,
+        issuedAtMs: issuedAtMs as number, // isCurrentBillingEvent checked it
         eventId: dedupeId,
       });
       return applied ? { ok: true, applied } : { ok: true, applied, reason: 'stale_replay' };
@@ -174,7 +178,9 @@ export const applyLegacyGrant = internalMutation({
       user &&
       user.status !== 'deleted' &&
       isCurrentBillingEvent(a.issuedAtMs) &&
-      a.issuedAtMs > (user.lastGenericBillingEventAt ?? 0) &&
+      // >= : distinct events can share a timestamp (one batch, coarse clocks);
+      // the eventId claim already stops a replay of the same event.
+      a.issuedAtMs >= (user.lastGenericBillingEventAt ?? 0) &&
       (a.expiresAtMs === null ||
         user.membershipExpiresAt == null ||
         a.expiresAtMs >= user.membershipExpiresAt),
