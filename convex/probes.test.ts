@@ -1738,6 +1738,21 @@ describe('probe lanes', () => {
     expect(await t.mutation(internal.probes.dispatchRun, { runId })).toEqual({ started: false });
     expect((await t.run((ctx) => ctx.db.get(runId)))!.status).toBe('requested');
     expect(await executes(t)).toEqual([]);
+    // Waiting is not the run's own time: eleven minutes later, still asked
+    // again every few seconds, it has not timed out.
+    for (let m = 0; m < 11; m++) {
+      vi.advanceTimersByTime(60_000);
+      await t.mutation(internal.probes.dispatchRun, { runId });
+      await t.run(async (ctx) => {
+        for (const r of await ctx.db
+          .query('probeRuns')
+          .withIndex('by_status', (q) => q.eq('status', 'running'))
+          .collect())
+          await ctx.db.patch(r._id, { startedAt: Date.now() });
+      });
+    }
+    await t.mutation(internal.probes.sweepStuck, { now: Date.now() });
+    expect((await t.run((ctx) => ctx.db.get(runId)))!.status).toBe('requested');
     // One lane frees up: the next ask hands the run to the executor.
     await t.run(async (ctx) => {
       const one = await ctx.db

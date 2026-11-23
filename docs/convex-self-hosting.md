@@ -213,13 +213,16 @@ background work over many rows runs in a bounded lane instead:
   rows while under its budget and schedules itself again with what is left. A row that throws
   is counted and skipped; the rest still run.
   - `edge-latency`: `edgeLatency.refreshLocations`, 2 locations at a time (mutations), 60 s
-    per driver run.
+    per driver run. Its rows are durable (pending lanes in `appState`, each taken off by the
+    row's own job), because a lost row would skip a window for good; the next tick resumes a
+    pass whose driver died.
   - `mirror-verify`: the rewrites one run asks for go to `storage.rewriteVerified`, one Node
     action rewriting 2 keys at a time, 90 s per driver run.
 - **A dispatch gate for long actions**: a probe run is handed to its executor
   (`probeOps.execute`, which waits on the source for up to 150 s) only by
   `probes.dispatchRun`, which marks it running when fewer than `PROBE_LANES` (4) run and
-  otherwise asks again 5 s later. Every probe goes through it, whoever asked (the `edge-probe`
+  otherwise asks again 5 s later, due from then (waiting never counts against the run's 10-minute
+  timeout). Every probe goes through it, whoever asked (the `edge-probe`
   cron, the detector, an admin, a qualification). A run marked running more than 4 minutes ago
   holds no lane: its executor died, and the stuck-run sweep settles it.
 - **Paged chains** for deletes and other sweeps (`retention.ts`, `probes.sweepFinished`): one

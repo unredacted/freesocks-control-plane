@@ -344,6 +344,60 @@ describe('measured member legs', () => {
     expect(Number((await mark())!.value)).toBeLessThan(NOW - 29 * 60_000);
   });
 
+  test('while off, the committed figures go and the kept samples stay', async () => {
+    vi.useFakeTimers();
+    const w = await setup();
+    await run(
+      w,
+      w.far,
+      Array.from({ length: 5 }, (_, i) => ({ country: 'IR', rttMs: 50, asn: `AS${i}` })),
+    );
+    await pass(w, NOW);
+    expect(await rows(w)).toHaveLength(1);
+    await w.t.run((ctx) => upsertSettingRow(ctx, 'delivery.country.latency', 'false'));
+    await pass(w, NOW + 3_600_000);
+    expect(await rows(w)).toEqual([]);
+    expect(await w.t.run((ctx) => ctx.db.query('edgeLatencySamples').collect())).toHaveLength(1);
+  });
+
+  test('a pass whose driver died is resumed before the mark moves, each location once', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const w = await setup();
+    await run(
+      w,
+      w.far,
+      Array.from({ length: 5 }, (_, i) => ({ country: 'IR', rttMs: 50, asn: `AS${i}` })),
+    );
+    const first = await w.t.mutation(internal.edgeLatency.refresh, { now: NOW });
+    const lanes = () => w.t.query(internal.edgeLatency.pendingLanes, {});
+    expect((await lanes()).flatMap((l) => l.ids)).toHaveLength(first.locations);
+    const mark = async () =>
+      Number(
+        (await w.t.run((ctx) =>
+          ctx.db
+            .query('appState')
+            .withIndex('by_key', (q) => q.eq('key', 'edgeLatency:through'))
+            .unique(),
+        ))!.value,
+      );
+    const before = await mark();
+    // Its driver has not run. A tick soon after waits for it; a later one resumes it.
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(
+      await w.t.mutation(internal.edgeLatency.refresh, { now: NOW + 5 * 60_000 }),
+    ).toMatchObject({ pending: first.locations, resumed: false });
+    vi.advanceTimersByTime(60 * 60_000);
+    expect(
+      await w.t.mutation(internal.edgeLatency.refresh, { now: NOW + 65 * 60_000 }),
+    ).toMatchObject({ pending: first.locations, resumed: true });
+    expect(await mark()).toBe(before);
+    // Both drivers run: every location takes the window once (five samples, not ten).
+    await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await lanes()).toEqual([]);
+    expect((await rows(w)).map((r) => [r.ms, r.samples])).toEqual([[50, 5]]);
+  });
+
   test('a mark older than two days (ordering was off) reads only two days back', async () => {
     vi.useFakeTimers();
     const w = await setup();

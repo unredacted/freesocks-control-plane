@@ -956,7 +956,8 @@ export const requestMany = internalMutation({
 /**
  * A run that is due (`insertRun` schedules this at its stagger delay): handed
  * to the executor now, marked running so it holds one of `PROBE_LANES`, or,
- * with every lane busy, asked again in `PROBE_LANE_RETRY_MS`. Reading the
+ * with every lane busy, asked again in `PROBE_LANE_RETRY_MS` (and due from
+ * now, so the wait does not count against its timeout). Reading the
  * running range and writing into it in one transaction makes two dispatches
  * that race for the last lane conflict, so the bound is exact.
  */
@@ -972,6 +973,11 @@ export const dispatchRun = internalMutation({
       .take(200);
     const held = running.filter((r) => (r.startedAt ?? r.requestedAt) > now - PROBE_LANE_HOLD_MS);
     if (held.length >= PROBE_LANES) {
+      // Waiting for a lane is not the run's own time: `sweepStuck` counts
+      // from the last time it was due, so a run that waits behind a long
+      // batch never times out before it ran. Only a run nothing asks for any
+      // more (its next ask lost) runs out its timeout.
+      await ctx.db.patch(runId, { scheduledAt: now });
       await ctx.scheduler.runAfter(PROBE_LANE_RETRY_MS, internal.probes.dispatchRun, { runId });
       return { started: false };
     }

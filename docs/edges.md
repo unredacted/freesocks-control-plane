@@ -5636,8 +5636,13 @@ walk order`. Meant for still wins for its own countries, and a blocked address s
   two at a time: docs/convex-self-hosting.md "Background work in lanes"), into the
   kept samples (`edgeLatencySamples`: at most 12 per clock hour, so a week stays bounded and
   even however often the location is probed); the first pass reads two days back. Passes run
-  only while latency ordering and steering are both on (the only time a figure is read); turning
-  either on takes a pass at once, and a pass after a longer gap also reads two days back. A figure
+  only while latency ordering and steering are both on (the only time a figure is read); while
+  either is off the committed figures are dropped (the kept samples stay), so turning them on never
+  serves a figure from before; it takes a pass at once, and a pass after a longer gap also reads
+  two days back. A pass's locations wait in two pending lanes (`appState`
+  `edgeLatency:pending:<n>`), written with the mark in one transaction; each location's job takes
+  itself off its lane in its own, so every location takes each window once, and a pass whose
+  driver died is resumed by the next tick (no progress for 10 minutes) before the mark moves. A figure
   counts from 5 samples from 2 networks with the newest under 48 hours old. What delivery reads
   (`edgeLatency.ms`) moves only by more than 15% and more than 10 ms, or when the figure
   appears or lapses; when it moves while latency ordering is on, every origin with an address
