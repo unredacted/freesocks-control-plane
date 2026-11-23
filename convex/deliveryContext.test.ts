@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 /**
  * The fronted subscription route's cache-hit path (GET /api/v1/sub/<token>):
- * one `deliveryContext.forToken` read, and the delivery stamp called only when
+ * the token lookup, the throttles, one `deliveryContext.forKey` read, and the
+ * delivery stamp called only when
  * something is due (lib/deliveryStamp.ts). Every Convex function the route
  * calls is counted, so the per-poll cost is pinned here.
  */
@@ -43,6 +44,14 @@ const modules: typeof glob = Object.fromEntries(
 );
 
 type T = ReturnType<typeof convexTest>;
+
+/** A cached answer: the token lookup BEFORE the per-token throttle, then the one context read. */
+const HIT = [
+  'rateLimits:enforce',
+  'deliveryContext:keyForToken',
+  'rateLimits:enforce',
+  'deliveryContext:forKey',
+];
 
 async function seedSub(t: T): Promise<{ subId: Id<'subscriptions'> }> {
   return t.run(async (ctx) => {
@@ -135,7 +144,7 @@ describe('a poll answered from the cache', () => {
     expect(hit.status).toBe(200);
     expect(await hit.text()).toBe('RAW-CONFIG');
     expect(fetches).toBe(1);
-    expect(calls).toEqual(['rateLimits:enforce', 'deliveryContext:forToken', 'rateLimits:enforce']);
+    expect(calls).toEqual(HIT);
     // Nothing was due, and nothing changed.
     expect(await t.run((ctx) => ctx.db.get(subId))).toEqual(stamped);
 
@@ -144,7 +153,7 @@ describe('a poll answered from the cache', () => {
     const tag = hit.headers.get('etag')!;
     const revalidated = await poll(t, { 'if-none-match': tag });
     expect(revalidated.status).toBe(304);
-    expect(calls).toEqual(['rateLimits:enforce', 'deliveryContext:forToken', 'rateLimits:enforce']);
+    expect(calls).toEqual(HIT);
   });
 
   test('once the stamp is due, the hit records it as before', async () => {
@@ -155,12 +164,7 @@ describe('a poll answered from the cache', () => {
     await t.run((ctx) => ctx.db.patch(subId, { lastDeliveredAt: old }));
     calls = [];
     await poll(t);
-    expect(calls).toEqual([
-      'rateLimits:enforce',
-      'deliveryContext:forToken',
-      'rateLimits:enforce',
-      'subscriptions:markDelivered',
-    ]);
+    expect(calls).toEqual([...HIT, 'subscriptions:markDelivered']);
     expect((await t.run((ctx) => ctx.db.get(subId)))!.lastDeliveredAt).toBeGreaterThan(old);
   });
 
@@ -171,7 +175,7 @@ describe('a poll answered from the cache', () => {
       headers: { 'user-agent': 'Clash/1', 'x-forwarded-for': '192.0.2.7' },
     });
     expect(res.status).toBe(404);
-    expect(calls).toEqual(['rateLimits:enforce', 'deliveryContext:forToken']);
+    expect(calls).toEqual(['rateLimits:enforce', 'deliveryContext:keyForToken']);
   });
 
   test('a device-bound request reads no cached body and is never served one', async () => {
@@ -186,7 +190,11 @@ describe('a poll answered from the cache', () => {
     );
     await poll(t);
     expect(fetches).toBe(1);
-    const ctxRead = await t.query(internal.deliveryContext.forToken, {
+    const subscriptionId = (await t.query(internal.deliveryContext.keyForToken, {
+      subToken: 'tok_abc',
+    }))!;
+    const ctxRead = await t.query(internal.deliveryContext.forKey, {
+      subscriptionId,
       subToken: 'tok_abc',
       ua: 'Clash/1',
       hwidHeader: true,

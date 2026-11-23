@@ -1,14 +1,16 @@
 /**
  * Everything the fronted subscription route (GET /api/v1/sub/<token>) reads
- * before it can answer from the cache, as ONE query: one transaction (one
- * consistent snapshot) and one query-cache entry per token and User-Agent,
- * instead of a separate function call for each piece. A cache hit then costs
- * the two rate-limit mutations and this read; the delivery stamp is called
- * only when something is due (lib/deliveryStamp.ts).
+ * before it can answer from the cache, as ONE query (`forKey`): one
+ * transaction (one consistent snapshot) and one query-cache entry per key and
+ * User-Agent, instead of a separate function call for each piece. It runs
+ * after the token lookup (`keyForToken`) and the per-token throttle, so a
+ * rotated User-Agent never builds it for a refused request. A cache hit then
+ * costs the two rate-limit mutations and these two reads; the delivery stamp
+ * is called only when something is due (lib/deliveryStamp.ts).
  *
  * Every piece is the plain read behind the query the route used to call on
  * its own, so their rules stay in one place:
- *  - the row: `subscriptions.bySubToken` (a deleted row is not found);
+ *  - the row: as `subscriptions.bySubToken` (a deleted row is not found);
  *  - the answer's title and refresh hint: `subscriptions.responseHints`;
  *  - the HWID switch: `appSettings.resolved['devices.enforcementEnabled']`;
  *  - this UA's cached body: `subscriptionBodies` (lib/subscriptionBodies.ts `entriesForUa`);
@@ -39,20 +41,36 @@ const NO_PLACE: PlaceRenderContext = {
   covered: false,
 };
 
-export const forToken = internalQuery({
+/**
+ * The key a token names, or null (a deleted row is not found): the one cheap
+ * read the route makes BEFORE the per-token throttle, so a valid token that
+ * rotates User-Agents (each one a fresh `forKey` read) is refused before the
+ * full context is built.
+ */
+export const keyForToken = internalQuery({
+  args: { subToken: v.string() },
+  handler: async (ctx, { subToken }) => {
+    const row = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_sub_token', (q) => q.eq('subToken', subToken))
+      .unique();
+    return row && row.state !== 'deleted' ? row._id : null;
+  },
+});
+
+export const forKey = internalQuery({
   args: {
+    subscriptionId: v.id('subscriptions'),
+    /** The token the request named: the row must still hold it. */
     subToken: v.string(),
     /** The UA the cache is keyed by (already truncated by the route). */
     ua: v.string(),
     /** The request carries an `x-hwid` the route would forward (length-capped). */
     hwidHeader: v.boolean(),
   },
-  handler: async (ctx, { subToken, ua, hwidHeader }) => {
-    const row = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_sub_token', (q) => q.eq('subToken', subToken))
-      .unique();
-    if (!row || row.state === 'deleted') return null;
+  handler: async (ctx, { subscriptionId, subToken, ua, hwidHeader }) => {
+    const row = await ctx.db.get(subscriptionId);
+    if (!row || row.state === 'deleted' || row.subToken !== subToken) return null;
     // The old blob never leaves this query (lib/subscriptionBodies.ts reads it
     // for this UA until it is moved).
     const { subCache: _legacy, ...sub } = row;

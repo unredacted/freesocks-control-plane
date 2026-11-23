@@ -1547,12 +1547,14 @@ at most 30>, must-revalidate` for a body holding fronts, `public, max-age=30` ot
   repeats it, so it never extends a cache's freshness past the proof either.
 - **Cache format.** Entries carry `v: 2` and `validUntil`. An entry written before that has no
   expiry metadata and is never served; it is overwritten as members fetch (no migration).
-- **What a poll costs.** Everything a cached answer needs is read by one query,
-  `deliveryContext.forToken` (`convex/deliveryContext.ts`): the key, the title and refresh
+- **What a poll costs.** The token is looked up first (`deliveryContext.keyForToken`, one cheap
+  read) so the per-token throttle refuses a rotating User-Agent before anything else is read.
+  Then everything a cached answer needs is read by one query,
+  `deliveryContext.forKey` (`convex/deliveryContext.ts`): the key, the title and refresh
   hint, the HWID switch, this User-Agent's cached body (`subscriptionBodies`), the country and
   place contexts, the address lane, the entry names and, only for a body holding Hysteria
   entries, the pins. That is one transaction and one query-cache entry per token and
-  User-Agent. A cached answer (200 or 304) is that read plus the two rate limits. The delivery
+  User-Agent. A cached answer (200 or 304) is those two reads plus the two rate limits. The delivery
   stamp (`markDelivered`) is called only when its plan (`lib/deliveryStamp.ts`, the same
   function the mutation applies) has something to write: at most once a minute for an
   unchanged body, or at once when the body's content time, epoch or snapshot moved. A reading

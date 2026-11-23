@@ -483,7 +483,7 @@ function sameCountryFields(a: CountryFields, b: Partial<Record<keyof CountryFiel
   );
 }
 
-/** The serialized cache entries a lookup returned (deliveryContext.forToken). */
+/** The serialized cache entries a lookup returned (deliveryContext.forKey). */
 function parseEntries(raw: string[]): SubCacheEntry[] {
   const out: SubCacheEntry[] = [];
   for (const one of raw) {
@@ -1278,22 +1278,16 @@ http.route({
     // cache-bypass amplification vector (each distinct UA = a live backend
     // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
     const ua = (req.headers.get('user-agent') ?? '').slice(0, 256);
-    // Everything a cache hit needs, in ONE query (convex/deliveryContext.ts):
-    // the row, the answer's hints, the HWID switch, this UA's cached body, the
-    // country and place contexts, the address lane, the member-facing names
-    // and (only for a body holding Hysteria entries) the pins.
-    const xHwid = req.headers.get('x-hwid');
-    const dc = await ctx.runQuery(internal.deliveryContext.forToken, {
-      subToken: token,
-      ua,
-      hwidHeader: !!xHwid && xHwid.length <= 256,
-    });
-    if (!dc)
-      return json({ error: { code: 'not_found', message: 'Not found' } }, 404, {
+    const notFound = () =>
+      json({ error: { code: 'not_found', message: 'Not found' } }, 404, {
         'cache-control': 'private, no-store',
         vary: 'user-agent',
       });
-    const { sub, hints, lane } = dc;
+    // The key the token names: one cheap read before the per-token throttle.
+    const subscriptionId = await ctx.runQuery(internal.deliveryContext.keyForToken, {
+      subToken: token,
+    });
+    if (!subscriptionId) return notFound();
     // Per-TOKEN bucket (Review B-F1): bounds UA-rotating cache-bypass
     // amplification and HWID device-stuffing per leaked/shared token — the
     // per-IP bucket above can't (the holder rotates IPs). Enforced only for a
@@ -1314,6 +1308,21 @@ http.route({
         },
       });
     }
+    // Everything a cache hit needs, in ONE query (convex/deliveryContext.ts),
+    // built only for a request the throttles let through: the row, the
+    // answer's hints, the HWID switch, this UA's cached body, the country and
+    // place contexts, the address lane, the member-facing names and (only for
+    // a body holding Hysteria entries) the pins.
+    const xHwid = req.headers.get('x-hwid');
+    const dc = await ctx.runQuery(internal.deliveryContext.forKey, {
+      subscriptionId,
+      subToken: token,
+      ua,
+      hwidHeader: !!xHwid && xHwid.length <= 256,
+    });
+    // The token left the key in between (a re-issue): as if never found.
+    if (!dc) return notFound();
+    const { sub, hints, lane } = dc;
 
     const now = Date.now();
     // The validator the app holds, if any: a matching answer is a 304.
