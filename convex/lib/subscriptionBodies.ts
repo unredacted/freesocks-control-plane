@@ -18,6 +18,7 @@
  */
 import type { DatabaseReader, MutationCtx } from '../_generated/server';
 import type { Doc, Id } from '../_generated/dataModel';
+import { readStateJson } from './appStateJson';
 
 /**
  * How many UA formats a key keeps (Review #11): several apps on one key (phone
@@ -25,6 +26,17 @@ import type { Doc, Id } from '../_generated/dataModel';
  * request. Small: a short-TTL in-front cache, not durable storage.
  */
 export const SUB_CACHE_MAX = 4;
+
+/**
+ * Set by the rollback step (convex/subscriptionBodies.ts `clearForRollback`)
+ * before it deletes anything: no body is written while it is set, so none can
+ * come back behind the drain. A deploy of this build lifts it (`resume`).
+ */
+export const BODIES_PAUSED_KEY = 'subscriptionBodies:paused';
+
+export async function bodiesPaused(db: DatabaseReader): Promise<boolean> {
+  return (await readStateJson<boolean>(db, BODIES_PAUSED_KEY)) === true;
+}
 
 /** A key never holds more rows than this, whatever went wrong before. */
 const ROWS_READ_CAP = 32;
@@ -127,6 +139,7 @@ const regionOf = (e: BodyEntry): string | undefined =>
  * kept). The key's old blob, if it still has one, is folded in and cleared, so
  * this is also the lazy migration. Rows that are kept as they were are not
  * rewritten. Serializable: concurrent writes for distinct UAs never clobber.
+ * Writes nothing while a rollback has paused the table (`BODIES_PAUSED_KEY`).
  */
 export async function storeBodies(
   ctx: MutationCtx,
@@ -136,6 +149,8 @@ export async function storeBodies(
     allowed?: (e: BodyEntry) => boolean;
   } = {},
 ): Promise<void> {
+  // A rollback is draining the table: write nothing (the old blob stays).
+  if (await bodiesPaused(ctx.db)) return;
   const allowed = opts.allowed ?? (() => true);
   const rows = await bodyRowsOf(ctx.db, sub._id);
   const rowUas = new Set(rows.map((r) => r.ua));
