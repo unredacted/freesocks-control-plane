@@ -122,6 +122,7 @@ describe('registerVerify', () => {
     const { userId } = await seedMember(t);
     await expect(
       t.action(internal.memberWebauthn.registerVerify, {
+        registrationSessionSid: 'fixture-session',
         userId,
         response: { id: 'x', rawId: 'x', response: {}, type: 'public-key' },
       }),

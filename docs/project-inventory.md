@@ -245,6 +245,9 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 
 - `tiers` are entitlement templates (traffic/device/hwid limits, `backend` discriminator,
   per-tier `expirationDaysAfterMembershipLapse`). Admin CRUD via `convex/adminApi.ts`.
+- **Speed limits** (`tiers.speedLimitMbps`, free 100 / member unlimited by default): **Stored
+  only**. No backend can apply a per-user speed cap, so nothing is sent or shown to members
+  (`docs/backends.md` § "Speed limits").
 - **`setMembership`** / `applyMembership` is the single entitlement seam: sets a user's tier +
   expiry (re-activating a lapsed user), records `tierHistory` + audit, and schedules a durable
   `pushTierToBackend` (event-driven, **not** a cron; retries with backoff + audits on final
@@ -597,8 +600,9 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `user-counts-reconcile` (daily 04:00 UTC): recompute the `appState` user-status counter (self-heal).
 - `session-counts-reconcile` (daily 04:10 UTC): recompute the `appState` session counter behind
   the admin dashboard's PoP readiness tally (self-heal; bumped live on every session write).
-- `session-sweep` / `rate-limit-sweep` / `replay-guard-sweep` (daily): drop expired
-  `sessions` / `rateLimits` / `replayGuard` rows.
+- `session-sweep` / `rate-limit-sweep` / `replay-guard-sweep` (hourly): drop expired
+  `sessions` / `rateLimits` / `replayGuard` rows. Hourly because each run drains at most
+  500 × 51 rows and `replayGuard` gains one row per PoP-signed request.
 - `epoch-key-rotate` (10 min) / `epoch-key-sweep` (daily): CDN-blinding HPKE epoch keys.
 - `admin-invite-sweep` (daily): drop expired admin-invite tokens (multi-admin onboarding).
 - `retention-audit` / `retention-webhooks` / `retention-tier-history` /
@@ -623,6 +627,8 @@ Convex runs these natively (no Workers triggers, no node-cron):
   what FCP serves (no-op unless a mirror provider exists).
 - `mirror-barrier-repair` (5 min): repair an upload a policy move overtook, retry a failed copy,
   delete a copy nothing should serve (cleared, torn down, withdrawn); backoff per record.
+  `mirror-barrier-repair`, `mirror-verify`, `sni-qualify` and `country-lists` enter through V8
+  gates (`convex/cronGates.ts`) that start their Node action only when something is due.
 - `mirror-verify` (15 min): read mirror copies back through their public URL (~6h per copy) and
   rewrite or flag the ones that do not serve what FCP wrote (`docs/mirrors.md`).
 - `mirror-copies-reconcile` (daily 04:20 UTC): rebuild the `stats:mirrorCopies` counter and drop
@@ -694,7 +700,7 @@ the companion docs. Sizes: S/M/L.
 | ~~**Remnawave 3.x port**~~ — **DONE** (2026-09-01): the provider speaks both the 2.x (`uuid`) and 3.x (numeric `id`) contracts by id shape; numeric ids are stored instance-scoped (`<backendServerId>:<id>`, `convex/lib/backendUserId.ts`); the operator-run `backendServers:migrateRemnawaveUserIds` re-keys a backend's existing subscriptions after ITS upgrade (runbook: `docs/backends.md` § "Upgrading a backend to Remnawave 3.x"). What remains is operational: upgrading the real backends one at a time and running the migration per backend.                                                                                                                                                                                | —    | `docs/backends.md`                       |
 | **Client application certification evidence**: the automated suite proves subscription formats for every catalogued client, tunnels for the reference sing-box/Mihomo engines, and import/refresh for the packaged SFL Linux app. Every other app (Hiddify, Karing, v2rayNG/N, the Clash family, Throne, Shadowrocket, Anywhere, Outline) needs device evidence recorded in `tests/compat/application-evidence.json` for `scripts/compat/certify.ts` to pass (30-day expiry, exact FCP commit). Per-app device checklists: `docs/client-device-checklists.md` (records written by `scripts/compat/evidence.ts`). Operational: store the beta canary as `FCP_COMPAT_SMOKE_TARGETS`; add MX Linux to the desktop VM matrix (live ISO only). | M    | `docs/client-compatibility.md`           |
 | **Admin referral drill-down**: referral events are audit-visible today (`referral.*`); a per-user referral view in the CMS is a follow-up if operators want it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | S    | `convex/referrals.ts`                    |
-| ~~**Deferred P2 perf/scale**~~ — **both CLOSED** (2026-07-18): (a) all daily sweeps drain-chain pages via `runAfter` until a partial page (retention.ts pattern, bounded at 50 rounds) — no table can outgrow its daily page; (b) `appSettings.resolved` is per-key indexed reads (no table scan), which also can't load the ratelimit/billing namespaces on hot paths.                                                                                                                                                                                                                                                                                                                                                                   | —    | `retention.ts`, `appSettings.ts`         |
+| ~~**Deferred P2 perf/scale**~~ — **both CLOSED** (2026-07-18): (a) all daily sweeps drain-chain pages via `runAfter` until a partial page (retention.ts pattern, bounded at 50 rounds) — no table can outgrow its drain (the per-request tables `sessions` / `rateLimits` / `replayGuard` sweep hourly since 2026-11-22: 500 × 51 rows a day was below `replayGuard`'s write rate); (b) `appSettings.resolved` is per-key indexed reads (no table scan), which also can't load the ratelimit/billing namespaces on hot paths.                                                                                                                                                                                                             | —    | `retention.ts`, `appSettings.ts`         |
 
 ---
 

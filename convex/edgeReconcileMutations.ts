@@ -497,6 +497,30 @@ export const configSnapshot = internalQuery({
   handler: (ctx) => resolveEdgeConfig(ctx.db),
 });
 
+/** How often edge-reconcile re-reads the Node version (a Node action each time).
+ *  The version only changes when the backend image does, and the deploy
+ *  entrypoint checks the floor on its own; the dashboard only shows it. */
+export const RUNTIME_RECHECK_MS = 60 * 60_000;
+
+/** Whether edge-reconcile should read the Node runtime version again: never
+ *  read, unreadable, or older than RUNTIME_RECHECK_MS. */
+export const runtimeCheckDue = internalQuery({
+  args: { now: v.number() },
+  handler: async (ctx, { now }): Promise<boolean> => {
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', 'edge:runtime'))
+      .unique();
+    if (!row) return true;
+    try {
+      const at = (JSON.parse(row.value) as { at?: number }).at;
+      return typeof at !== 'number' || now - at >= RUNTIME_RECHECK_MS;
+    } catch {
+      return true;
+    }
+  },
+});
+
 /** The Node version the "use node" actions run on, for the admin dashboard. */
 export const recordRuntime = internalMutation({
   args: { nodeVersion: v.string() },

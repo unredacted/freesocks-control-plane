@@ -8,6 +8,7 @@ import { realityClientRefusalFields, realityClientRefusalV } from './lib/reality
 import { edgeClientCheckV, sniAutoTestCheckV } from './lib/edges/clientCheck/validators';
 import { mirrorFormatValidator } from './lib/mirrorFormats';
 import { fleetStatsValidator } from './lib/fleetStats';
+import { directPaymentValidator } from './lib/directPayment';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -657,6 +658,11 @@ export default defineSchema({
     description: v.optional(v.string()),
     backend: backendId,
     monthlyTrafficGb: v.number(),
+    // Per-user speed cap in Mbps; 0 = unlimited. Absent = never set: the deploy
+    // seed (seed.seedTierSpeedLimits) fills it once (default-free tiers 100,
+    // the rest 0) and never overwrites a stored value. Not enforced on any
+    // backend yet (capabilities.speedLimit); see docs/backends.md § "Speed limits".
+    speedLimitMbps: v.optional(v.number()),
     deviceLimit: v.number(),
     hwidLimit: v.number(),
     hwidEnabled: v.boolean(),
@@ -693,6 +699,7 @@ export default defineSchema({
     .index('by_active', ['isActive']),
 
   users: defineTable({
+    legacySessionsRevoked: v.optional(v.boolean()),
     tierId: v.id('tiers'),
     currentSubscriptionId: v.optional(v.id('subscriptions')),
     status: userStatus,
@@ -706,6 +713,7 @@ export default defineSchema({
     // Unset on pre-existing rows → the vest check falls back to
     // membershipExpiresAt.
     membershipPaidThroughAt: v.optional(v.number()),
+    lastGenericBillingEventAt: v.optional(v.number()),
     suspendedAt: v.optional(v.number()),
     // Account-number auth: store only a peppered keyed hash
     // (HMAC-SHA256(ACCOUNT_ID_PEPPER, number)) + a 4-digit plaintext prefix
@@ -999,8 +1007,22 @@ export default defineSchema({
     // and an in-place switch away, so the revocation watch covers the key by
     // what it was issued into, not by the current mode pools.
     hysteriaGroups: v.optional(v.array(v.string())),
+    // Quota carryover (Review D-M3, lib/quotaCarry.ts). Bytes the member spent
+    // on earlier keys in this traffic period, taken off this key's limit by
+    // every limit writer and added to by the tombstone sweep's grace
+    // settlement, until `periodCarryUntil` (the next period start). A re-issue
+    // counts them with this key's own usage, so churning keys cannot reset a
+    // period; the quota-carry-expire cron restores the full limit after it.
+    periodCarryBytes: v.optional(v.number()),
+    periodCarryUntil: v.optional(v.number()),
+    // On a superseded key: the usage already counted toward its successor.
+    // The tombstone sweep charges anything spent after that (during the grace)
+    // to the member's current key before deleting this one.
+    graceBaseUsedBytes: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
+    // The quota-carry-expire cron's range: rows whose carry period has ended.
+    .index('by_period_carry_until', ['periodCarryUntil'])
     // (userId, state): the active-subscription resolvers hit this directly
     // instead of collecting every historical row for the user (tombstones
     // accrue with each regenerate/switch and, for paid users, otherwise
@@ -1189,6 +1211,8 @@ export default defineSchema({
     // Only this grant may enroll the first passkey. Older rows without a
     // recorded grant require an operator to reissue the invitation.
     pendingInviteId: v.optional(v.id('adminInvites')),
+    legacySessionsRevoked: v.optional(v.boolean()),
+    sessionGeneration: v.optional(v.number()),
     username: v.string(),
     displayName: v.string(),
     isActive: v.boolean(),
@@ -1409,6 +1433,12 @@ export default defineSchema({
     // gift's bucket and leave the refunded money live. Absent on orders granted
     // before this field existed; the unwind then falls back to the day.
     donationBucketExpiresAt: v.optional(v.number()),
+    // Direct checkout (a crypto rail set to `direct`): what the payer needs to
+    // pay from FreeSocks' own page, read from the processor API at checkout.
+    // The deposit address is unique to this payer, so it is WIPED as soon as
+    // the order leaves pending/confirming (lib/directPayment.ts), leaving no
+    // lasting address-to-member link here. Absent on hosted orders.
+    directPayment: v.optional(directPaymentValidator),
     updatedAt: v.number(),
   })
     .index('by_opaque_ref', ['opaqueRef'])
@@ -5748,6 +5778,9 @@ export default defineSchema({
     kind: v.union(v.literal('member'), v.literal('admin')),
     userId: v.optional(v.id('users')),
     adminUserId: v.optional(v.id('adminUsers')),
+    adminPasskeyId: v.optional(v.id('passkeyCredentials')),
+    adminSessionGeneration: v.optional(v.number()),
+    memberPasskeyId: v.optional(v.union(v.id('memberPasskeyCredentials'), v.null())),
     expiresAt: v.number(),
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
@@ -5782,7 +5815,8 @@ export default defineSchema({
   keyEpochs: defineTable({
     kid: v.string(),
     publicKey: v.string(),
-    seed: v.string(),
+    // Compatibility with snapshots from before volatile seed storage.
+    seed: v.optional(v.string()),
     manifestSig: v.string(),
     // Phase 4: the ML-DSA-65 half of the hybrid manifest signature (Ed25519 is
     // `manifestSig`). Optional so a deployment without FS_MANIFEST_SK_PQ still

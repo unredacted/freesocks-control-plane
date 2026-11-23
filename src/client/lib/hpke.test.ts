@@ -16,6 +16,8 @@ import {
 } from '../../shared/crypto/envelope';
 import { serverOpenRequest, serverSealResponse } from '../../shared/crypto/channel';
 import { serializePublicKey, serverKeyPairFromSeed } from '../../shared/crypto/hpke';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { epochStatement, revocationStatement, signManifest } from '../../shared/crypto/manifest';
 
 // The status store is a Svelte-runes module; the seam only pokes it after opening
 // a sealed response, so a stub is all this test needs.
@@ -33,6 +35,10 @@ beforeAll(async () => {
   // The pins are read at module load, so bake them before the first import.
   vi.stubEnv('VITE_FS_SERVER_HPKE_PK', bytesToB64Url(pkBytes));
   vi.stubEnv('VITE_FS_SERVER_HPKE_KID', kid);
+  // A static-only build unless a test pins a manifest: a developer's
+  // .env.local pins would otherwise make every seal wait for a signed epoch.
+  vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  vi.stubEnv('VITE_FS_MANIFEST_PK_PQ', undefined);
   hpke = await import('./hpke');
   expect(hpke.sealingEnabled()).toBe(true);
 });
@@ -171,4 +177,125 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
       await hpke.prepareOutbound('/api/v1/account/passkey/revoke', 'POST', '{"id":"x"}'),
     ).toBeUndefined();
   });
+});
+
+test('connection attestation applies a signed revocation to the cached recipient', async () => {
+  const manifestSk = new Uint8Array(32).fill(11);
+  const publicKey = bytesToB64Url(await serializePublicKey(kp.publicKey));
+  const notAfter = Date.now() + 600_000;
+  const epoch = {
+    kid,
+    publicKey,
+    notAfter,
+    sig: bytesToB64Url(
+      signManifest(manifestSk, epochStatement({ kid, publicKeyB64: publicKey, notAfter })),
+    ),
+  };
+  const statement = { version: 1, revokedKids: [kid], notAfter };
+  const revocation = {
+    ...statement,
+    sig: bytesToB64Url(signManifest(manifestSk, revocationStatement(statement))),
+  };
+  vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
+  vi.resetModules();
+  const pinned = await import('./hpke');
+  // The keys endpoint answers from this queue (then the default); /healthz
+  // answers the server clock.
+  const keyReplies: Array<() => Response> = [];
+  const fetchKeys = vi.fn((input: string | URL) =>
+    String(input) === '/healthz'
+      ? Response.json({ timestamp: new Date().toISOString() })
+      : (keyReplies.shift() ?? (() => Response.json({ epoch, revocation })))(),
+  );
+  vi.stubGlobal('fetch', fetchKeys);
+  try {
+    keyReplies.push(() => new Response(null, { status: 503 }));
+    await expect(
+      pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
+    ).rejects.toThrow(/encryption key is unavailable/);
+    keyReplies.push(() => Response.json({ epoch }));
+    await expect(
+      pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
+    ).resolves.toBeDefined();
+    await expect(pinned.verifyConnection()).resolves.toMatchObject({
+      attested: false,
+      failure: 'revoked',
+      revocationVersion: 1,
+    });
+    await expect(
+      pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}'),
+    ).rejects.toThrow();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  }
+});
+
+test('a device clock an hour fast still seals to a current epoch', async () => {
+  const manifestSk = new Uint8Array(32).fill(12);
+  const publicKey = bytesToB64Url(await serializePublicKey(kp.publicKey));
+  const serverNow = Date.now() - 60 * 60_000; // the device runs an hour ahead
+  const notAfter = serverNow + 20 * 60_000; // already past on the device's clock
+  const epoch = {
+    kid,
+    publicKey,
+    notAfter,
+    sig: bytesToB64Url(
+      signManifest(manifestSk, epochStatement({ kid, publicKeyB64: publicKey, notAfter })),
+    ),
+  };
+  vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
+  vi.resetModules();
+  const pinned = await import('./hpke');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: string | URL) =>
+      String(input) === '/healthz'
+        ? Response.json({ timestamp: new Date(serverNow).toISOString() })
+        : Response.json({ epoch }),
+    ),
+  );
+  try {
+    const out = await pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}');
+    expect(out?.recipientKid).toBe(kid);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  }
+});
+
+test('only the refresh after a refused epoch bypasses the keys cache', async () => {
+  const manifestSk = new Uint8Array(32).fill(13);
+  const publicKey = bytesToB64Url(await serializePublicKey(kp.publicKey));
+  const notAfter = Date.now() + 20 * 60_000;
+  const epoch = {
+    kid,
+    publicKey,
+    notAfter,
+    sig: bytesToB64Url(
+      signManifest(manifestSk, epochStatement({ kid, publicKeyB64: publicKey, notAfter })),
+    ),
+  };
+  vi.stubEnv('VITE_FS_MANIFEST_PK', bytesToB64Url(ed25519.getPublicKey(manifestSk)));
+  vi.resetModules();
+  const pinned = await import('./hpke');
+  const keyFetches: Array<RequestInit | undefined> = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: string | URL, init?: RequestInit) => {
+      if (String(input) === '/healthz')
+        return Response.json({ timestamp: new Date().toISOString() });
+      keyFetches.push(init);
+      return Response.json({ epoch });
+    }),
+  );
+  try {
+    await pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}');
+    pinned.invalidateEpoch(kid);
+    await pinned.prepareOutbound('/api/v1/account/redeem-code', 'POST', '{}');
+    expect(keyFetches.map((init) => init?.cache)).toEqual([undefined, 'no-store']);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubEnv('VITE_FS_MANIFEST_PK', undefined);
+  }
 });

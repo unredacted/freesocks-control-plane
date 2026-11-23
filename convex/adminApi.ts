@@ -49,6 +49,7 @@ import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { CAPABILITIES } from './lib/backends/capabilities';
+import { MAX_SPEED_LIMIT_MBPS } from './lib/backends/types';
 import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
@@ -96,6 +97,8 @@ const tierUpsertFields = {
   description: v.union(v.string(), v.null()),
   backend: backendId,
   monthlyTrafficGb: v.number(),
+  // Mbps, 0 = unlimited. Optional so an older client's create still works (0).
+  speedLimitMbps: v.optional(v.number()),
   deviceLimit: v.number(),
   hwidLimit: v.number(),
   hwidEnabled: v.boolean(),
@@ -154,6 +157,20 @@ function checkTierBounds(patch: Record<string, unknown>): void {
       }
     }
   }
+  if ('speedLimitMbps' in patch && patch.speedLimitMbps !== undefined) {
+    const val = patch.speedLimitMbps;
+    if (
+      typeof val !== 'number' ||
+      !Number.isInteger(val) ||
+      val < 0 ||
+      val > MAX_SPEED_LIMIT_MBPS
+    ) {
+      throw new ConvexError({
+        code: 'validation',
+        message: `speedLimitMbps must be an integer from 0 to ${MAX_SPEED_LIMIT_MBPS}`,
+      });
+    }
+  }
   if ('priority' in patch) {
     const val = patch.priority;
     if (typeof val !== 'number' || !Number.isInteger(val)) {
@@ -176,6 +193,7 @@ function mapTier(t: Doc<'tiers'>) {
     description: t.description ?? null,
     backend: t.backend,
     monthlyTrafficGb: t.monthlyTrafficGb,
+    speedLimitMbps: t.speedLimitMbps ?? 0,
     deviceLimit: t.deviceLimit,
     hwidLimit: t.hwidLimit,
     hwidEnabled: t.hwidEnabled,
@@ -345,6 +363,7 @@ export const createTier = internalMutation({
       description: a.description ?? undefined,
       backend: a.backend,
       monthlyTrafficGb: a.monthlyTrafficGb,
+      speedLimitMbps: a.speedLimitMbps ?? 0,
       deviceLimit: a.deviceLimit,
       hwidLimit: a.hwidLimit,
       hwidEnabled: a.hwidEnabled,
@@ -401,6 +420,7 @@ export const updateTier = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     backend: v.optional(backendId),
     monthlyTrafficGb: v.optional(v.number()),
+    speedLimitMbps: v.optional(v.number()),
     deviceLimit: v.optional(v.number()),
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
@@ -520,6 +540,7 @@ export const upsertTierBySlug = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     backend: v.optional(backendId),
     monthlyTrafficGb: v.optional(v.number()),
+    speedLimitMbps: v.optional(v.number()),
     deviceLimit: v.optional(v.number()),
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
@@ -549,6 +570,7 @@ export const upsertTierBySlug = internalMutation({
         description: a.description ?? undefined,
         backend,
         monthlyTrafficGb: a.monthlyTrafficGb ?? 0,
+        speedLimitMbps: a.speedLimitMbps ?? 0,
         deviceLimit: a.deviceLimit ?? 0,
         hwidLimit: a.hwidLimit ?? 0,
         hwidEnabled: a.hwidEnabled ?? false,
@@ -810,7 +832,9 @@ export const activeSubForUser = internalQuery({
       .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
       .order('desc')
       .first();
-    return sub ? { backend: sub.backend, backendUserId: sub.backendUserId } : null;
+    return sub
+      ? { subscriptionId: sub._id, backend: sub.backend, backendUserId: sub.backendUserId }
+      : null;
   },
 });
 
@@ -971,6 +995,17 @@ export const runUserOp = internalAction({
             code: 'backend.reset_failed',
             message: 'The backend did not reset this key’s traffic. Try again later.',
           });
+        }
+        // A reset hands the member their whole quota back, so the bytes a
+        // re-issued key carried from earlier keys go too (lib/quotaCarry.ts).
+        await ctx.runMutation(internal.subscriptions.clearPeriodCarry, {
+          subscriptionId: sub.subscriptionId,
+        });
+        try {
+          await ctx.runAction(internal.lifecycle.pushTierToBackend, { userId });
+        } catch {
+          // The carry is gone locally; the next tier push or the expiry cron
+          // restores the provider limit.
         }
       }
       await ctx.runMutation(internal.adminApi.recordUserOpAudit, {
@@ -2038,15 +2073,25 @@ export const billingOverview = internalQuery({
 export const setBillingConfig = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
-    let writes: Array<{ key: string; value: string }>;
+    let configWrites: Array<{ key: string; value: string }>;
+    let secretWrites: Array<{ key: string; value: string }>;
     try {
-      writes = [...billingConfigWrites(patch), ...(await billingSecretWrites(ctx.db, patch))];
+      configWrites = billingConfigWrites(patch);
+      secretWrites = await billingSecretWrites(ctx.db, patch);
     } catch (e) {
       throw new ConvexError({
         code: 'validation',
         message: e instanceof Error ? e.message : 'invalid billing config',
       });
     }
+    // publicBaseUrl included: it builds the IPN and post-payment redirect URLs.
+    if (!actorAdminId && secretWrites.length > 0) {
+      throw new ConvexError({
+        code: 'auth.forbidden',
+        message: 'Changing processor credentials and endpoints requires an admin session',
+      });
+    }
+    const writes = [...configWrites, ...secretWrites];
     if (writes.length === 0) {
       throw new ConvexError({ code: 'validation', message: 'no recognized billing fields' });
     }
@@ -2062,6 +2107,12 @@ export const setBillingConfig = internalMutation({
       });
     }
     const config = await resolveBillingConfig(ctx.db);
+    // Direct checkout from the account's coin list: fill / refresh the cached
+    // list now rather than at the next hourly tick, so switching it on works at once.
+    const np = config.direct.nowpayments;
+    if (np.style === 'direct' && np.source === 'account') {
+      await ctx.scheduler.runAfter(0, internal.billing.refreshAccountCoins, {});
+    }
     const secretStatus = processorSecretStatus(await resolveProcessorSecrets(ctx.db));
     return { config, secretStatus };
   },

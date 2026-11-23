@@ -11,6 +11,14 @@
 import { z } from 'zod';
 import { readBoundedBody } from '../readBoundedBody';
 import { fetchProcessorApi } from './apiFetch';
+import {
+  cleanAmount,
+  cleanExpiry,
+  cleanToken,
+  DirectPaymentError,
+  type DirectPayment,
+} from '../directPayment';
+import { knownNetwork, networkName } from '../cryptoNetworks';
 import type { CheckoutParams, CheckoutResult, OrderStatus, VerifyResult } from './types';
 
 export interface NowPaymentsConfig {
@@ -398,4 +406,268 @@ export async function testConnection(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// --- direct checkout (Admin -> Billing: checkout style "direct") -------------
+
+const MAX_API_BYTES = 64 * 1024;
+
+/** A coin as the direct step needs it (see DirectCoin in lib/billingConfig.ts). */
+export interface DirectCoinSpec {
+  ticker: string;
+  label: string;
+  network: string;
+  allowMemo: boolean;
+}
+
+/**
+ * Parse a NOWPayments JSON body, keeping `pay_amount` as the exact decimal
+ * text the API sent (a JS number would re-spell 1e-7-sized amounts). Uses the
+ * same JSON.parse source-text reviver the IPN verifier relies on.
+ */
+function parseKeepingAmount(text: string): unknown {
+  return JSON.parse(text, (key, value, context?: { source?: string }) =>
+    key === 'pay_amount' && typeof value === 'number' && context?.source ? context.source : value,
+  );
+}
+
+/**
+ * Direct checkout: create the payment ON the invoice createCheckout already
+ * minted (`POST /v1/invoice-payment` { iid, pay_currency }), so every IPN for
+ * it still carries `invoice_id` = the order's stored processorRef and the
+ * whole verify + grant path (checkoutRef, price_amount, paidRatio) is
+ * unchanged. Returns the validated details for the payer, or throws a
+ * DirectPaymentError; never captures the api key or full URL.
+ */
+export async function createInvoicePayment(
+  cfg: NowPaymentsConfig,
+  args: {
+    invoiceId: string;
+    orderRef: string;
+    coin: DirectCoinSpec;
+    hostedUrl: string;
+    now: number;
+  },
+): Promise<DirectPayment> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  let body: Record<string, unknown>;
+  try {
+    const res = await fetchProcessorApi(new URL('/v1/invoice-payment', cfg.apiUrl).toString(), {
+      method: 'POST',
+      headers: {
+        'x-api-key': cfg.apiKey,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({ iid: args.invoiceId, pay_currency: args.coin.ticker }),
+      signal: controller.signal,
+    });
+    const text = await readBoundedBody(res, MAX_API_BYTES);
+    if (!res.ok) {
+      // Server-log detail (truncated); the member gets a generic or a
+      // "coin minimum" message. Error bodies describe the request, never the key.
+      const detail = (text ?? '').slice(0, 300);
+      if (/minimal|AMOUNT_MINIMAL/i.test(detail)) {
+        throw new DirectPaymentError(
+          'below_minimum',
+          `NOWPayments ${res.status} on /v1/invoice-payment: ${detail}`,
+        );
+      }
+      throw new DirectPaymentError(
+        'unavailable',
+        `NOWPayments ${res.status} on /v1/invoice-payment${detail ? `: ${detail}` : ''}`,
+      );
+    }
+    const parsed: unknown = text ? parseKeepingAmount(text) : null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new DirectPaymentError('unavailable', 'NOWPayments invoice-payment: not an object');
+    }
+    body = parsed as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof DirectPaymentError) throw err;
+    throw new DirectPaymentError('unavailable', 'NOWPayments invoice-payment request failed');
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const fail = (what: string): never => {
+    throw new DirectPaymentError('unavailable', `NOWPayments invoice-payment: ${what}`);
+  };
+  if (body.payment_id == null || body.payment_id === '') fail('no payment_id');
+  const payCurrency = typeof body.pay_currency === 'string' ? body.pay_currency.toLowerCase() : '';
+  if (payCurrency !== args.coin.ticker) fail(`pay_currency ${payCurrency || 'missing'}`);
+  // The payment must carry OUR order ref (inherited from the invoice). Its IPNs
+  // find the order by order_id, so a payment without it could be paid and never
+  // granted: missing is refused like a mismatch (the checkout falls back to hosted).
+  if (body.order_id !== args.orderRef)
+    fail(body.order_id == null ? 'no order_id' : 'order_id mismatch');
+  const address = cleanToken(body.pay_address, 256) ?? fail('bad pay_address');
+  const amount = cleanAmount(body.pay_amount) ?? fail('bad pay_amount');
+  let memo: string | undefined;
+  if (body.payin_extra_id != null && body.payin_extra_id !== '') {
+    memo = cleanToken(body.payin_extra_id, 128) ?? fail('bad payin_extra_id');
+    if (!args.coin.allowMemo) {
+      throw new DirectPaymentError(
+        'memo_refused',
+        `NOWPayments ${args.coin.ticker} needs a memo; allow it on the coin to offer it`,
+      );
+    }
+  }
+  const expiresAt = cleanExpiry(body.expiration_estimate_date ?? body.valid_until, args.now);
+  if (expiresAt === null) return fail('bad expiry');
+  return {
+    methods: [
+      {
+        id: args.coin.ticker,
+        unit: args.coin.label,
+        network: args.coin.network,
+        address,
+        amount,
+        ...(memo ? { memo } : {}),
+        // The address only: wallet URI schemes differ per coin and network, so
+        // the payer pastes the amount (and memo) rather than trusting a QR for them.
+        qr: address,
+      },
+    ],
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+    hostedUrl: args.hostedUrl,
+  };
+}
+
+/** One row of the Admin -> Billing "Check coins" report. Nulls = could not tell. */
+export interface CoinCheck {
+  ticker: string;
+  /** Switched on in the NOWPayments dashboard's coin settings. */
+  enabledOnAccount: boolean | null;
+  /** NOWPayments' own network code for the ticker, e.g. `trx`. */
+  network: string | null;
+  /** Our chain name for that code (e.g. `Tron`), null when the code is unknown. */
+  networkName: string | null;
+  /** NOWPayments uses a memo / destination tag for this coin. */
+  needsMemo: boolean | null;
+  /** The coin's minimum payment in the fiat currency (indicative: no conversion leg). */
+  minFiat: number | null;
+}
+
+async function getJson(cfg: NowPaymentsConfig, path: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  try {
+    const res = await fetchProcessorApi(new URL(path, cfg.apiUrl).toString(), {
+      headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const text = await readBoundedBody(res, 4 * 1024 * 1024);
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function listOf(x: unknown, ...keys: string[]): unknown[] | null {
+  if (!x || typeof x !== 'object') return null;
+  for (const k of keys) {
+    const v = (x as Record<string, unknown>)[k];
+    if (Array.isArray(v)) return v;
+  }
+  return null;
+}
+
+/** `/v1/full-currencies` keyed by lower-cased code (empty map when unreadable). */
+async function currencyDetails(
+  cfg: NowPaymentsConfig,
+): Promise<Map<string, Record<string, unknown>>> {
+  const details = new Map<string, Record<string, unknown>>();
+  for (const c of listOf(await getJson(cfg, '/v1/full-currencies'), 'currencies') ?? []) {
+    if (c && typeof c === 'object' && typeof (c as { code?: unknown }).code === 'string') {
+      details.set((c as { code: string }).code.toLowerCase(), c as Record<string, unknown>);
+    }
+  }
+  return details;
+}
+
+/**
+ * Every coin switched on in the NOWPayments dashboard's coin settings
+ * (`/v1/merchant/coins`), with its network code and memo use from
+ * `/v1/full-currencies`. A coin without a readable network is left out: the
+ * member must be told the network, and we won't guess it. Null when either
+ * call fails (the caller keeps its last good list).
+ */
+export async function accountCoins(
+  cfg: NowPaymentsConfig,
+): Promise<Array<{ ticker: string; network: string; memo: boolean }> | null> {
+  const [merchant, details] = await Promise.all([
+    getJson(cfg, '/v1/merchant/coins'),
+    currencyDetails(cfg),
+  ]);
+  const enabled = listOf(merchant, 'selectedCurrencies', 'currencies');
+  if (!enabled || details.size === 0) return null;
+  const out: Array<{ ticker: string; network: string; memo: boolean }> = [];
+  const seen = new Set<string>();
+  for (const raw of enabled) {
+    const ticker = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    if (!/^[a-z0-9]{2,20}$/.test(ticker) || seen.has(ticker)) continue;
+    const d = details.get(ticker);
+    if (!d || d.enable === false) continue;
+    const network = typeof d.network === 'string' ? d.network.trim().toLowerCase() : '';
+    if (!/^[a-z0-9-]{1,20}$/.test(network)) continue;
+    seen.add(ticker);
+    out.push({ ticker, network, memo: d.extra_id_exists === true });
+  }
+  return out;
+}
+
+/**
+ * Read-only check of the direct-coin allowlist against the account: which
+ * tickers are switched on (`/v1/merchant/coins`), their network and memo use
+ * (`/v1/full-currencies`), and each one's minimum (`/v1/min-amount` with a fiat
+ * equivalent). Creates nothing. Best effort: an unreadable answer is a null.
+ */
+export async function checkCoins(
+  cfg: NowPaymentsConfig,
+  tickers: string[],
+  fiat: string,
+): Promise<CoinCheck[]> {
+  const [merchant, details] = await Promise.all([
+    getJson(cfg, '/v1/merchant/coins'),
+    currencyDetails(cfg),
+  ]);
+  const enabled = listOf(merchant, 'selectedCurrencies', 'currencies');
+  const enabledSet = enabled
+    ? new Set(enabled.filter((c): c is string => typeof c === 'string').map((c) => c.toLowerCase()))
+    : null;
+  return Promise.all(
+    tickers.map(async (ticker): Promise<CoinCheck> => {
+      const d = details.get(ticker);
+      const min = await getJson(
+        cfg,
+        `/v1/min-amount?currency_from=${encodeURIComponent(ticker)}&currency_to=${encodeURIComponent(ticker)}&fiat_equivalent=${encodeURIComponent(fiat.toLowerCase())}`,
+      );
+      // Only a real number (or numeric string) counts: Number(null) / Number('')
+      // would read as a zero minimum and hide the warning.
+      const rawMin =
+        min && typeof min === 'object' ? (min as Record<string, unknown>).fiat_equivalent : null;
+      const fiatMin =
+        typeof rawMin === 'number'
+          ? rawMin
+          : typeof rawMin === 'string' && rawMin.trim() !== ''
+            ? Number(rawMin)
+            : NaN;
+      return {
+        ticker,
+        enabledOnAccount: enabledSet ? enabledSet.has(ticker) : null,
+        network: d && typeof d.network === 'string' ? d.network.toLowerCase() : null,
+        networkName:
+          d && typeof d.network === 'string' && knownNetwork(d.network)
+            ? networkName(d.network)
+            : null,
+        needsMemo: d && typeof d.extra_id_exists === 'boolean' ? d.extra_id_exists : null,
+        minFiat: Number.isFinite(fiatMin) ? fiatMin : null,
+      };
+    }),
+  );
 }

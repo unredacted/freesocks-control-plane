@@ -125,7 +125,9 @@ export const execute = internalAction({
   args: { runId: v.id('probeRuns') },
   handler: async (ctx, { runId }): Promise<null> => {
     const c = await ctx.runQuery(internal.probes.runContext, { runId });
-    if (!c || c.run.status !== 'requested') return null;
+    // Running: handed over by `probes.dispatchRun` (a run requested before it
+    // existed is still `requested`); anything else was settled meanwhile.
+    if (!c || (c.run.status !== 'requested' && c.run.status !== 'running')) return null;
     const { run, cfg, secrets } = c;
     const target = parseTarget(run.target, run);
     // The `tls-sni` shape check presents the listener's name (resolved by the

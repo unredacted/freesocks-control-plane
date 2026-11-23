@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { spawnSync } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -74,7 +75,10 @@ function run(env: Record<string, string>, opts: { fails?: number; oldDumps?: num
   if (opts.fails) writeFileSync(path.join(work, 'fails'), `${opts.fails}\n`);
   for (let i = 0; i < (opts.oldDumps ?? 0); i++)
     writeFileSync(path.join(out, `freesocks-freesocks_test-2026010${i}T000000Z.sql.gz`), 'old');
-  const res = spawnSync('sh', [script], {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const signingKey = path.join(work, 'signing.pem');
+  writeFileSync(signingKey, privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+  const res = spawnSync('bash', [script], {
     encoding: 'utf8',
     env: {
       PATH: `${bin}:${process.env.PATH}`,
@@ -83,16 +87,41 @@ function run(env: Record<string, string>, opts: { fails?: number; oldDumps?: num
       POSTGRES_DB: 'freesocks_test',
       POSTGRES_PASSWORD: 'pw',
       BACKUP_ALLOW_UNENCRYPTED: 'true',
+      BACKUP_SIGNING_KEY_FILE: signingKey,
       ...env,
     },
   });
   const sleeps = () =>
     readFileSync(path.join(work, 'sleeps'), 'utf8').trim().split('\n').map(Number);
-  const dumps = () => readdirSync(out).filter((f) => f.startsWith('freesocks-'));
+  const dumps = () => readdirSync(out).filter((f) => /\.sql\.gz(?:\.age)?$/.test(f));
   return { res, sleeps, dumps, heartbeat: () => existsSync(path.join(out, '.heartbeat')) };
 }
 
 describe('docker/backup.sh', () => {
+  test('requires a producer signing key for local-only backups', () => {
+    const { res, heartbeat, dumps } = run({
+      BACKUP_ALLOW_LOCAL_ONLY: 'true',
+      BACKUP_SIGNING_KEY_FILE: '',
+      SLEEPS: '1',
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain('BACKUP_SIGNING_KEY_FILE');
+    expect(dumps()).toHaveLength(0);
+    expect(heartbeat()).toBe(false);
+  });
+
+  test('fails startup when offsite storage requires an encryption recipient', () => {
+    const { res, heartbeat } = run({
+      S3_BUCKET: 'test-bucket',
+      S3_ENDPOINT: 'https://storage.example',
+      BACKUP_ALLOW_UNENCRYPTED: '',
+      SLEEPS: '1',
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain('set BACKUP_AGE_PUBLIC_KEY');
+    expect(heartbeat()).toBe(false);
+  });
+
   test('a failed cycle retries soon, backing off up to the interval; a success resets', () => {
     // Four failed cycles, then a good one, then one more wait to stop the loop.
     const { res, sleeps, heartbeat } = run(

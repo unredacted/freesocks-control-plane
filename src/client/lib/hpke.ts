@@ -29,6 +29,7 @@ import {
   verifyManifestPq,
 } from '../../shared/crypto/manifest';
 import { markSealedResponse } from './hpke-status.svelte';
+import { serverTimeOffset } from './serverClock';
 
 const PK_B64 = import.meta.env.VITE_FS_SERVER_HPKE_PK as string | undefined;
 const KID = import.meta.env.VITE_FS_SERVER_HPKE_KID as string | undefined;
@@ -138,6 +139,23 @@ let _epoch: EpochKey | null = null;
 let _epochFetch: Promise<void> | null = null;
 /** Stop using an epoch this long before its notAfter (clock skew + in-flight margin). */
 const EPOCH_MARGIN_MS = 30_000;
+/**
+ * The most server-time correction the epoch freshness check accepts. Without
+ * it, a device clock running more than an epoch's lifetime (30 min) fast
+ * would treat every epoch as expired and, with no static fallback, could
+ * never seal a login. The bound keeps a relay that forges the clock source
+ * from reviving epochs older than this; their seeds are long destroyed.
+ */
+const EPOCH_CLOCK_CORRECTION_MAX_MS = 2 * 60 * 60_000;
+
+/** "Now" on the server's clock, for judging epoch expiry. */
+async function epochNow(): Promise<number> {
+  const offset = await serverTimeOffset();
+  return (
+    Date.now() +
+    Math.max(-EPOCH_CLOCK_CORRECTION_MAX_MS, Math.min(EPOCH_CLOCK_CORRECTION_MAX_MS, offset))
+  );
+}
 
 // --- revoked-kid list (Phase 3c): a manifest-signed, monotonic-versioned list
 // of compromised kids. Persisted so it survives reload and applies before the
@@ -176,24 +194,41 @@ function isRevoked(kid: string): boolean {
   return _revokedKids.has(kid);
 }
 
-function applyRevocation(r: {
+interface SignedRevocation {
   version: number;
   revokedKids: string[];
   notAfter: number;
   sig: string;
   sigPq?: string;
-}) {
-  if (!MANIFEST_PK) return;
-  // Anti-rollback: never accept a version lower than the last we trusted.
-  if (r.version < _revVersion) return;
+}
+
+function applyRevocation(r: SignedRevocation): number | undefined {
+  if (
+    !MANIFEST_PK ||
+    !Number.isSafeInteger(r.version) ||
+    r.version < 0 ||
+    r.version < _revVersion ||
+    !Number.isFinite(r.notAfter) ||
+    !Array.isArray(r.revokedKids) ||
+    r.revokedKids.some((kid) => typeof kid !== 'string')
+  )
+    return;
   const ok = verifyManifestHybrid(
     revocationStatement({ version: r.version, notAfter: r.notAfter, revokedKids: r.revokedKids }),
     r.sig,
     r.sigPq,
   );
-  if (!ok) return; // tampered -> keep the persisted list (still fail-closed on known kids)
+  if (!ok) return;
+  // Origin revocations stay in force until a newer signed list replaces them.
+  const revoked = new Set(r.revokedKids);
+  if (r.version === _revVersion) {
+    if (revoked.size !== _revokedKids.size || [...revoked].some((kid) => !_revokedKids.has(kid)))
+      return;
+    return _revVersion;
+  }
   _revVersion = r.version;
-  _revokedKids = new Set(r.revokedKids);
+  _revokedKids = revoked;
+  if (_epoch && isRevoked(_epoch.kid)) _epoch = null;
   try {
     localStorage.setItem(
       REV_STORAGE_KEY,
@@ -202,6 +237,7 @@ function applyRevocation(r: {
   } catch {
     /* storage unavailable */
   }
+  return _revVersion;
 }
 
 /**
@@ -217,12 +253,25 @@ function applyRevocation(r: {
  * WORSE for the population this serves: the fetch-spec cache modes send
  * `max-age=0`, which punches every request past the CDN to the origin, where the
  * per-IP `hpke.keys.fetch` policy lives. A per-browser cache saves nothing for many
- * distinct clients behind one carrier-grade NAT - only the shared CDN cache does -
- * so bypassing it trades a bounded, quiet staleness for 429s and a silent
- * static-key fallback exactly where censorship makes NAT sharing the norm.
+ * distinct clients behind one carrier-grade NAT - only the shared CDN cache does.
+ * The origin never refuses this route (past the budget it answers from the
+ * datastore alone, convex/http.ts hpkeKeysHandler), so a neighbour on the same
+ * address cannot lock others out of an epoch, but routine lookups still belong
+ * on the cache.
  */
+let _bypassKeysCacheOnce = false;
+
 function fetchKeys(): Promise<Response> {
-  return fetch('/api/v1/hpke/keys', { credentials: 'omit' });
+  // Routine lookups keep the shared CDN cache (see above). Only the refresh
+  // right after the server refused an epoch skips caches: no-store also sends
+  // Cache-Control: no-cache upstream, which would otherwise hit the origin's
+  // per-IP budget on every lookup behind a shared NAT.
+  const bypass = _bypassKeysCacheOnce;
+  _bypassKeysCacheOnce = false;
+  return fetch('/api/v1/hpke/keys', {
+    credentials: 'omit',
+    ...(bypass ? { cache: 'no-store' as const } : {}),
+  });
 }
 
 async function refreshEpoch(): Promise<void> {
@@ -238,13 +287,7 @@ async function refreshEpoch(): Promise<void> {
         sig: string;
         sigPq?: string;
       } | null;
-      revocation?: {
-        version: number;
-        revokedKids: string[];
-        notAfter: number;
-        sig: string;
-        sigPq?: string;
-      } | null;
+      revocation?: SignedRevocation | null;
     };
     if (body.revocation) applyRevocation(body.revocation);
     const e = body.epoch;
@@ -254,24 +297,22 @@ async function refreshEpoch(): Promise<void> {
       e.sig,
       e.sigPq,
     );
-    // Ignore a tampered, expired, or revoked epoch key -> fall back to static.
-    if (!ok || e.notAfter <= Date.now() || isRevoked(e.kid)) return;
-    _epoch = {
-      kid: e.kid,
-      pub: await deserializePublicKey(b64UrlToBytes(e.publicKey)),
-      notAfter: e.notAfter,
-    };
+    // Ignore a tampered, expired, or revoked epoch key.
+    if (!ok || e.notAfter <= (await epochNow()) || isRevoked(e.kid)) return;
+    const pub = await deserializePublicKey(b64UrlToBytes(e.publicKey));
+    if (isRevoked(e.kid)) return;
+    _epoch = { kid: e.kid, pub, notAfter: e.notAfter };
   } catch {
-    // network/parse error -> keep whatever we have (or none); fall back to static.
+    // Keep any still-valid epoch when the refresh is unavailable.
   }
 }
 
-/** The current verified epoch key, or null to fall back to the static key. */
+/** The current verified, unexpired epoch key, or null. */
 async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
+  if (!MANIFEST_PK) return null; // a static-only build has no epochs
+  const now = await epochNow();
   const fresh = () =>
-    _epoch && _epoch.notAfter - EPOCH_MARGIN_MS > Date.now() && !isRevoked(_epoch.kid)
-      ? _epoch
-      : null;
+    _epoch && _epoch.notAfter - EPOCH_MARGIN_MS > now && !isRevoked(_epoch.kid) ? _epoch : null;
   if (fresh()) return { kid: _epoch!.kid, pub: _epoch!.pub };
   _epochFetch ??= refreshEpoch().finally(() => {
     _epochFetch = null;
@@ -285,7 +326,7 @@ async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
  * Why an attestation did not attest, when the endpoint DID answer. Only
  * `signature` and `revoked` are tamper tells (a CDN swapping the key, or a key we
  * were told to refuse); `absent` and `expired` mean the server has no live epoch
- * to offer, so the client keeps sealing to the pinned static key. See
+ * to offer, so manifest-pinned clients pause sealed requests. See
  * `classifyAttestation` in ./hpke-status.svelte.ts for how each maps to UI.
  */
 export type AttestationFailure = 'absent' | 'expired' | 'signature' | 'revoked';
@@ -312,8 +353,8 @@ export interface ConnectionAttestation {
 /**
  * Live, READ-ONLY attestation check for the "Verify connection" backend + the
  * banner's active state: fetch the server-attested epoch key and verify the
- * manifest chain in-browser exactly as the seal path does, but WITHOUT mutating
- * the seal state machine (a pure diagnostic). `attested:false` with
+ * manifest chain in-browser. Apply authenticated revocations to the same state
+ * that gates sealing before reporting the key's status. `attested:false` with
  * `reachable:true` is the tell that a CDN may be tampering with the epoch
  * endpoint. The endpoint is `cache-control: max-age=60`, so this is cheap even
  * alongside the seal path's own fetch. Never throws.
@@ -335,30 +376,9 @@ export async function verifyConnection(): Promise<ConnectionAttestation> {
         sig: string;
         sigPq?: string;
       } | null;
-      revocation?: {
-        version: number;
-        revokedKids: string[];
-        notAfter: number;
-        sig: string;
-        sigPq?: string;
-      } | null;
+      revocation?: SignedRevocation | null;
     };
-    let revocationVersion: number | undefined;
-    const r = body.revocation;
-    if (
-      r &&
-      verifyManifestHybrid(
-        revocationStatement({
-          version: r.version,
-          notAfter: r.notAfter,
-          revokedKids: r.revokedKids,
-        }),
-        r.sig,
-        r.sigPq,
-      )
-    ) {
-      revocationVersion = r.version;
-    }
+    const revocationVersion = body.revocation ? applyRevocation(body.revocation) : undefined;
     const e = body.epoch;
     if (!e) return { reachable: true, attested: false, failure: 'absent', revocationVersion };
     // Order matters: report the TAMPER tells (bad signature, revoked kid) ahead of
@@ -372,7 +392,7 @@ export async function verifyConnection(): Promise<ConnectionAttestation> {
       ? 'signature'
       : isRevoked(e.kid)
         ? 'revoked'
-        : e.notAfter <= Date.now()
+        : e.notAfter <= (await epochNow())
           ? 'expired'
           : undefined;
     return {
@@ -396,6 +416,7 @@ export interface OutboundSeal {
   header?: { name: string; value: string };
   /** Kept to open a reveal-leg response. */
   respEphPriv?: CryptoKey;
+  recipientKid?: string;
 }
 
 /** Prepare a sealed outbound request, or undefined if the route is not sealed (then send plaintext). */
@@ -425,6 +446,10 @@ export async function prepareOutbound(
     if (ep) {
       sealPub = ep.pub;
       sealKid = ep.kid;
+    } else if (MANIFEST_PK) {
+      // A missing unauthenticated response cannot establish that the baked
+      // recipient is still trusted by this manifest.
+      throw new Error('A current server encryption key is unavailable. Try again shortly.');
     }
     // Fail closed: if even the chosen seal target is revoked (e.g. the static key
     // is compromised and no valid epoch key is available), refuse to send the
@@ -439,8 +464,12 @@ export async function prepareOutbound(
     policy,
     bodyObj,
   });
+  if (policy.request === 'seal' && isRevoked(sealKid)) {
+    throw new Error('fcp_hpke_seal_key_revoked');
+  }
   const out: OutboundSeal = { policy, respEphPriv: prep.respEphPriv };
   if (policy.request === 'seal') {
+    out.recipientKid = sealKid;
     out.body = JSON.stringify(prep.body);
   } else if (policy.response === 'reveal') {
     if (m === 'GET' || m === 'HEAD') {
@@ -452,7 +481,14 @@ export async function prepareOutbound(
   return out;
 }
 
-/** Open a sealed reveal-leg response; pass through anything that is not sealed. */
+export function invalidateEpoch(kid: string): void {
+  if (_epoch?.kid === kid) {
+    _epoch = null;
+    _bypassKeysCacheOnce = true;
+  }
+}
+
+/** Open a reveal-leg response and enforce required sealing on successful replies. */
 export async function openInbound(
   seal: OutboundSeal,
   path: string,
@@ -469,6 +505,9 @@ export async function openInbound(
     });
     markSealedResponse(); // a sealed response was actually opened (drives the "active" UI)
     return opened;
+  }
+  if (seal.policy.response === 'reveal' && seal.policy.required) {
+    throw new Error('Expected a sealed response from the origin');
   }
   return json;
 }

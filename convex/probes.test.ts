@@ -12,7 +12,7 @@ import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { __setGlobalpingFactory, __setInternalProbeDeps } from './probeOps';
-import { familiesOf, type ResolvedTarget } from './probes';
+import { PROBE_LANES, familiesOf, type ResolvedTarget } from './probes';
 import { EDGE_DEFAULTS, __setEdgePlumbingForTests, type EdgeConfig } from './lib/edgeConfig';
 import type { GlobalpingLike } from './lib/edges/probes/globalping';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
@@ -1700,5 +1700,93 @@ describe('relayProbes', () => {
     await expect(
       t.mutation(internal.probeTargets.update, { id: created.id, probeProtocol: 'quic' as never }),
     ).rejects.toThrow();
+  });
+});
+
+describe('probe lanes', () => {
+  /** A probe run of the seeded edge in `status`, started `startedAgoMs` ago when running. */
+  const insert = (
+    t: ReturnType<typeof convexTest>,
+    edgeId: Id<'edges'>,
+    status: 'requested' | 'running',
+    startedAgoMs = 0,
+  ) =>
+    t.run((ctx) =>
+      ctx.db.insert('probeRuns', {
+        targetKind: 'edge',
+        targetRef: edgeId,
+        source: 'globalping',
+        target: `${EDGE}:443`,
+        status,
+        trigger: 'cron',
+        requestedAt: Date.now() - startedAgoMs,
+        ...(status === 'running' ? { startedAt: Date.now() - startedAgoMs } : {}),
+        results: [],
+      }),
+    );
+  const executes = (t: ReturnType<typeof convexTest>) =>
+    t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (f) => f.name.includes('probeOps') && f.state.kind === 'pending',
+      ),
+    );
+
+  test('a due run waits while every lane runs, and starts once one is free', async () => {
+    const { t, edgeId } = await seed();
+    for (let i = 0; i < PROBE_LANES; i++) await insert(t, edgeId, 'running');
+    const runId = await insert(t, edgeId, 'requested');
+    expect(await t.mutation(internal.probes.dispatchRun, { runId })).toEqual({ started: false });
+    expect((await t.run((ctx) => ctx.db.get(runId)))!.status).toBe('requested');
+    expect(await executes(t)).toEqual([]);
+    // Waiting is not the run's own time: eleven minutes later, still asked
+    // again every few seconds, it has not timed out.
+    for (let m = 0; m < 11; m++) {
+      vi.advanceTimersByTime(60_000);
+      await t.mutation(internal.probes.dispatchRun, { runId });
+      await t.run(async (ctx) => {
+        for (const r of await ctx.db
+          .query('probeRuns')
+          .withIndex('by_status', (q) => q.eq('status', 'running'))
+          .collect())
+          await ctx.db.patch(r._id, { startedAt: Date.now() });
+      });
+    }
+    await t.mutation(internal.probes.sweepStuck, { now: Date.now() });
+    expect((await t.run((ctx) => ctx.db.get(runId)))!.status).toBe('requested');
+    // One lane frees up: the next ask hands the run to the executor.
+    await t.run(async (ctx) => {
+      const one = await ctx.db
+        .query('probeRuns')
+        .withIndex('by_status', (q) => q.eq('status', 'running'))
+        .first();
+      await ctx.db.patch(one!._id, { status: 'finished', finishedAt: Date.now() });
+    });
+    expect(await t.mutation(internal.probes.dispatchRun, { runId })).toEqual({ started: true });
+    expect((await t.run((ctx) => ctx.db.get(runId)))!.status).toBe('running');
+    expect((await executes(t)).map((f) => f.args[0])).toEqual([{ runId }]);
+  });
+
+  test('a run whose executor died long ago holds no lane', async () => {
+    const { t, edgeId } = await seed();
+    for (let i = 0; i < PROBE_LANES; i++) await insert(t, edgeId, 'running', 5 * 60_000);
+    const runId = await insert(t, edgeId, 'requested');
+    expect(await t.mutation(internal.probes.dispatchRun, { runId })).toEqual({ started: true });
+  });
+
+  test('of a batch due at once, only the lanes start; the rest ask again later', async () => {
+    const { t, edgeId } = await seed();
+    const ids = [];
+    for (let i = 0; i < PROBE_LANES + 6; i++) ids.push(await insert(t, edgeId, 'requested'));
+    const started = [];
+    for (const runId of ids)
+      started.push((await t.mutation(internal.probes.dispatchRun, { runId })).started);
+    expect(started.filter(Boolean)).toHaveLength(PROBE_LANES);
+    expect(await executes(t)).toHaveLength(PROBE_LANES);
+    const retries = await t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (f) => f.name.includes('dispatchRun') && f.state.kind === 'pending',
+      ),
+    );
+    expect(retries).toHaveLength(6);
   });
 });

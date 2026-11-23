@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # A3: automated, offsite Postgres backups. Runs as a long-lived sidecar that
 # pg_dumps the Convex datastore on an interval and uploads the dump to
 # S3-compatible object storage, then prunes old local copies. A host-disk loss
@@ -21,11 +21,11 @@
 #     doubles on each further failure, never longer than the interval),
 #   BACKUP_RETENTION (local copies to keep, default 7),
 #   BACKUP_AGE_PUBLIC_KEY (age recipient; encrypts dumps before upload),
-#   BACKUP_ALLOW_UNENCRYPTED=true (silence the no-encryption warning),
+#   BACKUP_ALLOW_UNENCRYPTED=true (explicitly allow a plaintext offsite upload),
 #   and for offsite upload (all required to enable it):
 #     S3_ENDPOINT, S3_BUCKET, S3_PREFIX (default db-backups),
 #     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
-set -eu
+set -euo pipefail
 
 # Fail-fast gate: accounts are anonymous, so a host-disk loss without an
 # offsite copy is unrecoverable. Refuse to run local-only unless the operator
@@ -41,10 +41,18 @@ if [ -z "${S3_BUCKET:-}" ] || [ -z "${S3_ENDPOINT:-}" ]; then
   fi
   echo "[backup] WARNING: BACKUP_ALLOW_LOCAL_ONLY=true — offsite backups DISABLED" >&2
 fi
-if [ -z "${BACKUP_AGE_PUBLIC_KEY:-}" ] && [ "${BACKUP_ALLOW_UNENCRYPTED:-}" != "true" ]; then
-  echo "[backup] WARNING: BACKUP_AGE_PUBLIC_KEY unset — dumps are uploaded UNENCRYPTED" >&2
-  echo "[backup]          (they contain accountIdHash + live sub tokens). Set an age" >&2
-  echo "[backup]          recipient, or BACKUP_ALLOW_UNENCRYPTED=true to accept this." >&2
+if [ -n "${S3_BUCKET:-}" ] && [ -n "${S3_ENDPOINT:-}" ] && [ -z "${BACKUP_AGE_PUBLIC_KEY:-}" ]; then
+  if [ "${BACKUP_ALLOW_UNENCRYPTED:-}" != "true" ]; then
+    echo "[backup] FATAL: set BACKUP_AGE_PUBLIC_KEY or explicitly allow plaintext offsite uploads" >&2
+    exit 1
+  fi
+  echo "[backup] WARNING: BACKUP_ALLOW_UNENCRYPTED=true — offsite dumps are uploaded unencrypted" >&2
+fi
+
+SIGNING_KEY_FILE="${BACKUP_SIGNING_KEY_FILE:-}"
+if [ ! -s "$SIGNING_KEY_FILE" ] || [ ! -r "$SIGNING_KEY_FILE" ]; then
+  echo "[backup] FATAL: dumps require a readable BACKUP_SIGNING_KEY_FILE" >&2
+  exit 1
 fi
 
 PGHOST="${POSTGRES_HOST:-postgres}"
@@ -59,9 +67,13 @@ mkdir -p "$OUT_DIR"
 
 # Prune old local dumps beyond the retention count (both plaintext + .age).
 prune_local() {
-  ls -1t "$OUT_DIR"/freesocks-*.sql.gz* 2>/dev/null | tail -n +"$((RETENTION + 1))" | while read -r old; do
+  shopt -s nullglob
+  dumps=("$OUT_DIR"/freesocks-*.sql.gz "$OUT_DIR"/freesocks-*.sql.gz.age)
+  shopt -u nullglob
+  [ "${#dumps[@]}" -gt "$RETENTION" ] || return 0
+  ls -1t "${dumps[@]}" | tail -n "+$((RETENTION + 1))" | while IFS= read -r old; do
     echo "[backup] pruning ${old}"
-    rm -f "$old"
+    rm -f "$old" "$old.sig"
   done
 }
 
@@ -106,10 +118,18 @@ backup_once() {
     fi
   fi
 
+  if ! openssl dgst -sha256 -sign "$SIGNING_KEY_FILE" -out "$file.sig.tmp" "$file" ||
+     ! mv -f "$file.sig.tmp" "$file.sig"; then
+    echo "[backup] ERROR: could not sign dump" >&2
+    rm -f "$file" "$file.sig.tmp"
+    return 1
+  fi
+
   if [ -n "${S3_BUCKET:-}" ] && [ -n "${S3_ENDPOINT:-}" ]; then
     key="${S3_PREFIX:-db-backups}/$(basename "$file")"
     echo "[backup] uploading -> s3://${S3_BUCKET}/${key}"
-    if ! aws --endpoint-url "$S3_ENDPOINT" s3 cp "$file" "s3://${S3_BUCKET}/${key}"; then
+    if ! aws --endpoint-url "$S3_ENDPOINT" s3 cp "$file" "s3://${S3_BUCKET}/${key}" ||
+       ! aws --endpoint-url "$S3_ENDPOINT" s3 cp "$file.sig" "s3://${S3_BUCKET}/${key}.sig"; then
       # A failed OFFSITE copy is a failed backup (the local copy is kept): return
       # non-zero so the heartbeat stops and the container reads unhealthy. Still
       # prune: every retry of a failing upload writes a full dump, and without

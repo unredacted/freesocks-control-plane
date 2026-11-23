@@ -33,6 +33,14 @@ export const insert = internalMutation({
     manifestSigPq: v.optional(v.string()),
   },
   handler: async (ctx, row) => {
+    const current = await ctx.db
+      .query('keyRevocations')
+      .withIndex('by_version')
+      .order('desc')
+      .first();
+    if (current && row.version <= current.version) {
+      throw new Error('Revocation versions must increase');
+    }
     await ctx.db.insert('keyRevocations', row);
     return null;
   },

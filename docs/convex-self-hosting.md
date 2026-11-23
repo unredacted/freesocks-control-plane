@@ -142,7 +142,7 @@ optional one-time bootstrap.)
 | `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`                                                                                                                                                                                                       | none                                 | card rail (Phase 2). Required once the Stripe rail is enabled.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_API_BASE`                                                                                                                                                                     | none                                 | PayPal rail (Phase 3). Required once the PayPal rail is enabled. `PAYPAL_API_BASE` = `https://api-m.paypal.com` (live) or the sandbox host.                                                                                                                                                                                                                                                                                                                                                               |
 | `BILLING_PENDING_TTL_HOURS`, `BILLING_ORDER_RETENTION_DAYS`                                                                                                                                                                                     | `48`, `365`                          | abandoned-checkout expiry window + terminal-order retention.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `FS_SERVER_HPKE_SK`, `FS_MANIFEST_SK`, `FS_MANIFEST_SK_PQ`                                                                                                                                                                                      | none                                 | CDN-blinding sealed channel (user-facing label "HPKE"): the server HPKE private key + the classical/post-quantum manifest signing keys. Generate all of them with `bun scripts/gen-hpke-keys.mjs` (the printed `VITE_FS_*` public halves bake into the SPA build). Unset = the deployment runs **dark** (plaintext dual-mode over TLS). Full runbook: `docs/secrets.md` §2 + `docs/threat-model-cdn-blinding.md`.                                                                                         |
+| `FS_SERVER_HPKE_SK`, `FS_MANIFEST_SK`, `FS_MANIFEST_SK_PQ`                                                                                                                                                                                      | Generated                            | `FS_SERVER_HPKE_SK` (with the matching `VITE_FS_SERVER_HPKE_*` pins in the browser app) is required for sealed signup and first-admin enrollment. The manifest keys turn on signed epoch keys: they need the HPKE epoch store, and a build with `VITE_FS_MANIFEST_PK` refuses to seal without a live epoch. See [Secrets](secrets.md).                                                                                                                                                                    |
 | `WEBAUTHN_CHALLENGE_RETENTION_DAYS`                                                                                                                                                                                                             | `1`                                  | retention (days past `expiresAt`) for consumed/expired passkey challenge rows before the daily sweeps delete them.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `EDGE_RETENTION_DAYS`, `EDGE_ROTATION_RETENTION_DAYS`, `PANEL_OP_RETENTION_DAYS`, `SNI_ROLLOUT_RETENTION_DAYS`, `EDGE_SETUP_RUN_RETENTION_DAYS`, `ACTIVATION_RUN_RETENTION_DAYS`, `EDGE_HOST_HIDE_RETENTION_DAYS`, `PORT_CHANGE_RETENTION_DAYS` | `30`, then `90` each                 | retention of destroyed edges, terminal rotations and the servers/edges workflow rows (ledger ops, name rollouts, setup and activation runs, released Host hides, port changes). A row something still reads is never deleted (`docs/edges.md` "Reconcile cron", Retention).                                                                                                                                                                                                                               |
 | `MAINTENANCE_HOLD_RETENTION_DAYS`, `OBLIGATION_RETENTION_DAYS`                                                                                                                                                                                  | `90` each                            | retention of released maintenance holds and settled obligations (an open hold, an outstanding obligation and the confirmed create of an origin name's DNS record are never deleted).                                                                                                                                                                                                                                                                                                                      |
@@ -199,6 +199,39 @@ module and is reached through `ctx.runQuery`/`ctx.runMutation`. `bun run convex:
 with the CLI's own esbuild and runs in CI, so this fails on the pull request rather than in
 `docker/deploy-entrypoint.sh`.
 
+### Background work in lanes
+
+The backend runs every function kind from a small pool (`APPLICATION_MAX_CONCURRENT_*`, 16
+each in `docker-compose.stack.yml`; HTTP actions share the V8-action pool), and it runs at most
+`SCHEDULED_JOB_EXECUTION_PARALLELISM` scheduled jobs at once (upstream default 8, not set
+here), first due first. A cron that schedules one job per row fills both: member requests wait
+for a permit (and fail after 5 s for a query or mutation, 10 s for an action), and every other
+scheduled job, including ones a member's request started, queues behind the burst. So
+background work over many rows runs in a bounded lane instead:
+
+- **One driver per pass, a few rows in flight** (`convex/lib/lanes.ts` `inLanes`): it starts
+  rows while under its budget and schedules itself again with what is left. A row that throws
+  is counted and skipped; the rest still run.
+  - `edge-latency`: `edgeLatency.refreshLocations`, 2 locations at a time (mutations), 60 s
+    per driver run. Its rows are durable (pending lanes in `appState`, each taken off by the
+    row's own job), because a lost row would skip a window for good; the next tick resumes a
+    pass whose driver died.
+  - `mirror-verify`: the rewrites one run asks for go to `storage.rewriteVerified`, one Node
+    action rewriting 2 keys at a time, 90 s per driver run.
+- **A dispatch gate for long actions**: a probe run is handed to its executor
+  (`probeOps.execute`, which waits on the source for up to 150 s) only by
+  `probes.dispatchRun`, which marks it running when fewer than `PROBE_LANES` (4) run and
+  otherwise asks again 5 s later, due from then (waiting never counts against the run's 10-minute
+  timeout). Every probe goes through it, whoever asked (the `edge-probe`
+  cron, the detector, an admin, a qualification). A run marked running more than 4 minutes ago
+  holds no lane: its executor died, and the stuck-run sweep settles it.
+- **Paged chains** for deletes and other sweeps (`retention.ts`, `probes.sweepFinished`): one
+  page per job, the next scheduled by the last.
+
+A new cron that touches many rows uses one of these, never `ctx.scheduler.runAfter` in a loop
+over rows. We do not use `@convex-dev/workpool`: these three patterns cover the lanes in
+about 100 lines, with no component, no extra dependency and no extra tables to deploy.
+
 ## 6. Cutover to Convex (P11, start fresh)
 
 No data is migrated (free users churn within the expiry window; there are no OIDC
@@ -216,6 +249,17 @@ members to carry). On a fresh backend:
    ```sh
    bunx convex run seed:seedCutover '{}'
    ```
+
+   Manifest-enabled deployments require the volatile HPKE epoch store. The
+   stack Compose file places it on a private network with the Convex backend.
+   Run the normal secrets bootstrap for the deployment's env file to generate
+   `HPKE_EPOCH_STORE_TOKEN` before upgrading. When using a manually managed
+   backend, run the sidecar on a private backend network, set
+   `HPKE_EPOCH_STORE_URL` and `HPKE_EPOCH_STORE_TOKEN` in the Convex deployment
+   environment, and run `bunx convex run lib/hpkeCrypto:initializeEpochStore '{}'`
+   after deploying. The Compose deployer automates initialization. The next maintenance tick
+   replenishes the store after a restart. Operators can run the initialization
+   action to publish a new epoch immediately.
 
    `seedCutover` seeds the default-free + member tiers, app settings (including the
    device-limit enforcement default, OFF), the primary Remnawave instance (from
@@ -306,12 +350,12 @@ app.freesocks.org {
     # Security headers. The captcha (self-hosted Cap) is bundled + served
     # same-origin, so the CSP is pure 'self' — ZERO third-party origins. Inline
     # STYLES are allowed (Svelte style bindings); inline SCRIPTS are not (the FOUC
-    # theme logic is the external /theme-init.js). worker-src 'self' covers both
-    # the PoP signing worker and Cap's proof-of-work solver worker;
+    # theme logic is the external /theme-init.js). worker-src allows blob: for
+    # the bundled PoP signer and Cap's proof-of-work solver;
     # 'wasm-unsafe-eval' lets Cap's WASM compile (served same-origin via /cap).
     header {
         # Add the site policy so proxied subscription documents keep their sandbox.
-        +Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+        +Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
         # COOP/CORP isolate the context; COEP require-corp is now ENFORCEABLE
         # (every subresource is same-origin — the Turnstile iframe that blocked it
         # is gone). Permissions-Policy denies features the app never uses.
@@ -327,9 +371,8 @@ app.freesocks.org {
     }
     # Integrity-Policy "blocked-destinations=(script)" stays DEFERRED. Every chunk
     # now carries SRI (entry/css in index.html + an import map covering all dynamic
-    # chunks), but the enforcing header would block the PoP signing WORKER's module
-    # imports (a worker realm doesn't inherit the document import map → no integrity
-    # source → blocked → auth breaks). Flip only after an in-browser beta check.
+    # chunks), and the PoP signer ships inline. Check both the signing and
+    # captcha workers in supported browsers before enabling the header.
 
     # API + health/readiness → Convex HTTP actions (:3211)
     @api path /api/* /healthz /readyz
