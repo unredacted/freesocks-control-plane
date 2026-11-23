@@ -394,11 +394,16 @@ describe('every format of a mirror', () => {
     w.calls.length = 0;
     await w.t.action(internal.storage.verifyMirrorCopies, {});
     expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'never', reason: 'missing' });
-    expect(await scheduled(w.t, 'refreshMirrorsForSubscription')).toHaveLength(1);
-    await w.t.action(internal.storage.refreshMirrorsForSubscription, {
-      subscriptionId: subId,
-      forceProviders: ['p1'],
-      verifyAfter: true,
+    // One driver for the run's rewrites (never an action per key), read back once rewritten.
+    const queued = await scheduled(w.t, 'rewriteVerified');
+    expect(queued.map((f) => f.args[0])).toEqual([
+      { items: [{ subscriptionId: subId, forceProviders: ['p1'] }] },
+    ]);
+    expect(await scheduled(w.t, 'refreshMirrorsForSubscription')).toHaveLength(0);
+    expect(await w.t.action(internal.storage.rewriteVerified, queued[0]!.args[0])).toEqual({
+      done: 1,
+      failed: 0,
+      left: 0,
     });
     expect(w.objects.has(`p1:${path}.json`)).toBe(true);
     expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', verify: 'match' });
@@ -908,9 +913,9 @@ describe('the member-facing URL is read back', () => {
     out = await w.t.action(internal.storage.verifyMirrorCopies, {});
     expect(out).toMatchObject({ missing: 1 });
     expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'never', reason: 'missing' });
-    const queued = await scheduled(w.t, 'refreshMirrorsForSubscription');
+    const queued = await scheduled(w.t, 'rewriteVerified');
     expect(queued.map((f) => f.args[0])).toEqual([
-      { subscriptionId: subId, forceProviders: ['p1'], verifyAfter: true },
+      { items: [{ subscriptionId: subId, forceProviders: ['p1'] }] },
     ]);
     await w.t.action(internal.storage.refreshMirrorsForSubscription, {
       subscriptionId: subId,
@@ -931,7 +936,7 @@ describe('the member-facing URL is read back', () => {
       reason: 'url_unreadable',
     });
     // No upload loop: nothing new was scheduled for it.
-    expect(await scheduled(w.t, 'refreshMirrorsForSubscription')).toHaveLength(1);
+    expect(await scheduled(w.t, 'rewriteVerified')).toHaveLength(1);
   });
 
   test('an admin re-check rewrites a deleted object and reads it back, so a later overwrite is repaired too', async () => {

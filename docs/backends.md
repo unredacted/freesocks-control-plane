@@ -652,6 +652,38 @@ Operator sizing: one mode group per node, add them all to the mode's pool, and F
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for
 the multi-backend / Outline case.
 
+## Traffic quota across re-issues
+
+A regenerate, a backend, mode or server switch that re-issues, and a country-exit move all mint
+a new provider identity with a fresh traffic counter. On a tier with a traffic cap, each key
+carries what earlier keys spent in the same traffic period (`convex/lib/quotaCarry.ts`):
+
+- **Spent this period** = the old key's live usage plus the bytes that key itself still carried
+  in, so a chain of re-issues never forgets an earlier key. The new row stores the total as
+  `subscriptions.periodCarryBytes`, with `periodCarryUntil` = the start of the next period in
+  UTC (calendar month for `MONTH`, Monday for `WEEK`, midnight for `DAY`, never for
+  `NO_RESET`).
+- **Every limit writer subtracts a live carry** through `keyTrafficLimit`: issuance, the tier
+  push (`lifecycle.activeSubAndTier`), the donation re-cap (a carrying key leaves the bulk call
+  and gets its own limit) and the grace settlement. None of them hands the spent bytes back
+  mid-period.
+- **The grace.** The superseded key keeps routing for 24 hours. Its tombstone records the usage
+  already counted (`graceBaseUsedBytes`), and the tombstone sweep charges anything spent after
+  that to the member's current key before deleting the old one (`lifecycle.settleGraceUsage`).
+  The spend is recorded before the provider update, so a retried sweep never charges it twice;
+  a failed update schedules a tier push, which sends the same reduced limit with its own retry.
+  A counter below the base means the provider reset it during the grace, and everything on it
+  is charged as new-period spend.
+- **A new period.** The hourly `quota-carry-expire` cron restores the full tier limit on keys
+  whose `periodCarryUntil` has passed and drops the carry (index `by_period_carry_until`). It
+  pages past failed restores (retried hourly); after a week it drops the carry and schedules a
+  tier push, whose bounded retry sends the full limit and audits if it gives up. The
+  provider resets its own counter on its own schedule, so the two can be apart by the panel's
+  timezone offset. An admin traffic reset drops the carry too.
+- **Best-effort.** A failed usage read issues at the full tier limit and a failed settlement
+  leaves the member the bytes: a member replacing a key on a failing server must still get one.
+  A fully spent quota carries as 1 byte, never 0 (0 means unlimited to Remnawave).
+
 ## Revoking a key with an open Hysteria connection
 
 FCP disables a key for a lapsed membership and an admin disable, and deletes one at the
@@ -765,6 +797,46 @@ can't honor a device limit — device limits are an `url`-delivery / fronted con
 
 The device list + member self-service **revoke** (`POST /api/v1/account/devices/revoke`)
 are Remnawave-only; Outline has no device concept and returns a typed 409.
+
+## Speed limits
+
+Each tier carries a per-user speed cap, `tiers.speedLimitMbps` (Mbps; 0 = unlimited),
+edited on **Admin → Tiers** next to the monthly traffic. The deploy seed
+(`seed.seedTierSpeedLimits`, run by `seedCutover`) fills tiers that never had a value
+once: default-free tiers get **100**, every other tier (the `member` tier included) **0**.
+A stored value is never overwritten, so an operator's edit, including a 0 on a free
+tier, survives every later deploy. `resolveSpeedLimitMbps(tier)` in
+`lib/backends/types.ts` turns it into `number | null` (null = unlimited).
+
+**Reserved for a future feature: it does nothing today.** No backend can apply it, so it is stored and shown in Admin only (labelled as reserved there). The capability
+flag `speedLimit` is `false` on both backends and nothing is sent at issuance, on the tier
+push (`lifecycle.pushTierToBackend`) or in `lifecycle.activeSubAndTier`. Members are not
+shown the cap. What was checked (2026-11):
+
+- **Remnawave panel:** the create/update user bodies have no speed or bandwidth field in
+  the 2.x contract (2.8.1) or the 3.x contract (3.4.20, which only adds
+  `trafficLimitStrategy`). The 3.x **node plugins** (torrent blocker, ingress/egress
+  filters, connection drop, pre/post-start, IP block executor) filter and drop; none
+  shapes traffic.
+- **Xray core (26.10.31):** policy levels carry timeouts, buffer size and stats switches,
+  no rate. The only rate knobs are REALITY `limitFallbackUpload` / `limitFallbackDownload`,
+  which cap traffic that fails REALITY auth, not users. The panel writes each client's
+  `email` as its numeric user id and never sets a `level`, so a node cannot tell one
+  tier's users from another's without a per-user list in the config profile, and every
+  profile change reloads the core on every node.
+- **Outline:** data limits only, no speed limit.
+
+For now the cap is a setting only (owner's call, 2026-11). Enforcing it would need node-side
+work; these are possible future work, not planned: the nodes already run
+`fq` as root qdisc (the Ansible role's BBR setup), and `fq maxrate` caps each socket's
+send rate, which is a per-connection (not per-user) cap that would apply to every user
+on the node. A per-tier cap built on it means placing capped tiers on their own nodes.
+Shaping per source address on the node (an nftables meter, or tc HTB/cake keyed by source
+IP) comes closer to per-user, but only on direct nodes: behind a CDN or an L4 edge the
+source is the front's address, and it still cannot tell one tier from another.
+When a backend gains a way to apply the cap, flip `speedLimit` in its capability row
+together with the provider change that sends `resolveSpeedLimitMbps`, and show the cap to
+members only where the flag is true.
 
 ## Subscription formats (Clash, sing-box, base64)
 

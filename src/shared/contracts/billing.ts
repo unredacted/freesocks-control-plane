@@ -5,9 +5,11 @@ import { z } from 'zod';
  * `/api/v1/billing/*` surface the SPA consumes). The server validates with
  * Convex `v.*`; these zod schemas are what `apiClient` parses responses against.
  *
- * Flow: POST /billing/checkout → { redirectUrl, orderRef }; the SPA full-page
+ * Flow: POST /billing/checkout → { redirectUrl, orderRef, direct }; the SPA full-page
  * navigates to the processor-hosted page, then returns to /account?order=<ref>
- * and polls GET /billing/order/<ref> until a terminal status.
+ * and polls GET /billing/order/<ref> until a terminal status. A `direct` order
+ * skips the redirect: the poll's `payment` carries the address, amount, network
+ * and memo, shown on our own return page.
  */
 
 export const BillingProcessor = z.enum(['nowpayments', 'btcpay', 'stripe', 'paypal']);
@@ -26,6 +28,9 @@ export const CheckoutRequest = z.object({
   /** Optional donation in cents — added on top of a membership (self/gift), or the
    *  entire charge for a standalone donation (kind 'donation'). */
   donationCents: z.number().int().nonnegative().optional(),
+  /** Direct NOWPayments checkout: the picked coin's ticker, from
+   *  PublicConfig.billing.direct.nowpayments.coins. Omit for hosted. */
+  payCurrency: z.string().optional(),
 });
 export type CheckoutRequest = z.infer<typeof CheckoutRequest>;
 
@@ -39,6 +44,10 @@ export const CheckoutResponse = z.object({
     .refine((u) => u.startsWith('https://'), { message: 'redirect URL must be https' }),
   /** Our opaque order ref; echoed back as ?order=<ref> on return for polling. */
   orderRef: z.string().min(1),
+  /** Direct checkout: the payment details are on the order (OrderStatusResponse
+   *  .payment), so go to our own return page instead of `redirectUrl`, which is
+   *  then only the fallback to the processor's page for the same invoice. */
+  direct: z.boolean().default(false),
 });
 export type CheckoutResponse = z.infer<typeof CheckoutResponse>;
 
@@ -54,6 +63,39 @@ export const BillingOrderStatus = z.enum([
 ]);
 export type BillingOrderStatus = z.infer<typeof BillingOrderStatus>;
 
+/** One way to pay a direct-checkout order (NOWPayments: the picked coin;
+ *  BTCPay: on-chain and/or Lightning). Strings exactly as the processor gave them. */
+export const DirectPaymentMethod = z.object({
+  /** NOWPayments ticker (`usdttrc20`) or BTCPay payment method id (`BTC-LN`). */
+  id: z.string(),
+  /** Unit next to the amount, e.g. `USDT`. */
+  unit: z.string(),
+  /** Network label (NOWPayments, operator text); empty for BTCPay (the id says it). */
+  network: z.string(),
+  /** Deposit address, or a BOLT11 invoice for Lightning. */
+  address: z.string(),
+  /** Exact amount, as a decimal string; copy it verbatim. */
+  amount: z.string(),
+  /** Memo / destination tag: the payment can't be matched without it. */
+  memo: z.string().optional(),
+  /** What the QR encodes (the address, or a bitcoin: / lightning: link). */
+  qr: z.string(),
+});
+export type DirectPaymentMethod = z.infer<typeof DirectPaymentMethod>;
+
+export const OrderPayment = z.object({
+  processor: BillingProcessor,
+  methods: z.array(DirectPaymentMethod).min(1),
+  /** When the processor stops accepting payment to these details; null = no timer. */
+  expiresAt: z.string().datetime().nullable(),
+  /** The processor's own page for the same invoice (fallback). https only. */
+  hostedUrl: z
+    .string()
+    .url()
+    .refine((u) => u.startsWith('https://'), { message: 'hosted URL must be https' }),
+});
+export type OrderPayment = z.infer<typeof OrderPayment>;
+
 export const OrderStatusResponse = z.object({
   status: BillingOrderStatus,
   /** The member's membership expiry once `paid` (ISO); null while pending/failed. */
@@ -63,6 +105,8 @@ export const OrderStatusResponse = z.object({
   /** Gift orders only: the freshly-minted codes, revealed ONCE on return (empty
    *  once acknowledged / for self orders). Plaintext — show, let the buyer save, ack. */
   giftCodes: z.array(z.string()).default([]),
+  /** Direct checkout: what to pay, while the order is pending/confirming; else null. */
+  payment: OrderPayment.nullable().default(null),
 });
 export type OrderStatusResponse = z.infer<typeof OrderStatusResponse>;
 
@@ -110,6 +154,86 @@ export const BtcpayCheckoutView = z.object({
 });
 export type BtcpayCheckoutView = z.infer<typeof BtcpayCheckoutView>;
 
+/** One coin on the direct NOWPayments allowlist (see DirectCoin server-side). */
+export const DirectCoinView = z.object({
+  ticker: z.string(),
+  label: z.string(),
+  network: z.string(),
+  /** The operator accepts coins that need a memo / destination tag. */
+  allowMemo: z.boolean(),
+});
+export type DirectCoinView = z.infer<typeof DirectCoinView>;
+
+/** `GET /api/v1/billing/coins`: the direct NOWPayments coin picker, in display order. */
+export const DirectCoinsResponse = z.object({
+  coins: z.array(
+    z.object({
+      ticker: z.string(),
+      /** Unit shown next to the amount, e.g. `USDT`. */
+      label: z.string(),
+      /** Network shown everywhere the coin appears, e.g. `Tron (TRC-20)`. */
+      network: z.string(),
+      /** NOWPayments uses a memo / tag for this coin (a hint for the picker). */
+      memo: z.boolean().default(false),
+      /** A quick-pick button (the operator's pinned coins); the rest are in the drop-down. */
+      pinned: z.boolean().default(true),
+    }),
+  ),
+});
+export type DirectCoinsResponse = z.infer<typeof DirectCoinsResponse>;
+
+export const CoinSource = z.enum(['account', 'list']);
+export type CoinSource = z.infer<typeof CoinSource>;
+
+export const CheckoutStyle = z.enum(['hosted', 'direct']);
+export type CheckoutStyle = z.infer<typeof CheckoutStyle>;
+
+export const DirectCheckoutView = z.object({
+  nowpayments: z.object({
+    style: CheckoutStyle,
+    /** `account`: every coin switched on in the NOWPayments dashboard; `list`: `coins` only. */
+    source: CoinSource.default('list'),
+    coins: z.array(DirectCoinView),
+    /** Source `account`: tickers never offered. */
+    exclude: z.array(z.string()).default([]),
+    /** Source `account`: tickers shown first, in order. */
+    pinned: z.array(z.string()).default([]),
+  }),
+  btcpay: z.object({ style: CheckoutStyle, methods: z.array(z.string()) }),
+});
+export type DirectCheckoutView = z.infer<typeof DirectCheckoutView>;
+
+const DIRECT_CHECKOUT_VIEW_DEFAULT: DirectCheckoutView = {
+  nowpayments: { style: 'hosted', source: 'account', coins: [], exclude: [], pinned: [] },
+  btcpay: { style: 'hosted', methods: [] },
+};
+
+/** Admin -> Billing "Check coins" (POST /api/v1/admin/billing/check-coins). */
+export const CoinCheckResponse = z.object({
+  ok: z.boolean(),
+  error: z.string().nullable(),
+  /** Price of the cheapest term the crypto rail sells (cents); null if none. */
+  cheapestCryptoCents: z.number().int().nullable(),
+  /** Source `account`: coins now offered from the account (null = list not read). */
+  accountCoinCount: z.number().int().nullable().default(null),
+  /** Source `account`: network codes with no member-facing name (shown as the bare code). */
+  unnamedNetworks: z.array(z.string()).default([]),
+  coins: z.array(
+    z.object({
+      ticker: z.string(),
+      enabledOnAccount: z.boolean().nullable(),
+      /** NOWPayments' network code for the ticker, e.g. `trx`. */
+      network: z.string().nullable(),
+      /** Our chain name for that code (e.g. `Tron`); null = a code we don't name. */
+      networkName: z.string().nullable().default(null),
+      needsMemo: z.boolean().nullable(),
+      /** Indicative minimum in the billing currency (no conversion leg). */
+      minFiat: z.number().nullable(),
+    }),
+  ),
+});
+export type CoinCheckResponse = z.infer<typeof CoinCheckResponse>;
+
 const BTCPAY_CHECKOUT_VIEW_DEFAULT: BtcpayCheckoutView = {
   expirationMinutes: 90,
   monitoringMinutes: 1440,
@@ -139,6 +263,8 @@ export const BillingConfigView = z.object({
   underpaymentTolerancePct: z.number().default(5),
   /** Defaulted so a transient SPA-newer-than-backend deploy skew still parses. */
   donation: DonationConfigView.default(DONATION_VIEW_DEFAULT),
+  /** Direct checkout for the crypto rails. Defaulted for deploy skew. */
+  direct: DirectCheckoutView.default(DIRECT_CHECKOUT_VIEW_DEFAULT),
 });
 export type BillingConfigView = z.infer<typeof BillingConfigView>;
 

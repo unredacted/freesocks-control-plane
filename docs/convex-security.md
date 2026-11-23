@@ -107,19 +107,20 @@ files, so a new service must be added there.
 
 `docker-compose.stack.yml` (its header has the same notes):
 
-| Service            | Networks                | Hardening                                  |
-| ------------------ | ----------------------- | ------------------------------------------ |
-| backend            | edge, data, checks, ops | uid 10001, read-only root, no capabilities |
-| postgres           | data (internal)         | only the capabilities its entrypoint needs |
-| valkey             | cache (internal)        | only the capabilities its entrypoint needs |
-| cap                | edge, cache             | no capabilities                            |
-| web (Caddy)        | edge                    | read-only root, only `NET_BIND_SERVICE`    |
-| dashboard          | edge                    | read-only root, no capabilities            |
-| edge-client-check  | checks                  | read-only root, no capabilities            |
-| backup             | data, backup_egress     | no capabilities, read-only DB role         |
-| deployer           | ops                     | no capabilities                            |
-| keygen, data-perms | none                    | no network                                 |
-| db-roles           | data                    | no capabilities                            |
+| Service            | Networks                            | Hardening                                                         |
+| ------------------ | ----------------------------------- | ----------------------------------------------------------------- |
+| backend            | edge, data, checks, ops, epoch_keys | uid 10001, read-only root, no capabilities                        |
+| postgres           | data (internal)                     | only the capabilities its entrypoint needs                        |
+| valkey             | cache (internal)                    | only the capabilities its entrypoint needs                        |
+| cap                | edge, cache                         | no capabilities                                                   |
+| web (Caddy)        | edge                                | read-only root, only `NET_BIND_SERVICE`                           |
+| dashboard          | edge                                | read-only root, no capabilities                                   |
+| edge-client-check  | checks                              | read-only root, no capabilities                                   |
+| hpke-epoch-store   | epoch_keys (internal)               | read-only root, no capabilities                                   |
+| backup             | data, backup_egress                 | only `DAC_READ_SEARCH` (reads the signing key), read-only DB role |
+| deployer           | ops, epoch_keys                     | no capabilities                                                   |
+| keygen, data-perms | none                                | no network                                                        |
+| db-roles           | data                                | no capabilities                                                   |
 
 Every service also runs with `no-new-privileges`. Docker cannot filter by port,
 so anything that shares a network with `backend` can reach `:3210`; the layout

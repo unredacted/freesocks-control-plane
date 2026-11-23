@@ -19,7 +19,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 
 // --- registration challenges -------------------------------------------------
@@ -69,8 +69,22 @@ export const insertCredential = internalMutation({
     transports: v.optional(v.string()),
     deviceLabel: v.optional(v.string()),
     aaguid: v.optional(v.string()),
+    // Supplied by the HTTP registration ceremony, which can overlap recovery.
+    registrationSessionSid: v.optional(v.string()),
   },
-  handler: async (ctx, a) => {
+  handler: async (ctx, { registrationSessionSid, ...a }) => {
+    if (registrationSessionSid !== undefined) {
+      const session = await ctx.runQuery(internal.sessions.bySid, {
+        sid: registrationSessionSid,
+        recentMember: true,
+      });
+      if (session?.userId !== a.userId) {
+        throw new ConvexError({
+          code: 'auth.reauthentication_required',
+          message: 'Sign in again to manage account credentials.',
+        });
+      }
+    }
     // Uniqueness read-check (no UNIQUE constraint in Convex): a credentialId
     // dup would silently break the sign-in lookup's .unique().
     const clash = await ctx.db
@@ -101,18 +115,6 @@ export const credentialByCredentialId = internalQuery({
       .query('memberPasskeyCredentials')
       .withIndex('by_credential_id', (q) => q.eq('credentialId', credentialId))
       .unique(),
-});
-
-export const bumpCredentialCounter = internalMutation({
-  args: { credentialId: v.string(), newCounter: v.number() },
-  handler: async (ctx, { credentialId, newCounter }) => {
-    const row = await ctx.db
-      .query('memberPasskeyCredentials')
-      .withIndex('by_credential_id', (q) => q.eq('credentialId', credentialId))
-      .unique();
-    if (row) await ctx.db.patch(row._id, { counter: newCounter, lastUsedAt: Date.now() });
-    return null;
-  },
 });
 
 // --- assertion challenges ----------------------------------------------------
@@ -186,6 +188,7 @@ export const revokeCredential = internalMutation({
     const id = ctx.db.normalizeId('memberPasskeyCredentials', credentialId);
     const cred = id ? await ctx.db.get(id) : null;
     if (!cred || cred.userId !== userId) return { ok: true as const, revoked: false };
+    await ctx.db.patch(userId, { legacySessionsRevoked: true });
     await ctx.db.delete(cred._id);
     await writeAuditLog(ctx, {
       actorType: 'member',

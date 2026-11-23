@@ -130,7 +130,9 @@
           </CardHeader>
           <CardContent class="space-y-2 text-sm">
             <div>
-              Traffic: <strong>{tier.monthlyTrafficGb || 'unlimited'} GB/month</strong> · Devices:
+              Traffic: <strong>{tier.monthlyTrafficGb || 'unlimited'} GB/month</strong> · Speed:
+              <strong>{tier.speedLimitMbps ? `${tier.speedLimitMbps} Mbps` : 'unlimited'}</strong>
+              <span class="text-muted-foreground">(reserved, not applied)</span> · Devices:
               <strong>{tier.deviceLimit}</strong> · Strategy:
               <strong>{tier.trafficStrategy}</strong>
             </div>

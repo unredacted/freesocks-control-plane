@@ -2,7 +2,16 @@
 # seeds, all inside the compose stack (no host Bun, no manual admin-key copy).
 # It uses the convex CLI from the repo lockfile and reads the admin key from the
 # shared volume the `keygen` service writes. See docs/beta-deploy.md.
-FROM oven/bun:1.4.5@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18
+FROM oven/bun:1.4.5@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3ac9b6b0c7f145615f62b2ee18 AS bun-base
+
+# Build the isolated epoch store from the same pinned runtime as the deployer.
+FROM bun-base AS epoch-seed-store
+WORKDIR /app
+COPY docker/epoch-seed-store.mjs .
+USER bun
+ENTRYPOINT ["bun", "/app/epoch-seed-store.mjs"]
+
+FROM bun-base AS deployer
 WORKDIR /app
 
 COPY package.json bun.lock ./

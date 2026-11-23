@@ -754,6 +754,7 @@ describe('stack isolation', () => {
       all.filter(([, s]) => s.cap_add?.length).map(([n, s]) => [n, [...s.cap_add!].sort()]),
     );
     expect(added).toEqual({
+      backup: ['DAC_READ_SEARCH'],
       'data-perms': ['CHOWN', 'DAC_READ_SEARCH', 'FOWNER'],
       postgres: ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'],
       valkey: ['CHOWN', 'SETGID', 'SETUID'],
@@ -798,6 +799,10 @@ describe('stack isolation', () => {
       expect(own.includes('data') || own.includes('cache'), name).toBe(false);
     }
     expect(services['edge-client-check'].networks).toEqual(['checks']);
+    // The epoch-seed store: internal, reachable by the backend and deployer only.
+    expect(internal('epoch_keys')).toBe(true);
+    expect(services['hpke-epoch-store'].networks).toEqual(['epoch_keys']);
+    expect(membersOf('epoch_keys')).toEqual(['backend', 'deployer', 'hpke-epoch-store']);
     expect(membersOf('checks')).toEqual(['backend', 'edge-client-check']);
   });
 

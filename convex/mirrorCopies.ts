@@ -497,6 +497,24 @@ export const noteOverwritten = internalMutation({
 });
 
 /** Copies whose member-facing URL is due a read (never read first, then the oldest read). */
+/**
+ * Whether `dueForVerify` would return any copy: one awaiting its recheck, or
+ * one not read within MIRROR_VERIFY_EVERY_MS. The V8 cron gate (cronGates.ts)
+ * asks this first, so an idle tick never starts the Node verify action.
+ */
+export async function hasDueVerify(db: DatabaseReader, now: number): Promise<boolean> {
+  const recheck = await db
+    .query('mirrorCopies')
+    .withIndex('by_recheck', (q) => q.gt('recheckAt', 0).lte('recheckAt', now))
+    .first();
+  if (recheck) return true;
+  const stale = await db
+    .query('mirrorCopies')
+    .withIndex('by_verified', (q) => q.lt('verifiedAt', now - MIRROR_VERIFY_EVERY_MS))
+    .first();
+  return stale !== null;
+}
+
 export const dueForVerify = internalQuery({
   args: { now: v.number(), limit: v.number() },
   handler: async (ctx, { now, limit }) => {

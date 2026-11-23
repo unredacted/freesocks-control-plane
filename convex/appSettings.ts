@@ -1,5 +1,5 @@
 import { internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
@@ -103,25 +103,28 @@ export const SETTINGS_DEFAULTS = {
  */
 export const resolved = internalQuery({
   args: {},
-  handler: async (ctx): Promise<Record<string, unknown>> => {
-    const map: Record<string, unknown> = { ...SETTINGS_DEFAULTS };
-    await Promise.all(
-      Object.keys(SETTINGS_DEFAULTS).map(async (key) => {
-        const row = await ctx.db
-          .query('appSettings')
-          .withIndex('by_key', (q) => q.eq('key', key))
-          .unique();
-        if (!row) return;
-        try {
-          map[key] = JSON.parse(row.value);
-        } catch {
-          /* keep the default */
-        }
-      }),
-    );
-    return map;
-  },
+  handler: (ctx): Promise<Record<string, unknown>> => resolveAppSettings(ctx.db),
 });
+
+/** `resolved` for a caller already in a query or mutation (the account view). */
+export async function resolveAppSettings(db: DatabaseReader): Promise<Record<string, unknown>> {
+  const map: Record<string, unknown> = { ...SETTINGS_DEFAULTS };
+  await Promise.all(
+    Object.keys(SETTINGS_DEFAULTS).map(async (key) => {
+      const row = await db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (!row) return;
+      try {
+        map[key] = JSON.parse(row.value);
+      } catch {
+        /* keep the default */
+      }
+    }),
+  );
+  return map;
+}
 
 /** Upsert one setting row (JSON-encoded value) — the shared by-key upsert. */
 export async function upsertSettingRow(
@@ -186,6 +189,15 @@ export const setMany = internalMutation({
       // Latency ordering turned on or off: the order members receive changes.
       if (key === 'delivery.country.latency' && (before === 'true') !== (value === 'true'))
         await ctx.scheduler.runAfter(0, internal.edgeRender.latencyChanged, {});
+      // Latency ordering (or the steering it needs) turned on: the measured
+      // legs are taken now (`edge-latency` passes only while both are on), so
+      // no figure from before it was off is read for up to an hour.
+      if (
+        (key === 'delivery.country.latency' || key === 'delivery.country.steer') &&
+        before !== 'true' &&
+        value === 'true'
+      )
+        await ctx.scheduler.runAfter(0, internal.edgeLatency.refresh, {});
       // Wide guesses ended (one of their switches went off): guesses off the
       // list and pending countries go.
       if (

@@ -77,6 +77,11 @@ export interface BackendCapabilities {
    *  watch's cut (docs/backends.md "Revoking a key with an open Hysteria
    *  connection"). */
   nodeRestart: boolean;
+  /** A per-user speed cap (tiers.speedLimitMbps) reaches the backend. False on
+   *  every backend today: neither the Remnawave panel (2.x or 3.x) nor the Xray
+   *  core has a per-user rate, and Outline has none. Flip it with the provider
+   *  that sends the cap (docs/backends.md § "Speed limits"). */
+  speedLimit: boolean;
 }
 
 export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
@@ -100,6 +105,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     userLookupByUsername: true,
     udpTransports: true,
     nodeRestart: true,
+    speedLimit: false,
   },
   outline: {
     placement: false,
@@ -121,6 +127,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     userLookupByUsername: false,
     udpTransports: false,
     nodeRestart: false,
+    speedLimit: false,
   },
 };
 

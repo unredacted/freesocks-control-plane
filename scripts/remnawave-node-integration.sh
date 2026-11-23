@@ -29,9 +29,13 @@ RW_TEST_NODE_SECRET=pending "${COMPOSE[@]}" up -d rw-test-db rw-test-redis rw-te
 
 echo "[node-integration] bootstrapping admin + minting an API token"
 BOOT="$(bun scripts/remnawave-test-bootstrap.mjs)"
-set -a
-eval "$BOOT"
-set +a
+REMNAWAVE_TEST_URL="$(printf '%s\n' "$BOOT" | sed -n 's/^REMNAWAVE_TEST_URL=//p')"
+REMNAWAVE_TEST_TOKEN="$(printf '%s\n' "$BOOT" | sed -n 's/^REMNAWAVE_TEST_TOKEN=//p')"
+if [[ -z "$REMNAWAVE_TEST_URL" || -z "$REMNAWAVE_TEST_TOKEN" ]]; then
+  echo '[integration] bootstrap did not return a URL and API token' >&2
+  exit 1
+fi
+export REMNAWAVE_TEST_URL REMNAWAVE_TEST_TOKEN
 
 echo "[node-integration] fetching the panel's node key"
 RW_TEST_NODE_SECRET="$(curl -fsS -H "authorization: Bearer ${REMNAWAVE_TEST_TOKEN}" \

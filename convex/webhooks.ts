@@ -2,11 +2,11 @@
  * Generic webhook seam (P7): the single transport integration point the future
  * billing portal plugs into to drive entitlements. HMAC-verified + deduped,
  * then mapped onto the lifecycle `setMembership` seam keyed by the member's
- * account number. CiviCRM's bespoke webhook is gone; this is intentionally
+ * support ID. CiviCRM's bespoke webhook is gone; this is intentionally
  * provider-agnostic.
  *
  * Contract (POST /api/webhooks/billing, header `x-signature: <hex hmac-sha256>`):
- *   { eventId, accountId, tierSlug, expiresAtMs? }
+ *   { eventId, supportId, tierSlug, issuedAtMs, expiresAtMs? }
  * The signature is HMAC-SHA256(WEBHOOK_SIGNING_SECRET, rawBody). Unknown
  * user/tier is ACKed (200, applied:false) so the sender doesn't retry forever;
  * a replayed eventId is a no-op.
@@ -15,8 +15,21 @@ import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
-import { hashAccountId, normalizeAccountId } from './lib/accountId';
 import { writeAuditLog } from './lib/audit';
+import { applyMembership } from './lifecycle';
+
+const BILLING_EVENT_MAX_AGE_MS = 86_400_000;
+const BILLING_EVENT_CLOCK_SKEW_MS = 60_000;
+
+function isCurrentBillingEvent(issuedAtMs: unknown): issuedAtMs is number {
+  const now = Date.now();
+  return (
+    typeof issuedAtMs === 'number' &&
+    Number.isSafeInteger(issuedAtMs) &&
+    issuedAtMs >= now - BILLING_EVENT_MAX_AGE_MS &&
+    issuedAtMs <= now + BILLING_EVENT_CLOCK_SKEW_MS
+  );
+}
 
 type IngestResult = { ok: true; duplicate?: boolean; applied: boolean; reason?: string };
 
@@ -39,30 +52,46 @@ export const ingest = internalAction({
 
     let payload: {
       eventId?: string;
-      accountId?: string;
+      supportId?: string;
+      accountId?: unknown;
       tierSlug?: string;
       expiresAtMs?: number | null;
+      issuedAtMs?: number;
     };
     try {
       payload = JSON.parse(rawBody);
     } catch {
       throw new Error('invalid JSON body');
     }
-    const { eventId, accountId, tierSlug, expiresAtMs } = payload;
-    if (!eventId || !accountId || !tierSlug)
-      throw new Error('eventId, accountId, tierSlug required');
+    const { eventId, supportId, tierSlug, issuedAtMs, expiresAtMs } = payload;
+    if (
+      typeof eventId !== 'string' ||
+      !eventId ||
+      typeof tierSlug !== 'string' ||
+      !tierSlug ||
+      typeof supportId !== 'string' ||
+      !/^FS-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(supportId) ||
+      'accountId' in payload
+    ) {
+      throw new Error('eventId, supportId, and tierSlug required');
+    }
+
+    const current = isCurrentBillingEvent(issuedAtMs);
+    // Ahead of our clock: refuse (non-2xx, nothing claimed) so the sender
+    // retries once the clocks agree, rather than dropping a paid grant.
+    if (!current && typeof issuedAtMs === 'number' && issuedAtMs > Date.now()) {
+      throw new Error('billing event issued in the future');
+    }
 
     // Claim the eventId first: a `processed` replay never reapplies, but a
     // `failed` (or crashed-mid-flight `pending`) claim stays retryable so a
-    // grant that threw isn't silently dropped by the sender's retry. Persist a
-    // REDACTED payload: the raw body carries the account-number plaintext,
-    // which must never be stored; keep only the 4-digit prefix for tracing.
+    // grant that threw isn't silently dropped by the sender's retry. Keep the
+    // support ID out of the stored event payload.
     // The dedupe id is namespaced (`generic:`) so a generic-seam eventId can
     // never pre-claim a processor rail's id (their adapters prefix their own).
     const dedupeId = `generic:${eventId}`;
     const safePayload = JSON.stringify({
       eventId,
-      accountIdPrefix: normalizeAccountId(accountId).slice(0, 4),
       tierSlug,
       expiresAtMs: expiresAtMs ?? null,
     });
@@ -72,6 +101,20 @@ export const ingest = internalAction({
       payload: safePayload,
     });
     if (!claim.proceed) return { ok: true, duplicate: true, applied: false };
+
+    if (!current) {
+      // Too old to trust as fresh: ACK so the sender stops, and leave one trace
+      // (the claim makes a replay of the same event a silent duplicate) for the
+      // operator to grant by hand if it was a real late delivery.
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'webhook',
+        action: 'billing.webhook.stale_event',
+        targetType: 'webhookEvent',
+        payload: { issuedAtMs: typeof issuedAtMs === 'number' ? issuedAtMs : null },
+      });
+      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
+      return { ok: true, applied: false, reason: 'stale_event' };
+    }
 
     try {
       // Validate/coerce expiresAtMs INSIDE the claim, before any side effect:
@@ -89,11 +132,9 @@ export const ingest = internalAction({
         expiryMs = expiresAtMs < 1e12 ? Math.round(expiresAtMs * 1000) : Math.round(expiresAtMs);
       }
 
-      // Map account number → user (status-blind so a lapsed account can renew).
-      const accountHash = await hashAccountId(accountId);
-      const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, {
-        accountIdHash: accountHash,
-      });
+      // A reference is only for lookup; the portal signature authorizes the grant.
+      const userId = await ctx.runQuery(internal.supportId.findBySupportId, { input: supportId });
+      const user = userId ? await ctx.runQuery(internal.users.get, { id: userId }) : null;
       // Unknown user/tier is a permanent ACK (the sender must stop retrying),
       // so mark processed — only an exception below leaves the claim retryable.
       if (!user) {
@@ -107,35 +148,55 @@ export const ingest = internalAction({
         return { ok: true, applied: false, reason: 'unknown_tier' };
       }
 
-      // Stale-replay guard (Review E-M2): the dedupe claim only covers the
-      // webhookEvents retention window (90d), and this generic seam has no
-      // order-level paid guard (unlike the processor rails) — so a captured,
-      // validly-signed body replayed AFTER the sweep would re-claim and
-      // re-apply the ORIGINAL expiry, regressing (even lapsing) a since-renewed
-      // member on every replay. Refuse any grant whose expiry is BELOW the
-      // member's current one: such an event carries no new information.
-      if (
-        expiryMs !== null &&
-        user.membershipExpiresAt != null &&
-        expiryMs < user.membershipExpiresAt
-      ) {
-        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
-        return { ok: true, applied: false, reason: 'stale_replay' };
-      }
-
-      await ctx.runMutation(internal.lifecycle.setMembership, {
+      const applied = await ctx.runMutation(internal.webhooks.applyLegacyGrant, {
         userId: user._id,
         tierId: tier._id,
         expiresAtMs: expiryMs,
-        reason: 'billing.webhook',
-        triggeredBy: 'webhook',
+        issuedAtMs: issuedAtMs as number, // isCurrentBillingEvent checked it
+        eventId: dedupeId,
       });
-      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
-      return { ok: true, applied: true };
+      return applied ? { ok: true, applied } : { ok: true, applied, reason: 'stale_replay' };
     } catch (err) {
       await ctx.runMutation(internal.webhooks.markEventFailed, { eventId: dedupeId });
       throw err;
     }
+  },
+});
+
+/** Order grants and commit the receipt with the membership update. */
+export const applyLegacyGrant = internalMutation({
+  args: {
+    userId: v.id('users'),
+    tierId: v.id('tiers'),
+    expiresAtMs: v.union(v.number(), v.null()),
+    issuedAtMs: v.number(),
+    eventId: v.string(),
+  },
+  handler: async (ctx, a): Promise<boolean> => {
+    const user = await ctx.db.get(a.userId);
+    const applied = Boolean(
+      user &&
+      user.status !== 'deleted' &&
+      isCurrentBillingEvent(a.issuedAtMs) &&
+      // >= : distinct events can share a timestamp (one batch, coarse clocks);
+      // the eventId claim already stops a replay of the same event.
+      a.issuedAtMs >= (user.lastGenericBillingEventAt ?? 0) &&
+      (a.expiresAtMs === null ||
+        user.membershipExpiresAt == null ||
+        a.expiresAtMs >= user.membershipExpiresAt),
+    );
+    if (applied) {
+      await applyMembership(ctx, {
+        userId: a.userId,
+        tierId: a.tierId,
+        expiresAtMs: a.expiresAtMs,
+        reason: 'billing.webhook',
+        triggeredBy: 'webhook',
+      });
+      await ctx.db.patch(a.userId, { lastGenericBillingEventAt: a.issuedAtMs });
+    }
+    await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: a.eventId });
+    return applied;
   },
 });
 
