@@ -802,6 +802,9 @@ export const seedCutover = internalAction({
     // no-op afterwards. A rollback's pause is lifted first (going forward
     // again after `subscriptionBodies:clearForRollback`).
     await ctx.runMutation(internal.subscriptionBodies.resume, {});
+    // Likewise a rollback's pause on the withheld-entries notes
+    // (`edgeHostHides:clearWithheldForRollback`).
+    await ctx.runMutation(internal.edgeHostHides.resumeWithheldNotes, {});
     await ctx.scheduler.runAfter(0, internal.subscriptionBodies.migrateLegacy, {});
     await ctx.runMutation(internal.ownExits.refresh, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});

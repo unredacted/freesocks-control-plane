@@ -11,6 +11,19 @@
  */
 import type { DatabaseReader, MutationCtx } from '../../_generated/server';
 import type { Doc, Id } from '../../_generated/dataModel';
+import { readStateJson } from '../appStateJson';
+
+/**
+ * Set by `edgeHostHides:clearWithheldForRollback` so no render recreates a note
+ * between the clear and the older build's deploy (its schema has no such
+ * table); lifted by the next forward deploy (`seed:seedCutover` runs
+ * `edgeHostHides:resumeWithheldNotes`).
+ */
+export const WITHHELD_NOTES_PAUSED_KEY = 'withheldNotes:paused';
+
+export async function withheldNotesPaused(db: DatabaseReader): Promise<boolean> {
+  return (await readStateJson<boolean>(db, WITHHELD_NOTES_PAUSED_KEY)) === true;
+}
 
 export interface WithheldNote {
   at: number;

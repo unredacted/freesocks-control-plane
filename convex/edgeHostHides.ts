@@ -57,7 +57,13 @@ import { edgeAddressesOf } from './lib/edges/render';
 import { listenerRemark, listenersOf } from './relayListeners';
 import { nodeAddressesOf } from './nodeIntents';
 import { HOST_OP_TTL_MS, HOST_SETTLE_LOOKS, HOST_SETTLE_MS } from './hostOps';
-import { ownWithheldNote, writeWithheldNote } from './lib/edges/withheldNotes';
+import {
+  WITHHELD_NOTES_PAUSED_KEY,
+  ownWithheldNote,
+  withheldNotesPaused,
+  writeWithheldNote,
+} from './lib/edges/withheldNotes';
+import { writeStateJson } from './lib/appStateJson';
 
 /** Disable retries the reconcile pass issues for one Host before it counts as failed. */
 export const HIDE_MAX_ATTEMPTS = 6;
@@ -569,6 +575,8 @@ export const noteWithheld = internalMutation({
   args: { relayId: v.id('relays'), count: v.number(), remarks: v.array(v.string()) },
   handler: async (ctx, { relayId, count, remarks }) => {
     const now = Date.now();
+    // A rollback is clearing the note table: write nothing until it is lifted.
+    if (await withheldNotesPaused(ctx.db)) return null;
     // Many renders of one origin schedule this together when the minute turns
     // (each throttles on what it read). Read the small note row first: the ones
     // that lose the race see the winner's note and return having read only that
@@ -602,11 +610,14 @@ export const noteWithheld = internalMutation({
 /**
  * Rollback (docs/edges.md "Deploy notes"): an older schema has no
  * `relayWithheldNotes` table (and the oldest no `withheldEntries`), so both are
- * emptied before deploying it.
+ * emptied before deploying it. Notes are paused first, in the same transaction,
+ * so no render recreates a row before the older build lands; the next forward
+ * deploy lifts the pause (`resumeWithheldNotes`, run by `seed:seedCutover`).
  */
 export const clearWithheldForRollback = internalMutation({
   args: {},
   handler: async (ctx) => {
+    await writeStateJson(ctx.db, WITHHELD_NOTES_PAUSED_KEY, true);
     let cleared = 0;
     for (const relay of await ctx.db.query('relays').collect()) {
       // small operator table
@@ -620,7 +631,20 @@ export const clearWithheldForRollback = internalMutation({
       await ctx.db.delete(row._id);
       notes++;
     }
-    return { cleared, notes };
+    return { cleared, notes, paused: true };
+  },
+});
+
+/** Lift a rollback's pause on withheld notes (run by `seed:seedCutover`). */
+export const resumeWithheldNotes = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', WITHHELD_NOTES_PAUSED_KEY))
+      .unique();
+    if (row) await ctx.db.delete(row._id);
+    return { resumed: !!row };
   },
 });
 

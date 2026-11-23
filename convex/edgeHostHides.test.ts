@@ -1174,8 +1174,20 @@ describe('the direct-Host attention from a render note lapses on its own', () =>
     expect(await t.mutation(internal.edgeHostHides.clearWithheldForRollback, {})).toEqual({
       cleared: 0,
       notes: 1,
+      paused: true,
     });
     expect(await t.run((ctx) => ownWithheldNote(ctx.db, relayId))).toBeNull();
+    // Paused: a render noting after the clear recreates nothing the older
+    // schema would refuse.
+    vi.setSystemTime(NOW + 20 * 60_000);
+    await t.mutation(internal.edgeHostHides.noteWithheld, { relayId, count: 1, remarks: [] });
+    expect(await t.run((ctx) => ownWithheldNote(ctx.db, relayId))).toBeNull();
+    // Going forward again lifts it.
+    expect(await t.mutation(internal.edgeHostHides.resumeWithheldNotes, {})).toEqual({
+      resumed: true,
+    });
+    await t.mutation(internal.edgeHostHides.noteWithheld, { relayId, count: 1, remarks: [] });
+    expect((await t.run((ctx) => ownWithheldNote(ctx.db, relayId)))?.count).toBe(1);
   });
 });
 

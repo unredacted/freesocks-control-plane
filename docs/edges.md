@@ -8616,7 +8616,9 @@ next pass).
 is no longer written; reads fall back to it for an origin noted before the move, so a stretch
 that began before the deploy keeps its start. To roll back, run
 `edgeHostHides:clearWithheldForRollback` with no arguments right before deploying the older
-build: it empties the note table (and the legacy field), which the older schema does not have.
+build: it pauses notes (so no render recreates a row in the meantime) and empties the note table
+(and the legacy field), which the older schema does not have. The next forward deploy lifts the
+pause (`seed:seedCutover` runs `edgeHostHides:resumeWithheldNotes`).
 
 **Every bound origin re-observed, unplaced entries left out, refusals for good** add one
 optional field (`relays.withheldEntries`): one deploy, no migration, no env change. From the
