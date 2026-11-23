@@ -1,11 +1,10 @@
 /**
  * Isolate-side sealing wrapper for the CDN-blinding channel. `sealed(handler)`
  * wraps a public httpAction: it opens a sealed request and/or seals the response
- * by delegating the actual HPKE to the "use node" action in ./hpkeCrypto.ts (the
- * default isolate lacks subtle HKDF, Phase 0 finding).
+ * inline, in this same V8 httpAction, through ./hpkeServer.ts (no ctx.runAction:
+ * the isolate has subtle HKDF since the pinned backend, docs/hpke-phase0-spike.md).
  *
- * Per-route behavior comes from SEALED_ROUTES (envelope.ts). This module imports
- * only the pure ./envelope helpers, never ./hpke, so it is isolate-safe.
+ * Per-route behavior comes from SEALED_ROUTES (envelope.ts).
  *
  * Dual-mode (so this rolls out without a flag day): a request that is not sealed
  * (no envelope on a 'seal' route, no fsRespEph on a 'reveal' route) passes
@@ -31,7 +30,10 @@
  */
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
-import { internal } from '../_generated/api';
+import { openSealedRequest, sealRevealResponse } from './hpkeServer';
+import { postureKnob } from './hpkePosture';
+
+export { postureKnob };
 import {
   ADMIN_COOKIE,
   errorJson,
@@ -49,18 +51,6 @@ import {
 } from '../../src/shared/crypto/envelope';
 
 type RawHandler = (ctx: ActionCtx, req: Request) => Promise<Response>;
-
-/**
- * Read a sealing-posture knob from the deployment env. Also honors the
- * pre-2026-09-16 `FS_E2EE_*` spelling (the E2EE -> HPKE rename) so a deploy that
- * lands before the operator renames the deployment env cannot silently reopen
- * dual-mode and let account numbers transit in plaintext. Drop the legacy read
- * once every deployment's env carries the `FS_HPKE_*` names.
- */
-export function postureKnob(name: 'FS_HPKE_REQUIRED' | 'FS_HPKE_ADMIN_REQUIRED'): boolean {
-  const legacy = name.replace('FS_HPKE_', 'FS_E2EE_');
-  return process.env[name] === 'true' || process.env[legacy] === 'true';
-}
 
 /**
  * A Request-like view over the transport request with a replacement parsed body.
@@ -212,11 +202,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     if (wire) {
       // A mandatory request envelope must not also carry cleartext application fields.
       if (policy.required && Object.keys(wire).length !== 1) return sealedRequired();
-      const opened = await ctx.runAction(internal.lib.hpkeCrypto.openRequest, {
-        method,
-        path,
-        wireBody: wire,
-      });
+      const opened = await openSealedRequest(ctx, { method, path, wireBody: wire });
       if ('unavailable' in opened) {
         return errorJson(
           'hpke.key_unavailable',
@@ -278,7 +264,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     const ct = res.headers.get('content-type') ?? '';
     if (ct.includes('json')) {
       const responseObj = await res.json();
-      const sealedWire: SealedWire = await ctx.runAction(internal.lib.hpkeCrypto.sealResponse, {
+      const sealedWire: SealedWire = await sealRevealResponse({
         method,
         path,
         respEphPubB64,
