@@ -476,20 +476,26 @@ export const deliveryPolicy = internalQuery({
  */
 export const rawUrlEdgeRequired = internalQuery({
   args: { subscriptionId: v.id('subscriptions') },
-  handler: async (ctx, { subscriptionId }): Promise<boolean> => {
-    const sub = await ctx.db.get(subscriptionId);
-    const sid = sub?.backendServerId;
-    if (!sid) return false;
-    if (await deliveryBindingFor(ctx.db, sid, sub.pinnedNode ?? undefined)) return true;
-    if (sub.pinnedNode) return false;
-    // One binding per bound node of this backend: operator-scale.
-    const bindings = await ctx.db
-      .query('edgeDeliveryBindings')
-      .withIndex('by_server_node', (q) => q.eq('backendServerId', sid))
-      .collect();
-    return bindings.some((b) => b.state === 'active');
-  },
+  handler: async (ctx, { subscriptionId }): Promise<boolean> =>
+    rawUrlEdgeRequiredOf(ctx.db, await ctx.db.get(subscriptionId)),
 });
+
+/** `rawUrlEdgeRequired` for a caller already holding the row (the account view). */
+export async function rawUrlEdgeRequiredOf(
+  db: QueryCtx['db'],
+  sub: Doc<'subscriptions'> | null,
+): Promise<boolean> {
+  const sid = sub?.backendServerId;
+  if (!sid) return false;
+  if (await deliveryBindingFor(db, sid, sub.pinnedNode ?? undefined)) return true;
+  if (sub.pinnedNode) return false;
+  // One binding per bound node of this backend: operator-scale.
+  const bindings = await db
+    .query('edgeDeliveryBindings')
+    .withIndex('by_server_node', (q) => q.eq('backendServerId', sid))
+    .collect();
+  return bindings.some((b) => b.state === 'active');
+}
 
 /**
  * Cache token for a subscription's place: `<policyVersion>[:g<gate>]:<epoch>`

@@ -1,5 +1,5 @@
 import { internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
@@ -103,25 +103,28 @@ export const SETTINGS_DEFAULTS = {
  */
 export const resolved = internalQuery({
   args: {},
-  handler: async (ctx): Promise<Record<string, unknown>> => {
-    const map: Record<string, unknown> = { ...SETTINGS_DEFAULTS };
-    await Promise.all(
-      Object.keys(SETTINGS_DEFAULTS).map(async (key) => {
-        const row = await ctx.db
-          .query('appSettings')
-          .withIndex('by_key', (q) => q.eq('key', key))
-          .unique();
-        if (!row) return;
-        try {
-          map[key] = JSON.parse(row.value);
-        } catch {
-          /* keep the default */
-        }
-      }),
-    );
-    return map;
-  },
+  handler: (ctx): Promise<Record<string, unknown>> => resolveAppSettings(ctx.db),
 });
+
+/** `resolved` for a caller already in a query or mutation (the account view). */
+export async function resolveAppSettings(db: DatabaseReader): Promise<Record<string, unknown>> {
+  const map: Record<string, unknown> = { ...SETTINGS_DEFAULTS };
+  await Promise.all(
+    Object.keys(SETTINGS_DEFAULTS).map(async (key) => {
+      const row = await db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (!row) return;
+      try {
+        map[key] = JSON.parse(row.value);
+      } catch {
+        /* keep the default */
+      }
+    }),
+  );
+  return map;
+}
 
 /** Upsert one setting row (JSON-encoded value) — the shared by-key upsert. */
 export async function upsertSettingRow(

@@ -15,7 +15,7 @@
  * to break Convex's inference cycle (same convention as lifecycle.ts).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { ActionCtx, MutationCtx } from './_generated/server';
+import type { ActionCtx, DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
@@ -1391,22 +1391,28 @@ export const getAnonOrderStatus = internalQuery({
  */
 export const pendingGiftReveal = internalQuery({
   args: { userId: v.id('users') },
-  handler: async (ctx, { userId }): Promise<string | null> => {
-    // Straight to this member's pending reveals (oldest first), however many
-    // other orders they have: a late-paid gift can be older than any number of
-    // later checkouts. Only paid gift orders ever carry the flag.
-    const pending = await ctx.db
-      .query('billingOrders')
-      .withIndex('by_user_gift_reveal_pending', (q) =>
-        q.eq('userId', userId).eq('giftRevealPending', true),
-      )
-      .take(10);
-    const next = pending.find(
-      (o) => o.kind === 'gift' && o.status === 'paid' && (o.giftReveal?.length ?? 0) > 0,
-    );
-    return next?.opaqueRef ?? null;
-  },
+  handler: (ctx, { userId }): Promise<string | null> => pendingGiftRevealOf(ctx.db, userId),
 });
+
+/** `pendingGiftReveal` for a caller already in a query (the account view). */
+export async function pendingGiftRevealOf(
+  db: DatabaseReader,
+  userId: Id<'users'>,
+): Promise<string | null> {
+  // Straight to this member's pending reveals (oldest first), however many
+  // other orders they have: a late-paid gift can be older than any number of
+  // later checkouts. Only paid gift orders ever carry the flag.
+  const pending = await db
+    .query('billingOrders')
+    .withIndex('by_user_gift_reveal_pending', (q) =>
+      q.eq('userId', userId).eq('giftRevealPending', true),
+    )
+    .take(10);
+  const next = pending.find(
+    (o) => o.kind === 'gift' && o.status === 'paid' && (o.giftReveal?.length ?? 0) > 0,
+  );
+  return next?.opaqueRef ?? null;
+}
 
 export const ackGiftReveal = internalMutation({
   args: { opaqueRef: v.string(), userId: v.id('users') },

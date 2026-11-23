@@ -27,6 +27,7 @@ import {
   hasPlacementResolver,
   resolveCatalogWithAvailability,
   resolverFor,
+  type CatalogWithAvailability,
 } from './lib/placement';
 import {
   FREEDOM_FAMILY,
@@ -78,14 +79,21 @@ export const families = internalQuery({
  *  mode is served. */
 export const defaultId = internalQuery({
   args: { backend: v.optional(backendIdValidator) },
-  handler: async (ctx, { backend }) => {
-    const catalog = await resolveCatalogWithAvailability(ctx.db);
-    const id = backend
-      ? effectiveDefaultFor(catalog, backend)
-      : (catalog.modes.find((m) => m.isDefault)?.id ?? null);
-    return id ?? (await resolveDefaultModeId(ctx.db));
-  },
+  handler: (ctx, { backend }) => defaultModeIdOf(ctx.db, backend),
 });
+
+/** `defaultId` for a caller already in a query (the account view). */
+export async function defaultModeIdOf(
+  db: DatabaseReader,
+  backend?: BackendId,
+  resolved?: CatalogWithAvailability,
+): Promise<string> {
+  const catalog = resolved ?? (await resolveCatalogWithAvailability(db));
+  const id = backend
+    ? effectiveDefaultFor(catalog, backend)
+    : (catalog.modes.find((m) => m.isDefault)?.id ?? null);
+  return id ?? (await resolveDefaultModeId(db));
+}
 
 /**
  * The fully-resolved projection of ONE member's current mode for the account
@@ -99,38 +107,46 @@ export const memberMode = internalQuery({
     modeId: v.union(v.string(), v.null()),
     backend: backendIdValidator,
   },
-  handler: async (ctx, { modeId, backend }) => {
-    const catalog = await resolveCatalogWithAvailability(ctx.db);
-    const { families, modes } = catalog;
-    const fallbackId = effectiveDefaultFor(catalog, backend);
-    const effective =
-      (modeId ? modes.find((m) => m.id === modeId) : undefined) ??
-      modes.find((m) => m.id === fallbackId);
-    if (!effective) {
-      // Deleted-from-catalog id on an empty-ish catalog: ship a minimal echo so
-      // the client still has a stable id + a sane delivery default.
-      return modeId
-        ? {
-            id: modeId,
-            deliveryStyle: 'url' as DeliveryStyle,
-            label: null,
-            description: null,
-            family: null,
-            available: false,
-          }
-        : null;
-    }
-    const family = families.find((f) => f.id === effective.family) ?? null;
-    return {
-      id: effective.id,
-      deliveryStyle: effective.deliveryStyle,
-      label: effective.label,
-      description: effective.description,
-      family: family ? { id: family.id, label: family.label } : null,
-      available: effective.availableBackends.includes(backend),
-    };
-  },
+  handler: (ctx, { modeId, backend }) => memberModeOf(ctx.db, modeId, backend),
 });
+
+/** `memberMode` for a caller already in a query (the account view). */
+export async function memberModeOf(
+  db: DatabaseReader,
+  modeId: string | null,
+  backend: BackendId,
+  resolved?: CatalogWithAvailability,
+) {
+  const catalog = resolved ?? (await resolveCatalogWithAvailability(db));
+  const { families, modes } = catalog;
+  const fallbackId = effectiveDefaultFor(catalog, backend);
+  const effective =
+    (modeId ? modes.find((m) => m.id === modeId) : undefined) ??
+    modes.find((m) => m.id === fallbackId);
+  if (!effective) {
+    // Deleted-from-catalog id on an empty-ish catalog: ship a minimal echo so
+    // the client still has a stable id + a sane delivery default.
+    return modeId
+      ? {
+          id: modeId,
+          deliveryStyle: 'url' as DeliveryStyle,
+          label: null,
+          description: null,
+          family: null,
+          available: false,
+        }
+      : null;
+  }
+  const family = families.find((f) => f.id === effective.family) ?? null;
+  return {
+    id: effective.id,
+    deliveryStyle: effective.deliveryStyle,
+    label: effective.label,
+    description: effective.description,
+    family: family ? { id: family.id, label: family.label } : null,
+    available: effective.availableBackends.includes(backend),
+  };
+}
 
 /**
  * Validate a member's PRE-ISSUANCE mode choice (the plain preference set,

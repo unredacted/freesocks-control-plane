@@ -70,7 +70,8 @@ interface WorldOpts {
 }
 
 async function world(o: WorldOpts = {}) {
-  const t = convexTest(schema, modules);
+  // Convex's per-execution limits enforced: the view is one query transaction now.
+  const t = convexTest({ schema, modules, transactionLimits: true });
   const ids = await t.run(async (ctx) => {
     const tierId = await ctx.db.insert('tiers', {
       slug: 'free',

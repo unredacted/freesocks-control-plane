@@ -16,6 +16,7 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  type DatabaseReader,
   type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
@@ -150,12 +151,19 @@ async function edgeServable(
  */
 export const rawUrlWithheld = internalQuery({
   args: { subscriptionId: v.id('subscriptions') },
-  handler: async (ctx, { subscriptionId }): Promise<boolean> => {
-    if (!(await freedomEdgesOnly(ctx.db))) return false;
-    const sub = await ctx.db.get(subscriptionId);
-    return !!sub && (await freedomHoldOf(ctx.db, sub, sub.pinnedNode)) !== null;
-  },
+  handler: (ctx, { subscriptionId }): Promise<boolean> =>
+    freedomRawUrlWithheldOf(ctx.db, subscriptionId),
 });
+
+/** `rawUrlWithheld` for a caller already in a query (the account view). */
+export async function freedomRawUrlWithheldOf(
+  db: DatabaseReader,
+  subscriptionId: Id<'subscriptions'>,
+): Promise<boolean> {
+  if (!(await freedomEdgesOnly(db))) return false;
+  const sub = await db.get(subscriptionId);
+  return !!sub && (await freedomHoldOf(db, sub, sub.pinnedNode)) !== null;
+}
 
 // --- the pools ---------------------------------------------------------------------------------------
 
