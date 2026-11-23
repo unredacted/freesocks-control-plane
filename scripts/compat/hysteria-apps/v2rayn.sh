@@ -18,6 +18,8 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 FIXTURE=(bun --no-env-file "$DIR/fixture.ts")
 export V2RAYN_LOCAL_APPLICATION_DATA_V2=1
 DATA="$HOME/.local/share/v2rayN"
+# .NET answers an empty path for a folder that does not exist yet.
+mkdir -p "$HOME/.local/share"
 export DISPLAY=:99
 mkdir -p "$OUT"
 step=0

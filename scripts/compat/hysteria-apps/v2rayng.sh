@@ -30,11 +30,19 @@ snap() { # snap <name>: a screenshot and a UI dump of fixture data only
     adb pull /sdcard/ui.xml "$OUT/$name.xml" >/dev/null 2>&1
   cp "$OUT/$name.xml" "$OUT/last.xml" 2>/dev/null || true
 }
-tap_text() { # tap_text <regex>
-  local at
-  at=$(python3 "$DIR/ui.py" "$OUT/last.xml" text "$1") || return 1
-  # shellcheck disable=SC2086
-  adb shell input tap $at
+tap_text() { # tap_text <regex>: scrolls the list down until it shows
+  local at i
+  for i in 1 2 3 4 5 6; do
+    if at=$(python3 "$DIR/ui.py" "$OUT/last.xml" text "$1"); then
+      # shellcheck disable=SC2086
+      adb shell input tap $at
+      return 0
+    fi
+    adb shell input swipe 160 450 160 200 300
+    sleep 1
+    snap scrolled
+  done
+  return 1
 }
 tap_id() {
   local at
@@ -56,7 +64,15 @@ carried() { "${FIXTURE[@]}" carried "$1"; }
 import() { # import <name>
   adb shell am start -a android.intent.action.VIEW -p "$PKG" \
     -d "'v2rayng://install-sub?url=$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$BASE/$1")'" >/dev/null
-  sleep 8
+  # The scheme activity closes at once and the fetch finishes in the
+  # background, after the list on screen was loaded: open the app again.
+  sleep 10
+  adb shell am force-stop "$PKG"
+  launch
+}
+launch() {
+  adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  sleep 5
 }
 stop_app_vpn() {
   adb shell am force-stop "$PKG"
@@ -76,8 +92,10 @@ declare -A result
 adb install -r "$APK" >/dev/null
 adb shell appops set "$PKG" ACTIVATE_VPN allow
 adb forward tcp:10808 tcp:10808 >/dev/null
-adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-sleep 6
+# The app's own log (fixture data only), for when a step fails.
+adb logcat -c
+adb logcat -v time 'com.v2ray.ang:V' 'AndroidRuntime:E' '*:S' >"$OUT/logcat.txt" 2>&1 </dev/null &
+launch
 snap first-run
 
 # 1. Import the raw config; both entries show.
@@ -97,8 +115,7 @@ if connect_udp && fetch_until 45 && [ "$(carried node)" -gt "$before" ]; then
   # 3. UDP to the node dropped: nothing answers.
   sudo iptables -t raw -I OUTPUT -p udp -d 127.0.0.1 --dport 8443 -j DROP
   stop_app_vpn
-  adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-  sleep 4
+  launch
   connect_udp
   if ! fetch && ! fetch && ! fetch; then result[udp]=true; fi
   sudo iptables -t raw -D OUTPUT -p udp -d 127.0.0.1 --dport 8443 -j DROP

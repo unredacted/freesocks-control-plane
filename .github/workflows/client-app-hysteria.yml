@@ -58,8 +58,10 @@ jobs:
           bun --no-env-file scripts/compat/hysteria-apps/fixture.ts up "$host"
           # Every background process writes to a file: one holding the step's
           # output would keep the step (and the emulator step) open.
+          mkdir -p test-results/compat/hysteria-apps
           nohup python3 -m http.server 4180 --bind 127.0.0.1 \
-            --directory .cache/compat/hysteria-apps/www >/tmp/www.log 2>&1 </dev/null &
+            --directory .cache/compat/hysteria-apps/www \
+            >test-results/compat/hysteria-apps/www.log 2>&1 </dev/null &
       - name: Let the runner user open /dev/kvm
         if: matrix.app == 'v2rayNG'
         run: |
