@@ -1,21 +1,11 @@
-// FreeSocks bundle verifier (CDN-blinding Phase 4, MEGA model). When the app
-// origin loads, fetch the served index.html and compare its SHA-384 against the
-// hash pinned inside this store-delivered extension. index.html carries SRI for
-// every script/style, so a match means the whole served bundle equals the
-// reproducible, out-of-band-published build; a mismatch means the CDN served
-// something else (active tamper) and the user is warned.
-//
-// This is a scaffold (v0.1). Limitation: it fetches index.html itself, so a
-// sophisticated active CDN could in principle serve a clean file to this fetch
-// and a tampered one to the page. Verifying the exact executed resources (or a
-// native app) is the stronger sibling; see README.md.
+// Probe the served HTML against the hash pinned in the store-delivered extension.
+// The probe does not observe the document or resources executed in the tab.
 import { PINNED } from './pinned.js';
 
 // MUST stay byte-identical to scripts/gen-verifier-pin.mjs `normalizeIndexHtml`.
 // Caddy templates a per-request CSP nonce into <meta name="csp-nonce">, so the
 // served index.html hash changes every request; canonicalize that one tag before
-// hashing so the served page matches the pinned hash. The SRI `integrity=` attrs
-// (which pin every chunk) are untouched, so this still pins the whole bundle.
+// hashing so the served page matches the pinned hash. Preserve its SRI metadata.
 function normalizeIndexHtml(html) {
   return html.replace(/<meta name="csp-nonce"[^>]*>/, '<meta name="csp-nonce" content="">');
 }
@@ -38,7 +28,7 @@ function warnOnce(message) {
   chrome.notifications.create('fs-verify-fail', {
     type: 'basic',
     iconUrl: 'icon.png',
-    title: 'FreeSocks: served app does NOT match the published build',
+    title: 'FreeSocks: HTML probe does NOT match the published build',
     message,
     priority: 2,
   });
@@ -51,11 +41,11 @@ async function verify() {
     const got = await sha384Hex(normalizeIndexHtml(await res.text()));
     if (got === PINNED.indexSha384) {
       warned = false;
-      setBadge('OK', 'served bundle matches the pinned, reproducible build', false);
+      setBadge('HTML', 'fetched HTML matches the pinned build', false);
     } else {
       setBadge('!', 'served index.html does NOT match the pinned build', true);
       warnOnce(
-        'The served bundle differs from the build published out of band. Do not enter your account number; verify via the .onion mirror.',
+        'The fetched HTML differs from the build published out of band. Do not enter your account number; verify via the .onion mirror.',
       );
     }
   } catch (e) {

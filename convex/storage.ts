@@ -45,6 +45,7 @@ import {
   type MirrorFormat,
 } from './lib/mirrorFormats';
 import { mirrorFormatPath, mirrorObjectPaths } from '../src/shared/mirrorFormats';
+import { inLanes } from './lib/lanes';
 
 /** The body a mirror holds when its place is edge-required and nothing can render. */
 export const MIRROR_UNAVAILABLE_STUB =
@@ -1285,18 +1286,33 @@ export const refreshMirrorsForSubscription = internalAction({
   handler: async (ctx, { subscriptionId, force, forceProviders, verifyAfter }): Promise<null> => {
     const set = await refreshSet(ctx);
     if (set.byName.size === 0) return null;
-    const target = await ctx.runQuery(internal.subscriptions.mirrorRefreshTarget, {
+    await refreshSubscription(ctx, set, {
       subscriptionId,
-    });
-    if (!target) return null;
-    const rewrote = await refreshOneSubMirrors(ctx, set, target, {
       force: force === true ? 'all' : forceProviders,
+      ...(verifyAfter ? { readBack: forceProviders } : {}),
     });
-    if (verifyAfter && forceProviders?.length)
-      await readBack(ctx, subscriptionId, forceProviders, rewrote);
     return null;
   },
 });
+
+/** One key's refresh (`refreshMirrorsForSubscription`, `rewriteVerified`). */
+async function refreshSubscription(
+  ctx: ActionCtx,
+  set: RefreshSet,
+  a: {
+    subscriptionId: Id<'subscriptions'>;
+    force?: 'all' | string[];
+    /** The providers whose copies are read back once rewritten (a rewrite a read asked for). */
+    readBack?: string[];
+  },
+): Promise<void> {
+  const target = await ctx.runQuery(internal.subscriptions.mirrorRefreshTarget, {
+    subscriptionId: a.subscriptionId,
+  });
+  if (!target) return;
+  const rewrote = await refreshOneSubMirrors(ctx, set, target, { force: a.force });
+  if (a.readBack?.length) await readBack(ctx, a.subscriptionId, a.readBack, rewrote);
+}
 
 /**
  * Read copies back right after a rewrite that a read asked for, so the copy
@@ -1519,6 +1535,13 @@ const VERIFY_BATCH = 100;
 /** Reads in flight at once, and how long one run may spend reading. */
 const VERIFY_CONCURRENCY = 10;
 const VERIFY_RUN_BUDGET_MS = 3 * 60_000;
+/**
+ * Rewrites a read asked for: keys rewritten at once inside ONE driver action
+ * (`rewriteVerified`), never an action per key, and how long one driver run
+ * starts keys before it hands the rest to the next.
+ */
+export const REWRITE_LANES = 2;
+const REWRITE_RUN_BUDGET_MS = 90_000;
 
 /**
  * Cron: read copies back through the URL each member holds and compare what it
@@ -1573,14 +1596,47 @@ export const verifyMirrorCopies = internalAction({
             rewrite.set(c.subscriptionId, [...(rewrite.get(c.subscriptionId) ?? []), c.provider]);
         }
       }
-      for (const [subscriptionId, forceProviders] of rewrite)
-        await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
-          subscriptionId,
-          forceProviders,
-          verifyAfter: true,
+      if (rewrite.size > 0)
+        await ctx.scheduler.runAfter(0, internal.storage.rewriteVerified, {
+          items: [...rewrite].map(([subscriptionId, forceProviders]) => ({
+            subscriptionId,
+            forceProviders,
+          })),
         });
       return out;
     }),
+});
+
+/**
+ * The rewrites one `mirror-verify` run asked for, each read back once
+ * rewritten: `REWRITE_LANES` keys at a time, for at most
+ * `REWRITE_RUN_BUDGET_MS`; what is left goes to a new run. A key whose rewrite
+ * throws is skipped (its copy stays due, so the next read asks again).
+ */
+export const rewriteVerified = internalAction({
+  args: {
+    items: v.array(
+      v.object({ subscriptionId: v.id('subscriptions'), forceProviders: v.array(v.string()) }),
+    ),
+  },
+  handler: async (ctx, { items }): Promise<{ done: number; failed: number; left: number }> => {
+    const set = await refreshSet(ctx);
+    if (set.byName.size === 0) return { done: 0, failed: 0, left: 0 };
+    const { done, failed, rest } = await inLanes(
+      items,
+      REWRITE_LANES,
+      (item) =>
+        refreshSubscription(ctx, set, {
+          subscriptionId: item.subscriptionId,
+          force: item.forceProviders,
+          readBack: item.forceProviders,
+        }),
+      Date.now() + REWRITE_RUN_BUDGET_MS,
+    );
+    if (rest.length > 0)
+      await ctx.scheduler.runAfter(0, internal.storage.rewriteVerified, { items: rest });
+    return { done, failed, left: rest.length };
+  },
 });
 
 /**

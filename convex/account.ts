@@ -16,6 +16,7 @@ import {
   internalMutation,
   internalQuery,
   type ActionCtx,
+  type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -24,12 +25,15 @@ import { randomHex } from './lib/crypto';
 import { requiresPrivateDelivery } from '../src/shared/contracts/connectionModes';
 import { boundedUsername } from './lib/backends/username';
 import { issueNewSubscription } from './lib/issuance';
+import { carryPeriodEnd, liveCarryBytes, type CarryFields } from './lib/quotaCarry';
 import {
   applyUsageCarryover,
   computeExpireAtIso,
   resolveHwidLimit,
   resolveTrafficLimitBytes,
+  type TrafficLimitStrategy,
   type UsageSeries,
+  type UserState,
 } from './lib/backends/types';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -43,6 +47,18 @@ import {
   inPlaceMoveProven,
   switchServerAvailable as switchServerAvailableIn,
 } from './lib/switchServer';
+import { resolveAppSettings } from './appSettings';
+import { defaultModeIdOf, memberModeOf } from './connectionModes';
+import { resolveCatalogWithAvailability } from './lib/placement';
+import { currentBonusGbOf, donationTotalsOf } from './donations';
+import { deliveryPolicyFor, rawUrlEdgeRequiredOf } from './edgeRender';
+import { freedomRawUrlWithheldOf } from './freedomDelivery';
+import { extraModeDegradedOf } from './lib/extraModeNodes';
+import { readingContextOf, memberViewOf } from './memberCountry';
+import { isListedOf, suggestModeOf } from './censoredCountries';
+import { suggestionCountry } from './lib/memberCountry';
+import { pendingGiftRevealOf } from './billing';
+import type { OwnExits } from './lib/ownExits';
 
 /**
  * Whether a key's raw backend URL (and the short id it ends in) is kept from
@@ -111,33 +127,60 @@ async function auditIfPlacementless(
 const TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Quota carryover (Review D-M3): a re-issue mints a FRESH backend traffic
- * counter while the superseded key keeps routing for the 24h tombstone grace,
- * so every regenerate/switch used to multiply the member's effective quota
- * (scripted churn compounded it by orders of magnitude). Read the old key's
- * live usedTrafficBytes and shrink the new key's limit by it, so the member's
- * period quota is preserved across the re-issue instead of reset.
+ * Quota carryover (Review D-M3, lib/quotaCarry.ts): a re-issue mints a FRESH
+ * backend traffic counter, so without a carry every regenerate/switch would
+ * reset the member's period quota (scripted churn compounded it by orders of
+ * magnitude). The new key's limit is the tier limit less what the member
+ * already spent this period: the old key's live usage PLUS what that key had
+ * itself carried in from its predecessors, so a chain of re-issues cannot
+ * forget earlier keys. Spending on the old key during its 24h grace is charged
+ * to the current key by the tombstone sweep (`graceBaseUsedBytes`,
+ * lifecycle.settleGraceUsage).
  *
  * Best-effort: a backend blip (or an already-gone old key) must not block
- * re-issue — there is usually nothing to carry then. A fully-spent quota
- * carries as 1 byte, NOT 0: 0 means UNLIMITED to Remnawave (and 'blocked' to
- * Outline), so 1 byte is the only value that reads as "spent" on both.
+ * re-issue, since the member may be replacing a key on a failing server. A
+ * fully-spent quota carries as 1 byte, NOT 0: 0 means UNLIMITED to Remnawave
+ * (and 'blocked' to Outline), so 1 byte is the only value that reads as
+ * "spent" on both.
  */
+type QuotaCarry = {
+  trafficLimitBytes: number | null;
+  // Spent on earlier keys this period and when it stops counting (new row).
+  periodCarryBytes?: number;
+  periodCarryUntil?: number;
+  // The old key's usage counted above, stored on its tombstone.
+  graceBaseUsedBytes?: number;
+};
+
 async function carriedTrafficLimit(
   ctx: ActionCtx,
-  oldSub: { backend: Backend; backendUserId: string } | null,
-  limitBytes: number | null,
-): Promise<number | null> {
-  if (limitBytes === null || !oldSub) return limitBytes;
+  oldSub: ({ backend: Backend; backendUserId: string } & CarryFields) | null,
+  tier: {
+    monthlyTrafficGb: number;
+    isDefaultFree: boolean;
+    trafficStrategy?: TrafficLimitStrategy;
+  },
+  bonusGb: number,
+): Promise<QuotaCarry> {
+  const limitBytes = resolveTrafficLimitBytes(tier, bonusGb);
+  if (limitBytes === null || !oldSub) return { trafficLimitBytes: limitBytes };
   try {
     const state = await ctx.runAction(internal.backends.getUser, {
       backend: oldSub.backend,
       backendUserId: oldSub.backendUserId,
     });
-    return applyUsageCarryover(limitBytes, state.usedTrafficBytes ?? 0);
+    const now = Date.now();
+    const used = Math.max(0, Math.floor(state.usedTrafficBytes ?? 0));
+    const spent = used + liveCarryBytes(oldSub, now);
+    return {
+      trafficLimitBytes: applyUsageCarryover(limitBytes, spent),
+      periodCarryBytes: spent,
+      periodCarryUntil: carryPeriodEnd(tier.trafficStrategy, now),
+      graceBaseUsedBytes: used,
+    };
   } catch {
     console.warn('[account] usage-carryover read failed; issuing at the full tier limit');
-    return limitBytes;
+    return { trafficLimitBytes: limitBytes };
   }
 }
 
@@ -150,11 +193,13 @@ async function carriedTrafficLimit(
 async function tombstoneOldSub(
   ctx: ActionCtx,
   backendUserId: string,
+  graceBaseUsedBytes?: number,
 ): Promise<{ deletedAt: number } | null> {
   try {
     return await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
       backendUserId,
       graceMs: TOMBSTONE_GRACE_MS,
+      graceBaseUsedBytes,
     });
   } catch (err) {
     console.warn(
@@ -164,6 +209,7 @@ async function tombstoneOldSub(
       backendUserId,
       graceMs: TOMBSTONE_GRACE_MS,
       attempt: 0,
+      graceBaseUsedBytes,
     });
     return null;
   }
@@ -504,110 +550,98 @@ interface AccountView {
   pendingGiftOrderRef: string | null;
 }
 
-export const getAccountView = internalAction({
-  args: { userId: v.id('users'), includeSubscriptionCredentials: v.optional(v.boolean()) },
-  handler: async (
-    ctx,
-    { userId, includeSubscriptionCredentials = false },
-  ): Promise<AccountView | null> => {
-    const user = await ctx.runQuery(internal.users.get, { id: userId });
-    if (!user) return null;
-    const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
-    if (!tier) return null;
-    const sub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
-    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    const deviceLimited = !!settings['devices.enforcementEnabled'] && tier.hwidEnabled;
+/** The view's fields that come from the backend's live state, not the database. */
+type LiveField =
+  | 'expiresAt'
+  | 'trafficLimitBytes'
+  | 'trafficUsedBytes'
+  | 'status'
+  | 'resetStrategy'
+  | 'lastResetAt'
+  | 'devices';
 
-    // W3: lazily backfill the support ID for pre-W3 accounts. Non-fatal — the
-    // account view still renders if minting transiently fails.
-    let supportId = user.supportId ?? null;
-    if (!supportId) {
-      try {
-        supportId = (await ctx.runAction(internal.supportId.ensureForUser, { userId })).supportId;
-      } catch {
-        /* leave null; next view retries */
-      }
-    }
+/** Everything the account view reads from the database, read in one transaction. */
+export interface AccountViewData {
+  /** The view without its key; `user.supportId` is null when it is still to be minted. */
+  view: Omit<AccountView, 'subscription'>;
+  /** The key the view shows (what the live backend read needs, and its local part). */
+  key: {
+    id: Id<'subscriptions'>;
+    backend: Backend;
+    backendUserId: string;
+    local: Omit<NonNullable<AccountView['subscription']>, LiveField>;
+  } | null;
+  /** The cap shown while the backend is unreachable: the tier's, with the shared donation bonus. */
+  trafficLimitFromTier: number | null;
+  /**
+   * The account route's part, present when the caller passed `geoCountry`: the
+   * member-country reading context and the verdicts for this request's country.
+   * `suggestedModeId` is null when detection will store a reading first (the
+   * route asks again after it), since the suggestion reads the stored country.
+   */
+  route: {
+    detect: boolean;
+    ownExits: OwnExits;
+    suggestedModeId: string | null;
+    geoCountryCensored: boolean;
+  } | null;
+}
 
-    // Member's chosen connection mode (or the catalog default) — surfaced so the
-    // client renders the selected transport server-authoritatively.
-    const connectionModeId =
-      user.connectionModeId ??
-      (await ctx.runQuery(internal.connectionModes.defaultId, { backend: tier.backend }));
-    const currentMode = await ctx.runQuery(internal.connectionModes.memberMode, {
-      modeId: connectionModeId,
-      backend: tier.backend,
-    });
-    // Fold the current shared donation bonus into the free-tier fallback so an
-    // outage (backend unreachable) still shows the raised cap, not the base.
-    const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
-    const trafficLimitFromTier = resolveTrafficLimitBytes(tier, bonusGb);
-    // The member's own settled donation totals (impact backend). The GB figure is
-    // computed server-side at the current rate so the raw rate never ships.
-    const donationTotals: {
-      donatedCentsTotal: number;
-      donationCount: number;
-      donatedGbTotal: number;
-    } = await ctx.runQuery(internal.donations.donationTotals, { userId });
-    let subscription: AccountView['subscription'] = null;
-    if (sub) {
-      // Best-effort live state; degrade to local data if the backend is down.
-      let live = {
-        expireAt: null as string | null,
-        trafficLimitBytes: trafficLimitFromTier,
-        usedTrafficBytes: 0,
-        // Degrade default: backend unreachable ⇒ we don't know the key's status,
-        // so 'unknown' (the member badge only fires for limited/disabled).
-        status: 'unknown' as 'active' | 'disabled' | 'limited' | 'expired' | 'unknown',
-        resetStrategy: undefined as 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH' | undefined,
-        lastResetAt: undefined as string | undefined,
-        devices: [] as {
-          hwid: string;
-          platform?: string | null;
-          deviceModel?: string | null;
-          firstSeenAt?: string | null;
-          lastSeenAt?: string | null;
-        }[],
-      };
-      try {
-        const state = await ctx.runAction(internal.backends.getUser, {
-          backend: sub.backend,
-          backendUserId: sub.backendUserId,
-        });
-        live = {
-          expireAt: state.expireAt,
-          trafficLimitBytes: state.trafficLimitBytes,
-          usedTrafficBytes: state.usedTrafficBytes,
-          status: state.status,
-          resetStrategy: state.trafficLimitStrategy,
-          lastResetAt: state.lastTrafficResetAt,
-          devices: state.devices,
-        };
-      } catch {
-        /* backend unreachable, or no instance resolves the key: serve local data
-           with zeroed live fields and the `unknown` status */
-      }
-      // The hosting instance's member-facing location (code + label; no secrets).
-      const server = sub.backendServerId
-        ? await ctx.runQuery(internal.backendServers.getById, { id: sub.backendServerId })
-        : null;
-      // Edge-required delivery (docs/edges.md): when an origin covers this key's
-      // place, only the fronted token URL is handed out (`rawUrlWithheld`).
-      const delivery = sub.backendServerId
-        ? await ctx.runQuery(internal.edgeRender.deliveryPolicy, {
-            backendServerId: sub.backendServerId,
-            nodeName: sub.pinnedNode ?? undefined,
-          })
-        : null;
-      const edgeRequired = delivery?.required === true;
-      // An app on this key got the app notice lately (lib/appNotice.ts).
-      const notice = appNoticeShown(sub.appNotice, Date.now());
-      const appNoticeHint = notice
-        ? { family: notice.family, at: new Date(notice.at).toISOString() }
-        : null;
-      const withheld =
-        !includeSubscriptionCredentials || edgeRequired || (await rawUrlWithheld(ctx, sub._id));
-      subscription = {
+async function accountViewDataOf(
+  ctx: QueryCtx,
+  args: {
+    userId: Id<'users'>;
+    includeSubscriptionCredentials: boolean;
+    geoCountry?: string | null;
+  },
+): Promise<AccountViewData | null> {
+  const { db } = ctx;
+  const { userId, includeSubscriptionCredentials, geoCountry } = args;
+  const user = await db.get(userId);
+  if (!user) return null;
+  const tier = await db.get(user.tierId);
+  if (!tier) return null;
+  const now = Date.now();
+  const sub = await currentOrActiveSub(db, user);
+  const settings = await resolveAppSettings(db);
+  const deviceLimited = !!settings['devices.enforcementEnabled'] && tier.hwidEnabled;
+
+  // Member's chosen connection mode (or the catalog default) — surfaced so the
+  // client renders the selected transport server-authoritatively.
+  const catalog = await resolveCatalogWithAvailability(db);
+  const connectionModeId =
+    user.connectionModeId ?? (await defaultModeIdOf(db, tier.backend, catalog));
+  const currentMode = await memberModeOf(db, connectionModeId, tier.backend, catalog);
+  // Fold the current shared donation bonus into the free-tier fallback so an
+  // outage (backend unreachable) still shows the raised cap, not the base.
+  const bonusGb = await currentBonusGbOf(db);
+  const trafficLimitFromTier = resolveTrafficLimitBytes(tier, bonusGb);
+  // The member's own settled donation totals (impact backend). The GB figure is
+  // computed server-side at the current rate so the raw rate never ships.
+  const donationTotals = await donationTotalsOf(db, user);
+
+  let key: AccountViewData['key'] = null;
+  if (sub) {
+    // The hosting instance's member-facing location (code + label; no secrets).
+    const server = sub.backendServerId ? await db.get(sub.backendServerId) : null;
+    // Edge-required delivery (docs/edges.md): when an origin covers this key's
+    // place, only the fronted token URL is handed out (`rawUrlWithheld`).
+    const delivery = sub.backendServerId
+      ? await deliveryPolicyFor(ctx, sub.backendServerId, sub.pinnedNode ?? undefined)
+      : null;
+    const edgeRequired = delivery?.required === true;
+    // An app on this key got the app notice lately (lib/appNotice.ts).
+    const notice = appNoticeShown(sub.appNotice, now);
+    const withheld =
+      !includeSubscriptionCredentials ||
+      edgeRequired ||
+      (await rawUrlEdgeRequiredOf(db, sub)) ||
+      (await freedomRawUrlWithheldOf(db, sub._id));
+    key = {
+      id: sub._id,
+      backend: sub.backend,
+      backendUserId: sub.backendUserId,
+      local: {
         // The raw backend URL (fallback) + the opaque token; the SPA builds the
         // FCP-fronted URL from the token + its own origin, so there's no
         // deployment-origin env dependency and every UI surface fronts uniformly.
@@ -626,36 +660,47 @@ export const getAccountView = internalAction({
             // The formats written at this copy: an app is handed its own only once it exists.
             formats: mirrorFormatsOf(m),
           })),
-        expiresAt: live.expireAt,
-        trafficLimitBytes: live.trafficLimitBytes,
-        trafficUsedBytes: live.usedTrafficBytes,
-        status: live.status,
-        resetStrategy: live.resetStrategy,
-        lastResetAt: live.lastResetAt,
         backend: sub.backend,
         location: server?.location
           ? { code: server.location, label: server.locationLabel ?? server.location }
           : null,
-        canSwitchServer: await ctx.runQuery(internal.account.switchServerAvailable, { userId }),
-        udpUnavailable: await ctx.runQuery(internal.subscriptions.extraModeDegraded, {
-          subscriptionId: sub._id,
-        }),
-        appNotice: appNoticeHint,
-        devices: live.devices.map((d) => ({
-          hwid: d.hwid,
-          platform: d.platform ?? undefined,
-          deviceModel: d.deviceModel ?? undefined,
-          firstSeenAt: d.firstSeenAt ?? undefined,
-          lastSeenAt: d.lastSeenAt ?? undefined,
-        })),
-      };
-    }
+        canSwitchServer: await switchServerAvailableIn(db, user, tier, sub, now),
+        udpUnavailable: await extraModeDegradedOf(db, sub),
+        appNotice: notice ? { family: notice.family, at: new Date(notice.at).toISOString() } : null,
+      },
+    };
+  }
 
-    return {
+  let route: AccountViewData['route'] = null;
+  if (geoCountry !== undefined) {
+    // The account route (http.ts): with detection on and a country on this
+    // request, the route stores the reading first and then asks for the
+    // suggestion, so it is not computed here. Without a country, a reading from
+    // one of FCP's own exits may still be stored: the route compares the client
+    // address (never passed in here) and asks again in that case.
+    const reading = await readingContextOf(db);
+    const suggestedModeId =
+      reading.detect && geoCountry
+        ? null
+        : await suggestModeOf(
+            db,
+            tier.backend,
+            suggestionCountry(await memberViewOf(db, userId), geoCountry),
+          );
+    route = {
+      detect: reading.detect,
+      ownExits: reading.ownExits,
+      suggestedModeId,
+      geoCountryCensored: await isListedOf(db, geoCountry),
+    };
+  }
+
+  return {
+    view: {
       user: {
         id: user._id,
         status: user.status,
-        supportId,
+        supportId: user.supportId ?? null,
         tier: {
           slug: tier.slug,
           name: tier.name,
@@ -678,10 +723,135 @@ export const getAccountView = internalAction({
         donatedGbTotal: donationTotals.donatedGbTotal,
         createdAt: new Date(user._creationTime).toISOString(),
       },
-      subscription,
       preferredLocation: user.preferredLocation ?? null,
-      pendingGiftOrderRef: await ctx.runQuery(internal.billing.pendingGiftReveal, { userId }),
+      pendingGiftOrderRef: await pendingGiftRevealOf(db, userId),
+    },
+    key,
+    trafficLimitFromTier,
+    route,
+  };
+}
+
+/**
+ * The database half of the account view in ONE query: one transaction (a
+ * consistent snapshot) and one query-cache entry per (member, grant, country),
+ * where the view used to be a chain of about fifteen queries, each at its own
+ * timestamp. A deterministic function of its args: the clock is read inside.
+ */
+export const accountViewData = internalQuery({
+  args: {
+    userId: v.id('users'),
+    includeSubscriptionCredentials: v.boolean(),
+    geoCountry: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: (ctx, args) => accountViewDataOf(ctx, args),
+});
+
+/** Which key the view will show, for the live backend read started beside the view query. */
+export const liveKeyOf = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (
+    ctx,
+    { userId },
+  ): Promise<{ id: Id<'subscriptions'>; backend: Backend; backendUserId: string } | null> => {
+    const user = await ctx.db.get(userId);
+    const sub = user ? await currentOrActiveSub(ctx.db, user) : null;
+    return sub ? { id: sub._id, backend: sub.backend, backendUserId: sub.backendUserId } : null;
+  },
+});
+
+type LiveState = UserState | null;
+
+/** Best-effort live state; null when the backend is down or no instance resolves the key. */
+async function readLiveState(
+  ctx: ActionCtx,
+  key: { backend: Backend; backendUserId: string },
+): Promise<LiveState> {
+  try {
+    return await ctx.runAction(internal.backends.getUser, {
+      backend: key.backend,
+      backendUserId: key.backendUserId,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Start the account view: the view query and the live backend read run side
+ * by side (the live read needs only which key, from a small query of its own).
+ * Null for an unknown user or tier. `finish` merges the live state in, and
+ * mints a missing support ID; the account route runs its member-country step
+ * between the two, beside the live read.
+ */
+export async function startAccountView(
+  ctx: ActionCtx,
+  args: {
+    userId: Id<'users'>;
+    includeSubscriptionCredentials: boolean;
+    geoCountry?: string | null;
+  },
+): Promise<{ data: AccountViewData; finish: () => Promise<AccountView> } | null> {
+  const early = ctx
+    .runQuery(internal.account.liveKeyOf, { userId: args.userId })
+    .then(async (key) => (key ? { id: key.id, state: await readLiveState(ctx, key) } : null));
+  // Settle the early read even when the view query throws, so it never rejects unobserved.
+  early.catch(() => undefined);
+  const data = await ctx.runQuery(internal.account.accountViewData, args);
+  if (!data) return null;
+  const finish = async (): Promise<AccountView> => {
+    // W3: lazily backfill the support ID for pre-W3 accounts. Non-fatal — the
+    // account view still renders if minting transiently fails.
+    const supportId: Promise<string | null> = data.view.user.supportId
+      ? Promise.resolve(data.view.user.supportId)
+      : ctx.runAction(internal.supportId.ensureForUser, { userId: args.userId }).then(
+          (r) => r.supportId,
+          () => null /* leave null; next view retries */,
+        );
+    const { key } = data;
+    let live: LiveState = null;
+    if (key) {
+      const read = await early.catch(() => null);
+      // A key re-issued between the two reads: read the one the view shows.
+      live = read?.id === key.id ? read.state : await readLiveState(ctx, key);
+    }
+    const subscription: AccountView['subscription'] = key
+      ? {
+          ...key.local,
+          expiresAt: live?.expireAt ?? null,
+          trafficLimitBytes: live ? live.trafficLimitBytes : data.trafficLimitFromTier,
+          trafficUsedBytes: live?.usedTrafficBytes ?? 0,
+          // Degrade default: backend unreachable ⇒ we don't know the key's status,
+          // so 'unknown' (the member badge only fires for limited/disabled).
+          status: live?.status ?? 'unknown',
+          resetStrategy: live?.trafficLimitStrategy,
+          lastResetAt: live?.lastTrafficResetAt,
+          devices: (live?.devices ?? []).map((d) => ({
+            hwid: d.hwid,
+            platform: d.platform ?? undefined,
+            deviceModel: d.deviceModel ?? undefined,
+            firstSeenAt: d.firstSeenAt ?? undefined,
+            lastSeenAt: d.lastSeenAt ?? undefined,
+          })),
+        }
+      : null;
+    return {
+      ...data.view,
+      user: { ...data.view.user, supportId: await supportId },
+      subscription,
     };
+  };
+  return { data, finish };
+}
+
+export const getAccountView = internalAction({
+  args: { userId: v.id('users'), includeSubscriptionCredentials: v.optional(v.boolean()) },
+  handler: async (
+    ctx,
+    { userId, includeSubscriptionCredentials = false },
+  ): Promise<AccountView | null> => {
+    const started = await startAccountView(ctx, { userId, includeSubscriptionCredentials });
+    return started ? started.finish() : null;
   },
 });
 
@@ -867,16 +1037,15 @@ export const regenerate = internalAction({
       oldSub ? undefined : (region ?? geoCountry),
     );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+    const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
     const issued = await issueNewSubscription(ctx, {
+      periodCarryBytes: carry.periodCarryBytes,
+      periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: tier.backend,
       spec: {
         username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-        trafficLimitBytes: await carriedTrafficLimit(
-          ctx,
-          oldSub,
-          resolveTrafficLimitBytes(tier, bonusGb),
-        ),
+        trafficLimitBytes: carry.trafficLimitBytes,
         trafficLimitStrategy: tier.trafficStrategy,
         // Member term, else the far-future sentinel (free keys never expire
         // backend-side; the usage-based idle sweep owns free reclaim).
@@ -906,7 +1075,7 @@ export const regenerate = internalAction({
       })) === region.trim().toUpperCase();
 
     if (oldSub) {
-      await tombstoneOldSub(ctx, oldSub.backendUserId);
+      await tombstoneOldSub(ctx, oldSub.backendUserId, carry.graceBaseUsedBytes);
     }
     await auditIfPlacementless(ctx, {
       backend: tier.backend,
@@ -1023,16 +1192,15 @@ export const switchBackend = internalAction({
       destination?.family?.id,
     );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+    const carry = await carriedTrafficLimit(ctx, oldSub, peerTier, bonusGb);
     const issued = await issueNewSubscription(ctx, {
+      periodCarryBytes: carry.periodCarryBytes,
+      periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: peerTier.backend,
       spec: {
         username: boundedUsername('freesocks-', peerTier.slug, randomHex(8)),
-        trafficLimitBytes: await carriedTrafficLimit(
-          ctx,
-          oldSub,
-          resolveTrafficLimitBytes(peerTier, bonusGb),
-        ),
+        trafficLimitBytes: carry.trafficLimitBytes,
         trafficLimitStrategy: peerTier.trafficStrategy,
         // Entitlement unchanged by a backend switch: keep the member's term
         // (free keys carry the no-expiry sentinel).
@@ -1055,7 +1223,7 @@ export const switchBackend = internalAction({
     // never two indefinitely-live keys.
     let oldDeletedAt: number | null = null;
     if (oldSub) {
-      const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
+      const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId, carry.graceBaseUsedBytes);
       oldDeletedAt = tomb?.deletedAt ?? null;
     }
 
@@ -1222,16 +1390,15 @@ export const switchMode = internalAction({
         userId,
       );
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+      const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
       const issued = await issueNewSubscription(ctx, {
+        periodCarryBytes: carry.periodCarryBytes,
+        periodCarryUntil: carry.periodCarryUntil,
         userId,
         backend: tier.backend,
         spec: {
           username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-          trafficLimitBytes: await carriedTrafficLimit(
-            ctx,
-            oldSub,
-            resolveTrafficLimitBytes(tier, bonusGb),
-          ),
+          trafficLimitBytes: carry.trafficLimitBytes,
           trafficLimitStrategy: tier.trafficStrategy,
           expireAt: computeExpireAtIso(user.membershipExpiresAt),
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
@@ -1248,7 +1415,7 @@ export const switchMode = internalAction({
       // repointed currentSubscriptionId), same 24h grace as regenerate/switch.
       let oldDeletedAt: number | null = null;
       if (oldSub) {
-        const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
+        const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId, carry.graceBaseUsedBytes);
         oldDeletedAt = tomb?.deletedAt ?? null;
       }
       await auditIfPlacementless(ctx, {
@@ -1595,16 +1762,15 @@ export const switchServer = internalAction({
         };
       }
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+      const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
       const issued = await issueNewSubscription(ctx, {
+        periodCarryBytes: carry.periodCarryBytes,
+        periodCarryUntil: carry.periodCarryUntil,
         userId,
         backend: tier.backend,
         spec: {
           username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-          trafficLimitBytes: await carriedTrafficLimit(
-            ctx,
-            oldSub,
-            resolveTrafficLimitBytes(tier, bonusGb),
-          ),
+          trafficLimitBytes: carry.trafficLimitBytes,
           trafficLimitStrategy: tier.trafficStrategy,
           expireAt: computeExpireAtIso(user.membershipExpiresAt),
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
@@ -1620,7 +1786,7 @@ export const switchServer = internalAction({
         // Moving servers is not a rotation: the member keeps their saved link.
         carrySubTokenFromId: oldSub._id,
       });
-      const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
+      const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId, carry.graceBaseUsedBytes);
       await auditIfPlacementless(ctx, {
         backend: tier.backend,
         placement: target.placement,
@@ -1886,16 +2052,15 @@ export const moveToCountryExit = internalAction({
     if (target.fallbackUnresolved) return nothing;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+    const carry = await carriedTrafficLimit(ctx, oldSub, tier, bonusGb);
     const issued = await issueNewSubscription(ctx, {
+      periodCarryBytes: carry.periodCarryBytes,
+      periodCarryUntil: carry.periodCarryUntil,
       userId,
       backend: tier.backend,
       spec: {
         username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
-        trafficLimitBytes: await carriedTrafficLimit(
-          ctx,
-          oldSub,
-          resolveTrafficLimitBytes(tier, bonusGb),
-        ),
+        trafficLimitBytes: carry.trafficLimitBytes,
         trafficLimitStrategy: tier.trafficStrategy,
         expireAt: computeExpireAtIso(user.membershipExpiresAt),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
@@ -1909,7 +2074,7 @@ export const moveToCountryExit = internalAction({
       // A move, not a rotation: the member keeps their saved link.
       carrySubTokenFromId: oldSub._id,
     });
-    const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
+    const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId, carry.graceBaseUsedBytes);
     if (tier.isDefaultFree) {
       await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
     }

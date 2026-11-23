@@ -44,6 +44,41 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+async function signUp(t: ReturnType<typeof convexTest>, body: Record<string, unknown>) {
+  const path = '/api/v1/account';
+  const method = 'POST';
+  const seed = new Uint8Array(32).fill(24);
+  const keys = await serverKeyPairFromSeed(seed);
+  const kid = await kidFromPublicKey(await serializePublicKey(keys.publicKey));
+  vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(seed));
+  const request = await clientPrepareRequest({
+    serverPub: keys.publicKey,
+    serverKid: kid,
+    method,
+    path,
+    policy: routePolicy(path, method)!,
+    bodyObj: body,
+  });
+  const res = await t.fetch(path, {
+    method,
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.91' },
+    body: JSON.stringify(request.body),
+  });
+  if (!res.ok) return res;
+  const wire = await res.json();
+  expect(isSealedWire(wire)).toBe(true);
+  return Response.json(
+    await clientOpenResponse({
+      serverKid: kid,
+      method,
+      path,
+      respEphPriv: request.respEphPriv!,
+      wire,
+    }),
+    { status: res.status, headers: res.headers },
+  );
+}
+
 async function seedTierAndUser(
   t: ReturnType<typeof convexTest>,
 ): Promise<{ tierId: Id<'tiers'>; userId: Id<'users'> }> {
@@ -125,8 +160,9 @@ async function insertToken(
 describe('billing webhook config vs HMAC', () => {
   const body = JSON.stringify({
     eventId: 'evt-1',
-    accountId: '1'.repeat(32),
+    supportId: 'FS-ZZZZ-ZZZZ',
     tierSlug: 'member',
+    issuedAtMs: Date.now(),
   });
 
   test('unset secret answers a distinct 503 webhook.not_configured', async () => {
@@ -165,14 +201,25 @@ describe('billing webhook config vs HMAC', () => {
   });
 });
 
+test('account creation requires a sealed signup request', async () => {
+  const t = convexTest(schema, modules);
+  const res = await t.fetch('/api/v1/account', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.40' },
+    body: '{}',
+  });
+  expect(res.status).toBe(400);
+  expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+});
+
 describe('request-body caps (413)', () => {
-  test('sealed route: oversized wire body is rejected before any work', async () => {
+  test('sealed route: oversized wire body is rejected before opening an envelope', async () => {
     const t = convexTest(schema, modules);
-    // '/api/v1/account' has a reveal policy, so sealed() reads (and caps) the
+    // '/api/v1/account' requires a sealed request, so sealed() reads (and caps) the
     // wire body before the handler — no auth needed to observe the cap.
     const res = await t.fetch('/api/v1/account', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.33' },
       body: JSON.stringify({ pad: 'x'.repeat(70 * 1024) }),
     });
     expect(res.status).toBe(413);
@@ -680,7 +727,7 @@ describe('public GET throttles (WS5)', () => {
     );
   });
 
-  test('/api/v1/hpke/keys is per-IP rate limited past its policy', async () => {
+  test('/api/v1/hpke/keys past its per-IP policy still answers, from the datastore alone', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.rateLimits.setPolicy, {
       policyKey: 'hpke.keys.fetch',
@@ -689,8 +736,13 @@ describe('public GET throttles (WS5)', () => {
       enabled: true,
     });
     const headers = { 'x-forwarded-for': '203.0.113.78' };
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(200);
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(429);
+    const first = await t.fetch('/api/v1/hpke/keys', { headers });
+    expect(first.status).toBe(200);
+    expect(first.headers.get('x-fs-keys-throttled')).toBeNull();
+    const over = await t.fetch('/api/v1/hpke/keys', { headers });
+    expect(over.status).toBe(200);
+    expect(over.headers.get('x-fs-keys-throttled')).toBe('1');
+    expect(await over.json()).toEqual(await first.json());
   });
 
   test('the legacy /api/v1/e2ee/keys alias serves the same body and shares the policy bucket', async () => {
@@ -708,8 +760,9 @@ describe('public GET throttles (WS5)', () => {
       enabled: true,
     });
     const headers = { 'x-forwarded-for': '203.0.113.79' };
-    expect((await t.fetch('/api/v1/e2ee/keys', { headers })).status).toBe(200);
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(429);
+    await t.fetch('/api/v1/e2ee/keys', { headers });
+    const over = await t.fetch('/api/v1/hpke/keys', { headers });
+    expect(over.headers.get('x-fs-keys-throttled')).toBe('1');
   });
 });
 
@@ -743,13 +796,15 @@ describe('cache-control defaults', () => {
   // "couldn't verify the encryption key" banner), so max-age is clamped to the
   // remaining validity and a rotation gap is never cached.
   test('the hpke keys route caps max-age at the epoch validity', async () => {
+    vi.stubEnv('HPKE_EPOCH_STORE_URL', 'http://epoch-store.test');
+    vi.stubEnv('HPKE_EPOCH_STORE_TOKEN', 'a'.repeat(64));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     const t = convexTest(schema, modules);
     const now = Date.now();
     await t.run(async (ctx) => {
       await ctx.db.insert('keyEpochs', {
         kid: 'kid-cache-cap',
         publicKey: 'pk',
-        seed: 'seed',
         manifestSig: 'sig',
         notBefore: now - 1_000,
         notAfter: now + 20_000, // 20s left: shorter than the 60s ceiling
@@ -763,13 +818,15 @@ describe('cache-control defaults', () => {
   });
 
   test('the hpke keys route keeps public, max-age=60 for a long-lived epoch', async () => {
+    vi.stubEnv('HPKE_EPOCH_STORE_URL', 'http://epoch-store.test');
+    vi.stubEnv('HPKE_EPOCH_STORE_TOKEN', 'a'.repeat(64));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     const t = convexTest(schema, modules);
     const now = Date.now();
     await t.run(async (ctx) => {
       await ctx.db.insert('keyEpochs', {
         kid: 'kid-cache-full',
         publicKey: 'pk',
-        seed: 'seed',
         manifestSig: 'sig',
         notBefore: now - 1_000,
         notAfter: now + 30 * 60_000,
@@ -1233,7 +1290,7 @@ describe('resolveCountry (CF-IPCountry, CF_FRONTED-gated)', () => {
   });
 });
 
-describe('opt-in mirror routes require a member session', () => {
+describe('opt-in mirror route authorization', () => {
   test('POST /api/v1/mirror/request → 401 without auth', async () => {
     const t = convexTest(schema, modules);
     const res = await t.fetch('/api/v1/mirror/request', {
@@ -1241,6 +1298,24 @@ describe('opt-in mirror routes require a member session', () => {
       body: JSON.stringify({ countryCode: 'IR' }),
     });
     expect(res.status).toBe(401);
+  });
+
+  test('mirror provisioning checks both delegated scopes', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const request = async (scopes: string[]) => {
+      const token = await insertToken(t, { scopes, subjectType: 'user', subjectUserId: userId });
+      return t.fetch('/api/v1/mirror/request', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '{}',
+      });
+    };
+    expect((await request(['account:write'])).status).toBe(403);
+    expect((await request(['subscription:read'])).status).toBe(401);
+    const permitted = await request(['account:write', 'subscription:read']);
+    expect(permitted.status).toBe(200);
+    expect(await permitted.json()).toMatchObject({ status: 'no_subscription' });
   });
 
   test('DELETE /api/v1/mirror → 401 without auth', async () => {
@@ -1333,11 +1408,7 @@ describe('referral routes', () => {
         updatedAt: Date.now(),
       }),
     );
-    const res = await t.fetch('/api/v1/account', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.91' },
-      body: JSON.stringify({ captchaToken: 'tok', referralCode: 'fsr-aaaa-bbbb' }),
-    });
+    const res = await signUp(t, { captchaToken: 'tok', referralCode: 'fsr-aaaa-bbbb' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { accountId: string; referralApplied?: boolean };
     expect(body.referralApplied).toBe(true);
@@ -1361,11 +1432,7 @@ describe('referral routes', () => {
     );
     const t = convexTest(schema, modules);
     await seedTierAndUser(t);
-    const res = await t.fetch('/api/v1/account', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.92' },
-      body: JSON.stringify({ captchaToken: 'tok', referralCode: 'FSR-NOPE-0000' }),
-    });
+    const res = await signUp(t, { captchaToken: 'tok', referralCode: 'FSR-NOPE-0000' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { referralApplied?: boolean };
     expect(body.referralApplied).toBe(false);
@@ -2339,6 +2406,24 @@ describe('analytics origin (POST /api/v1/telemetry + admin config)', () => {
         })
       ).status,
     ).toBe(200);
+  });
+
+  test('saving full-IP forwarding requires a signed-in admin', async () => {
+    const t = convexTest(schema, modules);
+    const token = await insertToken(t, {
+      scopes: ['admin:settings:write'],
+      subjectType: 'service',
+    });
+    const save = (headers: Record<string, string>) =>
+      t.fetch('/api/v1/admin/analytics', {
+        method: 'PATCH',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, forwardIp: true }),
+      });
+    expect((await save({ authorization: `Bearer ${token}` })).status).toBe(403);
+    expect((await t.query(internal.analytics.getConfig, {})).forwardIp).toBe(false);
+    expect((await save({ cookie: await adminCookie(t) })).status).toBe(200);
+    expect((await t.query(internal.analytics.getConfig, {})).forwardIp).toBe(true);
   });
 
   test('PATCH sanitizes: http url → "", junk id → "", missing booleans → off', async () => {

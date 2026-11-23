@@ -38,8 +38,9 @@ describe('routePolicy (method-aware)', () => {
     // /account reveals on both GET (view) and POST (mint).
     expect(routePolicy('/api/v1/account', 'GET')).toEqual({ request: 'plain', response: 'reveal' });
     expect(routePolicy('/api/v1/account', 'POST')).toEqual({
-      request: 'plain',
+      request: 'seal',
       response: 'reveal',
+      required: true,
     });
     expect(routePolicy('/api/v1/account/regenerate', 'POST')?.response).toBe('reveal');
   });

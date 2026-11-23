@@ -48,6 +48,7 @@ async function request<S extends z.ZodTypeAny>(
   path: string,
   init: RequestInit | undefined,
   schema: S,
+  retriedKeyChange = false,
 ): Promise<z.infer<S>> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const bodyStr = typeof init?.body === 'string' ? init.body : undefined;
@@ -120,7 +121,19 @@ async function request<S extends z.ZodTypeAny>(
   }
   let json: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiCallError(res.status, json);
+    const error = new ApiCallError(res.status, json);
+    if (
+      res.status === 503 &&
+      error.payload.error.code === 'hpke.key_unavailable' &&
+      seal?.recipientKid
+    ) {
+      // The server refused before opening the body, so nothing happened yet:
+      // drop the epoch and seal once more to a fresh one. Only once, since the
+      // relay can alter error responses.
+      (await loadHpke()).invalidateEpoch(seal.recipientKid);
+      if (!retriedKeyChange) return request(path, init, schema, true);
+    }
+    throw error;
   }
   if (seal) json = await (await loadHpke()).openInbound(seal, path, method, json);
   // PoP sid-binding: a member login / account-create response carries the public

@@ -84,6 +84,23 @@ const MIN = 60_000;
 const PROBE_RUN_RETENTION_MS = 14 * 24 * 60 * 60_000;
 const MAX_SWEEP_ROUNDS = 20;
 const RUN_TIMEOUT_MS = 10 * MIN;
+/**
+ * Probe executions (`probeOps.execute`, Node actions that wait on the source
+ * for up to two and a half minutes) running at once, whatever asked for them
+ * (the cron, the detector, an admin, a qualification): a run is handed to the
+ * executor only through `dispatchRun`, which waits while this many run. Keeps
+ * a probe batch from holding the backend's scheduled-job slots and Node pool
+ * that member requests and every other job need.
+ */
+export const PROBE_LANES = 4;
+/** How long a run that found every lane busy waits before it asks again. */
+const PROBE_LANE_RETRY_MS = 5_000;
+/**
+ * A run marked running longer ago than this holds no lane: no executor lives
+ * that long (the slowest source gives up after 150 s), so its action died and
+ * `sweepStuck` will settle it.
+ */
+const PROBE_LANE_HOLD_MS = 4 * MIN;
 /** Distinct failing networks kept per rollup row (the agreement rule needs a handful). */
 const MAX_FAIL_NETWORKS = 16;
 /** Readings one action may hand `noteGlobalping` (an action makes a few dozen calls at most). */
@@ -457,7 +474,7 @@ async function insertRun(
     scheduledAt: now + delayMs,
     results: [],
   });
-  await ctx.scheduler.runAfter(delayMs, internal.probeOps.execute, { runId });
+  await ctx.scheduler.runAfter(delayMs, internal.probes.dispatchRun, { runId });
   await writeAuditLog(ctx, {
     actorType: 'system',
     action: 'probe.run',
@@ -936,11 +953,47 @@ export const requestMany = internalMutation({
   },
 });
 
+/**
+ * A run that is due (`insertRun` schedules this at its stagger delay): handed
+ * to the executor now, marked running so it holds one of `PROBE_LANES`, or,
+ * with every lane busy, asked again in `PROBE_LANE_RETRY_MS` (and due from
+ * now, so the wait does not count against its timeout). Reading the
+ * running range and writing into it in one transaction makes two dispatches
+ * that race for the last lane conflict, so the bound is exact.
+ */
+export const dispatchRun = internalMutation({
+  args: { runId: v.id('probeRuns') },
+  handler: async (ctx, { runId }): Promise<{ started: boolean }> => {
+    const run = await ctx.db.get(runId);
+    if (!run || run.status !== 'requested') return { started: false };
+    const now = Date.now();
+    const running = await ctx.db
+      .query('probeRuns')
+      .withIndex('by_status', (q) => q.eq('status', 'running'))
+      .take(200);
+    const held = running.filter((r) => (r.startedAt ?? r.requestedAt) > now - PROBE_LANE_HOLD_MS);
+    if (held.length >= PROBE_LANES) {
+      // Waiting for a lane is not the run's own time: `sweepStuck` counts
+      // from the last time it was due, so a run that waits behind a long
+      // batch never times out before it ran. Only a run nothing asks for any
+      // more (its next ask lost) runs out its timeout.
+      await ctx.db.patch(runId, { scheduledAt: now });
+      await ctx.scheduler.runAfter(PROBE_LANE_RETRY_MS, internal.probes.dispatchRun, { runId });
+      return { started: false };
+    }
+    await ctx.db.patch(runId, { status: 'running', startedAt: now });
+    await ctx.scheduler.runAfter(0, internal.probeOps.execute, { runId });
+    return { started: true };
+  },
+});
+
 export const markRunning = internalMutation({
   args: { runId: v.id('probeRuns'), externalId: v.optional(v.string()) },
   handler: async (ctx, { runId, externalId }) => {
     const run = await ctx.db.get(runId);
-    if (!run || run.status !== 'requested') return null;
+    // Running already: dispatched (`dispatchRun`); the executor adds the
+    // source's measurement id once it has one.
+    if (!run || (run.status !== 'requested' && run.status !== 'running')) return null;
     await ctx.db.patch(runId, {
       status: 'running',
       startedAt: Date.now(),

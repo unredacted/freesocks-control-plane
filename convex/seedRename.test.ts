@@ -61,7 +61,12 @@ describe('seed.renameAppSettingKeys', () => {
     vi.stubEnv('TRUSTED_PROXY', 'true');
     vi.stubEnv('IP_HASH_SALT', 'test-salt');
     const headers = { 'x-forwarded-for': '203.0.113.80' };
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(200);
-    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(429);
+    expect(
+      (await t.fetch('/api/v1/hpke/keys', { headers })).headers.get('x-fs-keys-throttled'),
+    ).toBeNull();
+    // Past the budget the key route answers from the datastore alone, never 429.
+    expect(
+      (await t.fetch('/api/v1/hpke/keys', { headers })).headers.get('x-fs-keys-throttled'),
+    ).toBe('1');
   });
 });

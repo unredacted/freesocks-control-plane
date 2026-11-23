@@ -36,9 +36,7 @@ Files: `docker-compose.stack.yml`, `Caddyfile`, `docker/web.Dockerfile`,
 ## 1. Fill the two env files
 
 ```sh
-cp .env.beta.example   .env.beta      # infra: Caddy + backend identity + Postgres + HPKE pins
-cp .env.convex.example .env.convex    # Convex deployment secrets
-bun run bootstrap                     # installs deps (if stale) + generates every secret (idempotent)
+bun run bootstrap                     # creates owner-only env files and generates secrets
 $EDITOR .env.beta .env.convex         # then fill the EXTERNAL creds by hand (below)
 ```
 
@@ -51,8 +49,8 @@ value already set, so it is safe to re-run on testing/beta/prod):
   `CAP_ADMIN_KEY` (it prints `CAP_ADMIN_KEY` — you need it to
   log into the Cap dashboard), and generates the **CDN-blinding keypair**: the
   `VITE_FS_*` public pins in `.env.beta` (baked into the SPA build) + the matching
-  `FS_*` secrets in `.env.convex`. Running it enables body-sealing; not running it
-  ships the SPA dark (plaintext dual-mode over TLS). See `docs/secrets.md`.
+  `FS_*` secrets in `.env.convex`. Signup and first-admin enrollment require
+  these matching keys. See `docs/secrets.md`.
 - The **five core app secrets** (`SESSION_SIGNING_KEY`, `ADMIN_SESSION_SIGNING_KEY`,
   `ADMIN_BOOTSTRAP_SECRET`, `IP_HASH_SALT`, `ACCOUNT_ID_PEPPER`) are auto-generated
   ONCE by the `deployer` itself — **leave them `CHANGE_ME`**. `ACCOUNT_ID_PEPPER`
@@ -107,9 +105,11 @@ first request once DNS resolves (`logs web`); the backend `data` + Postgres
 
 ## 3. Bootstrap the first admin passkey
 
-Open `https://beta.freesocks.org/admin` in a browser. While no passkey exists, the
-bootstrap wizard appears: paste the `ADMIN_BOOTSTRAP_SECRET`, then register a
-passkey. Bootstrap **locks forever** once any credential exists.
+Open `https://beta.freesocks.org/admin` from an operator-verified instance. The
+build needs the matching HPKE pins and a live signed epoch before enrollment.
+While no passkey exists, paste `ADMIN_BOOTSTRAP_SECRET` into the wizard and
+register a passkey. Both enrollment requests are sealed to the origin. Bootstrap
+locks once a credential exists.
 
 The `deployer` **prints the bootstrap secret at the end of a deploy only while
 no admin credential exists yet** (look for the `ADMIN_BOOTSTRAP_SECRET = …`
@@ -184,6 +184,26 @@ git pull
 docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build --force-recreate web deployer
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 deployer  # expect "[deploy] OK"
 ```
+
+For the first upgrade to the volatile HPKE epoch store, rerun the secrets
+bootstrap to add `HPKE_EPOCH_STORE_TOKEN` and configure the backup signing
+key. Stop `web` and `backup` before recreating the backend on the new private
+network. Wait for the deployer before restarting ingress and backups.
+
+```sh
+bun run bootstrap
+docker compose -f docker-compose.stack.yml --env-file .env.beta stop web backup
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build --force-recreate backend hpke-epoch-store keygen deployer
+docker compose -f docker-compose.stack.yml --env-file .env.beta wait deployer
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build web backup
+```
+
+Continue to the last command only after `wait deployer` exits successfully.
+
+Take the pre-upgrade export first: rolling back this release means restoring it.
+A functions-only rollback cannot apply the previous schema, since new epoch rows
+carry no `seed` and users, sessions, admin users and subscriptions gain fields
+the previous schema rejects.
 
 `--build` rebuilds both images from the pulled source; `--force-recreate web
 deployer` then recreates **both** containers — `web` restarts with the new SPA,
@@ -639,8 +659,16 @@ interval, so a first cycle that raced a Postgres restart is retried within
 minutes instead of a day later; a failed upload still prunes local copies to
 `BACKUP_RETENTION`, so retries never fill the disk. Set `BACKUP_AGE_PUBLIC_KEY` (an age
 X25519 recipient; keep the private half offline) so dumps are encrypted
-client-side before upload: a dump carries `accountIdHash` + live subscription
-tokens, so an unencrypted bucket compromise yields the readable datastore.
+client-side before upload. Offsite upload requires this recipient or an explicit
+`BACKUP_ALLOW_UNENCRYPTED=true` opt-in. A dump carries `accountIdHash` and live
+subscription tokens, and **every Convex deployment env var**: Convex keeps them in
+its `_environment_variables` system table, so the session signing keys,
+`ACCOUNT_ID_PEPPER`, the HPKE static and manifest signing keys, processor
+credentials and `HPKE_EPOCH_STORE_TOKEN` are all inside, as are the panel API
+tokens in `backendServers`. Treat a dump as the whole secret set: keep the age
+private key offline, and after a suspected dump leak rotate those secrets and the
+panel tokens. The epoch seeds are the exception (they live only in the volatile
+store), which is why past sealed logins stay private even then.
 Also back up the **secret set** (the `bunx convex env` values, especially
 `ACCOUNT_ID_PEPPER` — losing it invalidates every account number). Export it
 alongside each dump, encrypted with the same age recipient, through the
@@ -666,8 +694,8 @@ Backup coverage notes:
 - The sidecar prunes **local** copies only — offsite bucket objects grow
   forever. Set an S3 lifecycle rule on the bucket (e.g. expire
   `db-backups/*` after 30 days) to match the local `BACKUP_RETENTION` intent.
-- `backup.sh` runs a **pre-dump sanity check** (`tiers` must exist and be
-  non-empty) so a `POSTGRES_DB`/`INSTANCE_NAME` mismatch fails the heartbeat
+- `backup.sh` runs a **pre-dump sanity check** (Convex's internal `documents`
+  table must exist and hold rows) so a `POSTGRES_DB`/`INSTANCE_NAME` mismatch fails the heartbeat
   instead of green-dumping the wrong (empty) database. `POSTGRES_DB` is an
   `.env.beta` var shared by the postgres env, its healthcheck, and the backup
   sidecar — set it there, never by editing the compose file.
@@ -676,20 +704,72 @@ Backup coverage notes:
 grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
 restore drill below must have been run at least once.
 
-Restore a dump:
+Configure a producer signing key before starting the backup service. Create a
+deployment-specific EC key under `umask 077` using
+`openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out producer.pem`.
+Set `BACKUP_SIGNING_KEY_FILE` to its
+absolute path outside the checkout. Export its public key with
+`openssl pkey -in producer.pem -pubout -out producer.pub.pem`, and pin that
+public key through a channel independent of the backup bucket. Preserve trusted
+old public keys for any retained dumps they signed.
+
+Restore a dump after verifying its producer signature. Keep the dump and its
+detached signature together. Legacy unsigned dumps require independently
+established provenance before use.
 
 ```sh
-# copy the chosen dump into ~/fcp-snapshots (never into the checkout), then
-# (for an age-encrypted dump, decrypt first; the key file stays out of the checkout too):
-#   age -d -i /path/to/backup-key.txt -o "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz" \
-#     "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz.age"
-gunzip -c "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz" \
-  | docker compose -f docker-compose.stack.yml exec -T postgres \
-      psql -U convex -d freesocks_beta
+set -euo pipefail
+# DUMP points to the locally staged, read-only download (.sql.gz or .sql.gz.age).
+openssl dgst -sha256 -verify "$BACKUP_VERIFY_KEY_FILE" -signature "$DUMP.sig" "$DUMP"
+# For an encrypted dump, decrypt these verified bytes to a private local file.
+if [[ "$DUMP" == *.age ]]; then
+  umask 077
+  age -d -i "$AGE_KEY_FILE" -o "${DUMP%.age}" "$DUMP"
+  DUMP="${DUMP%.age}"
+fi
+gunzip -c "$DUMP" \
+  | docker compose -f docker-compose.stack.yml --env-file "$FCP_ENV_FILE" exec -T postgres \
+      psql -U convex -d "$POSTGRES_DB" -v ON_ERROR_STOP=1
 ```
 
+### Before reopening access after a datastore restore
+
+Keep public ingress closed for both a SQL restore and a Convex
+`import --replace-all`. Stop `web` and `backup` before the restore and use the loopback
+deployment endpoint from the host or the instance-admin deployer. Deploy the
+current recovery functions to the restored instance while ingress is closed.
+
+From that instance-admin Convex CLI, run
+`bunx convex run apiTokens:revokeRestoredTokens '{"cursor":null}'`. If the
+response has `isDone: false`, repeat with the returned `cursor` until it reports
+`isDone: true`. This invalidates all restored bearer tokens, including member
+tokens. Reissue only authorized tokens after completing recovery and before
+restarting the affected automation.
+
+Keep a current administrator passkey inventory outside the datastore
+snapshots. Update the independently trusted copy whenever admin access or
+passkeys change. The instance-admin command
+`bunx convex run admins:recoveryPasskeyInventory '{}'` exports the active
+admin usernames and their passkey IDs and public keys. Retain the inventory
+in protected operator storage so a backup writer cannot replace it.
+
+After restoring and while ingress is still closed, run
+`bunx convex run admins:reconcileRestoredAdmins "$(cat "$APPROVED_ADMINS_FILE")"`
+with that current, independently trusted inventory. Reconciliation removes
+unapproved passkeys, deactivates unapproved admin accounts, invalidates
+restored admin sessions, and clears old invitations. It aborts before making
+changes if no approved passkey matches. In that case keep ingress closed
+until an operator establishes a trusted administrator. Reopen access only
+after both token and administrator recovery succeed.
+
+Run `bunx convex run lib/hpkeCrypto:initializeEpochStore '{}'` after any data
+import and before restarting `backup` and `web`. The action prepares a fresh
+epoch when manifest signing is enabled and deletes legacy epoch rows that
+contained private seeds. Apply normal protected retention to previously
+created backups, which can still contain those seeds.
+
 Run a **restore drill** before launch and periodically after:
-`sh docker/restore-verify.sh` restores the latest dump into a scratch DB,
+`bash docker/restore-verify.sh` verifies the signature with `BACKUP_VERIFY_KEY_FILE` and restores the latest dump into a scratch DB,
 asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted
 dumps; it decrypts with the backup image's `age`, so the host needs none, and
 any SQL error fails the drill). A backup that has never been restored is not a
@@ -876,7 +956,7 @@ migrations have run: upgrades apply in-place DB migrations, Convex documents no
 downgrade path, and an older binary against a migrated database is undefined
 behavior. The only real rollback is restore-from-backup — `bunx convex import
 --replace-all` of the pre-upgrade export (via the same deployer recipe), or the
-pg_dump restore above. This is why the export step is mandatory, not advisory.
+pg_dump restore above. Follow the post-restore access checks before reopening ingress.
 
 One more drift hazard: the **dev stack** (`docker-compose.yml`) deliberately
 runs `:latest`, so local dev can be _ahead_ of beta/prod — behavior that works
