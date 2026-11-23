@@ -1,0 +1,20 @@
+# The Hysteria app checks (scripts/compat/hysteria-apps/fixture.ts): an overlay
+# on docker-compose.compat.yml that publishes the Hysteria node and the rogue
+# on the runner's loopback, where a real application reaches them (an Android
+# emulator at 10.0.2.2, a desktop app at 127.0.0.1). Published ports need a
+# network that is not `internal`, so both join one more; their outbounds still
+# reach only the page and the echo behind them.
+services:
+  compat-hysteria-node:
+    networks:
+      compat-apps: {}
+    ports:
+      - 127.0.0.1:8443:443/udp
+  compat-hysteria-rogue:
+    networks:
+      compat-apps: {}
+    ports:
+      - 127.0.0.1:8444:443/udp
+
+networks:
+  compat-apps: {}
