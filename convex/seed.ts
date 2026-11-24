@@ -834,6 +834,9 @@ export const seedCutover = internalAction({
     // A build with the app notice deployed again after `appNotices:clearForRollback`
     // writes its records again (a no-op unless they were turned off).
     await ctx.runMutation(internal.appNotices.resumeRecords, {});
+    // Paid Telegram Stars orders from before their value was recorded get it
+    // at the current Stars rate (a no-op once none is left).
+    await ctx.runMutation(internal.billing.backfillStarsOrderValues, {});
     return {
       freeTierId,
       memberTierId,

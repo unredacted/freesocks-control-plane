@@ -29,6 +29,13 @@ export interface TelegramConfig {
   /** Telegram Stars payments (still needs a Stars price for a duration). */
   starsEnabled: boolean;
   starsPrices: StarsPrice[];
+  /**
+   * What 1,000 Stars are worth, in minor units of the billing currency (1300 =
+   * $13.00). A paid Stars order records its value at this rate when it is paid
+   * (`billingOrders.valueMinor`), so Admin -> Billing can sum it with the web
+   * orders. Defaults to Telegram's developer reward rate ($0.013 per Star).
+   */
+  starsValuePer1000: number;
   /** Full terms of sale the bot links ('' = the bot's own short terms only). */
   termsUrl: string;
   /**
@@ -49,6 +56,7 @@ export const TELEGRAM_KEYS = {
   botUsername: 'telegram.botUsername',
   starsEnabled: 'telegram.stars.enabled',
   starsPrices: 'telegram.stars.prices',
+  starsValuePer1000: 'telegram.stars.valuePer1000',
   termsUrl: 'telegram.termsUrl',
   webhookBotId: 'telegram.webhook.botId',
   webhookBotUsername: 'telegram.webhook.botUsername',
@@ -75,6 +83,7 @@ export const TELEGRAM_DEFAULTS: TelegramConfig = {
   botUsername: '',
   starsEnabled: false,
   starsPrices: [],
+  starsValuePer1000: 1300,
   termsUrl: '',
   webhookBotId: '',
   webhookBotUsername: '',
@@ -82,6 +91,21 @@ export const TELEGRAM_DEFAULTS: TelegramConfig = {
 
 /** Upper bound on a Stars price per code (Telegram caps one invoice at 10,000 Stars x quantity anyway). */
 export const MAX_STARS_PER_CODE = 100_000;
+
+/** Upper bound on the value of 1,000 Stars (minor units of the billing currency). */
+export const MAX_STARS_VALUE_PER_1000 = 10_000_000;
+
+/** A whole number of minor units in 1..MAX_STARS_VALUE_PER_1000, else null. */
+export function sanitizeStarsValuePer1000(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_STARS_VALUE_PER_1000
+    ? v
+    : null;
+}
+
+/** What `stars` Stars are worth at `per1000` (minor units per 1,000 Stars), rounded. */
+export function starsValueMinor(stars: number, per1000: number): number {
+  return Math.round((stars * per1000) / 1000);
+}
 
 /** A Telegram bot username as BotFather allows it, with an optional leading @; else ''. */
 export function sanitizeBotUsername(v: unknown): string {
@@ -183,6 +207,7 @@ export async function resolveTelegramConfig(db: DatabaseReader): Promise<Telegra
     botUsername,
     starsEnabled,
     starsPrices,
+    starsValuePer1000,
     termsUrl,
     webhookBotId,
     webhookBotUsername,
@@ -191,6 +216,7 @@ export async function resolveTelegramConfig(db: DatabaseReader): Promise<Telegra
     read(TELEGRAM_KEYS.botUsername),
     read(TELEGRAM_KEYS.starsEnabled),
     read(TELEGRAM_KEYS.starsPrices),
+    read(TELEGRAM_KEYS.starsValuePer1000),
     read(TELEGRAM_KEYS.termsUrl),
     read(TELEGRAM_KEYS.webhookBotId),
     read(TELEGRAM_KEYS.webhookBotUsername),
@@ -200,6 +226,8 @@ export async function resolveTelegramConfig(db: DatabaseReader): Promise<Telegra
     botUsername: sanitizeBotUsername(botUsername),
     starsEnabled: starsEnabled === true,
     starsPrices: sanitizeStarsPrices(starsPrices) ?? [],
+    starsValuePer1000:
+      sanitizeStarsValuePer1000(starsValuePer1000) ?? TELEGRAM_DEFAULTS.starsValuePer1000,
     termsUrl: sanitizeTermsUrl(termsUrl),
     webhookBotId:
       typeof webhookBotId === 'string' && /^\d{5,16}$/.test(webhookBotId) ? webhookBotId : '',
@@ -225,6 +253,7 @@ export interface TelegramConfigPatch {
   botUsername?: string;
   starsEnabled?: boolean;
   starsPrices?: unknown;
+  starsValuePer1000?: number;
   /** '' clears it. */
   termsUrl?: string;
   /** Write-only: undefined or blank leaves the saved token as it is. */
@@ -265,6 +294,15 @@ export function telegramConfigWrites(
       );
     }
     writes.push({ key: TELEGRAM_KEYS.starsPrices, value: prices });
+  }
+  if (patch.starsValuePer1000 !== undefined) {
+    const value = sanitizeStarsValuePer1000(patch.starsValuePer1000);
+    if (value === null) {
+      throw new Error(
+        `starsValuePer1000 must be a whole number of cents from 1 to ${MAX_STARS_VALUE_PER_1000}`,
+      );
+    }
+    writes.push({ key: TELEGRAM_KEYS.starsValuePer1000, value });
   }
   if (patch.termsUrl !== undefined) {
     if (typeof patch.termsUrl !== 'string') throw new Error('termsUrl must be text');

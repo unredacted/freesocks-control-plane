@@ -270,8 +270,15 @@ payment. Telegram's later
 `refunded_payment` for it changes nothing, since it isn't the payment that paid
 the order. A `refunded_payment` for the paying payment audits
 `billing.refund_seen`; the codes stay valid (nothing links them to the order).
-Stars revenue is not in the revenue chart (a different currency). Stars are paid
-out through Telegram, outside FCP.
+When a Stars order is paid it records its value in the billing currency
+(`billingOrders.valueMinor` + `valueCurrency`) at the card's Stars rate,
+`telegram.stars.valuePer1000` (minor units per 1,000 Stars; default 1300, Telegram's
+developer reward rate of $0.013 per Star). A later rate edit never moves a recorded
+value. The revenue chart sums Stars orders at that value (and says how many it
+counted that way), and the orders list shows it beside the Stars amount. Paid Stars
+orders from before the value existed get it at the current rate on the next deploy
+(`billing.backfillStarsOrderValues`, run by `seedCutover`). Stars are paid out
+through Telegram, outside FCP.
 
 **Delivery.** The bot keeps no chat, so it can't message a buyer later: the
 codes go out in the same update as the payment. What a payment is owed is read

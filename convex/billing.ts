@@ -35,6 +35,7 @@ import {
   resolveProcessorSecrets,
   withinUnderpaymentTolerance,
 } from './lib/billingConfig';
+import { resolveTelegramConfig, starsValueMinor } from './lib/telegramConfig';
 import { knownNetwork } from './lib/cryptoNetworks';
 import { runWithCronOutcome } from './cronHeartbeat';
 import type {
@@ -697,6 +698,52 @@ type GiftCode = { plaintext: string; hash: string; prefix: string };
  * serializable mutation. Shared by the webhook grant (applyEvent) and the
  * operator granting an order from Admin → Billing (grantOrderByAdmin).
  */
+/** Telegram Stars: the currency of a Stars order (whole Stars, no minor unit). */
+const STARS_CURRENCY = 'XTR';
+
+/**
+ * What `stars` Stars are worth now in the billing currency, at the shop's Stars
+ * rate: recorded on a Stars order when it is paid, so its value never moves
+ * with later rate edits.
+ */
+async function starsOrderValue(
+  db: DatabaseReader,
+  stars: number,
+): Promise<{ valueMinor: number; valueCurrency: string }> {
+  const [billing, telegram] = await Promise.all([
+    resolveBillingConfig(db),
+    resolveTelegramConfig(db),
+  ]);
+  return {
+    valueMinor: starsValueMinor(stars, telegram.starsValuePer1000),
+    valueCurrency: billing.currency,
+  };
+}
+
+/**
+ * Give paid Stars orders from before `valueMinor` existed their value, at
+ * the Stars rate in force now (run by seedCutover on every deploy; a no-op
+ * once none is left). Stars orders are few, and the scan stops at a page.
+ */
+export const backfillStarsOrderValues = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ valued: number }> => {
+    const rows = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_processor_ref', (q) => q.eq('processor', 'telegram_stars'))
+      .take(1000);
+    let valued = 0;
+    for (const o of rows) {
+      if (o.status !== 'paid' || o.valueMinor !== undefined || o.currency !== STARS_CURRENCY) {
+        continue;
+      }
+      await ctx.db.patch(o._id, await starsOrderValue(ctx.db, o.amountCents));
+      valued++;
+    }
+    return { valued };
+  },
+});
+
 async function grantOrder(
   ctx: MutationCtx,
   order: Doc<'billingOrders'>,
@@ -775,6 +822,9 @@ async function grantOrder(
   if (order.kind === 'gift') {
     const codes = g.giftCodes ?? [];
     await ctx.db.patch(order._id, {
+      ...(order.currency === STARS_CURRENCY
+        ? await starsOrderValue(ctx.db, order.amountCents)
+        : {}),
       status: 'paid',
       directPayment: undefined,
       paidAt: now,

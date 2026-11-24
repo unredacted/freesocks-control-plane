@@ -372,3 +372,124 @@ describe('Telegram Stars orders', () => {
     });
   });
 });
+
+const newTest = () => convexTest(schema, modules);
+
+describe('Stars orders in the billing currency', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const pay = (
+    t: ReturnType<typeof convexTest>,
+    orderRef: string,
+    totalAmount: number,
+    id: string,
+  ) =>
+    t.action(internal.billing.ingestStarsPayment, {
+      orderRef,
+      chargeId: id,
+      totalAmount,
+      currency: 'XTR',
+      event: 'paid',
+    });
+  const orderOf = (t: ReturnType<typeof newTest>, orderRef: string) =>
+    t.run((ctx) =>
+      ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
+        .unique(),
+    );
+  const revenue = (t: ReturnType<typeof convexTest>) =>
+    t.query(internal.adminApi.billingRevenueSeries, {
+      sinceMs: Date.now() - 3_600_000,
+      untilMs: Date.now() + 3_600_000,
+    });
+
+  test('a paid Stars order records its USD value at the Stars rate then', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { orderRef, totalStars } = await starsBotOrder(t);
+    expect((await orderOf(t, orderRef))?.valueMinor).toBeUndefined();
+    await pay(t, orderRef, totalStars, 'ch_value');
+    // 1,400 Stars at the default 13.00 USD per 1,000 Stars.
+    let order = await orderOf(t, orderRef);
+    expect(order?.valueMinor).toBe(1820);
+    expect(order?.valueCurrency).toBe('USD');
+
+    // A later rate edit never moves a recorded value.
+    await t.mutation(internal.telegramAdmin.setConfig, { starsValuePer1000: 2000 });
+    order = await orderOf(t, orderRef);
+    expect(order?.valueMinor).toBe(1820);
+  });
+
+  test('the revenue chart sums Stars orders at their value; unvalued ones stay out until backfilled', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const a = await starsBotOrder(t);
+    await pay(t, a.orderRef, a.totalStars, 'ch_a');
+    // A Stars order paid before values were recorded.
+    const old = await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'telegram_stars',
+        channel: 'telegram',
+        opaqueRef: 'd'.repeat(32),
+        processorRef: 'ch_old',
+        durationDays: 90,
+        amountCents: 700,
+        donationCents: 0,
+        currency: 'XTR',
+        status: 'paid',
+        paidAt: Date.now() - 60_000,
+        kind: 'gift',
+        quantity: 1,
+        updatedAt: Date.now(),
+      }),
+    );
+
+    let r = await revenue(t);
+    expect(r.totals.giftCents).toBe(1820);
+    expect(r.totals.donationCents).toBe(0);
+    expect(r.convertedOrders).toBe(1);
+    expect(r.otherCurrencyOrders).toBe(1);
+
+    await t.mutation(internal.telegramAdmin.setConfig, { starsValuePer1000: 1500 });
+    expect(await t.mutation(internal.billing.backfillStarsOrderValues, {})).toEqual({ valued: 1 });
+    expect(await t.mutation(internal.billing.backfillStarsOrderValues, {})).toEqual({ valued: 0 });
+    const valued = await t.run((ctx) => ctx.db.get(old));
+    expect(valued?.valueMinor).toBe(1050);
+    expect(valued?.valueCurrency).toBe('USD');
+
+    r = await revenue(t);
+    expect(r.totals.giftCents).toBe(1820 + 1050);
+    expect(r.totals.totalCents).toBe(1820 + 1050);
+    expect(r.convertedOrders).toBe(2);
+    expect(r.otherCurrencyOrders).toBe(0);
+  });
+
+  test('the admin orders list carries the value', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const { orderRef, totalStars } = await starsBotOrder(t, 1);
+    await pay(t, orderRef, totalStars, 'ch_list');
+    const overview = await t.query(internal.adminApi.billingOverview, {});
+    const row = overview.orders.find((o) => o.processor === 'telegram_stars');
+    expect(row).toMatchObject({
+      amountCents: 700,
+      currency: 'XTR',
+      valueMinor: 910,
+      valueCurrency: 'USD',
+    });
+  });
+
+  test('the Stars rate must be a whole number of cents above zero', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    expect((await t.query(internal.telegramAdmin.view, {})).starsValuePer1000).toBe(1300);
+    for (const bad of [0, -5, 12.5]) {
+      await expect(
+        t.mutation(internal.telegramAdmin.setConfig, { starsValuePer1000: bad }),
+      ).rejects.toThrow(/starsValuePer1000/);
+    }
+    await t.mutation(internal.telegramAdmin.setConfig, { starsValuePer1000: 1450 });
+    expect((await t.query(internal.telegramAdmin.view, {})).starsValuePer1000).toBe(1450);
+  });
+});

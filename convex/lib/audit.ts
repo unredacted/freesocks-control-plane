@@ -130,6 +130,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'enabled',
     'starsEnabled',
     'starsPriceCount',
+    'starsValuePer1000',
     'usernameChanged',
     'tokenChanged',
   ],
