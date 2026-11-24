@@ -27,6 +27,34 @@ export function originHostname(label: string, zoneName: string): string {
   return `${label}.${zoneName.toLowerCase().replace(/\.$/, '')}`;
 }
 
+/**
+ * Whether a node's managed origin name is held where its backend's zone moves
+ * (docs/servers.md "Changing a backend's setup"). A name is held once
+ * something outside FCP's own records may rely on it: the node went live (members
+ * and edges reached it), an Edges origin exists for it (a protection dials the
+ * name), it was adopted (it keeps what fronts it), or it is being retired (its
+ * teardown works from what it has). Any other node has served nobody and follows
+ * the new zone in a new machine revision.
+ */
+export function originNameHeld(
+  intent: {
+    name: string;
+    formerNames?: readonly string[];
+    state: string;
+    adopted?: unknown;
+    delivery: { exposure: { everLive: boolean } };
+  },
+  frontedNodeNames: ReadonlySet<string>,
+): boolean {
+  return (
+    intent.delivery.exposure.everLive ||
+    !!intent.adopted ||
+    intent.state === 'retiring' ||
+    frontedNodeNames.has(intent.name) ||
+    (intent.formerNames ?? []).some((n) => frontedNodeNames.has(n))
+  );
+}
+
 export const originMarker = (backendSlug: string, nodeName: string): string =>
   `fcp-origin:${backendSlug}:${nodeName}`;
 

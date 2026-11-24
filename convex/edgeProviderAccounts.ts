@@ -466,17 +466,38 @@ async function edgesDependingOnDnsAccount(
 
 /**
  * What still writes DNS through this account outside its own edges: backend
- * setups whose origin names live in one of its zones, and origin-name records
- * whose write is still in flight. Either would lose the credentials its
- * records are addressed with.
+ * setups whose origin names live in one of its zones, origin-name records
+ * whose write is still in flight, and records FCP wrote through it that still
+ * stand in a zone no setup reaches any more (a zone move's old records, until
+ * each node's reconcile withdraws them: their withdrawal falls back only to an
+ * account of the setup's CURRENT zone). Any of them would lose the
+ * credentials its records are addressed with.
  */
 async function originNamesUsing(
   db: import('./_generated/server').DatabaseReader,
   id: Id<'edgeProviderAccounts'>,
 ): Promise<number> {
   let n = 0;
-  for (const setup of await db.query('panelSetups').collect())
+  const zoneNow = new Map<string, string>();
+  for (const setup of await db.query('panelSetups').collect()) {
     if (setup.originDns?.accountId === id) n++;
+    if (setup.originDns) zoneNow.set(setup.backendServerId, setup.originDns.zoneId);
+  }
+  for (const server of await db.query('backendServers').collect())
+    for (const o of await db
+      .query('backendObligations')
+      .withIndex('by_server_kind_identity', (q) =>
+        q.eq('backendServerId', server._id).eq('kind', 'dns.record'),
+      )
+      .collect())
+      if (
+        o.verb === 'create' &&
+        o.state === 'confirmed' &&
+        !!o.dns?.recordId &&
+        o.dns.accountId === id &&
+        zoneNow.get(server._id) !== o.dns.zoneId
+      )
+        n++;
   for (const state of ['pending', 'sent', 'unresolved'] as const) {
     const open = await db
       .query('backendObligations')

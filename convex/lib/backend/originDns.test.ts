@@ -5,6 +5,7 @@ import {
   originMarker,
   planRecord,
   verifyResolution,
+  originNameHeld,
 } from './originDns';
 
 const marker = originMarker('panel', 'node a');
@@ -103,5 +104,27 @@ describe('verifyResolution', () => {
         { v4: '203.0.113.7', v6: '2001:db8::1' },
       ),
     ).toBe(true);
+  });
+});
+
+describe('originNameHeld', () => {
+  const node = (over: Partial<Parameters<typeof originNameHeld>[0]> = {}) => ({
+    name: 'node-w',
+    state: 'pending',
+    delivery: { exposure: { everLive: false } },
+    ...over,
+  });
+  test('a node that served nobody follows a zone move', () => {
+    expect(originNameHeld(node(), new Set())).toBe(false);
+    expect(originNameHeld(node(), new Set(['other']))).toBe(false);
+  });
+  test('live, fronted (under its name or a former one), adopted or retiring holds the name', () => {
+    expect(originNameHeld(node({ delivery: { exposure: { everLive: true } } }), new Set())).toBe(
+      true,
+    );
+    expect(originNameHeld(node(), new Set(['node-w']))).toBe(true);
+    expect(originNameHeld(node({ formerNames: ['old-w'] }), new Set(['old-w']))).toBe(true);
+    expect(originNameHeld(node({ adopted: { at: 1 } }), new Set())).toBe(true);
+    expect(originNameHeld(node({ state: 'retiring' }), new Set())).toBe(true);
   });
 });

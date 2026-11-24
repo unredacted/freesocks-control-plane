@@ -467,7 +467,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.setup_transport_missing':
     "The profile has no transport for the new mode yet. Use Add a transport on a node's page, tagged with the group name in capitals, then add the mode.",
   'servers.origin_zone_in_use':
-    'WebSocket nodes have origin hostnames in this zone. Keep it, on this or another account, or retire those nodes first.',
+    'WebSocket nodes that are live or fronted have origin hostnames in this zone. Keep it, on this or another account, or retire those nodes first.',
   'servers.origin_account_unusable':
     'Origin hostnames need a DNS account that is on. Turn it on under Edge providers, or pick another account.',
   'servers.origin_zone_required':

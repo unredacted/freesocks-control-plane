@@ -29,6 +29,7 @@ import {
   type Stage,
 } from './lib/backend/activation';
 import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
+import { revisedForSettings } from './lib/backend/nodeRevision';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
 import { ingressRoute, type IngressMapping, type IngressRoute } from './lib/backend/ingress';
 import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
@@ -355,15 +356,6 @@ export function withVerifiedIngress<
       ? { ...o, originTransport: { ...o.originTransport, acceptsHostHeader: 'any' } }
       : o,
   );
-}
-
-function revisionsOf(intent: Intent): Revisions {
-  return {
-    machineRevision: intent.machineRevision,
-    configRevision: intent.configRevision ?? '',
-    authRevision: intent.authRevision,
-    deliveryRevision: intent.deliveryRevision ?? '',
-  };
 }
 
 // --- enrollment (the role) -------------------------------------------------------------------------
@@ -987,39 +979,6 @@ const settingsPatch = v.object({
  * dropped), a new desired hash and generation, and no activation run of the
  * old revisions left to commit.
  */
-async function revisedForSettings(
-  ctx: MutationCtx,
-  intent: Intent,
-  settings: Intent['settings'],
-  now: number,
-): Promise<Partial<Intent>> {
-  const machineRevision = intent.machineRevision + 1;
-  const evidence = retainEvidence(intent.activation.evidence, {
-    ...revisionsOf(intent),
-    machineRevision,
-  });
-  // A revision moved: no activation run of the old revisions may commit.
-  for (const r of await ctx.db
-    .query('panelActivationRuns')
-    .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
-    .collect())
-    if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-      await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-  return {
-    settings,
-    machineRevision,
-    activation: {
-      ...intent.activation,
-      evidence,
-      stage: stageAfterChange(intent.activation.stage, evidence),
-      reviewHash: undefined,
-      currentRunId: undefined,
-    },
-    desiredHash: await desiredHashOf({ observed: intent.observed, settings }),
-    generation: intent.generation + 1,
-    updatedAt: now,
-  };
-}
 
 /** Where the node is reached moved: its management address, its public v4, or a v6 it publishes. */
 function endpointMoved(intent: Intent, o: Infer<typeof observed>): boolean {
@@ -1210,6 +1169,10 @@ export const patchSettings = internalMutation({
  * one keeps whatever fronts it, a retiring one is left alone, and one that was
  * ever live is never renamed from here. None of them has served a member: the
  * node gets a new machine revision for the role to apply.
+ *
+ * A move to another zone (or none) renamed the nodes nothing relies on in the
+ * setup change itself (`backendSetup.moveUnheldOriginNames`): they are pending
+ * here and reconciled with the rest.
  *
  * Then every pending node no attempt holds is reconciled, so neither waits for
  * the sweep.
@@ -1976,6 +1939,13 @@ export const reconcile = internalAction({
       //    An adopted node fronted by an edge FCP does not run keeps its own name.
       if (isWs(shape) && !c.intent.adopted?.externallyFronted) {
         if (!c.hostname) {
+          // A name it had (its backend's zone was taken away) is withdrawn
+          // first, through its own obligation: nothing FCP wrote stays behind.
+          const gone = await ctx.runAction(internal.nodeIntentOps.ensureOriginDns, f);
+          if (gone.state === 'unresolved') {
+            await stop('pending', 'servers.obligation_unresolved');
+            return null;
+          }
           await stop('blocked', 'servers.origin_hostname_missing');
           return null;
         }
