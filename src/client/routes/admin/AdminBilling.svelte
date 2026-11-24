@@ -831,7 +831,10 @@
       {/if}
     </section>
 
-    <TelegramBotCard durations={(billing.data?.config.durations ?? []).map((d) => d.months)} />
+    <TelegramBotCard
+      durations={(billing.data?.config.durations ?? []).map((d) => d.months)}
+      currency={billing.data?.config.currency ?? 'USD'}
+    />
 
     <!-- Processor credentials: DB-stored (an env var is the fallback). Secret
          fields are WRITE-ONLY - the server never returns them; a blank box is
@@ -1092,6 +1095,14 @@
               {o.processor === 'telegram_stars' ? 'Telegram Stars' : o.processor}
             </span>
             <span class="tabular-nums">{formatMoney(o.amountCents, o.currency)}</span>
+            {#if o.valueMinor != null && o.valueCurrency}
+              <span
+                class="text-xs text-muted-foreground tabular-nums"
+                title="Value when paid, at the Stars rate then"
+              >
+                ≈ {formatMoney(o.valueMinor, o.valueCurrency)}
+              </span>
+            {/if}
             {#if o.kind === 'gift'}
               <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                 gift x{o.quantity}

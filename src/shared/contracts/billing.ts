@@ -341,6 +341,10 @@ export const AdminBillingOrder = z.object({
   /** The donation portion of amountCents (0 for a pure membership order). */
   donationCents: z.number().int().nonnegative().default(0),
   currency: z.string(),
+  /** An order paid in another unit (Telegram Stars): its value in the billing
+   *  currency when it was paid, in minor units of valueCurrency. */
+  valueMinor: z.number().int().nullable().default(null),
+  valueCurrency: z.string().nullable().default(null),
   durationDays: z.number().int(),
   processorRef: z.string().nullable(),
   createdAt: z.string().datetime(),
@@ -375,6 +379,10 @@ export const AdminBillingRevenue = z.object({
    *  currencies must never share a total) and surfaced as a count instead.
    *  Optional/defaulted for rolling-deploy compat. */
   otherCurrencyOrders: z.number().int().optional().default(0),
+  /** Paid orders in the current range paid in another unit (Telegram Stars)
+   *  and counted in the sums at the value they recorded in the billing
+   *  currency when paid. */
+  convertedOrders: z.number().int().optional().default(0),
   truncated: z.boolean(),
 });
 export type AdminBillingRevenue = z.infer<typeof AdminBillingRevenue>;

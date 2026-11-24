@@ -372,3 +372,185 @@ describe('Telegram Stars orders', () => {
     });
   });
 });
+
+const newTest = () => convexTest(schema, modules);
+
+describe('Stars orders in the billing currency', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  const pay = (t: ReturnType<typeof newTest>, orderRef: string, totalAmount: number, id: string) =>
+    t.action(internal.billing.ingestStarsPayment, {
+      orderRef,
+      chargeId: id,
+      totalAmount,
+      currency: 'XTR',
+      event: 'paid',
+    });
+  const orderOf = (t: ReturnType<typeof newTest>, orderRef: string) =>
+    t.run((ctx) =>
+      ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
+        .unique(),
+    );
+  const revenue = (t: ReturnType<typeof newTest>) =>
+    t.query(internal.adminApi.billingRevenueSeries, {
+      sinceMs: Date.now() - 3_600_000,
+      untilMs: Date.now() + 3_600_000,
+    });
+  // Save the Stars rate and let the backfill it schedules run.
+  const setRate = async (t: ReturnType<typeof newTest>, starsValuePer1000: number) => {
+    await t.mutation(internal.telegramAdmin.setConfig, { starsValuePer1000 });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  };
+  // A paid Stars order from before values were recorded.
+  const legacyPaid = (t: ReturnType<typeof newTest>, processorRef: string, stars = 700) =>
+    t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'telegram_stars',
+        channel: 'telegram',
+        opaqueRef: processorRef.padEnd(32, '0'),
+        processorRef,
+        durationDays: 90,
+        amountCents: stars,
+        donationCents: 0,
+        currency: 'XTR',
+        status: 'paid',
+        paidAt: Date.now() - 60_000,
+        kind: 'gift',
+        quantity: 1,
+        updatedAt: Date.now(),
+      }),
+    );
+
+  test('a paid Stars order records its USD value at the Stars rate then', async () => {
+    const t = newTest();
+    await seed(t);
+    const { orderRef, totalStars } = await starsBotOrder(t);
+    expect((await orderOf(t, orderRef))?.valueMinor).toBeUndefined();
+    await pay(t, orderRef, totalStars, 'ch_value');
+    // 1,400 Stars at the default 13.00 USD per 1,000 Stars.
+    let order = await orderOf(t, orderRef);
+    expect(order?.valueMinor).toBe(1820);
+    expect(order?.valueCurrency).toBe('USD');
+
+    // A later rate edit never moves a recorded value.
+    await setRate(t, 2000);
+    order = await orderOf(t, orderRef);
+    expect(order?.valueMinor).toBe(1820);
+  });
+
+  test('the revenue chart sums Stars orders at their value; unvalued ones stay out until backfilled', async () => {
+    const t = newTest();
+    await seed(t);
+    const a = await starsBotOrder(t);
+    await pay(t, a.orderRef, a.totalStars, 'ch_a');
+    const old = await legacyPaid(t, 'ch_old');
+
+    let r = await revenue(t);
+    expect(r.totals.giftCents).toBe(1820);
+    expect(r.totals.donationCents).toBe(0);
+    expect(r.convertedOrders).toBe(1);
+    expect(r.otherCurrencyOrders).toBe(1);
+
+    // Saving a rate schedules the backfill; a deploy's run afterwards is a no-op.
+    await setRate(t, 1500);
+    expect(await t.action(internal.billing.backfillStarsOrderValues, {})).toEqual({ valued: 0 });
+    const valued = await t.run((ctx) => ctx.db.get(old));
+    expect(valued?.valueMinor).toBe(1050);
+    expect(valued?.valueCurrency).toBe('USD');
+
+    r = await revenue(t);
+    expect(r.totals.giftCents).toBe(1820 + 1050);
+    expect(r.totals.totalCents).toBe(1820 + 1050);
+    expect(r.convertedOrders).toBe(2);
+    expect(r.otherCurrencyOrders).toBe(0);
+  });
+
+  test('the backfill reaches orders past its first page', async () => {
+    const t = newTest();
+    await seed(t);
+    // A full page of Stars orders that need nothing, sorting before the one that does.
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 520; i++) {
+        await ctx.db.insert('billingOrders', {
+          processor: 'telegram_stars',
+          channel: 'telegram',
+          opaqueRef: `e${i}`.padEnd(32, '0'),
+          processorRef: `a${String(i).padStart(4, '0')}`,
+          durationDays: 90,
+          amountCents: 700,
+          donationCents: 0,
+          currency: 'XTR',
+          status: i % 2 ? 'paid' : 'pending',
+          ...(i % 2 ? { paidAt: Date.now(), valueMinor: 910, valueCurrency: 'USD' } : {}),
+          kind: 'gift',
+          quantity: 1,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+    const late = await legacyPaid(t, 'z_late', 1000);
+    expect(await t.action(internal.billing.backfillStarsOrderValues, {})).toEqual({ valued: 1 });
+    expect((await t.run((ctx) => ctx.db.get(late)))?.valueMinor).toBe(1300);
+  });
+
+  test('outside USD an unsaved rate values nothing; saving one values the orders paid meanwhile', async () => {
+    const t = newTest();
+    await seed(t);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'billing.membership.currency',
+        value: JSON.stringify('EUR'),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect((await t.query(internal.telegramAdmin.view, {})).starsValuePer1000).toBeNull();
+    const { orderRef, totalStars } = await starsBotOrder(t);
+    await pay(t, orderRef, totalStars, 'ch_eur');
+    // Never a USD number labelled EUR.
+    expect((await orderOf(t, orderRef))?.valueMinor).toBeUndefined();
+    expect(await t.action(internal.billing.backfillStarsOrderValues, {})).toEqual({ valued: 0 });
+    expect((await revenue(t)).otherCurrencyOrders).toBe(1);
+
+    await setRate(t, 1200);
+    const order = await orderOf(t, orderRef);
+    expect(order?.valueMinor).toBe(1680);
+    expect(order?.valueCurrency).toBe('EUR');
+    expect((await revenue(t)).convertedOrders).toBe(1);
+  });
+
+  test('the admin orders list carries the value', async () => {
+    const t = newTest();
+    await seed(t);
+    const { orderRef, totalStars } = await starsBotOrder(t, 1);
+    await pay(t, orderRef, totalStars, 'ch_list');
+    const overview = await t.query(internal.adminApi.billingOverview, {});
+    const row = overview.orders.find((o) => o.processor === 'telegram_stars');
+    expect(row).toMatchObject({
+      amountCents: 700,
+      currency: 'XTR',
+      valueMinor: 910,
+      valueCurrency: 'USD',
+    });
+  });
+
+  test('the Stars rate must be a whole number of cents above zero', async () => {
+    const t = newTest();
+    await seed(t);
+    expect((await t.query(internal.telegramAdmin.view, {})).starsValuePer1000).toBe(1300);
+    for (const bad of [0, -5, 12.5]) {
+      await expect(
+        t.mutation(internal.telegramAdmin.setConfig, { starsValuePer1000: bad }),
+      ).rejects.toThrow(/starsValuePer1000/);
+    }
+    await setRate(t, 1450);
+    expect((await t.query(internal.telegramAdmin.view, {})).starsValuePer1000).toBe(1450);
+  });
+});

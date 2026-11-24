@@ -1392,6 +1392,13 @@ export default defineSchema({
     // the grant path + admin billing log can report how much was donated.
     donationCents: v.optional(v.number()),
     currency: v.string(),
+    // What an order paid in another unit was worth in the billing currency
+    // when it was paid (minor units of `valueCurrency`): a Telegram Stars order
+    // at the shop's Stars rate (`telegram.stars.valuePer1000`). The revenue
+    // chart sums it with the orders paid in the billing currency. Absent on
+    // orders paid in the billing currency itself.
+    valueMinor: v.optional(v.number()),
+    valueCurrency: v.optional(v.string()),
     status: billingOrderStatus,
     paidAt: v.optional(v.number()),
     // The fraction of the invoice actually delivered, in the paid asset (e.g.

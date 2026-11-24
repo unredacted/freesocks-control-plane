@@ -10,10 +10,11 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
-import { resolveProcessorSecrets } from './lib/billingConfig';
+import { resolveBillingConfig, resolveProcessorSecrets } from './lib/billingConfig';
 import { randomHex } from './lib/crypto';
 import {
   botIdOf,
+  effectiveStarsRate,
   resolveTelegramConfig,
   resolveTelegramSecrets,
   telegramConfigWrites,
@@ -34,6 +35,12 @@ export interface TelegramAdminView {
   botUsername: string;
   starsEnabled: boolean;
   starsPrices: StarsPrice[];
+  /**
+   * The Stars rate in force (minor units of the billing currency per 1,000
+   * Stars): the saved one, else Telegram's USD rate when billing is in USD,
+   * else null (none yet: Stars orders get no value until one is saved).
+   */
+  starsValuePer1000: number | null;
   tokenSet: boolean;
   secretSet: boolean;
   /** Where the webhook must point (null while PUBLIC_BASE_URL is unset). */
@@ -43,14 +50,16 @@ export interface TelegramAdminView {
 export const view = internalQuery({
   args: {},
   handler: async (ctx): Promise<TelegramAdminView> => {
-    const [cfg, secrets, tgSecrets] = await Promise.all([
+    const [cfg, secrets, tgSecrets, billing] = await Promise.all([
       resolveTelegramConfig(ctx.db),
       resolveProcessorSecrets(ctx.db),
       resolveTelegramSecrets(ctx.db),
+      resolveBillingConfig(ctx.db),
     ]);
     const base = (secrets.publicBaseUrl ?? '').replace(/\/$/, '');
     return {
       ...cfg,
+      starsValuePer1000: effectiveStarsRate(cfg, billing.currency),
       tokenSet: tgSecrets.botToken !== '',
       secretSet: tgSecrets.webhookSecret !== '',
       webhookUrl: base ? `${base}${WEBHOOK_PATH}` : null,
@@ -85,6 +94,7 @@ export const setConfig = internalMutation({
     botUsername: v.optional(v.string()),
     starsEnabled: v.optional(v.boolean()),
     starsPrices: v.optional(v.array(v.object({ months: v.number(), stars: v.number() }))),
+    starsValuePer1000: v.optional(v.number()),
     termsUrl: v.optional(v.string()),
     botToken: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
@@ -130,6 +140,11 @@ export const setConfig = internalMutation({
       await upsertSettingRow(ctx, w.key, JSON.stringify(w.value), actorAdminId);
     }
     const next = await resolveTelegramConfig(ctx.db);
+    // A saved rate values the paid Stars orders still without one (paid
+    // while no rate was set outside USD).
+    if (writes.some((w) => w.key === TELEGRAM_KEYS.starsValuePer1000)) {
+      await ctx.scheduler.runAfter(0, internal.billing.backfillStarsOrderValues, {});
+    }
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -139,6 +154,7 @@ export const setConfig = internalMutation({
         enabled: next.enabled,
         starsEnabled: next.starsEnabled,
         starsPriceCount: next.starsPrices.length,
+        starsValuePer1000: next.starsValuePer1000,
         usernameChanged: next.botUsername !== cur.botUsername,
         tokenChanged: writes.some((w) => w.key === TELEGRAM_SECRET_KEYS.botToken),
       },

@@ -4065,6 +4065,9 @@ http.route({
         ...(typeof body.botUsername === 'string' ? { botUsername: body.botUsername } : {}),
         ...(typeof body.botToken === 'string' ? { botToken: body.botToken } : {}),
         ...(typeof body.termsUrl === 'string' ? { termsUrl: body.termsUrl } : {}),
+        ...(typeof body.starsValuePer1000 === 'number'
+          ? { starsValuePer1000: body.starsValuePer1000 }
+          : {}),
         ...(prices ? { starsPrices: prices } : {}),
         actorAdminId: admin.adminUserId,
       });

@@ -14,6 +14,7 @@
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
   import { adminTelegramQuery, queryKeys } from '../../lib/queries';
+  import { formatMoney } from '../../lib/i18n/format';
   import {
     AdminTelegramConfig,
     AdminTelegramWebhook,
@@ -23,8 +24,10 @@
   interface Props {
     /** The membership durations in the billing catalog (months). */
     durations: number[];
+    /** The billing currency, which the Stars rate is set in. */
+    currency: string;
   }
-  let { durations }: Props = $props();
+  let { durations, currency }: Props = $props();
 
   const qc = useQueryClient();
   const q = adminTelegramQuery();
@@ -37,6 +40,8 @@
   let botToken = $state('');
   let starsEnabled = $state(false);
   let termsUrl = $state('');
+  // What 1,000 Stars are worth, as typed in the billing currency ('13.00').
+  let valuePer1000 = $state('');
   // Stars per code, by months, as typed ('' = not sold for Stars).
   let stars = $state<Record<number, string>>({});
   let init = $state(false);
@@ -46,6 +51,8 @@
       botUsername = view.botUsername;
       starsEnabled = view.starsEnabled;
       termsUrl = view.termsUrl;
+      valuePer1000 =
+        view.starsValuePer1000 === null ? '' : (view.starsValuePer1000 / 100).toFixed(2);
       stars = Object.fromEntries(view.starsPrices.map((p) => [p.months, String(p.stars)]));
       init = true;
     }
@@ -82,15 +89,41 @@
     const starsPrices = durations
       .map((months) => ({ months, stars: Number(stars[months] ?? '') }))
       .filter((p) => (stars[p.months] ?? '').trim() !== '' && Number.isFinite(p.stars));
+    const rate = rateCents(valuePer1000);
+    // Blank keeps "no rate" only while none is in force; anything else must
+    // be a real amount, never silently dropped from the save.
+    const keepNoRate = valuePer1000.trim() === '' && view?.starsValuePer1000 === null;
+    if (!keepNoRate && !(Number.isFinite(rate) && rate >= 1)) {
+      toast.error('Enter what 1,000 Stars are worth', {
+        description: `An amount in ${currency} above zero, like 13.00.`,
+      });
+      return;
+    }
     save.mutate({
       enabled,
       botUsername: botUsername.trim(),
       starsEnabled,
       starsPrices,
       termsUrl: termsUrl.trim(),
+      ...(keepNoRate ? {} : { starsValuePer1000: rate }),
       ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
     });
   }
+
+  // The typed rate in minor units; NaN while blank or not a number.
+  const rateCents = (text: string): number => {
+    const t = text.trim();
+    return t ? Math.round(Number(t) * 100) : NaN;
+  };
+  // A code's value at the typed rate, shown under its Stars price.
+  const valueOf = (starsText: string | undefined): string | null => {
+    const n = Number((starsText ?? '').trim());
+    const rate = rateCents(valuePer1000);
+    if (!(starsText ?? '').trim() || !Number.isFinite(n) || n <= 0 || !Number.isFinite(rate)) {
+      return null;
+    }
+    return formatMoney(Math.round((n * rate) / 1000), currency);
+  };
 
   const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '');
   const mismatch = $derived(
@@ -202,10 +235,30 @@
             oninput={(e) =>
               (stars = { ...stars, [months]: (e.currentTarget as HTMLInputElement).value })}
           />
+          {#if valueOf(stars[months])}
+            <span class="block text-[11px] text-muted-foreground tabular-nums">
+              ≈ {valueOf(stars[months])} to you
+            </span>
+          {/if}
         </label>
       {/each}
     </div>
   </div>
+
+  <label class="block max-w-xs space-y-1">
+    <span class="text-xs text-muted-foreground">
+      What 1,000 Stars are worth to you, in {currency}. Each Stars order records its {currency} value
+      at this rate when it is paid, for the revenue chart and the orders list. Telegram's payout rate
+      is 13.00 USD per 1,000 Stars.
+    </span>
+    <Input inputmode="decimal" placeholder="13.00" bind:value={valuePer1000} autocomplete="off" />
+    {#if view && view.starsValuePer1000 === null}
+      <span class="block text-xs text-amber-600">
+        No rate in {currency} yet: Stars orders are left out of the revenue totals until you save one.
+        Saving it values the orders already paid.
+      </span>
+    {/if}
+  </label>
 
   <div class="flex flex-wrap justify-end gap-2">
     <Button

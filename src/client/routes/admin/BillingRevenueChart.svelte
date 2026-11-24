@@ -124,6 +124,13 @@
       {:else}
         <p class="text-muted-foreground">No paid orders in this range.</p>
       {/if}
+      {#if r.convertedOrders > 0}
+        <p class="text-xs text-muted-foreground">
+          Includes {r.convertedOrders} Telegram Stars order{r.convertedOrders === 1 ? '' : 's'},
+          counted at {r.convertedOrders === 1 ? 'its' : 'their'}
+          {r.currency} value when paid (the Stars rate on the Telegram gift shop card).
+        </p>
+      {/if}
       {#if r.otherCurrencyOrders > 0}
         <p class="text-xs text-amber-600">
           {r.otherCurrencyOrders} paid order{r.otherCurrencyOrders === 1 ? '' : 's'} in this range settled

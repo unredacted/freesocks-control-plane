@@ -812,6 +812,9 @@ export const AdminTelegramConfig = z.object({
   botUsername: z.string(),
   starsEnabled: z.boolean(),
   starsPrices: z.array(AdminTelegramStarsPrice),
+  /** What 1,000 Stars are worth, in minor units of the billing currency; null
+   *  while none is in force (never saved, billing not in USD). */
+  starsValuePer1000: z.number().int().nullable().default(null),
   termsUrl: z.string().default(''),
   tokenSet: z.boolean(),
   secretSet: z.boolean(),
@@ -825,6 +828,7 @@ export const AdminTelegramPatch = z.object({
   botUsername: z.string().optional(),
   starsEnabled: z.boolean().optional(),
   starsPrices: z.array(AdminTelegramStarsPrice).optional(),
+  starsValuePer1000: z.number().int().optional(),
   termsUrl: z.string().optional(),
   /** Write-only: omit or leave blank to keep the saved token. */
   botToken: z.string().optional(),

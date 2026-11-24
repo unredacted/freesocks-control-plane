@@ -1954,6 +1954,9 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
     quantity: o.quantity ?? 1,
     donationCents: o.donationCents ?? 0,
     currency: o.currency,
+    // Its value in the billing currency when paid (a Telegram Stars order).
+    valueMinor: o.valueMinor ?? null,
+    valueCurrency: o.valueCurrency ?? null,
     durationDays: o.durationDays,
     processorRef: o.processorRef ?? null,
     createdAt: iso(o._creationTime),
@@ -2006,14 +2009,22 @@ export const billingRevenueSeries = internalQuery({
       )
       .order('desc')
       .take(REVENUE_SCAN_CAP);
-    // One chart, one unit: only orders in the CONFIGURED currency are summed.
-    // Minor units of different currencies must never share a total, so orders
-    // settled under an older billing currency are counted out separately and
-    // surfaced instead of being silently mislabeled.
-    const inRange = rows.filter((o) => o.currency === config.currency);
-    const otherCurrencyOrders = rows.length - inRange.length;
-    const current = inRange.filter((o) => (o.paidAt as number) >= since);
-    const previous = inRange.filter((o) => (o.paidAt as number) < since);
+    // One chart, one unit: only amounts in the CONFIGURED currency are summed.
+    // Minor units of different currencies must never share a total, so an
+    // order paid in another unit counts only through the value it recorded in
+    // this currency when it was paid (a Telegram Stars order); the rest
+    // (orders settled under an older billing currency) are counted out
+    // separately and surfaced instead of being silently mislabeled.
+    const valued = rows.flatMap((o) => {
+      if (o.currency === config.currency) return [{ o, amount: o.amountCents, converted: false }];
+      if (o.valueCurrency === config.currency && o.valueMinor !== undefined) {
+        return [{ o, amount: o.valueMinor, converted: true }];
+      }
+      return [];
+    });
+    const otherCurrencyOrders = rows.length - valued.length;
+    const current = valued.filter(({ o }) => (o.paidAt as number) >= since);
+    const previous = valued.filter(({ o }) => (o.paidAt as number) < since);
 
     const n = Math.ceil((until - since) / bucketMs);
     const buckets = Array.from({ length: n }, (_, i) => ({
@@ -2022,9 +2033,15 @@ export const billingRevenueSeries = internalQuery({
       giftCents: 0,
       donationCents: 0,
     }));
-    const split = (o: Doc<'billingOrders'>) => {
-      const donation = o.kind === 'donation' ? o.amountCents : (o.donationCents ?? 0);
-      const rest = Math.max(0, o.amountCents - donation);
+    // `amount` is the order in the chart's currency. A converted order (paid
+    // in Stars) never carries a donation, so its donation share is 0.
+    const split = ({ o, amount, converted }: (typeof valued)[number]) => {
+      const donation = converted
+        ? 0
+        : o.kind === 'donation'
+          ? o.amountCents
+          : (o.donationCents ?? 0);
+      const rest = Math.max(0, amount - donation);
       return {
         donation,
         membership: o.kind === 'gift' || o.kind === 'donation' ? 0 : rest,
@@ -2032,8 +2049,9 @@ export const billingRevenueSeries = internalQuery({
       };
     };
     const totals = { membershipCents: 0, giftCents: 0, donationCents: 0, orders: current.length };
-    for (const o of current) {
-      const s = split(o);
+    for (const row of current) {
+      const { o } = row;
+      const s = split(row);
       totals.membershipCents += s.membership;
       totals.giftCents += s.gift;
       totals.donationCents += s.donation;
@@ -2043,7 +2061,9 @@ export const billingRevenueSeries = internalQuery({
       b.giftCents += s.gift;
       b.donationCents += s.donation;
     }
-    const previousTotalCents = previous.reduce((sum, o) => sum + o.amountCents, 0);
+    const previousTotalCents = previous.reduce((sum, r) => sum + r.amount, 0);
+    // Orders in the sums at their recorded value (paid in Telegram Stars).
+    const convertedOrders = current.filter((r) => r.converted).length;
 
     return {
       sinceMs: since,
@@ -2057,6 +2077,7 @@ export const billingRevenueSeries = internalQuery({
         previousTotalCents,
       },
       otherCurrencyOrders,
+      convertedOrders,
       truncated: rows.length >= REVENUE_SCAN_CAP,
     };
   },
