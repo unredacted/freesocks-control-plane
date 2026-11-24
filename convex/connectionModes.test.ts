@@ -717,7 +717,14 @@ describe('admin CRUD', () => {
     const t = convexTest(schema, modules);
     const turnOn = () =>
       t.mutation(internal.connectionModes.updateMode, { slug: 'privacy-hysteria', enabled: true });
-    // The defaults claim it for no app: refused, and it says why.
+    // The catalog's own apps: none marked (here, one app that is untested).
+    await t.mutation(internal.clients.create, {
+      name: 'Untested',
+      platforms: ['android'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://untested.example',
+    });
+    // No app claims it: refused, and it says why.
     await expect(turnOn()).rejects.toThrow(/no enabled app has recorded Hysteria support/);
     // An app marked so, but disabled, does not count.
     const app = await t.mutation(internal.clients.create, {
@@ -744,6 +751,14 @@ describe('admin CRUD', () => {
     // Another mode is never held to it.
     await t.mutation(internal.connectionModes.updateMode, {
       slug: 'privacy-reality',
+      enabled: true,
+    });
+  });
+
+  test('the default catalog (v2rayNG and v2rayN recorded) lets the Hysteria mode turn on', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.connectionModes.updateMode, {
+      slug: 'privacy-hysteria',
       enabled: true,
     });
   });

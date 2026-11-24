@@ -184,20 +184,20 @@ describe('the apps it names', () => {
   });
 
   test('on a Hysteria mode only apps with Hysteria evidence are named, untested ones never', () => {
-    // The defaults carry no evidence yet: nothing is named rather than a guess.
+    // With no app evidenced, nothing is named rather than a guess.
+    const none = DEFAULT_CLIENTS.map((c) => ({ ...c, hysteria2: undefined }));
     expect(
-      noticeApps(DEFAULT_CLIENTS, {
+      noticeApps(none, {
         backend: 'remnawave',
         modeId: 'privacy-hysteria',
         notice: OLD,
       }),
     ).toEqual([]);
-    const evidenced = DEFAULT_CLIENTS.map((c) =>
-      c.name === 'v2rayNG' ? { ...c, hysteria2: true } : c,
-    );
+    // The defaults: v2rayNG and v2rayN are recorded.
+    const evidenced = DEFAULT_CLIENTS;
     expect(
       noticeApps(evidenced, { backend: 'remnawave', modeId: 'privacy-hysteria', notice: OLD }),
-    ).toEqual(['v2rayNG']);
+    ).toEqual(['v2rayNG', 'v2rayN']);
     // Another mode is not narrowed by the flag.
     expect(
       noticeApps(evidenced, { backend: 'remnawave', modeId: 'privacy-reality', notice: OLD }),

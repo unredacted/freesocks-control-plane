@@ -1,1 +1,42 @@
-[]
+[
+  {
+    "client": "v2rayNG",
+    "appVersion": "2.3.15",
+    "os": "Android 14 (emulator, API 34)",
+    "backendVersion": "3.4.11",
+    "fcpCommit": "2c57cdfbd2abddb54682168d63e0a1ac8c3e5a4e",
+    "testedAt": "2026-11-23T23:54:13.000Z",
+    "testedBy": "CI: Hysteria in real apps",
+    "evidence": "https://github.com/unredacted/freesocks-control-plane/actions/runs/45291494743",
+    "import": "passed",
+    "connection": "passed",
+    "dns": "passed",
+    "https": "passed",
+    "refresh": "passed",
+    "hysteria2": {
+      "rawImport": "passed",
+      "udp": "passed",
+      "wrongPinRefused": "passed"
+    }
+  },
+  {
+    "client": "v2rayN",
+    "appVersion": "7.25.6",
+    "os": "Ubuntu 24.04",
+    "backendVersion": "3.4.11",
+    "fcpCommit": "2c57cdfbd2abddb54682168d63e0a1ac8c3e5a4e",
+    "testedAt": "2026-11-24T00:39:18.000Z",
+    "testedBy": "CI: Hysteria in real apps",
+    "evidence": "https://github.com/unredacted/freesocks-control-plane/actions/runs/45297715968",
+    "import": "passed",
+    "connection": "passed",
+    "dns": "passed",
+    "https": "passed",
+    "refresh": "passed",
+    "hysteria2": {
+      "rawImport": "passed",
+      "udp": "passed",
+      "wrongPinRefused": "passed"
+    }
+  }
+]
