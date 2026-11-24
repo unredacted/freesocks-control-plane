@@ -32,13 +32,30 @@ snap() { # fixture only: a beta screen shows the node's name and address
   import -window root "$OUT/$(printf '%02d-%s' "$step" "$1").png" 2>/dev/null || true
 }
 db() { python3 "$DIR/v2rayn_db.py" "$DATA" "$@"; }
-log() { if [ "$HY_KIND" = fixture ]; then cat >>"$OUT/app.log"; else cat >/dev/null; fi; }
+# The app's own output: kept with the results for the fixture only (on beta it
+# names the node), read through scrub.py when a step fails there.
+APP_LOG="$HY_WORK/app.log"
 start_app() {
-  /usr/bin/v2rayn 2>&1 </dev/null | log &
+  /usr/bin/v2rayn >>"$APP_LOG" 2>&1 </dev/null &
 }
-stop_app() { # the app and the core it started, nothing else (the fixture's servers run Xray too)
-  pkill -u "$(id -u)" -f '^/opt/v2rayN/' 2>/dev/null || true
-  sleep 3
+# stop_app: the app and the cores it started, nothing else (the fixture's
+# servers run Xray too). The cores run from the app's data folder, not from
+# /opt: one left running keeps the listener's port from the next start.
+stop_app() {
+  pkill -u "$(id -u)" -f "^/opt/v2rayN/|^$DATA/bin/" 2>/dev/null || true
+  local end=$((SECONDS + 20))
+  while bash -c 'exec 3<>/dev/tcp/127.0.0.1/10808' 2>/dev/null; do
+    ((SECONDS > end)) && { echo 'the listener port stayed taken'; break; }
+    sleep 1
+  done
+  sleep 1
+}
+# why_not (beta): what the app and its core said, every address and name
+# masked, and which of its processes run (fixture runs keep the whole log).
+why_not() {
+  [ "$HY_KIND" = beta ] || return 0
+  echo "processes: $(pgrep -u "$(id -u)" -f "^/opt/v2rayN/|^$DATA/bin/" -a | sed -E 's|^[0-9]+ ||; s|/home/[^ ]*/|~/|g' | tr '\n' ';')"
+  python3 "$DIR/scrub.py" "$HY_NAMES" "$APP_LOG" "$DATA"/guiLogs/*.txt
 }
 wait_for() { # wait_for <seconds> <command...>
   local end=$((SECONDS + $1))
@@ -73,7 +90,11 @@ run_udp() {
   db select '· UDP$' || { echo 'no · UDP server'; return 1; }
   start_app
   # The app's listener up, then a moment for the core behind it.
-  wait_for 45 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10808' || { echo 'no listener on 10808'; return 1; }
+  wait_for 45 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10808' || {
+    echo 'no listener on 10808'
+    why_not
+    return 1
+  }
   sleep 6
   snap running
 }
@@ -142,7 +163,10 @@ if $refused && fetch_sub "$HY_ROGUE_CONTROL_URL" "$HY_WORK/app-names-control.txt
 fi
 stop_app
 # The app's own logs, for a failed step (fixture data only).
-[ "$HY_KIND" = fixture ] && cp -r "$DATA/guiLogs" "$OUT/guiLogs" 2>/dev/null
+if [ "$HY_KIND" = fixture ]; then
+  cp -r "$DATA/guiLogs" "$OUT/guiLogs" 2>/dev/null
+  cp "$APP_LOG" "$OUT/app.log" 2>/dev/null
+fi
 
 pairs=()
 keys=(rawImport import connection udp refresh wrongPinRefused rogueRefused)
