@@ -101,6 +101,12 @@ crons.daily(
   {},
 );
 crons.daily(
+  'retention-telegram-updates',
+  { hourUTC: 4, minuteUTC: 7 },
+  internal.telegramBot.sweepUpdates,
+  {},
+);
+crons.daily(
   'retention-tier-history',
   { hourUTC: 4, minuteUTC: 10 },
   internal.retention.sweepTierHistory,

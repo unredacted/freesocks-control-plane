@@ -400,7 +400,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   checkout takes `orderKind:'gift'` + a `quantity` (1–50) and mints that many shareable,
   hash-only redemption codes bound to the buyer; the plaintexts reveal once
   (`GiftRevealModal`) and the `billing-gift-reveal-sweep` cron clears any un-acknowledged
-  buffer (see `docs/billing.md`). **Code-complete (NOWPayments + BTCPay; Stripe/PayPal
+  buffer (see `docs/billing.md`). **Telegram gift shop** (`convex/telegramBot.ts`,
+  dormant): a bot that sells gift codes only, for Telegram Stars only (Telegram's rule for digital goods);
+  userless `channel:'telegram'` orders whose codes are bound to nobody, in-chat
+  delivery, no chat stored (`docs/billing.md` § "Telegram gift shop"). **Code-complete (NOWPayments + BTCPay; Stripe/PayPal
   scaffolded behind admin toggles) and DORMANT until switched on** — `billingConfig` ships every rail
   `enabled:false` with placeholder prices, so no billing is active until an admin sets keys/prices and
   enables a rail. "Live" elsewhere in this file means _the code path is production-ready_, not that the

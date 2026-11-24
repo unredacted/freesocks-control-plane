@@ -791,6 +791,46 @@ export const AdminAlertsPatch = z.object({
 });
 export type AdminAlertsPatch = z.infer<typeof AdminAlertsPatch>;
 
+/** Telegram gift shop (`/api/v1/admin/telegram`). The bot token and webhook
+ *  secret are env only: the view says whether each is set, never the value. */
+export const AdminTelegramStarsPrice = z.object({
+  months: z.number().int(),
+  stars: z.number().int(),
+});
+export const AdminTelegramWebhook = z.object({
+  reachable: z.boolean(),
+  pointsHere: z.boolean(),
+  set: z.boolean(),
+  pendingUpdates: z.number(),
+  lastErrorAt: z.string().nullable(),
+  lastErrorMessage: z.string().nullable(),
+  tokenUsername: z.string().nullable(),
+});
+export type AdminTelegramWebhook = z.infer<typeof AdminTelegramWebhook>;
+export const AdminTelegramConfig = z.object({
+  enabled: z.boolean(),
+  botUsername: z.string(),
+  starsEnabled: z.boolean(),
+  starsPrices: z.array(AdminTelegramStarsPrice),
+  termsUrl: z.string().default(''),
+  tokenSet: z.boolean(),
+  secretSet: z.boolean(),
+  webhookUrl: z.string().nullable(),
+  /** Telegram's view of the webhook; null while the token is unset (absent after a PATCH). */
+  webhook: AdminTelegramWebhook.nullable().optional(),
+});
+export type AdminTelegramConfig = z.infer<typeof AdminTelegramConfig>;
+export const AdminTelegramPatch = z.object({
+  enabled: z.boolean().optional(),
+  botUsername: z.string().optional(),
+  starsEnabled: z.boolean().optional(),
+  starsPrices: z.array(AdminTelegramStarsPrice).optional(),
+  termsUrl: z.string().optional(),
+  /** Write-only: omit or leave blank to keep the saved token. */
+  botToken: z.string().optional(),
+});
+export type AdminTelegramPatch = z.infer<typeof AdminTelegramPatch>;
+
 export const AdminAlertsTestResult = z.object({ ok: z.boolean(), error: z.string().nullable() });
 export type AdminAlertsTestResult = z.infer<typeof AdminAlertsTestResult>;
 

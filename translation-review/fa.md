@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**238 of 845 strings are missing** (the app currently shows English for
+**379 of 986 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -221,7 +221,7 @@ review.
 | `account.createSub` | Get my key | ساخت اشتراک |
 | `account.creating` | Creating your key… | در حال ساخت… |
 | `account.rotateTitle` | Change your account number? | شمارهٔ حساب تغییر کند؟ |
-| `account.rotateBody` | A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked. | یک شمارهٔ ۳۲ رقمی جدید ساخته و فقط یک بار نمایش داده می‌شود. شمارهٔ فعلی بلافاصله از کار می‌افتد و هر کسی که آن را دارد دسترسی‌اش را از دست می‌دهد. اگر فکر می‌کنید شماره‌تان لو رفته این کار را انجام دهید. |
+| `account.rotateBody` | A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked. All passkeys on the account will be removed, and other sessions will be signed out. | یک شمارهٔ ۳۲ رقمی جدید ساخته و فقط یک بار نمایش داده می‌شود. شمارهٔ فعلی بلافاصله از کار می‌افتد و هر کسی که آن را دارد دسترسی‌اش را از دست می‌دهد. اگر فکر می‌کنید شماره‌تان لو رفته این کار را انجام دهید. همهٔ کلیدهای عبور حساب حذف می‌شوند و نشست‌های دیگر پایان می‌یابند. |
 | `account.rotateConfirm` | Yes, change it | بله، تغییر بده |
 | `account.rotating` | Rotating… | در حال تغییر… |
 | `account.rotateFailedTitle` | Could not change the account number | تغییر شمارهٔ حساب ناموفق بود |
@@ -331,7 +331,7 @@ review.
 | `hero.resetsInDays [countPlural=one]` | Resets in 1 day | ۱ روز دیگه ریست میشه |
 | `hero.resetsInDays [countPlural=other]` | Resets in {count} days | مقدار را در {count} روز تنظیم مجدد می‌کند |
 
-## `location` — Miscellaneous strings. *(2 missing)*
+## `location` — Miscellaneous strings. *(11 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -341,6 +341,15 @@ review.
 | `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | محل سرور پیکربندی شما. حالت خودکار خلوت‌ترین مکان را انتخاب می‌کند؛ اگر مکان دیگری روی شبکهٔ شما بهتر کار می‌کند، خودتان انتخابش کنید. |
 | `location.recommended` | Recommended for you | ⚠️ **MISSING** |
 | `location.pickerHintRecommended` | Automatic tries the locations recommended for your country first. Pick one yourself if another works better on your network. | ⚠️ **MISSING** |
+| `location.membersOnly` | Members | ⚠️ **MISSING** |
+| `location.current` | Current | ⚠️ **MISSING** |
+| `location.lockedTitle` | {location} is for members | ⚠️ **MISSING** |
+| `location.lockedBody` | Upgrade your membership to connect from {location}. Your key uses a location included in your plan until then. | ⚠️ **MISSING** |
+| `location.lockedCta` | See membership | ⚠️ **MISSING** |
+| `location.pickedLocked` | Members only | ⚠️ **MISSING** |
+| `location.keepsFirst` | Your free key stays in the location you picked first. Members can switch location at any time. | ⚠️ **MISSING** |
+| `location.autoShort` | Automatic | ⚠️ **MISSING** |
+| `location.autoHint` | Least busy | ⚠️ **MISSING** |
 
 ## `usage` — The 30-day usage trend under the traffic stats. *(1 missing)*
 
@@ -541,7 +550,7 @@ review.
 | `app.adminLoadFailedTitle` | Couldn't load the admin console | نتوانستم کنسول مدیریت را بارگیری کنم |
 | `app.adminLoadFailedBody` | The network request for this section failed. Reload to retry. | درخواست شبکه برای این بخش ناموفق بود. برای تلاش مجدد، دوباره بارگیری کنید. |
 
-## `footer` — The site footer (nonprofit line, terms/privacy links).
+## `footer` — The site footer (nonprofit line, terms/privacy links). *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -555,6 +564,7 @@ review.
 | `footer.socialMastodon` | FreeSocks on Mastodon | فری‌ساکس در ماستودون |
 | `footer.socialBluesky` | FreeSocks on Bluesky | فری‌ساکس در بلوسکای |
 | `footer.support` | Support | پشتیبانی |
+| `footer.telegramShop` | Gift codes on Telegram | ⚠️ **MISSING** |
 
 ## `renew` — Expiring/expired membership callouts and renewal prompts. *(4 missing)*
 
@@ -572,7 +582,7 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | اکنون در طرح رایگان هستید. برای بازگرداندن عضویت خود، از پایین تمدید کنید. |
 | `renew.renewCta` | Renew membership | تمدید عضویت |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(5 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -618,6 +628,7 @@ review.
 | `upgrade.failedBody` | Your payment did not go through, or the checkout expired. You can try again. | پرداخت شما انجام نشد یا مهلت پرداخت به پایان رسید. می‌توانید دوباره تلاش کنید. |
 | `upgrade.underpaidTitle` | Your payment arrived short | ⚠️ **MISSING** |
 | `upgrade.underpaidBody` | We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out. | ⚠️ **MISSING** |
+| `upgrade.cardReachHint` | If the payment page doesn't load, connect with your free FreeSocks key first, then try again. | ⚠️ **MISSING** |
 
 ## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming.
 
@@ -642,7 +653,7 @@ review.
 | `gift.reveal.saved` | I've saved them | من آنها را ذخیره کرده‌ام |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | کدهای شما هنوز روی صفحه هستند. اگر بدون ذخیره کردن آنها از صفحه خارج شوید، دیگر نمی‌توانید آنها را ببینید. |
 
-## `error` — API error messages shown to members. *(3 missing)*
+## `error` — API error messages shown to members. *(9 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -668,8 +679,14 @@ review.
 | `error.billing` | The payment service couldn't process this. Please try again later. | سرویس پرداخت نتوانست این را پردازش کند. لطفاً بعداً دوباره امتحان کنید. |
 | `error.serverError` | The server had a problem handling this. Please try again in a few minutes. | سرور در مدیریت این مشکل داشت. لطفاً چند دقیقه دیگر دوباره امتحان کنید. |
 | `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | حالت اتصال فعلی شما دیگر در دسترس نیست. ابتدا به حالت دیگری تغییر دهید، سپس دوباره امتحان کنید. |
-| `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
+| `error.noOtherServer` | There is no other server in this location right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
+| `error.coinMinimum` | This amount is below that coin's minimum. Pick another coin or a longer term. | ⚠️ **MISSING** |
+| `error.coinUnavailable` | That coin isn't available right now. Pick another one. | ⚠️ **MISSING** |
+| `error.locationMembersOnly` | That location is for members. Upgrade your membership to use it. | ⚠️ **MISSING** |
+| `error.locationSwitchMembership` | Changing your location is part of membership. | ⚠️ **MISSING** |
+| `error.locationUnavailable` | That location cannot take your key right now. Please try again later. | ⚠️ **MISSING** |
+| `error.locationSame` | Your key is already in that location. | ⚠️ **MISSING** |
 
 ## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(9 missing)*
 
@@ -862,7 +879,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(18 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(23 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -918,6 +935,11 @@ review.
 | `home.support.memberBodyUnlimited` | No monthly cap, faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
 | `home.support.memberBody` | Faster servers and more locations to choose from. Your payment also helps keep free accounts running. | ⚠️ **MISSING** |
 | `home.support.perMonth` | a month | ⚠️ **MISSING** |
+| `home.locations.title` | Where our servers are | ⚠️ **MISSING** |
+| `home.locations.subtitle` | You pick a location when you create your key. Members can switch between all of them at any time. | ⚠️ **MISSING** |
+| `home.locations.everyone` | Free and members | ⚠️ **MISSING** |
+| `home.locations.members` | Members only | ⚠️ **MISSING** |
+| `home.locations.statusLink` | Live network status | ⚠️ **MISSING** |
 
 ## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 
@@ -1010,14 +1032,14 @@ review.
 | `status.incidentsPast` | Past incidents | حوادث گذشته |
 | `status.report` | Report a problem | گزارش مشکل |
 
-## `switchServer` — Miscellaneous strings. *(17 missing)*
+## `switchServer` — Miscellaneous strings. *(20 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `switchServer.action` | Switch server | ⚠️ **MISSING** |
-| `switchServer.title` | Move to a different server? | ⚠️ **MISSING** |
-| `switchServer.body` | For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
-| `switchServer.bodyWithServer` | For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.title` | Move to another server in the same location? | ⚠️ **MISSING** |
+| `switchServer.body` | For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server in the same location; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.bodyWithServer` | For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server in the same location; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
 | `switchServer.reasonLegend` | What's wrong with your current server? | ⚠️ **MISSING** |
 | `switchServer.reasonSlow` | It's slow | ⚠️ **MISSING** |
 | `switchServer.reasonBlocked` | It's blocked where I am | ⚠️ **MISSING** |
@@ -1025,12 +1047,15 @@ review.
 | `switchServer.reasonOther` | Something else | ⚠️ **MISSING** |
 | `switchServer.point1` | Your apps pick up the new server on their next refresh | ⚠️ **MISSING** |
 | `switchServer.point2` | Your account and the data you have left are unchanged | ⚠️ **MISSING** |
-| `switchServer.point3` | If your key has to move to another location, your devices reconnect and register again | ⚠️ **MISSING** |
+| `switchServer.point3` | If your key has to be recreated on another server, your devices reconnect and register again | ⚠️ **MISSING** |
 | `switchServer.confirm` | Move my key | ⚠️ **MISSING** |
 | `switchServer.working` | Moving… | ⚠️ **MISSING** |
 | `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
+| `switchServer.actionIn` | Switch server in {location} | ⚠️ **MISSING** |
+| `switchServer.titleIn` | Move to another server in {location}? | ⚠️ **MISSING** |
+| `switchServer.vsLocation` | Want to connect from a different city instead? Use "Switch location". | ⚠️ **MISSING** |
 
 ## `report` — Miscellaneous strings. *(20 missing)*
 
@@ -1068,3 +1093,139 @@ review.
 | `telemetry.asnLabel` | Network (ASN) | ⚠️ **MISSING** |
 | `telemetry.notSet` | Not set | ⚠️ **MISSING** |
 | `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |
+
+## `direct` — Miscellaneous strings. *(33 missing)*
+
+| Key | English | Persian (فارسی) |
+| --- | --- | --- |
+| `direct.coinLabel` | Coin and network | ⚠️ **MISSING** |
+| `direct.coinHint` | Pick the network your wallet or exchange will send on. You pay on this page; you are not sent anywhere else. | ⚠️ **MISSING** |
+| `direct.title` | Send your payment | ⚠️ **MISSING** |
+| `direct.waiting` | Waiting for your payment. This page updates by itself. | ⚠️ **MISSING** |
+| `direct.timeLeft` | Time left | ⚠️ **MISSING** |
+| `direct.methodLabel` | Payment method | ⚠️ **MISSING** |
+| `direct.sendExactly` | Send exactly {amount} {unit} on {network}. | ⚠️ **MISSING** |
+| `direct.networkWarning` | Send only on {network}. Money sent on any other network is lost. | ⚠️ **MISSING** |
+| `direct.lightningOnly` | Pay this invoice from a Lightning wallet. | ⚠️ **MISSING** |
+| `direct.amountLabel` | Amount ({unit}) | ⚠️ **MISSING** |
+| `direct.addressLabel` | {network} address | ⚠️ **MISSING** |
+| `direct.invoiceLabel` | Lightning invoice | ⚠️ **MISSING** |
+| `direct.memoLabel` | Memo / tag | ⚠️ **MISSING** |
+| `direct.memoWarning` | Include this memo (also called tag or destination tag). Without it the payment cannot be matched to you. | ⚠️ **MISSING** |
+| `direct.copyLabel` | Copy {what} | ⚠️ **MISSING** |
+| `direct.qrAddressOnly` | QR has the address only. Enter the amount yourself. | ⚠️ **MISSING** |
+| `direct.qrWithAmount` | QR includes the amount. | ⚠️ **MISSING** |
+| `direct.seenBody` | We have seen your payment. It activates automatically once it confirms. | ⚠️ **MISSING** |
+| `direct.showDetails` | Show payment details | ⚠️ **MISSING** |
+| `direct.expiredTitle` | This payment address has expired | ⚠️ **MISSING** |
+| `direct.expiredBody` | Don't send anything to it. Start again to get a fresh address and amount. | ⚠️ **MISSING** |
+| `direct.startAgain` | Start again | ⚠️ **MISSING** |
+| `direct.hostedFallback` | Prefer the payment provider's own page? | ⚠️ **MISSING** |
+| `direct.hostedFallbackLink` | Open it instead | ⚠️ **MISSING** |
+| `direct.lightning` | Lightning | ⚠️ **MISSING** |
+| `direct.bitcoinOnchain` | Bitcoin (on-chain) | ⚠️ **MISSING** |
+| `direct.allCoins` | All coins | ⚠️ **MISSING** |
+| `direct.needsMemo` | needs memo | ⚠️ **MISSING** |
+| `direct.coinsLoading` | Loading coins… | ⚠️ **MISSING** |
+| `direct.searchLabel` | Search coins | ⚠️ **MISSING** |
+| `direct.searchPlaceholder` | Search {count} coins by name or network | ⚠️ **MISSING** |
+| `direct.noMatch` | No coin matches. Try the coin's name, like USDT, or its network, like Tron. | ⚠️ **MISSING** |
+| `direct.pickedCoin` | Selected: {coin} on {network} | ⚠️ **MISSING** |
+
+## `bot` — Miscellaneous strings. *(51 missing)*
+
+| Key | English | Persian (فارسی) |
+| --- | --- | --- |
+| `bot.closed` | The FreeSocks gift shop is closed right now. You can still get FreeSocks on our website: {site} | ⚠️ **MISSING** |
+| `bot.welcome` | Buy FreeSocks membership gift codes here.<br><br>Each code adds membership to any FreeSocks account. Redeem it in the app under Account, then Redeem a code. This bot never asks for your account number.<br><br>The official FreeSocks bot is the one linked from {site} | ⚠️ **MISSING** |
+| `bot.buttonBuy` | Buy gift codes | ⚠️ **MISSING** |
+| `bot.buttonPrivacy` | What this bot stores | ⚠️ **MISSING** |
+| `bot.buttonLanguage` | Language | ⚠️ **MISSING** |
+| `bot.buttonBack` | Back | ⚠️ **MISSING** |
+| `bot.chooseLanguage` | Choose a language. | ⚠️ **MISSING** |
+| `bot.chooseDuration` | How long should each code last? | ⚠️ **MISSING** |
+| `bot.chooseQuantity` | How many codes? | ⚠️ **MISSING** |
+| `bot.durationOne` | 1 month | ⚠️ **MISSING** |
+| `bot.durationMany` | {months} months | ⚠️ **MISSING** |
+| `bot.starsAmount` | {stars} Stars | ⚠️ **MISSING** |
+| `bot.orderSummary` | {quantity} x {duration} gift codes | ⚠️ **MISSING** |
+| `bot.failed` | This payment did not go through. Start a new one with /buy. | ⚠️ **MISSING** |
+| `bot.orderNotFound` | That order was not found. Start a new one with /buy. | ⚠️ **MISSING** |
+| `bot.codesTitle` | Your FreeSocks gift codes: | ⚠️ **MISSING** |
+| `bot.codesHelp` | Each code gives {duration} of FreeSocks membership. Redeem it in the app: Account, then Redeem a code. A code works once, and anyone who has it can use it, so share them carefully.<br><br>Save them now, then tap the button below to delete this message from the chat. | ⚠️ **MISSING** |
+| `bot.buttonSaved` | Saved, delete this message | ⚠️ **MISSING** |
+| `bot.buttonRedeem` | Redeem on the website | ⚠️ **MISSING** |
+| `bot.codesGone` | These codes were already shown. If you lost them, contact support and quote order {ref}. | ⚠️ **MISSING** |
+| `bot.deleted` | Deleted. Thank you for supporting FreeSocks. | ⚠️ **MISSING** |
+| `bot.orderRef` | Order {ref} | ⚠️ **MISSING** |
+| `bot.starsTitle` | FreeSocks gift codes | ⚠️ **MISSING** |
+| `bot.starsDescription` | {quantity} x {duration} of FreeSocks membership, as gift codes. | ⚠️ **MISSING** |
+| `bot.starsLabel` | Gift codes | ⚠️ **MISSING** |
+| `bot.starsRefused` | This order can no longer be paid. Start a new one with /buy. | ⚠️ **MISSING** |
+| `bot.privacy` | What this bot stores: for each message Telegram tells it your chat, your Telegram name and your app language. It keeps none of that. It stores only the order (length, number of codes, price and status) under a random reference. The codes are not linked to you or to any FreeSocks account.<br><br>Telegram keeps this chat on its own servers, so delete the codes message once you have saved the codes. Payments are made in Telegram Stars, through Telegram. | ⚠️ **MISSING** |
+| `bot.help` | /buy: buy gift codes<br>/terms: terms of sale<br>/paysupport: help with a payment<br>/language: change the language<br>/privacy: what this bot stores<br><br>Redeem codes in the app or on the website: Account, then Redeem a code. | ⚠️ **MISSING** |
+| `bot.rateLimited` | Too many requests. Wait a minute and try again. | ⚠️ **MISSING** |
+| `bot.error` | Something went wrong. Try again in a moment. | ⚠️ **MISSING** |
+| `bot.unknown` | Use the buttons, or send /buy to start. | ⚠️ **MISSING** |
+| `bot.unavailable` | This is not for sale right now. Start again with /buy. | ⚠️ **MISSING** |
+| `bot.commandBuy` | Buy gift codes | ⚠️ **MISSING** |
+| `bot.commandLanguage` | Change the language | ⚠️ **MISSING** |
+| `bot.commandPrivacy` | What this bot stores | ⚠️ **MISSING** |
+| `bot.commandHelp` | Help | ⚠️ **MISSING** |
+| `bot.buttonAccept` | I accept, pay {amount} | ⚠️ **MISSING** |
+| `bot.buttonTerms` | Terms | ⚠️ **MISSING** |
+| `bot.termsAsk` | Before you pay, read the terms of sale below. The button accepts them and opens a Telegram Stars invoice. | ⚠️ **MISSING** |
+| `bot.terms` | Terms of sale<br><br>1. You are buying gift codes. Each code adds the stated length of FreeSocks membership to the account it is redeemed on.<br>2. Anyone who has a code can redeem it, once. Keep codes private until you use or give them.<br>3. Codes are shown in this chat as soon as the payment is confirmed. If we cannot deliver them, a Stars payment is refunded in full.<br>4. Codes that were delivered cannot be refunded or exchanged. For a payment problem, use /paysupport.<br>5. FreeSocks is provided as it is. Your network may limit how well it works. | ⚠️ **MISSING** |
+| `bot.termsMore` | Full terms: {url} | ⚠️ **MISSING** |
+| `bot.paySupport` | Payment problem? Write to {email} and quote your order reference (the 8 characters this bot showed you). Telegram support and @BotSupport cannot help with purchases made in this bot. | ⚠️ **MISSING** |
+| `bot.paySupportSite` | Payment problem? Contact us through {site} and quote your order reference (the 8 characters this bot showed you). Telegram support and @BotSupport cannot help with purchases made in this bot. | ⚠️ **MISSING** |
+| `bot.starsNotFulfilled` | We could not fulfil this order, so your Stars were refunded in full. | ⚠️ **MISSING** |
+| `bot.starsRefundFailed` | We could not fulfil this order and will return your Stars. Use /paysupport and quote order {ref}. | ⚠️ **MISSING** |
+| `bot.commandTerms` | Terms of sale | ⚠️ **MISSING** |
+| `bot.commandPaySupport` | Help with a payment | ⚠️ **MISSING** |
+| `bot.orderPrice` | Price: {amount} | ⚠️ **MISSING** |
+| `bot.priceChanged` | The price changed. Here is the current price; nothing was charged. | ⚠️ **MISSING** |
+| `bot.deleteFailed` | Telegram could not delete the message just now. Tap the button again in a moment. | ⚠️ **MISSING** |
+| `bot.deleteYourself` | Telegram no longer lets the bot delete that message. Please delete it yourself. | ⚠️ **MISSING** |
+
+## `telegramShop` — Miscellaneous strings. *(13 missing)*
+
+| Key | English | Persian (فارسی) |
+| --- | --- | --- |
+| `telegramShop.title` | Buy gift codes on Telegram | ⚠️ **MISSING** |
+| `telegramShop.body` | Our Telegram bot sells FreeSocks membership gift codes, paid in Telegram Stars. Each code adds membership to any FreeSocks account, so you can keep it or give it away. | ⚠️ **MISSING** |
+| `telegramShop.officialLabel` | Our only official bot | ⚠️ **MISSING** |
+| `telegramShop.officialNote` | It is linked only from this site, and it never asks for your account number. Ignore any other bot that uses our name. | ⚠️ **MISSING** |
+| `telegramShop.copyHandle` | Copy the bot's username | ⚠️ **MISSING** |
+| `telegramShop.openApp` | Open in Telegram | ⚠️ **MISSING** |
+| `telegramShop.openWeb` | Open t.me link | ⚠️ **MISSING** |
+| `telegramShop.stepsTitle` | How it works | ⚠️ **MISSING** |
+| `telegramShop.step1` | Open the bot and choose a length and how many codes you want. | ⚠️ **MISSING** |
+| `telegramShop.step2` | Accept the terms and pay with Telegram Stars. Your codes appear in the chat. | ⚠️ **MISSING** |
+| `telegramShop.step3` | Redeem a code in FreeSocks: Account, then Redeem a code. | ⚠️ **MISSING** |
+| `telegramShop.privacy` | Telegram sees that you paid. The bot keeps no chat, and the codes are not linked to you or to your Telegram account. | ⚠️ **MISSING** |
+| `telegramShop.compact` | You can also buy gift codes for Telegram Stars in our official bot. | ⚠️ **MISSING** |
+
+## `switchLocation` — Miscellaneous strings. *(19 missing)*
+
+| Key | English | Persian (فارسی) |
+| --- | --- | --- |
+| `switchLocation.action` | Switch location | ⚠️ **MISSING** |
+| `switchLocation.title` | Switch location | ⚠️ **MISSING** |
+| `switchLocation.body` | Pick where your key connects from. Your subscription URL stays the same, so there is nothing to re-import: your apps pick up the new location on their next refresh. | ⚠️ **MISSING** |
+| `switchLocation.legend` | Move my key to | ⚠️ **MISSING** |
+| `switchLocation.current` | You are here | ⚠️ **MISSING** |
+| `switchLocation.point1` | Your account and the data you have left are unchanged | ⚠️ **MISSING** |
+| `switchLocation.point2` | Your devices reconnect and register again | ⚠️ **MISSING** |
+| `switchLocation.confirm` | Move my key | ⚠️ **MISSING** |
+| `switchLocation.working` | Moving… | ⚠️ **MISSING** |
+| `switchLocation.done` | Your key has moved to {location}. | ⚠️ **MISSING** |
+| `switchLocation.failed` | Could not move your key | ⚠️ **MISSING** |
+| `switchLocation.noOther` | There is no other location to move to right now. | ⚠️ **MISSING** |
+| `switchLocation.memberTitle` | Choosing your location is part of membership | ⚠️ **MISSING** |
+| `switchLocation.memberBody` | Members can move their key to any of our locations, whenever they like. | ⚠️ **MISSING** |
+| `switchLocation.memberBodyFrom` | Your free key stays in {location}. Members can move their key to any of our locations, whenever they like. | ⚠️ **MISSING** |
+| `switchLocation.memberLocations` | Members can also use: {list} | ⚠️ **MISSING** |
+| `switchLocation.memberCta` | See membership | ⚠️ **MISSING** |
+| `switchLocation.serverAlt` | Is your server blocked or slow? Switching to another server in the same location is free. | ⚠️ **MISSING** |
+| `switchLocation.serverAltCta` | Switch server instead | ⚠️ **MISSING** |

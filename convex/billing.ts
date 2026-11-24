@@ -58,6 +58,7 @@ import * as paypal from './lib/processors/paypal';
 import type {
   CheckoutParams,
   CheckoutResult,
+  OrderProcessorId,
   OrderStatus,
   ProcessorId,
   VerifyResult,
@@ -72,11 +73,21 @@ const MAX_GIFT_QUANTITY = 50;
 
 const orderKindValidator = v.union(v.literal('self'), v.literal('gift'), v.literal('donation'));
 
+// The hosted rails: the ones with a checkout to create and an IPN to verify.
 const processorValidator = v.union(
   v.literal('nowpayments'),
   v.literal('btcpay'),
   v.literal('stripe'),
   v.literal('paypal'),
+);
+// Every processor an order can carry: the hosted rails plus Telegram Stars,
+// which the bot sells through Telegram's own invoice (no checkout, no IPN).
+const orderProcessorValidator = v.union(
+  v.literal('nowpayments'),
+  v.literal('btcpay'),
+  v.literal('stripe'),
+  v.literal('paypal'),
+  v.literal('telegram_stars'),
 );
 const orderStatusValidator = v.union(
   v.literal('pending'),
@@ -98,6 +109,20 @@ function publicBaseUrl(secrets: ProcessorSecrets): string {
     });
   }
   return secrets.publicBaseUrl.replace(/\/$/, '');
+}
+
+/** Mint `n` gift codes with the CSPRNG (actions only): plaintext + hash + prefix. */
+async function mintGiftCodes(n: number): Promise<GiftCode[]> {
+  const codes: GiftCode[] = [];
+  for (let i = 0; i < n; i++) {
+    const plaintext = generateMembershipCode();
+    codes.push({
+      plaintext,
+      hash: await sha256Hex(plaintext),
+      prefix: membershipCodePrefix(plaintext),
+    });
+  }
+  return codes;
 }
 
 async function createCheckoutForProcessor(
@@ -676,7 +701,7 @@ async function grantOrder(
   ctx: MutationCtx,
   order: Doc<'billingOrders'>,
   g: {
-    processor: ProcessorId;
+    processor: OrderProcessorId;
     processorRef: string;
     giftCodes?: GiftCode[];
     /** Set when the payment was short but accepted: recorded on the order. */
@@ -730,11 +755,14 @@ async function grantOrder(
     return { applied: true, granted: true };
   }
 
-  // Membership orders (self/gift) are always user-bound — anonymous
-  // checkout is donation-only, so a userId-less row here would be corrupt.
-  // Refuse to grant rather than guessing an owner.
+  // Membership orders (self/gift) are user-bound, with one exception: a
+  // Telegram gift-shop order is a userless gift by design (its codes are bound
+  // to nobody, so a Telegram identity never meets a FreeSocks account). Any
+  // other userId-less membership row would be corrupt: refuse rather than
+  // guessing an owner.
   const buyerId = order.userId;
-  if (!buyerId) return { applied: false, granted: false };
+  const botGift = !buyerId && order.channel === 'telegram' && order.kind === 'gift';
+  if (!buyerId && !botGift) return { applied: false, granted: false };
 
   // Membership orders (self/gift) always carry a tier.
   const tierId = order.tierId;
@@ -773,7 +801,8 @@ async function grantOrder(
         tierId,
         durationDays: order.durationDays,
         status: 'active',
-        purchasedByUserId: buyerId,
+        // A bot gift's codes are bound to nobody (no buyer, no order id).
+        ...(buyerId ? { purchasedByUserId: buyerId } : {}),
         updatedAt: now,
       });
     }
@@ -793,11 +822,13 @@ async function grantOrder(
         kind: 'gift',
         quantity: codes.length,
         donationCents: donated,
+        channel: order.channel ?? 'web',
       },
     });
     return { applied: true, granted: true };
   }
 
+  if (!buyerId) return { applied: false, granted: false };
   const user = await ctx.db.get(buyerId);
   if (!user) return { applied: false, granted: false };
   await ctx.db.patch(order._id, {
@@ -846,7 +877,7 @@ async function grantOrder(
  */
 export const applyEvent = internalMutation({
   args: {
-    processor: processorValidator,
+    processor: orderProcessorValidator,
     orderRef: v.optional(v.string()),
     status: orderStatusValidator,
     processorRef: v.string(),
@@ -912,7 +943,11 @@ export const applyEvent = internalMutation({
           },
         });
       }
-      if (a.status === 'failed') {
+      // A Stars refund names the exact payment it returns. The bot refunds a
+      // second payment on a paid order right away; that refund is not this
+      // order's (the payment that paid it stands), so it changes nothing.
+      const otherStarsPayment = a.processor === 'telegram_stars' && !isSamePayment;
+      if (a.status === 'failed' && !otherStarsPayment) {
         await writeAuditLog(ctx, {
           actorType: 'webhook',
           actorId: order.userId,
@@ -1209,11 +1244,19 @@ export const adminGrantPlan = internalQuery({
   handler: async (
     ctx,
     { orderId },
-  ): Promise<{ kind: 'self' | 'gift' | 'donation'; quantity: number } | null> => {
+  ): Promise<{
+    kind: 'self' | 'gift' | 'donation';
+    quantity: number;
+    channel: 'web' | 'telegram';
+  } | null> => {
     const id = ctx.db.normalizeId('billingOrders', orderId);
     const order = id ? await ctx.db.get(id) : null;
     if (!order || !ADMIN_GRANTABLE.has(order.status)) return null;
-    return { kind: order.kind ?? 'self', quantity: order.quantity ?? 1 };
+    return {
+      kind: order.kind ?? 'self',
+      quantity: order.quantity ?? 1,
+      channel: order.channel ?? 'web',
+    };
   },
 });
 
@@ -1233,6 +1276,12 @@ export const grantOrderByAdmin = internalMutation({
   },
   handler: async (ctx, a): Promise<{ granted: boolean; kind: 'self' | 'gift' | 'donation' }> => {
     const order = await loadOrderForAdmin(ctx, a.orderId, ADMIN_GRANTABLE);
+    if (order.channel === 'telegram') {
+      throw new ConvexError({
+        code: 'billing.invalid_order',
+        message: 'A Telegram order is delivered in the chat when its Stars payment arrives',
+      });
+    }
     const res = await grantOrder(ctx, order, {
       processor: order.processor,
       processorRef: order.processorRef ?? '',
@@ -1270,24 +1319,23 @@ export const grantOrderByAdmin = internalMutation({
  * Action wrapper: gift orders need their codes minted with the CSPRNG first.
  * The codes go ONLY to the buyer: grantOrder stores them in the order's
  * one-time reveal, which the buyer's /account opens on their next visit
- * (pendingGiftReveal). The operator never sees them.
+ * (pendingGiftReveal), or which the Telegram bot sends after a Stars
+ * payment (botOrderStatus). The operator never sees them.
  */
 export const adminGrantOrder = internalAction({
   args: { orderId: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a): Promise<{ granted: boolean; kind: 'self' | 'gift' | 'donation' }> => {
     const plan = await ctx.runQuery(internal.billing.adminGrantPlan, { orderId: a.orderId });
-    let giftCodes: GiftCode[] | undefined;
-    if (plan?.kind === 'gift') {
-      giftCodes = [];
-      for (let i = 0; i < plan.quantity; i++) {
-        const plaintext = generateMembershipCode();
-        giftCodes.push({
-          plaintext,
-          hash: await sha256Hex(plaintext),
-          prefix: membershipCodePrefix(plaintext),
-        });
-      }
+    if (plan?.channel === 'telegram') {
+      // A bot order's codes reach the buyer only in the chat, in the update
+      // of its Stars payment; a hand grant would mint codes nobody can
+      // deliver (and make a later payment look like a second one).
+      throw new ConvexError({
+        code: 'billing.invalid_order',
+        message: 'A Telegram order is delivered in the chat when its Stars payment arrives',
+      });
     }
+    const giftCodes = plan?.kind === 'gift' ? await mintGiftCodes(plan.quantity) : undefined;
     return ctx.runMutation(internal.billing.grantOrderByAdmin, {
       orderId: a.orderId,
       giftCodes,
@@ -1368,21 +1416,13 @@ export const ingestEvent = internalAction({
       // Gift order being paid: pre-generate the shareable codes here (CSPRNG lives
       // in the action) so applyEvent can insert them hash-only + stash the plaintext
       // reveal atomically with the single-grant status flip.
-      let giftCodes: { plaintext: string; hash: string; prefix: string }[] | undefined;
+      let giftCodes: GiftCode[] | undefined;
       if (verified.status === 'paid' && verified.orderRef) {
         const plan = await ctx.runQuery(internal.billing.orderMintPlan, {
           orderRef: verified.orderRef,
         });
         if (plan && plan.kind === 'gift' && !plan.alreadyPaid) {
-          giftCodes = [];
-          for (let i = 0; i < plan.quantity; i++) {
-            const plaintext = generateMembershipCode();
-            giftCodes.push({
-              plaintext,
-              hash: await sha256Hex(plaintext),
-              prefix: membershipCodePrefix(plaintext),
-            });
-          }
+          giftCodes = await mintGiftCodes(plan.quantity);
         }
       }
 
@@ -1647,7 +1687,8 @@ interface DirectPaymentView {
  */
 function directPaymentView(order: Doc<'billingOrders'>): DirectPaymentView | null {
   const p = order.directPayment;
-  if (!p || !directPaymentLive(order.status)) return null;
+  // Stars orders never carry deposit details (Telegram shows its own invoice).
+  if (!p || !directPaymentLive(order.status) || order.processor === 'telegram_stars') return null;
   return {
     processor: order.processor,
     methods: p.methods,
@@ -1773,6 +1814,248 @@ export const ackGiftReveal = internalMutation({
       giftReveal: undefined,
       giftRevealAck: true,
       giftRevealPending: undefined, // leaves the by_gift_reveal_pending_paid index (Review #5)
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+// --- Telegram gift shop ------------------------------------------------------
+//
+// The bot (convex/telegramBot.ts) sells gift codes and nothing else. Its orders
+// are userless (`channel: 'telegram'`); their codes are bound to nobody; the
+// bot keeps no chat id. The 128-bit opaque ref is the buyer's only handle: the
+// bot puts it in its buttons and in the processor's return link, and reads the
+// order back through the two functions below, which answer ONLY for
+// telegram-channel orders.
+
+/**
+ * A pending Telegram Stars gift order. The caller (the bot action) mints the
+ * opaque ref (the CSPRNG lives in actions) and prices it from `telegram.*`;
+ * the duration, quantity and tier are checked against the billing catalog
+ * here, the same way a hosted checkout checks them.
+ */
+export const createStarsOrder = internalMutation({
+  args: {
+    opaqueRef: v.string(),
+    months: v.number(),
+    quantity: v.number(),
+    // The Stars price of ONE code for this duration (telegram.stars.prices).
+    starsPerCode: v.number(),
+  },
+  handler: async (ctx, a): Promise<{ orderRef: string; totalStars: number }> => {
+    const config = await resolveBillingConfig(ctx.db);
+    if (!config.enabled) {
+      throw new ConvexError({
+        code: 'billing.disabled',
+        message: 'Membership purchases are not available',
+      });
+    }
+    if (!findDuration(config, a.months)) {
+      throw new ConvexError({
+        code: 'billing.invalid_duration',
+        message: 'Unknown membership duration',
+      });
+    }
+    const quantity = Math.floor(a.quantity);
+    if (!Number.isFinite(quantity) || quantity < 1 || quantity > MAX_GIFT_QUANTITY) {
+      throw new ConvexError({
+        code: 'billing.invalid_quantity',
+        message: `Number of codes must be between 1 and ${MAX_GIFT_QUANTITY}`,
+      });
+    }
+    if (!Number.isInteger(a.starsPerCode) || a.starsPerCode < 1) {
+      throw new ConvexError({ code: 'billing.invalid_amount', message: 'No Stars price' });
+    }
+    const tier = await ctx.db
+      .query('tiers')
+      .withIndex('by_slug', (q) => q.eq('slug', config.tierSlug))
+      .unique();
+    if (!tier) {
+      throw new ConvexError({
+        code: 'billing.tier_missing',
+        message: 'Membership tier is not configured',
+      });
+    }
+    const totalStars = a.starsPerCode * quantity;
+    const now = Date.now();
+    const orderId = await ctx.db.insert('billingOrders', {
+      processor: 'telegram_stars',
+      channel: 'telegram',
+      opaqueRef: a.opaqueRef,
+      tierId: tier._id,
+      durationDays: monthsToDays(a.months),
+      // Minor units of XTR are whole Stars.
+      amountCents: totalStars,
+      donationCents: 0,
+      currency: 'XTR',
+      status: 'pending',
+      kind: 'gift',
+      quantity,
+      updatedAt: now,
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'anonymous',
+      action: 'billing.checkout.created',
+      targetType: 'billing_order',
+      targetId: orderId,
+      payload: {
+        processor: 'telegram_stars',
+        months: a.months,
+        kind: 'gift',
+        quantity,
+        donationCents: 0,
+        direct: false,
+        channel: 'telegram',
+      },
+    });
+    return { orderRef: a.opaqueRef, totalStars };
+  },
+});
+
+/**
+ * Telegram's pre-checkout question for a Stars invoice: may this payment go
+ * ahead? Yes only for a pending Stars order of exactly this amount in XTR.
+ * (Telegram asks once per payment attempt and waits at most 10 seconds.)
+ */
+export const starsPreCheckout = internalQuery({
+  args: { orderRef: v.string(), totalAmount: v.number(), currency: v.string() },
+  handler: async (
+    ctx,
+    a,
+  ): Promise<{ ok: true } | { ok: false; reason: 'not_found' | 'not_pending' | 'amount' }> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', a.orderRef))
+      .unique();
+    if (!order || order.processor !== 'telegram_stars' || order.channel !== 'telegram') {
+      return { ok: false, reason: 'not_found' };
+    }
+    if (order.status !== 'pending' || order.dismissedAt != null) {
+      return { ok: false, reason: 'not_pending' };
+    }
+    if (a.currency !== 'XTR' || a.totalAmount !== order.amountCents) {
+      return { ok: false, reason: 'amount' };
+    }
+    return { ok: true };
+  },
+});
+
+/**
+ * Settle (or record the refund of) a Telegram Stars payment through the same
+ * exactly-once path as a processor webhook: claim the dedupe id, pre-mint the
+ * gift codes, applyEvent, mark processed. The claim payload is a short summary,
+ * never the Telegram update (it names the chat). Telegram resends an update
+ * it saw no 200 for, so a replay must be a no-op: the claim and applyEvent's
+ * paid guard both see to that.
+ */
+export const ingestStarsPayment = internalAction({
+  args: {
+    orderRef: v.string(),
+    // telegram_payment_charge_id: Telegram's id for this payment.
+    chargeId: v.string(),
+    totalAmount: v.number(),
+    currency: v.string(),
+    event: v.union(v.literal('paid'), v.literal('refunded')),
+  },
+  handler: async (ctx, a): Promise<{ duplicate: boolean; applied: boolean; granted: boolean }> => {
+    const eventId = `telegram_stars:${a.chargeId}:${a.event}`;
+    const claim = await ctx.runMutation(internal.webhooks.claimEvent, {
+      eventId,
+      source: 'billing.telegram_stars',
+      payload: JSON.stringify({ event: a.event, amount: a.totalAmount, currency: a.currency }),
+    });
+    if (!claim.proceed) return { duplicate: true, applied: false, granted: false };
+    try {
+      let giftCodes: GiftCode[] | undefined;
+      if (a.event === 'paid') {
+        const plan = await ctx.runQuery(internal.billing.orderMintPlan, { orderRef: a.orderRef });
+        if (plan && plan.kind === 'gift' && !plan.alreadyPaid) {
+          giftCodes = await mintGiftCodes(plan.quantity);
+        }
+      }
+      const res = await ctx.runMutation(internal.billing.applyEvent, {
+        processor: 'telegram_stars',
+        orderRef: a.orderRef,
+        status: a.event === 'paid' ? 'paid' : 'failed',
+        processorRef: a.chargeId,
+        checkoutRef: null,
+        amountMinor: a.totalAmount,
+        amountCurrency: a.currency,
+        giftCodes,
+      });
+      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+      return { duplicate: false, ...res };
+    } catch (err) {
+      await ctx.runMutation(internal.webhooks.markEventFailed, { eventId });
+      throw err;
+    }
+  },
+});
+
+export type BotOrderStatus = {
+  status: OrderStatus;
+  processor: OrderProcessorId;
+  months: number;
+  quantity: number;
+  /** The one-time reveal: present while paid and not yet acknowledged. */
+  giftCodes: string[];
+};
+
+/** A Telegram gift-shop order by its ref (null for any other order). */
+export const botOrderStatus = internalQuery({
+  args: { orderRef: v.string() },
+  handler: async (ctx, { orderRef }): Promise<BotOrderStatus | null> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
+      .unique();
+    if (!order || order.channel !== 'telegram' || order.kind !== 'gift') return null;
+    return {
+      status: order.status,
+      processor: order.processor,
+      months: Math.max(1, Math.round(order.durationDays / AVG_DAYS_PER_MONTH)),
+      quantity: order.quantity ?? 1,
+      giftCodes: order.status === 'paid' && !order.giftRevealAck ? (order.giftReveal ?? []) : [],
+    };
+  },
+});
+
+/**
+ * What the bot owes for one Stars payment: its codes when this charge is the
+ * one that paid the order, else a refund (the order was paid by another
+ * charge, or refused this one). Read from the order, so a redelivered payment
+ * gets the same answer as the first attempt.
+ */
+export const starsPaymentFate = internalQuery({
+  args: { orderRef: v.string(), chargeId: v.string() },
+  handler: async (ctx, { orderRef, chargeId }): Promise<'deliver' | 'refund'> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
+      .unique();
+    const paidByThis =
+      order?.channel === 'telegram' &&
+      order.processor === 'telegram_stars' &&
+      order.status === 'paid' &&
+      order.processorRef === chargeId;
+    return paidByThis ? 'deliver' : 'refund';
+  },
+});
+
+/** The Telegram buyer saved the codes: clear the plaintext (as ackGiftReveal does). */
+export const ackBotGiftReveal = internalMutation({
+  args: { orderRef: v.string() },
+  handler: async (ctx, { orderRef }): Promise<{ ok: boolean }> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
+      .unique();
+    if (!order || order.channel !== 'telegram' || order.status !== 'paid') return { ok: false };
+    await ctx.db.patch(order._id, {
+      giftReveal: undefined,
+      giftRevealAck: true,
+      giftRevealPending: undefined,
       updatedAt: Date.now(),
     });
     return { ok: true };

@@ -11,6 +11,14 @@
 export type ProcessorId = 'nowpayments' | 'btcpay' | 'stripe' | 'paypal';
 
 /**
+ * Every processor an order row can carry: the hosted rails above plus
+ * Telegram Stars, which the Telegram gift shop takes through Telegram's own
+ * invoice. Stars has no hosted checkout and no IPN, so it is never a
+ * `ProcessorId` (the dispatch switches stay exhaustive over the hosted rails).
+ */
+export type OrderProcessorId = ProcessorId | 'telegram_stars';
+
+/**
  * Order lifecycle — kept in sync with the billingOrderStatus union in schema.ts.
  * `underpaid`: money arrived but short of the invoice by more than the
  * underpayment tolerance (or by an amount we can't measure). Never expired by

@@ -15,6 +15,17 @@ import { z } from 'zod';
 export const BillingProcessor = z.enum(['nowpayments', 'btcpay', 'stripe', 'paypal']);
 export type BillingProcessor = z.infer<typeof BillingProcessor>;
 
+/** Every processor an order can carry: the hosted rails plus Telegram Stars
+ *  (the Telegram gift shop only; never offered on the website). */
+export const OrderProcessor = z.enum([
+  'nowpayments',
+  'btcpay',
+  'stripe',
+  'paypal',
+  'telegram_stars',
+]);
+export type OrderProcessor = z.infer<typeof OrderProcessor>;
+
 export const CheckoutRequest = z.object({
   processor: BillingProcessor,
   /** A duration offered in PublicConfig.billing.durations (validated server-side against
@@ -310,10 +321,12 @@ export interface BillingConfigPatch extends Partial<BillingConfigView> {
 
 export const AdminBillingOrder = z.object({
   id: z.string(),
-  processor: BillingProcessor,
+  processor: OrderProcessor,
+  /** Where it was bought: the website, or the Telegram gift shop (no account). */
+  channel: z.enum(['web', 'telegram']).default('web'),
   /** Only a prefix of the opaque ref (the full ref is the member's poll token). */
   refPrefix: z.string(),
-  /** Null = an anonymous donation order (no account behind it). */
+  /** Null = an anonymous order (a donation, or a Telegram gift-shop order). */
   userId: z.string().nullable(),
   /** The buyer's non-secret support id (FS-XXXX-XXXX), for the "who donated" column. */
   userHandle: z.string().nullable().default(null),

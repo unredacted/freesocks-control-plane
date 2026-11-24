@@ -36,6 +36,7 @@ import {
   RemnawaveNodeStatsResponse,
   RemnawaveLoggingLastCheckResponse,
   AdminAlertsConfig,
+  AdminTelegramConfig,
   AdminCensoredCountries,
   AdminMemberCountry,
   AdminAnalyticsConfig,
@@ -111,6 +112,7 @@ export const queryKeys = {
   adminReferralConfig: ['admin', 'referral-config'] as const,
   adminAnalytics: ['admin', 'analytics'] as const,
   adminAlerts: ['admin', 'alerts'] as const,
+  adminTelegram: ['admin', 'telegram'] as const,
   adminCensoredCountries: ['admin', 'censored-countries'] as const,
 };
 
@@ -303,6 +305,14 @@ export const adminAnalyticsQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminAnalytics,
     queryFn: () => apiClient.get('/api/v1/admin/analytics', AdminAnalyticsConfig),
+    staleTime: 60_000,
+  }));
+
+/** Telegram gift shop settings + the webhook's state at Telegram (no secrets). */
+export const adminTelegramQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminTelegram,
+    queryFn: () => apiClient.get('/api/v1/admin/telegram', AdminTelegramConfig),
     staleTime: 60_000,
   }));
 

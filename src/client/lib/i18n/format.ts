@@ -30,6 +30,9 @@ export function formatDateTime(value: string | number | Date): string {
  * string if the currency code is non-standard (Intl throws on a bad code).
  */
 export function formatMoney(amountCents: number, currency: string): string {
+  // Telegram Stars (XTR, the Telegram gift shop's Stars orders) have no minor
+  // unit: the stored amount is a whole number of Stars.
+  if (currency === 'XTR') return `${amountCents} Stars`;
   const amount = amountCents / 100;
   try {
     return new Intl.NumberFormat(getLocale(), { style: 'currency', currency }).format(amount);

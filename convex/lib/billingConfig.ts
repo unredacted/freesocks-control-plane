@@ -250,7 +250,9 @@ export const BILLING_KEYS = {
   btcpay_directMethods: 'billing.btcpay.directMethods',
 } as const;
 
-const MAX_MONTHS = 120; // 10 years — a sane upper bound on a single fixed term.
+/** 10 years: a sane upper bound on a single fixed term (the Telegram shop shares it). */
+export const MAX_DURATION_MONTHS = 120;
+const MAX_MONTHS = MAX_DURATION_MONTHS;
 const MAX_AMOUNT_CENTS = 10_000_00; // $10,000 — guards a fat-fingered admin edit.
 const MAX_SUGGESTED_AMOUNTS = 8; // cap the preset-chip list length.
 const MAX_BONUS_GB_PER_USD = 1000; // sanity ceiling on the donation→bandwidth rate.

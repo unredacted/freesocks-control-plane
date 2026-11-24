@@ -22,6 +22,7 @@
   import { toast } from 'svelte-sonner';
   import Gift from '@lucide/svelte/icons/gift';
   import CoinPicker from './CoinPicker.svelte';
+  import TelegramShopCard from './TelegramShopCard.svelte';
   import { followCheckout } from '../lib/checkoutReturn';
 
   const config = configQuery();
@@ -138,6 +139,9 @@
         <p class="text-sm text-muted-foreground">{t('gift.subtitle')}</p>
       </div>
     </div>
+
+    <!-- The official Telegram gift shop, only while it is open. -->
+    <TelegramShopCard variant="compact" />
 
     <!-- Method first (gates the durations: crypto minimum). -->
     <fieldset>

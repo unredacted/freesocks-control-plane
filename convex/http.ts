@@ -23,7 +23,7 @@ import { needsStoredCountry, nothingDue, planDelivery } from './lib/deliveryStam
 import { startAccountView } from './account';
 import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
-import { hmacSha256Hex } from './lib/crypto';
+import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
 import { sanitizeConnectionChoice, sanitizeConnectionEntry } from './edgeAttribution';
 import {
   deliverBody,
@@ -3080,6 +3080,45 @@ http.route({
   }),
 });
 
+// --- Telegram gift shop webhook ------------------------------------------------
+//
+// Telegram posts every bot update here with the secret we gave it at
+// setWebhook in x-telegram-bot-api-secret-token. Once that header checks out
+// the answer is 200 whatever the update holds (a bad update is not worth
+// redelivering), except a Stars payment whose grant failed: 500, so Telegram
+// sends it again. The handler stores no update, chat or user (telegramBot.ts).
+
+http.route({
+  path: '/api/webhooks/telegram',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    const { webhookSecret: secret } = await ctx.runQuery(internal.telegramAdmin.secrets, {});
+    if (!secret) {
+      return errorJson('webhook.not_configured', 'The Telegram bot is not configured', 503);
+    }
+    const given = req.headers.get('x-telegram-bot-api-secret-token') ?? '';
+    if (!timingSafeEqual(given, secret)) {
+      return errorJson('webhook.rejected', 'Webhook rejected', 401);
+    }
+    const declaredLen = Number(req.headers.get('content-length') ?? '0');
+    if (Number.isFinite(declaredLen) && declaredLen > 64 * 1024) {
+      return errorJson('webhook.too_large', 'Payload too large', 413);
+    }
+    // No per-IP limit: after the secret check every request is Telegram's,
+    // from a few shared addresses, so an IP bucket would let one busy chat
+    // hold back every buyer's payment. The bot limits per chat instead
+    // (payments and pre-checkout answers are never limited).
+    const rawBody = await readBoundedBody(req, 64 * 1024);
+    if (rawBody === null) return errorJson('webhook.too_large', 'Payload too large', 413);
+    try {
+      await ctx.runAction(internal.telegramBot.handleUpdate, { rawBody });
+    } catch {
+      return errorJson('webhook.retry', 'Not applied, retry', 500);
+    }
+    return json({ ok: true });
+  }),
+});
+
 // --- self-service billing webhooks (one route per processor) ----------------
 // Same template as the generic billing webhook: 503 when the rail's secret is
 // unset (distinct from a bad signature), 64 KiB cap BEFORE verifying, per-IP
@@ -3984,6 +4023,77 @@ http.route({
     const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
     if (!admin) return ADMIN_UNAUTH();
     return json(await ctx.runAction(internal.alerts.sendTest, {}));
+  }),
+});
+
+// --- admin: Telegram gift shop (Admin -> Billing -> Telegram bot) --------------
+// Settings + the webhook's state at Telegram. The bot token is write-only
+// (sealed PATCH, blank = unchanged); the webhook secret is made by Register.
+// The view says whether each is set, never the values.
+
+http.route({
+  path: '/api/v1/admin/telegram',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    const [config, webhook] = await Promise.all([
+      ctx.runQuery(internal.telegramAdmin.view, {}),
+      ctx.runAction(internal.telegramAdmin.webhookStatus, {}),
+    ]);
+    return json({ ...config, webhook });
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telegram',
+  method: 'PATCH',
+  handler: sealed(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    const bool = (k: string) => (typeof body[k] === 'boolean' ? { [k]: body[k] as boolean } : {});
+    const prices = Array.isArray(body.starsPrices)
+      ? (body.starsPrices as unknown[]).map((p) => {
+          const r = (p ?? {}) as Record<string, unknown>;
+          return { months: Number(r.months), stars: Number(r.stars) };
+        })
+      : undefined;
+    try {
+      await ctx.runMutation(internal.telegramAdmin.setConfig, {
+        ...bool('enabled'),
+        ...bool('starsEnabled'),
+        ...(typeof body.botUsername === 'string' ? { botUsername: body.botUsername } : {}),
+        ...(typeof body.botToken === 'string' ? { botToken: body.botToken } : {}),
+        ...(typeof body.termsUrl === 'string' ? { termsUrl: body.termsUrl } : {}),
+        ...(prices ? { starsPrices: prices } : {}),
+        actorAdminId: admin.adminUserId,
+      });
+      return json(await ctx.runQuery(internal.telegramAdmin.view, {}));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telegram/webhook',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{ action?: unknown }>(req);
+    if (body.action !== 'register' && body.action !== 'remove') {
+      return errorJson('validation', 'action must be register or remove', 400);
+    }
+    try {
+      await ctx.runAction(internal.telegramAdmin.setWebhook, {
+        action: body.action,
+        actorAdminId: admin.adminUserId,
+      });
+      return json(await ctx.runAction(internal.telegramAdmin.webhookStatus, {}));
+    } catch (err) {
+      return adminError(err);
+    }
   }),
 });
 

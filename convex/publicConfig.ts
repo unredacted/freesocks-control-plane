@@ -24,6 +24,12 @@ import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
 import { publicAnalytics, resolveAnalyticsConfig } from './lib/analyticsConfig';
+import {
+  resolveTelegramConfig,
+  resolveTelegramSecrets,
+  verifiedBotUsername,
+} from './lib/telegramConfig';
+import { shopOpen, toShopBilling } from './lib/telegram/flow';
 import { publicFamilyProjection } from './lib/connectionModes';
 import { resolvePublicModes } from './lib/placement';
 import { BACKEND_IDS } from './lib/backendIds';
@@ -112,6 +118,8 @@ export const get = query({
       locations,
       clientsCatalog,
       censored,
+      telegramCfg,
+      telegramSecrets,
     ] = await Promise.all([
       // Public-safe billing catalog: prices, durations, which rails are live, and
       // the tier slug the membership maps to. No secrets (API keys/IPN secrets are
@@ -158,6 +166,8 @@ export const get = query({
       resolveClients(ctx.db),
       // Only for the country question's on/off bit: the list stays server-side.
       resolveCensoredCountries(ctx.db),
+      resolveTelegramConfig(ctx.db),
+      resolveTelegramSecrets(ctx.db),
     ]);
     const mirrorsEnabled = firstMirror !== null;
     const { modes: modeProjection, catalog: modeCatalog } = publicModes;
@@ -327,6 +337,19 @@ export const get = query({
       // The Umami host + website id are server-side-only — publicAnalytics's
       // narrow return type is the structural guarantee they can't leak here.
       analytics: publicAnalytics(analyticsCfg),
+      // The official Telegram gift shop, so the site can link (and vouch for)
+      // the real bot: only its public username, only while the shop is open
+      // (the bot's own test: switched on, billing on, something to sell) and
+      // the bot can actually answer (a webhook secret is set, and the webhook
+      // was registered for the bot whose token is saved now). The name is the
+      // one Telegram reported for that token at Register, and only while it
+      // matches the configured one: a mistyped or renamed bot hides the link.
+      telegram:
+        telegramSecrets.webhookSecret &&
+        shopOpen(telegramCfg, toShopBilling(billing)) &&
+        verifiedBotUsername(telegramCfg, telegramSecrets.botToken)
+          ? { botUsername: verifiedBotUsername(telegramCfg, telegramSecrets.botToken)! }
+          : null,
       // Member-facing connection-mode catalog: the PARENT families a member picks
       // first, plus their transport sub-choices (id + family + label + description
       // + deliveryStyle + isDefault + available = enabled AND placement pool

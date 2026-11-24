@@ -132,6 +132,7 @@ export const publicConfigReturns = v.object({
     homeImage: v.union(siteImageRef, v.null()),
   }),
   analytics: v.object({ enabled: v.boolean() }),
+  telegram: v.union(v.object({ botUsername: v.string() }), v.null()),
   connectionModes: v.array(
     v.object({
       id: v.string(),

@@ -8,6 +8,7 @@
   import AdminLayout from './AdminLayout.svelte';
   import BillingRevenueChart from './BillingRevenueChart.svelte';
   import AdminDirectCheckout from './AdminDirectCheckout.svelte';
+  import TelegramBotCard from './TelegramBotCard.svelte';
   import AdminListState from './AdminListState.svelte';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
@@ -830,6 +831,8 @@
       {/if}
     </section>
 
+    <TelegramBotCard durations={(billing.data?.config.durations ?? []).map((d) => d.months)} />
+
     <!-- Processor credentials: DB-stored (an env var is the fallback). Secret
          fields are WRITE-ONLY - the server never returns them; a blank box is
          left unchanged on save. -->
@@ -1078,11 +1081,16 @@
             <code class="font-mono text-xs text-muted-foreground">{o.refPrefix}…</code>
             {#if o.userHandle}
               <code class="font-mono text-xs text-muted-foreground">{o.userHandle}</code>
+            {:else if o.channel === 'telegram'}
+              <!-- The Telegram gift shop: no account behind the order, by design. -->
+              <span class="text-[11px] text-muted-foreground">Telegram</span>
             {:else if o.userId === null}
               <!-- No account behind this order: an anonymous donation. -->
               <span class="text-[11px] text-muted-foreground">anonymous</span>
             {/if}
-            <span class="capitalize">{o.processor}</span>
+            <span class={o.processor === 'telegram_stars' ? '' : 'capitalize'}>
+              {o.processor === 'telegram_stars' ? 'Telegram Stars' : o.processor}
+            </span>
             <span class="tabular-nums">{formatMoney(o.amountCents, o.currency)}</span>
             {#if o.kind === 'gift'}
               <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
@@ -1108,7 +1116,7 @@
             <span class="ms-auto text-xs text-muted-foreground tabular-nums">
               {o.paidAt ? `paid ${formatDate(o.paidAt)}` : formatDate(o.createdAt)}
             </span>
-            {#if GRANTABLE.has(o.status)}
+            {#if GRANTABLE.has(o.status) && o.channel !== 'telegram'}
               <span class="flex gap-1">
                 <Button
                   size="sm"
