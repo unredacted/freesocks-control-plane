@@ -211,7 +211,7 @@ describe('clients CRUD', () => {
 
   test('hysteria2 defaults: only the recorded apps, Hiddify recorded unable', () => {
     // A `true` needs a record (convex/clientCompatibility.test.ts holds that).
-    const RECORDED = new Set(['v2rayNG']);
+    const RECORDED = new Set(['v2rayNG', 'v2rayN']);
     for (const c of DEFAULT_CLIENTS)
       expect(c.hysteria2, c.name).toBe(
         c.name === 'Hiddify' ? false : RECORDED.has(c.name) ? true : undefined,

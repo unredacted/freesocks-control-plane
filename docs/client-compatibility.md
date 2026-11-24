@@ -353,11 +353,11 @@ Do one of them before turning the `freedom-xhttp` mode on for members.
 
 Each catalog app also carries a `hysteria2` flag (`convex/lib/clientCatalog.ts`), tri-state again, but read as an **allowlist**: on a Hysteria mode (the built-in `privacy-hysteria`) only apps marked `true` are offered, and untested ones are left out with the ones marked `false`. The entry's certificate is self-signed and trusted only by its pin (`docs/privacy.md`), and the Hysteria password is the member's own credential. An app that drops the pin either fails to connect or connects to whoever answers at the address and hands that server the password. So `true` is never set from release notes or from what an app's core can do: it needs a recorded check of that app's version through FCP's own delivery.
 
-| `hysteria2` | Apps                                                                                                           |
-| ----------- | -------------------------------------------------------------------------------------------------------------- |
-| `true`      | v2rayNG (2.3.15, recorded against beta's canary by **Hysteria in real apps**)                                  |
-| `false`     | Hiddify (its link parser ignores `pinSHA256`, so the pin never reaches its core)                               |
-| unset       | Every other app, until a record exists. Next: v2rayN (passes against the fixture; its beta run is being fixed) |
+| `hysteria2` | Apps                                                                                                              |
+| ----------- | ----------------------------------------------------------------------------------------------------------------- |
+| `true`      | v2rayNG (2.3.15, Android) and v2rayN (7.25.6, Linux), recorded against beta's canary by **Hysteria in real apps** |
+| `false`     | Hiddify (its link parser ignores `pinSHA256`, so the pin never reaches its core)                                  |
+| unset       | Every other app, until a record exists                                                                            |
 
 What counts as a record: an entry in `tests/compat/application-evidence.json` made with `scripts/compat/evidence.ts --hysteria2`, for a specific app version, after the three Hysteria checks in `docs/client-device-checklists.md` § "Hysteria": the app imports a `privacy-hysteria` key's raw config through its own importer, connects through the `· UDP` entry over UDP, and refuses to connect once one character of the entry's pin is changed. `convex/clientCompatibility.test.ts` fails when a default app is `true` without such a record for it. An admin who sets **Hysteria support** in **Client apps** is held to the same rule by the field's own help text; the CMS cannot see the evidence file.
 

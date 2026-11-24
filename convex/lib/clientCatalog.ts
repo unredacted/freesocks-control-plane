@@ -205,6 +205,9 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     sourceUrl: 'https://github.com/2dust/v2rayN',
     easeOfUse: 'advanced',
     xhttp: true, // Xray-core inside
+    // Recorded: 7.25.6 on Linux against beta's Hysteria canary (CI, Hysteria in
+    // real apps). Windows shares the link parser and config builder (ServiceLib).
+    hysteria2: true,
     enabled: true,
     priority: 45,
   },

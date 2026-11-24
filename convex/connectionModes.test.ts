@@ -755,7 +755,7 @@ describe('admin CRUD', () => {
     });
   });
 
-  test('the default catalog (v2rayNG recorded) lets the Hysteria mode turn on', async () => {
+  test('the default catalog (v2rayNG and v2rayN recorded) lets the Hysteria mode turn on', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.connectionModes.updateMode, {
       slug: 'privacy-hysteria',

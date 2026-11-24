@@ -193,11 +193,11 @@ describe('the apps it names', () => {
         notice: OLD,
       }),
     ).toEqual([]);
-    // The defaults: v2rayNG is recorded.
+    // The defaults: v2rayNG and v2rayN are recorded.
     const evidenced = DEFAULT_CLIENTS;
     expect(
       noticeApps(evidenced, { backend: 'remnawave', modeId: 'privacy-hysteria', notice: OLD }),
-    ).toEqual(['v2rayNG']);
+    ).toEqual(['v2rayNG', 'v2rayN']);
     // Another mode is not narrowed by the flag.
     expect(
       noticeApps(evidenced, { backend: 'remnawave', modeId: 'privacy-reality', notice: OLD }),
