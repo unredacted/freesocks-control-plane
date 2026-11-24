@@ -116,10 +116,13 @@ describe('what a change does, said before it runs', () => {
     expect(to('acct-3', 'zone-net').lines).toEqual([
       'Origin hostnames move from example.org to example.net.',
     ]);
+    expect(to('acct-3', 'zone-net').effect).toBe(
+      "Recorded at once as generation 2. Nothing changes on the backend, or on nodes that serve members or are fronted. A WebSocket node that has served nobody, or is still waiting for a hostname, gets one under example.net in a new machine revision, applied on the role's next run. FCP removes its record under example.org.",
+    );
     const none = setupChangeWords(current, { modes, origin: null }, zones);
     expect(none.lines[0]).toMatch(/^No zone for origin hostnames any more/);
     expect(none.effect).toBe(
-      'Recorded at once as generation 2. Nothing changes on the backend, or on nodes that already have a hostname or serve members.',
+      'Recorded at once as generation 2. Nothing changes on the backend, or on nodes that serve members or are fronted. A WebSocket node that has served nobody loses its hostname under example.org and waits for one again.',
     );
   });
 

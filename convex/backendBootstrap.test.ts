@@ -830,20 +830,56 @@ describe("changing a backend's setup", () => {
 
     expect(panel.writes.length).toBe(writes);
 
-    // The zone, while a WebSocket node has a name in it.
+    // The zone, while a WebSocket node that is live or fronted has a name in it.
     const zoneA = await createAccount(t, { provider: 'cloudflare', name: 'dns-a' });
     await change(t, serverId, { originDns: { accountId: zoneA } });
-    await enroll(t, serverId, 'node-w', 'freedom-ws');
+    const { intentId: wId } = await enroll(t, serverId, 'node-w', 'freedom-ws');
     const enrolled = panel.writes.length;
     const zoneB = await createAccount(t, {
       provider: 'cloudflare',
       name: 'dns-b',
       settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
     });
+    // Fronted: an Edges origin dials the name.
+    const relayId = await t.run((ctx) =>
+      ctx.db.insert('relays', {
+        slug: 'origin-w',
+        backendServerId: serverId,
+        origin: { kind: 'panel-node', backendServerId: serverId, nodeName: 'node-w' },
+        nodeName: 'node-w',
+        originAddress: 'node-w.example.org',
+        enabled: true,
+        autoRotate: false,
+        hostMode: 'fcp',
+        delivery: 'edge-required',
+        desiredPublished: 1,
+        standbyPerRelay: 0,
+        cooldownMs: 1,
+        maxRotationsPerDay: 3,
+        drainMs: 1,
+        publicationEpoch: 0,
+        publishedEdgeIds: [],
+        standbyEdgeIds: [],
+        rotationsToday: 0,
+        updatedAt: Date.now(),
+      }),
+    );
     await expect(change(t, serverId, { originDns: { accountId: zoneB } })).rejects.toThrow(
       /origin_zone_in_use/,
     );
     await expect(change(t, serverId, { originDns: null })).rejects.toThrow(/origin_zone_in_use/);
+    await t.run((ctx) => ctx.db.delete(relayId));
+    // Ever live: members and edges reached it under the name.
+    const exposure = (await t.run((ctx) => ctx.db.get(wId)))!.delivery;
+    await t.run((ctx) =>
+      ctx.db.patch(wId, {
+        delivery: { ...exposure, exposure: { ...exposure.exposure, everLive: true } },
+      }),
+    );
+    await expect(change(t, serverId, { originDns: { accountId: zoneB } })).rejects.toThrow(
+      /origin_zone_in_use/,
+    );
+    await t.run((ctx) => ctx.db.patch(wId, { delivery: exposure }));
     // Another account holding the same zone is fine: every name stays what it is.
     const zoneA2 = await createAccount(t, { provider: 'cloudflare', name: 'dns-a2' });
     expect(await change(t, serverId, { originDns: { accountId: zoneA2 } })).toMatchObject({
@@ -985,6 +1021,85 @@ describe("changing a backend's setup", () => {
     });
     expect((await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w')))!.originAddress).toBe(
       'node-w.example.org',
+    );
+  });
+});
+
+describe("a backend's zone moving under nodes that served nobody", () => {
+  const change = (t: T, serverId: Id<'backendServers'>, over: Partial<SetupInputArg> = {}) =>
+    t.mutation(internal.backendSetup.start, {
+      backendServerId: serverId,
+      input: { ...setupInput, ...over },
+    });
+  async function until<R>(get: () => Promise<R>, ok: (r: R) => boolean): Promise<R> {
+    for (let i = 0; i < 500; i++) {
+      const r = await get();
+      if (ok(r)) return r;
+      await new Promise((res) => setTimeout(res, 5));
+    }
+    throw new Error('condition never held');
+  }
+
+  test('its managed name follows the new zone: a new machine revision, the old record withdrawn, the new one written', async () => {
+    const { t, serverId, panel } = await seed();
+    await runSetup(t, serverId);
+    const zoneA = await createAccount(t, { provider: 'cloudflare', name: 'dns-a' });
+    await change(t, serverId, { originDns: { accountId: zoneA } });
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-w',
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    await runIntent(t, intentId);
+    const names = () => panel.zone.map((r) => r.name);
+    await until(
+      async () => names(),
+      (n) => n.includes('node-w.example.org'),
+    );
+    const before = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(before.settings.originHostnameSource).toBe('managed');
+
+    const zoneB = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'dns-b',
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+    });
+    expect(await change(t, serverId, { originDns: { accountId: zoneB } })).toMatchObject({
+      state: 'ready',
+      started: false,
+    });
+    const moved = await until(
+      () => t.run((ctx) => ctx.db.get(intentId)),
+      (i) => i!.machineRevision > before.machineRevision && !i!.claim,
+    );
+    expect(moved!.settings.originHostnameSource).toBe('managed');
+    expect((await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w')))!.originAddress).toBe(
+      'node-w.example.net',
+    );
+    await until(
+      async () => names(),
+      (n) => n.includes('node-w.example.net') && !n.includes('node-w.example.org'),
+    );
+
+    // No zone any more: it waits for a hostname again, and its record goes.
+    await change(t, serverId, { originDns: null });
+    const waiting = await until(
+      () => t.run((ctx) => ctx.db.get(intentId)),
+      (i) => i!.code === 'servers.origin_hostname_missing' && !i!.claim,
+    );
+    expect(waiting).toMatchObject({
+      state: 'blocked',
+      settings: { originHostnameSource: 'explicit' },
+    });
+    await until(
+      async () => names(),
+      (n) => !n.some((x) => x.startsWith('node-w.')),
     );
   });
 });

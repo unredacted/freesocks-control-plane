@@ -41,6 +41,7 @@ import { sameTarget } from './lib/edges/sni/family';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
 import { callResultOf, classifyRequest } from './lib/backend/ops';
 import { checkProfileCompatibility, type EffectiveTransport } from './lib/backend/profileCompat';
+import { originNameHeld } from './lib/backend/originDns';
 import {
   PROFILE_DEFAULTS,
   buildProfile,
@@ -253,6 +254,20 @@ function observedProfile(p: Doc<'panelProfiles'>) {
 }
 
 type OriginDns = Setup['originDns'];
+
+/** The node names of this backend an Edges origin (a protection) dials. */
+export async function frontedNodeNames(
+  db: QueryCtx['db'],
+  backendServerId: Id<'backendServers'>,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const r of await db
+    .query('relays')
+    .withIndex('by_backend_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect())
+    if (r.origin.kind === 'panel-node') out.add(r.origin.nodeName);
+  return out;
+}
 type Change = { kind: 'none' } | { kind: 'origin' } | { kind: 'modes'; added: ModeInput[] };
 
 /**
@@ -293,16 +308,24 @@ async function checkChange(
   }
   const before = row.originDns ?? null;
   if (before && before.zoneId !== originDns?.zoneId) {
-    const named = (
+    // Only a name something relies on holds the zone (`originNameHeld`): a node
+    // that never served anyone follows the new zone (`afterSetupReady`).
+    const fronted = await frontedNodeNames(ctx.db, row.backendServerId);
+    const held = (
       await ctx.db
         .query('panelNodeIntents')
         .withIndex('by_server_name', (q) => q.eq('backendServerId', row.backendServerId))
         .collect()
-    ).some((i) => i.state !== 'retired' && i.settings.originHostnameSource === 'managed');
-    if (named)
+    ).some(
+      (i) =>
+        i.state !== 'retired' &&
+        i.settings.originHostnameSource === 'managed' &&
+        originNameHeld(i, fronted),
+    );
+    if (held)
       refuse(
         'servers.origin_zone_in_use',
-        `WebSocket nodes have origin names under ${before.zoneName}. Keep that zone, or retire them first`,
+        `WebSocket nodes that are live or fronted have origin names under ${before.zoneName}. Keep that zone, or retire them first`,
       );
   }
   // The modes as a set (another order changes nothing).
@@ -518,6 +541,8 @@ export const start = internalMutation({
       });
       await ctx.scheduler.runAfter(0, internal.nodeIntents.afterSetupReady, {
         backendServerId: sid,
+        // Another zone (or none): the names of nodes that served nobody follow it.
+        zoneMoved: (row.originDns?.zoneId ?? null) !== (originDns?.zoneId ?? null),
       });
       return {
         setupId: row._id,

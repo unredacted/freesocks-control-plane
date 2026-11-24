@@ -31,7 +31,7 @@ import {
 import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
 import { ingressRoute, type IngressMapping, type IngressRoute } from './lib/backend/ingress';
-import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
+import { LABEL_RE, originHostname, originLabel, originNameHeld } from './lib/backend/originDns';
 import {
   ADDRESS_SEP,
   addressRemark,
@@ -48,7 +48,14 @@ import {
   verificationBinding,
   verificationCurrent,
 } from './lib/edges/verification';
-import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
+import {
+  bumpGateVersion,
+  frontedNodeNames,
+  modeOf,
+  setupReady,
+  type Setup,
+  type SetupMode,
+} from './backendSetup';
 import { extraTransportOn } from './lib/backend/extraModes';
 import {
   desiredRoutes,
@@ -1211,15 +1218,25 @@ export const patchSettings = internalMutation({
  * ever live is never renamed from here. None of them has served a member: the
  * node gets a new machine revision for the role to apply.
  *
+ * When the zone itself moved (`zoneMoved`, from a change of the setup), each
+ * node with a managed name that nothing relies on (`originNameHeld`: never
+ * live, no Edges origin, not adopted, not retiring) follows it the same way: a
+ * new machine revision for its new name, and the reconcile withdraws the old
+ * record through its own obligation before it writes the new one. With no zone
+ * any more such a node waits for a hostname again, as if it had enrolled
+ * without one. The setup change refused the move while any held name was in
+ * the old zone.
+ *
  * Then every pending node no attempt holds is reconciled, so neither waits for
  * the sweep.
  */
 export const afterSetupReady = internalMutation({
-  args: { backendServerId: v.id('backendServers') },
-  handler: async (ctx, { backendServerId: sid }) => {
+  args: { backendServerId: v.id('backendServers'), zoneMoved: v.optional(v.boolean()) },
+  handler: async (ctx, { backendServerId: sid, zoneMoved }) => {
     const setup = await readySetup(ctx, sid);
     if (!setup) return { named: 0, reconciled: 0 };
     const wsModes = new Set(setup.modes.filter((m) => isWs(m.shape)).map((m) => m.slug));
+    const fronted = zoneMoved ? await frontedNodeNames(ctx.db, sid) : new Set<string>();
     const server = await ctx.db.get(sid);
     const now = Date.now();
     let named = 0;
@@ -1247,6 +1264,30 @@ export const afterSetupReady = internalMutation({
             now,
           )),
           // No longer blocked for a name: pending until reconciled.
+          state: 'pending',
+          code: undefined,
+        });
+        await writeAuditLog(ctx, {
+          actorType: 'system',
+          action: 'servers.node.settings',
+          targetType: 'panel_node_intent',
+          targetId: intent._id,
+          payload: { backendSlug: server?.slug ?? '', name: intent.name, change: 'origin_name' },
+        });
+        named++;
+      } else if (
+        zoneMoved &&
+        wsModes.has(modeSlug(intent)) &&
+        s.originHostnameSource === 'managed' &&
+        intent.state !== 'retired' &&
+        !originNameHeld(intent, fronted)
+      ) {
+        // Its name follows the zone; with none left it waits for one again.
+        const settings: Intent['settings'] = setup.originDns
+          ? s
+          : { ...s, originHostnameSource: 'explicit' };
+        await ctx.db.patch(intent._id, {
+          ...(await revisedForSettings(ctx, intent, settings, now)),
           state: 'pending',
           code: undefined,
         });
@@ -1976,6 +2017,13 @@ export const reconcile = internalAction({
       //    An adopted node fronted by an edge FCP does not run keeps its own name.
       if (isWs(shape) && !c.intent.adopted?.externallyFronted) {
         if (!c.hostname) {
+          // A name it had (its backend's zone was taken away) is withdrawn
+          // first, through its own obligation: nothing FCP wrote stays behind.
+          const gone = await ctx.runAction(internal.nodeIntentOps.ensureOriginDns, f);
+          if (gone.state === 'unresolved') {
+            await stop('pending', 'servers.obligation_unresolved');
+            return null;
+          }
           await stop('blocked', 'servers.origin_hostname_missing');
           return null;
         }

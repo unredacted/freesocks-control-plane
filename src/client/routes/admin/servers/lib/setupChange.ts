@@ -145,19 +145,35 @@ export function setupChangeWords(
         `No node can enroll or be approved until the run is done. Members are not affected.`,
       done: 'The setup runs again.',
     };
-  if (originMoved)
+  if (originMoved) {
+    // Another zone, or none: the names of nodes that served nobody follow it.
+    const zoneMoves = !!from && from.zoneId !== to?.zoneId;
+    let nodes = '';
+    if (zoneMoves && toName)
+      nodes =
+        ` A WebSocket node that has served nobody, or is still waiting for a hostname, gets ` +
+        `one under ${toName} in a new machine revision, applied on the role's next run. FCP ` +
+        `removes its record under ${from.zoneName}.`;
+    else if (zoneMoves)
+      nodes =
+        ` A WebSocket node that has served nobody loses its hostname under ${from.zoneName} ` +
+        `and waits for one again.`;
+    else if (toName)
+      nodes =
+        ` A WebSocket node still waiting for a hostname gets one under ${toName} in a new ` +
+        `machine revision, applied on the role's next run.`;
     return {
       changed: true,
       lines,
       effect:
         `Recorded at once as generation ${generation}. Nothing changes on the backend, or on ` +
-        `nodes that already have a hostname or serve members.` +
-        (toName
-          ? ` A WebSocket node still waiting for a hostname gets one under ${toName} in a new ` +
-            `machine revision, applied on the role's next run.`
-          : ''),
+        (zoneMoves
+          ? `nodes that serve members or are fronted.`
+          : `nodes that already have a hostname or serve members.`) +
+        nodes,
       done: 'Origin hostnames changed. Nothing on the backend moved.',
     };
+  }
   return { changed: false, lines, effect: 'Nothing is changed yet.', done: '' };
 }
 
