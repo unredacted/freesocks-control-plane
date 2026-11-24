@@ -185,6 +185,8 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     sourceUrl: 'https://github.com/2dust/v2rayNG',
     easeOfUse: 'moderate',
     xhttp: true, // Xray-core inside
+    // Recorded: 2.3.15 against beta's Hysteria canary (CI, Hysteria in real apps).
+    hysteria2: true,
     enabled: true,
     priority: 40,
   },
