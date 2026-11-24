@@ -29,9 +29,10 @@ import {
   type Stage,
 } from './lib/backend/activation';
 import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
+import { revisedForSettings } from './lib/backend/nodeRevision';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
 import { ingressRoute, type IngressMapping, type IngressRoute } from './lib/backend/ingress';
-import { LABEL_RE, originHostname, originLabel, originNameHeld } from './lib/backend/originDns';
+import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
 import {
   ADDRESS_SEP,
   addressRemark,
@@ -48,14 +49,7 @@ import {
   verificationBinding,
   verificationCurrent,
 } from './lib/edges/verification';
-import {
-  bumpGateVersion,
-  frontedNodeNames,
-  modeOf,
-  setupReady,
-  type Setup,
-  type SetupMode,
-} from './backendSetup';
+import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { extraTransportOn } from './lib/backend/extraModes';
 import {
   desiredRoutes,
@@ -362,15 +356,6 @@ export function withVerifiedIngress<
       ? { ...o, originTransport: { ...o.originTransport, acceptsHostHeader: 'any' } }
       : o,
   );
-}
-
-function revisionsOf(intent: Intent): Revisions {
-  return {
-    machineRevision: intent.machineRevision,
-    configRevision: intent.configRevision ?? '',
-    authRevision: intent.authRevision,
-    deliveryRevision: intent.deliveryRevision ?? '',
-  };
 }
 
 // --- enrollment (the role) -------------------------------------------------------------------------
@@ -994,39 +979,6 @@ const settingsPatch = v.object({
  * dropped), a new desired hash and generation, and no activation run of the
  * old revisions left to commit.
  */
-async function revisedForSettings(
-  ctx: MutationCtx,
-  intent: Intent,
-  settings: Intent['settings'],
-  now: number,
-): Promise<Partial<Intent>> {
-  const machineRevision = intent.machineRevision + 1;
-  const evidence = retainEvidence(intent.activation.evidence, {
-    ...revisionsOf(intent),
-    machineRevision,
-  });
-  // A revision moved: no activation run of the old revisions may commit.
-  for (const r of await ctx.db
-    .query('panelActivationRuns')
-    .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
-    .collect())
-    if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-      await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-  return {
-    settings,
-    machineRevision,
-    activation: {
-      ...intent.activation,
-      evidence,
-      stage: stageAfterChange(intent.activation.stage, evidence),
-      reviewHash: undefined,
-      currentRunId: undefined,
-    },
-    desiredHash: await desiredHashOf({ observed: intent.observed, settings }),
-    generation: intent.generation + 1,
-    updatedAt: now,
-  };
-}
 
 /** Where the node is reached moved: its management address, its public v4, or a v6 it publishes. */
 function endpointMoved(intent: Intent, o: Infer<typeof observed>): boolean {
@@ -1218,25 +1170,19 @@ export const patchSettings = internalMutation({
  * ever live is never renamed from here. None of them has served a member: the
  * node gets a new machine revision for the role to apply.
  *
- * When the zone itself moved (`zoneMoved`, from a change of the setup), each
- * node with a managed name that nothing relies on (`originNameHeld`: never
- * live, no Edges origin, not adopted, not retiring) follows it the same way: a
- * new machine revision for its new name, and the reconcile withdraws the old
- * record through its own obligation before it writes the new one. With no zone
- * any more such a node waits for a hostname again, as if it had enrolled
- * without one. The setup change refused the move while any held name was in
- * the old zone.
+ * A move to another zone (or none) renamed the nodes nothing relies on in the
+ * setup change itself (`backendSetup.moveUnheldOriginNames`): they are pending
+ * here and reconciled with the rest.
  *
  * Then every pending node no attempt holds is reconciled, so neither waits for
  * the sweep.
  */
 export const afterSetupReady = internalMutation({
-  args: { backendServerId: v.id('backendServers'), zoneMoved: v.optional(v.boolean()) },
-  handler: async (ctx, { backendServerId: sid, zoneMoved }) => {
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId: sid }) => {
     const setup = await readySetup(ctx, sid);
     if (!setup) return { named: 0, reconciled: 0 };
     const wsModes = new Set(setup.modes.filter((m) => isWs(m.shape)).map((m) => m.slug));
-    const fronted = zoneMoved ? await frontedNodeNames(ctx.db, sid) : new Set<string>();
     const server = await ctx.db.get(sid);
     const now = Date.now();
     let named = 0;
@@ -1264,30 +1210,6 @@ export const afterSetupReady = internalMutation({
             now,
           )),
           // No longer blocked for a name: pending until reconciled.
-          state: 'pending',
-          code: undefined,
-        });
-        await writeAuditLog(ctx, {
-          actorType: 'system',
-          action: 'servers.node.settings',
-          targetType: 'panel_node_intent',
-          targetId: intent._id,
-          payload: { backendSlug: server?.slug ?? '', name: intent.name, change: 'origin_name' },
-        });
-        named++;
-      } else if (
-        zoneMoved &&
-        wsModes.has(modeSlug(intent)) &&
-        s.originHostnameSource === 'managed' &&
-        intent.state !== 'retired' &&
-        !originNameHeld(intent, fronted)
-      ) {
-        // Its name follows the zone; with none left it waits for one again.
-        const settings: Intent['settings'] = setup.originDns
-          ? s
-          : { ...s, originHostnameSource: 'explicit' };
-        await ctx.db.patch(intent._id, {
-          ...(await revisedForSettings(ctx, intent, settings, now)),
           state: 'pending',
           code: undefined,
         });

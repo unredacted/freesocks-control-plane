@@ -1074,6 +1074,10 @@ describe("a backend's zone moving under nodes that served nobody", () => {
       state: 'ready',
       started: false,
     });
+    // Renamed in the transaction that recorded the zone, not by a later callback.
+    expect((await t.run((ctx) => ctx.db.get(intentId)))!.machineRevision).toBeGreaterThan(
+      before.machineRevision,
+    );
     const moved = await until(
       () => t.run((ctx) => ctx.db.get(intentId)),
       (i) => i!.machineRevision > before.machineRevision && !i!.claim,
@@ -1100,6 +1104,65 @@ describe("a backend's zone moving under nodes that served nobody", () => {
     await until(
       async () => names(),
       (n) => !n.some((x) => x.startsWith('node-w.')),
+    );
+  });
+
+  test('a zone moved together with a new mode renames the node too, before the setup runs again', async () => {
+    const { t, serverId, panel } = await seed();
+    const [direct, l4, xhttp, ws] = setupInput.modes as [ModeArg, ModeArg, ModeArg, ModeArg];
+    const zoneA = await createAccount(t, { provider: 'cloudflare', name: 'dns-a' });
+    await runSetup(t, serverId, {
+      ...setupInput,
+      modes: [direct, l4, ws],
+      originDns: { accountId: zoneA },
+    });
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-w',
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    await runIntent(t, intentId);
+    await until(
+      async () => panel.zone.map((r) => r.name),
+      (n) => n.includes('node-w.example.org'),
+    );
+    const before = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    // The profile (as last looked at) has the new mode's transport.
+    await t.run(async (ctx) => {
+      const p = (await ctx.db
+        .query('panelProfiles')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .first())!;
+      const like = p.inbounds.find((i) => i.tag === 'FREEDOM_REALITY')!;
+      await ctx.db.patch(p._id, {
+        inbounds: [
+          ...p.inbounds,
+          { ...like, tag: 'FREEDOM_XHTTP', inboundUuid: UUID(77), network: 'xhttp', path: '/' },
+        ],
+      });
+    });
+    const zoneB = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'dns-b',
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+    });
+    expect(
+      await change(t, serverId, {
+        modes: [direct, l4, ws, xhttp],
+        originDns: { accountId: zoneB },
+      }),
+    ).toMatchObject({ started: true });
+    const now = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(now.machineRevision).toBeGreaterThan(before.machineRevision);
+    expect(now.state).toBe('pending');
+    expect((await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w')))!.originAddress).toBe(
+      'node-w.example.net',
     );
   });
 });
@@ -1502,6 +1565,32 @@ describe("a front node's origin name", () => {
     expect(await t.mutation(internal.nodeIntents.resume, { intentId })).toBe(false);
     for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 5));
     expect(panel.zone).toEqual([]);
+  });
+
+  test("a zone move's old account cannot be removed while a record it wrote still stands", async () => {
+    const { t, serverId, panel } = await seed();
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    await runSetup(t, serverId, { ...setupInput, originDns: { accountId: acct } });
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.zone).toHaveLength(1);
+    const other = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'dns-b',
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+    });
+    await t.mutation(internal.backendSetup.start, {
+      backendServerId: serverId,
+      input: { ...setupInput, originDns: { accountId: other } },
+    });
+    // The setup no longer names it, but its record waits for the node's reconcile.
+    await expect(t.mutation(internal.edgeProviderAccounts.remove, { id: acct })).rejects.toThrow(
+      /origin names use this account/,
+    );
+    for (let i = 0; i < 200 && panel.zone.some((r) => r.name.endsWith('.example.org')); i++)
+      await new Promise((r) => setTimeout(r, 5));
+    expect(panel.zone.map((r) => r.name)).toEqual([HOST.replace('example.org', 'example.net')]);
+    await t.mutation(internal.edgeProviderAccounts.remove, { id: acct });
   });
 
   test('a record written with an account since replaced (same zone) and removed is still withdrawn', async () => {

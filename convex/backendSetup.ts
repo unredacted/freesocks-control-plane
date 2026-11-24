@@ -30,7 +30,7 @@
 import { sniFamilyBySlug } from './lib/edges/sni/slug';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { ActionCtx, QueryCtx } from './_generated/server';
+import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
@@ -42,6 +42,7 @@ import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib
 import { callResultOf, classifyRequest } from './lib/backend/ops';
 import { checkProfileCompatibility, type EffectiveTransport } from './lib/backend/profileCompat';
 import { originNameHeld } from './lib/backend/originDns';
+import { revisedForSettings } from './lib/backend/nodeRevision';
 import {
   PROFILE_DEFAULTS,
   buildProfile,
@@ -268,6 +269,62 @@ export async function frontedNodeNames(
     if (r.origin.kind === 'panel-node') out.add(r.origin.nodeName);
   return out;
 }
+/**
+ * The zone for origin names moved (to another zone, or to none): every
+ * managed WebSocket node whose name nothing relies on (`originNameHeld`) gets
+ * a new machine revision for its new name, IN the transaction that records the
+ * new zone, so no full setup run and no edge made meanwhile can see the new
+ * zone with the node still on the old one. It waits `pending` for its
+ * reconcile (`nodeIntents.afterSetupReady` reconciles every pending node once
+ * the setup is ready), which withdraws its old record through its own
+ * obligation and writes the new one. With no zone any more it waits for a
+ * hostname again. `checkChange` already refused the move while a held name was
+ * in the old zone.
+ */
+async function moveUnheldOriginNames(
+  ctx: MutationCtx,
+  row: SetupRow,
+  to: OriginDns,
+  backendSlug: string,
+  now: number,
+): Promise<number> {
+  const before = row.originDns ?? null;
+  if (!before || before.zoneId === to?.zoneId) return 0;
+  const fronted = await frontedNodeNames(ctx.db, row.backendServerId);
+  const wsModes = new Set(row.modes.filter((m) => m.shape.transport === 'ws').map((m) => m.slug));
+  let moved = 0;
+  for (const intent of await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) => q.eq('backendServerId', row.backendServerId))
+    .collect()) {
+    const s = intent.settings;
+    if (
+      !wsModes.has(intent.mode ?? '') ||
+      s.originHostnameSource !== 'managed' ||
+      intent.state === 'retired' ||
+      originNameHeld(intent, fronted)
+    )
+      continue;
+    const settings: Doc<'panelNodeIntents'>['settings'] = to
+      ? s
+      : { ...s, originHostnameSource: 'explicit' };
+    await ctx.db.patch(intent._id, {
+      ...(await revisedForSettings(ctx, intent, settings, now)),
+      state: 'pending',
+      code: undefined,
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'servers.node.settings',
+      targetType: 'panel_node_intent',
+      targetId: intent._id,
+      payload: { backendSlug, name: intent.name, change: 'origin_name' },
+    });
+    moved++;
+  }
+  return moved;
+}
+
 type Change = { kind: 'none' } | { kind: 'origin' } | { kind: 'modes'; added: ModeInput[] };
 
 /**
@@ -527,6 +584,9 @@ export const start = internalMutation({
           addedModes: change.kind === 'modes' ? change.added.map((m) => m.slug).join(',') : '',
         },
       });
+    // Before the row records the new zone, in the same transaction.
+    if (row && change && change.kind !== 'none')
+      await moveUnheldOriginNames(ctx, row, originDns, server.slug, now);
     if (row && change?.kind === 'origin' && row.state === 'ready') {
       // Only the origin-name zone: no step of the setup reads it, so nothing on
       // the backend is looked at or written and the row stays ready. Nodes
@@ -541,8 +601,6 @@ export const start = internalMutation({
       });
       await ctx.scheduler.runAfter(0, internal.nodeIntents.afterSetupReady, {
         backendServerId: sid,
-        // Another zone (or none): the names of nodes that served nobody follow it.
-        zoneMoved: (row.originDns?.zoneId ?? null) !== (originDns?.zoneId ?? null),
       });
       return {
         setupId: row._id,

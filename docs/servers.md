@@ -721,9 +721,13 @@ instead; a mode a stopped run never set up may be changed or taken out again); a
 the current one that something relies on (`servers.origin_zone_in_use`): it was ever live, an
 Edges origin (a protection) dials it, it was adopted, or it is being retired (`originNameHeld` in
 `convex/lib/backend/originDns.ts`). A node with a managed name that served nobody does not hold
-the zone: it follows the move (`nodeIntents.afterSetupReady` with `zoneMoved`) in a new machine
-revision for its new name, and the reconcile withdraws its old record through its own obligation
-before it writes the new one. With no zone any more it waits for a hostname again
+the zone: it follows the move in a new machine revision for its new name, made in the same
+transaction that records the new zone (`moveUnheldOriginNames` in `convex/backendSetup.ts`, on
+the in-place path and on a change that also adds a mode alike), and its reconcile withdraws the
+old record through its own obligation before it writes the new one. Until every such record is
+withdrawn, the old zone's DNS account cannot be removed (`edge.account_referenced`): its records
+are reached only through it, since a withdrawal falls back only to an account of the setup's
+current zone. With no zone any more it waits for a hostname again
 (`servers.origin_hostname_missing`, its record withdrawn first). Another account holding the SAME
 zone is always fine: every name stays, and FCP finds its records again by name and marker. Any
 number of backends may use the same zone: each name is its node's own label.
