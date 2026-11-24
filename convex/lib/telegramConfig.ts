@@ -31,11 +31,13 @@ export interface TelegramConfig {
   starsPrices: StarsPrice[];
   /**
    * What 1,000 Stars are worth, in minor units of the billing currency (1300 =
-   * $13.00). A paid Stars order records its value at this rate when it is paid
-   * (`billingOrders.valueMinor`), so Admin -> Billing can sum it with the web
-   * orders. Defaults to Telegram's developer reward rate ($0.013 per Star).
+   * $13.00), as saved; null = never saved. A paid Stars order records its
+   * value at this rate when it is paid (`billingOrders.valueMinor`), so Admin
+   * -> Billing can sum it with the web orders. Read it through
+   * `effectiveStarsRate`: unsaved means Telegram's developer reward rate
+   * ($0.013 per Star) only when the billing currency is USD.
    */
-  starsValuePer1000: number;
+  starsValuePer1000: number | null;
   /** Full terms of sale the bot links ('' = the bot's own short terms only). */
   termsUrl: string;
   /**
@@ -83,7 +85,7 @@ export const TELEGRAM_DEFAULTS: TelegramConfig = {
   botUsername: '',
   starsEnabled: false,
   starsPrices: [],
-  starsValuePer1000: 1300,
+  starsValuePer1000: null,
   termsUrl: '',
   webhookBotId: '',
   webhookBotUsername: '',
@@ -100,6 +102,20 @@ export function sanitizeStarsValuePer1000(v: unknown): number | null {
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_STARS_VALUE_PER_1000
     ? v
     : null;
+}
+
+/** Telegram's developer reward rate: 13.00 USD per 1,000 Stars, in cents. */
+export const STARS_USD_RATE_PER_1000 = 1300;
+
+/**
+ * The Stars rate in force for `currency`: the saved one, else Telegram's USD
+ * reward rate when the billing currency is USD, else null (no rate: Stars
+ * orders get no value until an admin sets one, rather than a USD number
+ * labelled as another currency).
+ */
+export function effectiveStarsRate(cfg: TelegramConfig, currency: string): number | null {
+  if (cfg.starsValuePer1000 !== null) return cfg.starsValuePer1000;
+  return currency.toUpperCase() === 'USD' ? STARS_USD_RATE_PER_1000 : null;
 }
 
 /** What `stars` Stars are worth at `per1000` (minor units per 1,000 Stars), rounded. */
@@ -226,8 +242,7 @@ export async function resolveTelegramConfig(db: DatabaseReader): Promise<Telegra
     botUsername: sanitizeBotUsername(botUsername),
     starsEnabled: starsEnabled === true,
     starsPrices: sanitizeStarsPrices(starsPrices) ?? [],
-    starsValuePer1000:
-      sanitizeStarsValuePer1000(starsValuePer1000) ?? TELEGRAM_DEFAULTS.starsValuePer1000,
+    starsValuePer1000: sanitizeStarsValuePer1000(starsValuePer1000),
     termsUrl: sanitizeTermsUrl(termsUrl),
     webhookBotId:
       typeof webhookBotId === 'string' && /^\d{5,16}$/.test(webhookBotId) ? webhookBotId : '',

@@ -51,7 +51,8 @@
       botUsername = view.botUsername;
       starsEnabled = view.starsEnabled;
       termsUrl = view.termsUrl;
-      valuePer1000 = (view.starsValuePer1000 / 100).toFixed(2);
+      valuePer1000 =
+        view.starsValuePer1000 === null ? '' : (view.starsValuePer1000 / 100).toFixed(2);
       stars = Object.fromEntries(view.starsPrices.map((p) => [p.months, String(p.stars)]));
       init = true;
     }
@@ -89,13 +90,22 @@
       .map((months) => ({ months, stars: Number(stars[months] ?? '') }))
       .filter((p) => (stars[p.months] ?? '').trim() !== '' && Number.isFinite(p.stars));
     const rate = rateCents(valuePer1000);
+    // Blank keeps "no rate" only while none is in force; anything else must
+    // be a real amount, never silently dropped from the save.
+    const keepNoRate = valuePer1000.trim() === '' && view?.starsValuePer1000 === null;
+    if (!keepNoRate && !(Number.isFinite(rate) && rate >= 1)) {
+      toast.error('Enter what 1,000 Stars are worth', {
+        description: `An amount in ${currency} above zero, like 13.00.`,
+      });
+      return;
+    }
     save.mutate({
       enabled,
       botUsername: botUsername.trim(),
       starsEnabled,
       starsPrices,
       termsUrl: termsUrl.trim(),
-      ...(Number.isFinite(rate) ? { starsValuePer1000: rate } : {}),
+      ...(keepNoRate ? {} : { starsValuePer1000: rate }),
       ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
     });
   }
@@ -242,6 +252,12 @@
       is 13.00 USD per 1,000 Stars.
     </span>
     <Input inputmode="decimal" placeholder="13.00" bind:value={valuePer1000} autocomplete="off" />
+    {#if view && view.starsValuePer1000 === null}
+      <span class="block text-xs text-amber-600">
+        No rate in {currency} yet: Stars orders are left out of the revenue totals until you save one.
+        Saving it values the orders already paid.
+      </span>
+    {/if}
   </label>
 
   <div class="flex flex-wrap justify-end gap-2">

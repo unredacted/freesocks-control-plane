@@ -35,7 +35,7 @@ import {
   resolveProcessorSecrets,
   withinUnderpaymentTolerance,
 } from './lib/billingConfig';
-import { resolveTelegramConfig, starsValueMinor } from './lib/telegramConfig';
+import { effectiveStarsRate, resolveTelegramConfig, starsValueMinor } from './lib/telegramConfig';
 import { knownNetwork } from './lib/cryptoNetworks';
 import { runWithCronOutcome } from './cronHeartbeat';
 import type {
@@ -701,46 +701,86 @@ type GiftCode = { plaintext: string; hash: string; prefix: string };
 /** Telegram Stars: the currency of a Stars order (whole Stars, no minor unit). */
 const STARS_CURRENCY = 'XTR';
 
+type StarsValue = { valueMinor: number; valueCurrency: string };
+
 /**
- * What `stars` Stars are worth now in the billing currency, at the shop's Stars
- * rate: recorded on a Stars order when it is paid, so its value never moves
- * with later rate edits.
+ * The rate to value Stars at now: the billing currency and the shop's Stars
+ * rate in it, or null while there is none (an unsaved rate outside USD).
  */
-async function starsOrderValue(
+async function starsRateNow(
   db: DatabaseReader,
-  stars: number,
-): Promise<{ valueMinor: number; valueCurrency: string }> {
+): Promise<{ currency: string; per1000: number } | null> {
   const [billing, telegram] = await Promise.all([
     resolveBillingConfig(db),
     resolveTelegramConfig(db),
   ]);
-  return {
-    valueMinor: starsValueMinor(stars, telegram.starsValuePer1000),
-    valueCurrency: billing.currency,
-  };
+  const per1000 = effectiveStarsRate(telegram, billing.currency);
+  return per1000 === null ? null : { currency: billing.currency, per1000 };
 }
 
 /**
- * Give paid Stars orders from before `valueMinor` existed their value, at
- * the Stars rate in force now (run by seedCutover on every deploy; a no-op
- * once none is left). Stars orders are few, and the scan stops at a page.
+ * What `stars` Stars are worth now in the billing currency, at the shop's
+ * Stars rate: recorded on a Stars order when it is paid, so its value never
+ * moves with later rate edits. Nothing while there is no rate (the order is
+ * valued once one is saved).
  */
-export const backfillStarsOrderValues = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<{ valued: number }> => {
-    const rows = await ctx.db
+async function starsOrderValue(db: DatabaseReader, stars: number): Promise<StarsValue | object> {
+  const rate = await starsRateNow(db);
+  return rate
+    ? { valueMinor: starsValueMinor(stars, rate.per1000), valueCurrency: rate.currency }
+    : {};
+}
+
+/**
+ * One page of the Stars-value backfill: give paid Stars orders with no
+ * recorded value one at the Stars rate in force now (orders paid before
+ * values existed, or while no rate was set).
+ */
+export const backfillStarsOrderValuesPage = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }): Promise<{ valued: number; cursor: string; done: boolean }> => {
+    const rate = await starsRateNow(ctx.db);
+    const page = await ctx.db
       .query('billingOrders')
       .withIndex('by_processor_ref', (q) => q.eq('processor', 'telegram_stars'))
-      .take(1000);
+      .paginate({ cursor, numItems: 500 });
     let valued = 0;
-    for (const o of rows) {
-      if (o.status !== 'paid' || o.valueMinor !== undefined || o.currency !== STARS_CURRENCY) {
-        continue;
+    if (rate) {
+      for (const o of page.page) {
+        if (o.status !== 'paid' || o.valueMinor !== undefined || o.currency !== STARS_CURRENCY) {
+          continue;
+        }
+        await ctx.db.patch(o._id, {
+          valueMinor: starsValueMinor(o.amountCents, rate.per1000),
+          valueCurrency: rate.currency,
+        });
+        valued++;
       }
-      await ctx.db.patch(o._id, await starsOrderValue(ctx.db, o.amountCents));
-      valued++;
     }
-    return { valued };
+    // No rate: nothing to write, so stop after one page.
+    return { valued, cursor: page.continueCursor, done: page.isDone || !rate };
+  },
+});
+
+/**
+ * Value every paid Stars order that has none yet, page by page until the
+ * end of the index. Run by seedCutover on each deploy and scheduled when an
+ * admin saves the Stars rate; a no-op once none is left.
+ */
+export const backfillStarsOrderValues = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ valued: number }> => {
+    let cursor: string | null = null;
+    let valued = 0;
+    for (;;) {
+      const r: { valued: number; cursor: string; done: boolean } = await ctx.runMutation(
+        internal.billing.backfillStarsOrderValuesPage,
+        { cursor },
+      );
+      valued += r.valued;
+      if (r.done) return { valued };
+      cursor = r.cursor;
+    }
   },
 });
 
