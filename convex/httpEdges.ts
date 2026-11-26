@@ -235,11 +235,12 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   // Checking names from inside a country spends third-party measurements.
   if (a === 'sni' && b === 'families' && c && d === 'vantage' && !parts[4])
     return 'admin.edges.probe';
-  // A rollout writes a backend profile; a test link fetches a credential body.
+  // A rollout writes a backend profile; a test link fetches a credential body;
+  // "Test again" starts FCP's client check through an address.
   if (
     a === 'sni' &&
     (b === 'bindings' || b === 'rollouts') &&
-    (d === 'rollout' || d === 'test-link')
+    (d === 'rollout' || d === 'test-link' || d === 'test-again')
   )
     return 'admin.edges.provider-call';
   if (a === 'providers' && (b === 'discover' || b === 'test-credentials') && !c) {
@@ -1057,6 +1058,15 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           rolloutId: id<'sniRollouts'>(c),
           edgeId: id<'edges'>(String(body.edgeId ?? '')),
           sni: typeof body.sni === 'string' ? body.sni : undefined,
+          ...act,
+        }),
+      );
+    // "Test again": more tries for FCP's own test of a send on one node (`{relaySlug}`).
+    if (b === 'rollouts' && c && d === 'test-again' && !e)
+      return json(
+        await ctx.runMutation(internal.sniAutoConfirm.testAgain, {
+          rolloutId: id<'sniRollouts'>(c),
+          relaySlug: String(body.relaySlug ?? ''),
           ...act,
         }),
       );

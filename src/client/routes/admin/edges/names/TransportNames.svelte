@@ -40,7 +40,13 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '@client/lib/api';
-  import { invalidateSni, lookUpCt, readTargetCert, unbindFamily } from '@client/lib/sniApi';
+  import {
+    invalidateSni,
+    lookUpCt,
+    readTargetCert,
+    testNamesAgain,
+    unbindFamily,
+  } from '@client/lib/sniApi';
   import { invalidateServers } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
   import type { SniTransport, SniTransportsView } from '../../../../../shared/contracts/sni';
@@ -94,6 +100,13 @@
   );
   // FCP's own test of the send on this node (switch `edge.sni.autoConfirm`).
   let autoLine = $derived(step && switches ? autoTestWords(step, switches.autoTest) : null);
+  // FCP stopped testing the send here: a person may give it more tries.
+  let canTestAgain = $derived(
+    step?.kind === 'test' &&
+      step.node.autoTest?.state === 'stopped' &&
+      switches?.autoTest === 'ready' &&
+      !!transport?.send,
+  );
 
   // Once the backend is seen to hold a send, the port's SNIs as Servers reads
   // them change too: read them again, so this card never shows two lists.
@@ -132,6 +145,20 @@
           : await lookUpCt([host], { family: t.list.slug });
       if (r.ok) toast.success(lookedWords(r, ct));
       else toast.error(CHECK_WORDS[r.code ?? ''] ?? 'The cover site could not be read.');
+    } catch (e) {
+      toast.error(sniErrorWords(codeOf(e)));
+    } finally {
+      busy = false;
+      invalidateSni(qc);
+    }
+  }
+  async function testAgain() {
+    const send = transport?.send;
+    if (!send || step?.kind !== 'test') return;
+    busy = true;
+    try {
+      await testNamesAgain(send.rolloutId, step.node.relaySlug);
+      toast.success(`FCP is testing again on ${step.node.nodeName}.`);
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
@@ -199,6 +226,9 @@
           <Button variant={quiet ? 'outline' : 'default'} disabled={busy} onclick={next}>
             {button}
           </Button>
+        {/if}
+        {#if canTestAgain}
+          <Button variant="outline" disabled={busy} onclick={testAgain}>Test again</Button>
         {/if}
         {#if transport.list || onEditByHand}
           <DropdownMenu.Root>

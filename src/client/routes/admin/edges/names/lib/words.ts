@@ -270,6 +270,7 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.rollout_not_confirmed': 'The SNIs are not on the backend yet.',
   'edge.sni.receipt_expired': 'That test link has expired. Make a new one.',
   'edge.sni.superseded': 'A newer write replaced this one. Test against the newer one.',
+  'edge.sni.auto_test_off': 'Testing by FCP is turned off. Turn it on first.',
   'edge.sni.country_not_curated': 'SNIs are not judged for that country.',
   'edge.sni.vantage_off': 'Checks from inside countries are turned off. Turn them on first.',
   'edge.sni.vantage_country': 'That country is not turned on for checks.',

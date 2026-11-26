@@ -29,7 +29,7 @@
  * `failed` with the verdict or the code, the node's page says why, and the
  * operator's "Test one name" stays where it was. It is tried again on the
  * `sni-qualify` cron's cadence, at most `AUTO_MAX_FAILURES` times per send and
- * node. A node with no such address stays manual (its page says so): the check
+ * node; after that a person may ask for more tries (`testAgain`). A node with no such address stays manual (its page says so): the check
  * never dials a node's own address.
  */
 import { ConvexError, v, type Infer } from 'convex/values';
@@ -56,6 +56,7 @@ import {
   AUTO_RECEIPT_TTL_MS,
   AUTO_STAGGER_MS,
   autoTestDue,
+  autoTestOf,
 } from './lib/edges/sni/autoTest';
 import { clientConfirmationStands } from './lib/edges/assignedLocation';
 import { verificationCurrent } from './lib/edges/verification';
@@ -213,6 +214,69 @@ export const sweep = internalMutation({
     if (next !== null && started < AUTO_PER_SWEEP)
       await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, { cursor: next, started });
     return { started: started - (before ?? 0), why: null };
+  },
+});
+
+/**
+ * "Test again" on a node where FCP stopped testing a send: the tries it used are
+ * set aside (kept as history, no longer counted) and a sweep of the send starts
+ * now, so the node gets `AUTO_MAX_FAILURES` more. Only while testing by FCP is
+ * on and the send is still the one the backend holds; only where it stopped
+ * (a test still running or still due needs nothing). The test is the same as
+ * the sweep's, with every guard: this only gives it more tries.
+ */
+export const testAgain = internalMutation({
+  args: {
+    rolloutId: v.id('sniRollouts'),
+    relaySlug: v.string(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { rolloutId, relaySlug, actorAdminId }) => {
+    const no = (code: string, message: string): never => {
+      throw new ConvexError({ code, message });
+    };
+    const cfg = await resolveSniConfig(ctx.db);
+    if (!cfg.enabled || !cfg.autoConfirm)
+      return no('edge.sni.auto_test_off', 'Testing by FCP is switched off');
+    const r = await ctx.db.get(rolloutId);
+    if (!r) return no('not_found', 'No such send');
+    const b = await ctx.db.get(r.bindingId);
+    if (r.phase !== 'panel_confirmed' || !b || b.generation !== r.generation)
+      return no('conflict', 'This send is no longer the one the backend holds');
+    const mine = (await boundListeners(ctx, b)).find((x) => x.relay.slug === relaySlug);
+    if (!mine) return no('not_found', 'This node does not serve the transport of this send');
+    const now = Date.now();
+    const rows = (
+      await ctx.db
+        .query('sniAcceptanceReceipts')
+        .withIndex('by_rollout', (q) => q.eq('rolloutId', rolloutId))
+        .collect()
+    ).filter((x) => x.evidenceKind === 'client_check' && x.listenerId === mine.listener._id);
+    const before = autoTestOf(rows, now);
+    if (before?.state !== 'stopped')
+      return no('conflict', 'FCP has not stopped testing this send on this node');
+    let setAside = 0;
+    for (const x of rows)
+      if (x.setAsideAt === undefined && x.state !== 'issued') {
+        await ctx.db.patch(x._id, { setAsideAt: now });
+        setAside++;
+      }
+    await writeAuditLog(ctx, {
+      ...(actorAdminId
+        ? { actorType: 'admin' as const, actorId: actorAdminId }
+        : { actorType: 'system' as const }),
+      action: 'edge.sni.names.test_again',
+      targetType: 'relay_listener',
+      targetId: mine.listener._id,
+      payload: {
+        relaySlug,
+        listenerKey: mine.listener.listenerKey,
+        generation: r.generation,
+        count: setAside,
+      },
+    });
+    await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, { rolloutId });
+    return { ok: true as const, setAside };
   },
 });
 

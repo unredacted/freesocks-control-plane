@@ -590,7 +590,7 @@ describe("FCP's own test of a send", () => {
       /set its last test aside: the address changed while it ran/,
     );
     expect(s({ state: 'stopped', failures: 4 })).toBe(
-      "FCP's test did not pass 4 times, so it stopped trying for this send. Test one SNI yourself.",
+      "FCP's test did not pass 4 times, so it stopped trying for this send. Test one SNI yourself, or have FCP test again.",
     );
     for (const line of [s({}), s({ state: 'stopped' }), s({ state: 'voided', code: 'x' })])
       expect(line).not.toMatch(/\u2014|address_failed|reality_refused/);

@@ -386,6 +386,12 @@ export const SniReceiptConfirmed = z.object({
   witness: z.boolean(),
 });
 
+/**
+ * `POST …/rollouts/{id}/test-again {relaySlug}`: FCP stopped testing this send
+ * on the node; the tries it used are set aside and it tests again now.
+ */
+export const SniTestAgain = z.object({ ok: z.literal(true), setAside: z.number() });
+
 /** `POST …/families/{slug}/vantage {snis, country}`: check these names from there now. */
 export const SniVantageRequested = z.object({
   batches: z.number(),

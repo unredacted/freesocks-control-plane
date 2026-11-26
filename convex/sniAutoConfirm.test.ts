@@ -502,6 +502,62 @@ describe('a test that does not pass', () => {
     expect(node.testable).toHaveLength(1);
   });
 
+  test('"Test again" after FCP stopped: its tries set aside, a test starts now, a pass hands out', async () => {
+    const node = { taken: false };
+    const { t, bindingId, listenerId } = await seed({ auto: true, script: nodeScript(node) });
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    const again = () =>
+      t.mutation(internal.sniAutoConfirm.testAgain, {
+        rolloutId: rolloutId as Id<'sniRollouts'>,
+        relaySlug: 'node-one',
+      });
+    // Not stopped yet: nothing to give more tries to.
+    await sweepAndRun(t);
+    await expect(again()).rejects.toThrow(/has not stopped testing/);
+    for (let i = 1; i < AUTO_MAX_FAILURES; i++) {
+      vi.setSystemTime((await t.run(async () => Date.now())) + AUTO_RETRY_MS);
+      await t.action(internal.edgeClientCheck.refreshHealth, {});
+      await sweepAndRun(t);
+    }
+    const nodeView = async () =>
+      (await t.query(internal.sniTransports.status, { backendSlug: 'panel-a' })).transports[0]!
+        .nodes[0]!;
+    expect((await nodeView()).autoTest).toMatchObject({ state: 'stopped' });
+    // The node takes the names now; without "Test again" FCP would never look.
+    node.taken = true;
+    expect(await again()).toEqual({ ok: true, setAside: AUTO_MAX_FAILURES });
+    expect((await receipts(t)).every((r) => r.setAsideAt !== undefined)).toBe(true);
+    expect(await scheduled(t)).toContain('sniAutoConfirm:sweep');
+    expect((await nodeView()).autoTest).toMatchObject({ state: 'failed', failures: 0 });
+    // No wait: the first test after "Test again" starts at once (a second on, so the
+    // fake service's replay guard takes the health check's fresh signature).
+    vi.setSystemTime((await t.run(async () => Date.now())) + 1000);
+    await t.action(internal.edgeClientCheck.refreshHealth, {});
+    const { swept } = await sweepAndRun(t);
+    expect(swept).toEqual({ started: 1, why: null });
+    expect(await activeNames(t, listenerId)).toContain('fresh-1.example');
+    expect((await nodeView()).autoTest).toMatchObject({ state: 'passed' });
+    const audit = await audits(t, 'edge.sni.names.test_again');
+    expect(audit.map((a) => a.payload)).toEqual([
+      expect.objectContaining({ relaySlug: 'node-one', count: AUTO_MAX_FAILURES }),
+    ]);
+    // Done: nothing stopped any more.
+    await expect(again()).rejects.toThrow(/has not stopped testing/);
+  });
+
+  test('"Test again" is refused with testing by FCP off, and for a node off the transport', async () => {
+    const { t, bindingId } = await seed({ auto: true, script: nodeScript({ taken: false }) });
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    const id = rolloutId as Id<'sniRollouts'>;
+    await expect(
+      t.mutation(internal.sniAutoConfirm.testAgain, { rolloutId: id, relaySlug: 'nobody' }),
+    ).rejects.toThrow(/does not serve/);
+    await t.mutation(internal.sniFamilies.patchConfig, { patch: { autoConfirm: false } });
+    await expect(
+      t.mutation(internal.sniAutoConfirm.testAgain, { rolloutId: id, relaySlug: 'node-one' }),
+    ).rejects.toThrow(/switched off/);
+  });
+
   test('the service not answering: could not check, nothing handed out', async () => {
     const { t, bindingId, listenerId, script } = await seed();
     script.current = () => ({ status: 503 });

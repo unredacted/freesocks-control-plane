@@ -17,6 +17,7 @@ import {
   SniFamilyUpdated,
   SniImportResult,
   SniReceiptConfirmed,
+  SniTestAgain,
   SniRolloutPlan,
   SniRolloutStarted,
   SniRolloutStatus,
@@ -138,6 +139,9 @@ export const buildNameTestLink = (rolloutId: string, edgeId: string, sni?: strin
   apiClient.post(`${BASE}/rollouts/${enc(rolloutId)}/test-link`, { edgeId, sni }, SniTestLink);
 export const confirmNameTest = (receiptId: string) =>
   apiClient.post(`${BASE}/receipts/${enc(receiptId)}/confirm`, {}, SniReceiptConfirmed);
+/** FCP stopped testing a send on a node: set its used tries aside and test again now. */
+export const testNamesAgain = (rolloutId: string, relaySlug: string) =>
+  apiClient.post(`${BASE}/rollouts/${enc(rolloutId)}/test-again`, { relaySlug }, SniTestAgain);
 
 // --- a transport's names (docs/edges.md "A transport's names") ------------------------------
 /** Every REALITY transport of a backend, with where its names stand. */

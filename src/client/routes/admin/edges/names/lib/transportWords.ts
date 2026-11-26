@@ -392,7 +392,7 @@ export function autoTestWords(
     case 'voided':
       return `FCP set its last test aside: ${VOID_WORDS[t.code ?? ''] ?? 'something it was bound to changed'}. ${AGAIN}`;
     case 'stopped':
-      return `FCP's test did not pass ${plural(t.failures, 'time')}, so it stopped trying for this send. Test one SNI yourself.`;
+      return `FCP's test did not pass ${plural(t.failures, 'time')}, so it stopped trying for this send. Test one SNI yourself, or have FCP test again.`;
   }
 }
 

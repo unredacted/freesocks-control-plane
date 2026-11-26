@@ -3499,7 +3499,12 @@ old). A sweep walks every send still confirmed on its backend, 25 a page, the ne
 until it has started its tests; a node it started is not due again for minutes, so the next sweep
 reaches the ones after it. One sweep starts at most three tests, 100 s apart (the service runs one session at a time and a test holds it for at
 most its 90 s); a test that did not pass is tried again no sooner than 10 minutes later, and after
-**4** that did not pass on one node FCP leaves that send there to a person.
+**4** that did not pass on one node FCP leaves that send there to a person. There, "Test again"
+on the node's SNIs step (`POST /api/v1/admin/edges/sni/rollouts/{rolloutId}/test-again`,
+`{relaySlug}`, `admin:servers:manage`, audit `edge.sni.names.test_again`) sets the tries it used
+aside (the receipts stay, marked `setAsideAt`, and no longer count) and starts a sweep of the
+send at once: 4 more tries, with every guard of the sweep. Only where FCP stopped, and only
+while the send is still the one the backend holds.
 
 **What it tests.** The same receipt an operator's test link makes (`receiptContextOf`, every
 check of it): the binding's newest send, confirmed on the backend, through an **L4 address of

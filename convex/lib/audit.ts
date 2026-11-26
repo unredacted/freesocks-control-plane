@@ -799,6 +799,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'code',
     'engines',
   ],
+  // "Test again" after FCP stopped testing a send on a node: its used tries set aside.
+  'edge.sni.names.test_again': ['relaySlug', 'listenerKey', 'generation', 'count'],
   // Checks from inside a country: slugs, the country, the source and counts, never a name or an address.
   'edge.sni.vantage.batch': ['country', 'source', 'targetKind', 'count', 'trigger'],
   'edge.sni.vantage.request': ['slug', 'country', 'count', 'batches'],
