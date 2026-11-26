@@ -199,7 +199,7 @@ services:
   # would break scripts/convex-repin.sh's counts); no network, and only the
   # capabilities chown needs.
   data-perms:
-    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    image: postgres:18.7-trixie@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
     pids_limit: 64
     restart: 'no'
     logging: *log
@@ -227,7 +227,7 @@ services:
     # data directory, and with it the collation order its indexes were built on.
     # docker/backup.Dockerfile must pin the same image; Dependabot moves both in
     # one PR (.github/dependabot.yml, `stack-images`).
-    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    image: postgres:18.7-trixie@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -328,7 +328,7 @@ services:
   # ones Convex creates later). Idempotent; it re-applies the password from
   # BACKUP_DB_PASSWORD on every `up`, so rotating it is: change the value, `up`.
   db-roles:
-    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    image: postgres:18.7-trixie@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
     pids_limit: 64
     restart: 'no'
     logging: *log
