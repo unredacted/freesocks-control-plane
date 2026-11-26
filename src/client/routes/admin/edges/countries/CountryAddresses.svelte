@@ -143,12 +143,12 @@
           {/if}
           {where(a)}
           <!-- Narrow: the two figure columns are hidden, so their figures sit here. -->
-          <span class="@xl:hidden"
-            >{[share, a.path ? `${a.path.ms} ms` : null]
+          <span class="@xl:hidden">
+            {[share, a.path ? `${a.path.ms} ms` : null]
               .filter(Boolean)
               .map((f) => ` · ${f}`)
-              .join('')}</span
-          >
+              .join('')}
+          </span>
         </span>
       </span>
       <span class="text-muted-foreground hidden pt-px text-sm tabular-nums @xl:block">
@@ -232,12 +232,11 @@
             {@const w = meantForWords(l)}
             <li class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
               <Link href={edgesPaths.provider(l.accountId)} class="font-medium">{l.label}</Link>
-              <span
-                class={l.blocked ? 'text-destructive' : 'text-muted-foreground'}
-                title={w.detail}
-              >
+              <span class={l.blocked ? 'text-destructive' : 'text-muted-foreground'}>
                 {w.state}
               </span>
+              <!-- Shown, not a tooltip: touch and keyboard users have no hover. -->
+              <span class="text-muted-foreground w-full text-xs">{w.detail}</span>
             </li>
           {/each}
         </ul>

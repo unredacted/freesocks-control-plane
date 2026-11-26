@@ -204,7 +204,7 @@
 
     {#if actionsShown && rows.length > 0}
       <div id={`${uid}-actions`} class="mt-3">
-        <ActionNeeded {rows} title={`Action needed on ${name}`} max={8} />
+        <ActionNeeded {rows} {onSetUp} title={`Action needed on ${name}`} max={8} />
       </div>
     {/if}
     <div class="mt-3 empty:hidden"><PortChangesCard {slug} {canWrite} /></div>

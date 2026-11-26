@@ -57,9 +57,12 @@ export interface Chip {
   label: string;
 }
 
-/** The one button of a row: a link, or one of the two server calls the Overview runs itself. */
+/**
+ * The one button of a row: a link, or one of the two server calls the Overview runs itself.
+ * `setup` marks the "Set up" link: a list given `onSetUp` opens the setup sheet instead.
+ */
 export type RowAction =
-  | { kind: 'link'; label: string; href: string }
+  | { kind: 'link'; label: string; href: string; setup?: true }
   | { kind: 'release'; label: string; slug: string; holdId: string }
   | { kind: 'seen'; label: string; slug: string; profileUuid: string };
 
@@ -206,14 +209,18 @@ export function backendRows(b: BackendInput, multi: boolean, now: number): Overv
       b.canWrite ? { kind: 'release', label: 'Release', slug: b.slug, holdId: h.id } : { ...open },
     );
   if (b.manageOn && b.setupRow)
-    row('setup', 'warning', 'Backend not set up', b.setupRow, { ...open, label: 'Set up' });
+    row('setup', 'warning', 'Backend not set up', b.setupRow, {
+      ...open,
+      label: 'Set up',
+      setup: true,
+    });
   else if (b.manageOn && !b.setUp)
     row(
       'not-set-up',
       'warning',
       'Backend not set up',
       'Changes are on but refused until this backend is set up. Set it up first.',
-      { ...open, label: 'Set up' },
+      { ...open, label: 'Set up', setup: true },
     );
   for (const n of b.needs) {
     if (n.key.startsWith('edit:'))

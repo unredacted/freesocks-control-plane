@@ -15,6 +15,7 @@
    * Props:
    *   rows: OverviewRow[]
    *   onAction?: (item: AttentionItem) => void | Promise<unknown>   edge attention calls
+   *   onSetUp?: () => void           the "Set up" row opens the setup sheet instead of linking
    *                                    (without it an edge row's button navigates)
    *   max?: number                     lines shown before "Show all" (default 6)
    *   title?: string                   the heading (default "Action needed")
@@ -28,7 +29,7 @@
   import { toast } from 'svelte-sonner';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { Button } from '@client/components/ui/button';
-  import { codeExplain, codeFix, plainWords } from '@client/lib/edgeCodes';
+  import { codeExplain, codeFix, codeLabel, plainWords } from '@client/lib/edgeCodes';
   import { router } from '@client/stores/router.svelte';
   import { acknowledgeForeignEdit, invalidateServers, releaseHold } from '@client/lib/serversApi';
   import AdminListState from '../../AdminListState.svelte';
@@ -48,6 +49,7 @@
   interface Props {
     rows: OverviewRow[];
     onAction?: (item: AttentionItem) => void | Promise<unknown>;
+    onSetUp?: () => void;
     max?: number;
     title?: string;
     top?: Snippet;
@@ -57,6 +59,7 @@
   let {
     rows,
     onAction,
+    onSetUp,
     max = 6,
     title = 'Action needed',
     top,
@@ -102,7 +105,8 @@
 
   async function act(key: string, action: RowAction): Promise<void> {
     if (action.kind === 'link') {
-      router.navigate(action.href);
+      if (action.setup && onSetUp) onSetUp();
+      else router.navigate(action.href);
       return;
     }
     busyKey = key;
@@ -193,6 +197,13 @@
               {#snippet groupDetails()}
                 {#if kind}
                   <p>{kind.explain}</p>
+                  {#if kind.shared}
+                    <!-- Said once here; the nested rows leave out the reason they share. -->
+                    <p>
+                      <span class="text-foreground font-medium">Reason:</span>
+                      {plainWords(codeLabel(kind.shared))}.
+                    </p>
+                  {/if}
                   {#if kind.fix}
                     <p><span class="text-foreground font-medium">What to do:</span> {kind.fix}</p>
                   {/if}

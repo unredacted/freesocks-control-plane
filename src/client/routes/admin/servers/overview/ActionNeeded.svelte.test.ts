@@ -169,6 +169,46 @@ describe('The merged Action needed list', () => {
     expect(document.body.textContent).toMatch(/1 critical/);
   });
 
+  test('a reason every item of a group shares is said once, above the items', () => {
+    client = new QueryClient();
+    const a = { ...item, code: 'timeout' };
+    const b = { ...item, id: 'block:e2', relaySlug: 'node-c', edgeId: 'e2', code: 'timeout' };
+    app = mountWithQuery(client, ActionNeeded, {
+      rows: [
+        { key: 'edge:block:e1', source: 'edge', severity: 'critical', item: a },
+        { key: 'edge:block:e2', source: 'edge', severity: 'critical', item: b },
+      ] as OverviewRow[],
+      onAction: vi.fn(),
+    });
+    flushSync();
+    document.querySelector<HTMLButtonElement>('li button[aria-expanded]')!.click();
+    flushSync();
+    expect(document.body.textContent?.match(/Reason:/g)).toHaveLength(1);
+    expect(document.body.textContent).toMatch(/Reason:\s*Timeout\./);
+  });
+
+  test('a Set up row opens the setup sheet when the list is given onSetUp', () => {
+    client = new QueryClient();
+    const onSetUp = vi.fn();
+    app = mountWithQuery(client, ActionNeeded, {
+      rows: [
+        {
+          key: 'main:setup',
+          source: 'servers',
+          severity: 'warning',
+          title: 'Backend not set up',
+          chip: null,
+          text: 'Set it up first.',
+          action: { kind: 'link', label: 'Set up', href: '/admin/servers/nodes', setup: true },
+        },
+      ] as OverviewRow[],
+      onSetUp,
+    });
+    flushSync();
+    button('Set up')!.click();
+    expect(onSetUp).toHaveBeenCalledOnce();
+  });
+
   test('beyond max, the rest wait behind Show all', () => {
     mount(2);
     expect(document.querySelectorAll('ul[aria-label="Action needed"] > li')).toHaveLength(2);
