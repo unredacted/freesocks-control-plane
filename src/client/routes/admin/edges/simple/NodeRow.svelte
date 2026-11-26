@@ -17,6 +17,7 @@
   import Link from '@client/components/Link.svelte';
   import { countryName } from '@client/lib/countries';
   import type { EdgeSummary, OriginStatus } from '@shared/contracts/edges';
+  import { splitLead } from '@client/lib/splitLead';
   import { originSentence } from '../lib/statusWords';
   import StatusDot from './StatusDot.svelte';
 
@@ -52,7 +53,11 @@
       {#if country}<span class="text-muted-foreground text-xs">{country}</span>{/if}
     </span>
     {#if status}
-      <span class="text-muted-foreground block text-sm">{originSentence(status)}</span>
+      {@const sentence = originSentence(status)}
+      <!-- One sentence here; the node page says the rest. -->
+      <span class="text-muted-foreground block text-sm" title={sentence}>
+        {splitLead(sentence).lead}
+      </span>
     {:else}
       <span class="bg-muted mt-1 block h-4 w-48 animate-pulse rounded-md" aria-hidden="true"></span>
     {/if}

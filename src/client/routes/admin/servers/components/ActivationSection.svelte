@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MoreText from '../../edges/components/MoreText.svelte';
   /**
    * One enrolled node's way to members (docs/servers.md "Node lifecycle"):
    * its sentence, the isolated test links (one per server name) with their
@@ -251,9 +252,9 @@
   {#if canTest}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3">
       <p class="text-sm">
-        Open the test link in a client, connect and load a page, then tick Works. It uses FCP's test
-        account. A node with several SNIs has one link per SNI: test each. Nobody else sees this
-        node yet.
+        <MoreText
+          text="Open the test link in a client, connect and load a page, then tick Works. It uses FCP's test account. A node with several SNIs has one link per SNI: test each. Nobody else sees this node yet."
+        />
       </p>
       {#if link}
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -333,14 +334,16 @@
     </div>
   {:else if canProtect && origin}
     <p class="bg-card mt-3 rounded-md border p-3 text-sm">
-      It goes live again through its edges below. Front again makes new addresses. Test each one,
-      then approve go-live.
+      <MoreText
+        text="Front again makes new addresses: test each one, then approve go-live. Without that, it goes live again through its edges below."
+      />
     </p>
   {:else if canProtect}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3 text-sm">
       <p>
-        Members reach this node through edge addresses. Front it from Edges, test each new address,
-        then approve go-live there.
+        <MoreText
+          text="Members reach this node through edge addresses. Front it from Edges, test each new address, then approve go-live there."
+        />
       </p>
       <Button size="sm" onclick={protect}>Front this node</Button>
     </div>

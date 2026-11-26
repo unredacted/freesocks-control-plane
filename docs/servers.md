@@ -1642,9 +1642,10 @@ rule: the whole old `/admin/edges/...` tree, `/admin/backend-servers`, `/admin/r
 across every backend: one row per node, one per enrolled node whose panel row is gone while it
 retires, and one per origin that is not a backend node row (**Added by hand**: a manual address or
 a whole server; also a backend node no panel lists any more). Columns: the node (a dot, its name,
-its machine name, its backend when there is more than one), Country, Modes (its enrolled mode and
+its machine name), Country, Modes (its enrolled mode and
 extra modes, else its mode groups), **Addresses** ("3 fronted, 1 spare", "Direct", "None yet"),
-**Users online** and one status sentence: the most urgent of the node's own words, its activation
+**Users online** and one status sentence (its first sentence; the rest on hover and on the node
+page): the most urgent of the node's own words, its activation
 stage and its origin's status (the server's one judgement, docs/edges.md "Admin section"). A row
 opens the node's page (an origin added by hand opens `/admin/servers/origins/<slug>`); a live or
 stopped fronting run offers **Show progress**, and a node without an enrolled node offers **Adopt
@@ -1664,13 +1665,17 @@ Readiness and the Reachability chart. `/admin/servers/origins` (and the older
 `/admin/edges/advanced/origins`) redirect here with the technical columns on (`?filter=` becomes
 `?show=`, `?new=1` becomes `?add=origin`), and `/admin/edges` lands on the fronted nodes.
 
-Above the table each backend says its status and when its panel was read, and its "Action needed"
-list only when something is broken (`servers/components/BackendStatus.svelte`), then its port
-changes. Below it each backend keeps its quiet one-line notes (a transport nobody uses on three
-nodes is one line, not six), **Backend setup**, which says how a ready backend is set up (its
-modes, the generation, the zone for origin names) and, with changes from here allowed, carries
-**Change setup** ("Changing a backend's setup"), its mode groups and Recent changes
-(`BackendDetails.svelte`). The two switches (regular reading, changes from here) sit in the
+With more than one backend the table puts each backend's nodes under a heading row with its
+name. Above the table, **Backends** lists each backend on one line
+(`servers/components/BackendStatus.svelte`): its dot, name, status sentence and when its panel was
+read (amber once regular reading has fallen an hour behind), then two disclosures, closed by
+default. **Action needed (N)** opens its rows (the Overview's `backendRows`, grouped the same way;
+it opens by itself when one is critical), and **Details** opens `BackendDetails.svelte`: its
+quiet one-line notes (a transport nobody uses on three nodes is one line, not six), **Backend
+setup**, which says how a ready backend is set up (its modes, the generation, the zone for origin
+names) and, with changes from here allowed, carries **Change setup** ("Changing a backend's
+setup"), its encrypted twins, its mode groups and Recent changes. Its port changes show under
+the line while there are any. The two switches (regular reading, changes from here) sit in the
 footer, and in Settings, Maintenance.
 
 **Add a node** (with changes allowed and the backend set up) writes one node row by hand: name,
@@ -1681,6 +1686,11 @@ not run. Before anything is sent it shows the placement check: the mode groups t
 chosen transport, and what `placements/validate` says about every mode's pool (an empty pool, a
 mode group this backend does not have, a mode group with no transport). The create is the
 ledger's node create (`POST {slug}/nodes`, sent once).
+
+Copy on these pages says one thing per line: a status, note or hint of more than one sentence
+shows its first sentence and a small **More** (`edges/components/MoreText.svelte`, `splitLead`),
+and an issue is an `IssueRow` whose why and what-to-do sit behind its chevron. On the node page the
+held, paused and refused replacement cards are such rows, and Spread members is one too.
 
 `/admin/servers/nodes/{uuid}` is the node's ONE page (`servers/NodePage.svelte`). The header has
 its name, "machine · country · backend" (the backend only when there is more than one), its

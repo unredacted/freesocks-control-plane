@@ -11,7 +11,8 @@
  * needs; one that does not navigates instead (no confirm promising a call).
  *
  * Exports: attentionTarget(item), ATTENTION_ACTION_PLAN, attentionCallable(item),
- *          attentionSubject(item), attentionFactsLine(item), attentionHeading(item, plain),
+ *          attentionSubject(item), attentionWho(item), attentionFactsLine(item),
+ *          attentionHeading(item, plain),
  *          attentionActionLabel(item, plain), AttentionPlan, AttentionConfirmCopy.
  */
 import { transportName } from '../../../../lib/transportName';
@@ -243,6 +244,14 @@ export function attentionSubject(item: AttentionItem): string {
   return parts.join(', ');
 }
 
+/**
+ * The node (or account) a row is about, by its name alone: the origin's slug,
+ * else the node or account its facts name; '' when none.
+ */
+export function attentionWho(item: AttentionItem): string {
+  return item.relaySlug ?? factString(item, 'node') ?? factString(item, 'name') ?? '';
+}
+
 /** A render client family as members know the apps. */
 function familyWords(family: string): string {
   const words: Record<string, string> = {
@@ -261,10 +270,13 @@ function familyWords(family: string): string {
 /**
  * The small facts of a row as one line. Only well-known keys are rendered
  * (counts, country codes, ages); anything else in `facts` is ignored so a new
- * server fact never shows up as a raw key.
+ * server fact never shows up as a raw key. `brief` leaves out the long lists
+ * (refusals by reason and source, refused engines, families): the collapsed
+ * row shows the brief line, its details the full one.
  */
-export function attentionFactsLine(item: AttentionItem): string {
+export function attentionFactsLine(item: AttentionItem, opts: { brief?: boolean } = {}): string {
   const f = item.facts;
+  const brief = opts.brief === true;
   const out: string[] = [];
   const num = (k: string): number | null => (typeof f[k] === 'number' ? (f[k] as number) : null);
   const str = (k: string): string | null =>
@@ -326,7 +338,7 @@ export function attentionFactsLine(item: AttentionItem): string {
   if (used !== null && cap !== null) out.push(`${used} of ${cap} today`);
   const total = num('total');
   if (total !== null) out.push(`${total} refused in the last hour`);
-  const byReason = f['byReason'];
+  const byReason = brief ? null : f['byReason'];
   if (byReason && typeof byReason === 'object' && !Array.isArray(byReason)) {
     const top = Object.entries(byReason as Record<string, unknown>)
       .filter((e): e is [string, number] => typeof e[1] === 'number')
@@ -336,7 +348,7 @@ export function attentionFactsLine(item: AttentionItem): string {
     if (top.length > 0) out.push(top.join(', '));
   }
   // Where the refusals were: the node each body resolved to and the app family that asked.
-  const sources = f['topSources'];
+  const sources = brief ? null : f['topSources'];
   if (Array.isArray(sources)) {
     const parts = sources
       .filter(
@@ -352,7 +364,7 @@ export function attentionFactsLine(item: AttentionItem): string {
       );
     if (parts.length > 0) out.push(`Most: ${parts.join('; ')}`);
   }
-  const refuses = f['refuses'];
+  const refuses = brief ? null : f['refuses'];
   if (Array.isArray(refuses) && refuses.length > 0)
     out.push(
       `Refuses ${refuses
@@ -362,7 +374,7 @@ export function attentionFactsLine(item: AttentionItem): string {
         .filter((x): x is string => x !== null)
         .join(' and ')}`,
     );
-  const families = f['families'];
+  const families = brief ? null : f['families'];
   if (Array.isArray(families) && families.length > 0)
     out.push(families.filter((x): x is string => typeof x === 'string').join(', '));
   // An address that left a country list: which list, and which of the address's families.

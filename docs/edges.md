@@ -2434,8 +2434,15 @@ qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
     (Seen it), addresses that point at nothing, changes of unknown outcome, port changes waiting
     on you, and switched-on nodes that serve members without being enrolled; SNI lists with a next
     step (`namesNeedsYou`); countries where a node has no working address or a location set for it is
-    blocked; provider accounts at or close to their cost cap. A chip names the backend (only
-    with more than one), the country, the provider or "SNIs". Five rows, then "Show all".
+    blocked; provider accounts at or close to their cost cap. Rows of one kind and severity are
+    ONE line (`overviewModel.ts` `groupRows`: "Address unreachable (4) node-a, node-b"), opening to
+    the items with their own buttons; the kind's explanation and fix (and a reason every item
+    shares) are said once on the group. Every line is an `IssueRow`
+    (`edges/components/IssueRow.svelte`): severity icon, title, who it is about, at most one short
+    line, when it started and the button; why, the reason, what to do and the full facts wait
+    behind the row's chevron. A non-edge row carries a `title` (its kind in a few words), a
+    one-sentence `text` and an optional `detail`; the heading counts lines by severity, and the
+    status sentence counts lines, not items. Six lines, then "Show all".
   - **Readiness** (the fleet `setup-status` checklist), only while setup is incomplete.
   - **Automatic work**: the fleet switches in one place, each with one line saying what it does
     and calling what its Settings card calls: Automatic replacement (`POST automation`; the line
@@ -5873,9 +5880,15 @@ section bar (`sections.ts`; Summary when `?section=` is missing or unknown):
 - **Summary**: the totals, what is switched off, how many keys are set to the country (by the
   member's own answer and by FCP's guess, with what the count leaves out), and one line per
   section linking to it.
-- **Addresses for this country**: the locations set for it (with "Add a location for this
-  country", which opens Providers), then every origin's transports with what a member here is
-  handed and each address with its state, why and evidence. The per-country edges design's card
+- **Addresses for this country**: the locations set for it (with "Add a location", which opens
+  Providers), then every origin's transports: the protocol, what a member here is handed in one
+  line (`handedSummary`; shares worth a look, like members starting on a blocked address, in
+  amber), the handshake gap as a chip, and the full words behind "How members here are handed
+  this". Each address is one row (state, address with its IPv6 one and provider location under
+  it, share of members here, path in ms; a container query folds the two figures under the
+  address in a narrow card) whose chevron opens why it counts as it does, how long that stands,
+  its lists (a warning icon on the row when it left one) and the evidence. Whose numbers these
+  are sits behind a small disclosure at the top. The per-country edges design's card
   goes in its `perCountry` slot, between the locations and the origins.
 - **SNIs**: first the country's own list (`CountrySnisCard`: each SNI once over every node, with
   its state here and whether it is shared, only for this country or not used there), then each

@@ -49,6 +49,7 @@
   import type { AddressView, TransportView } from '../../../../shared/contracts/servers';
   import AdminListState from '../AdminListState.svelte';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
+  import MoreText from '../edges/components/MoreText.svelte';
   import { edgeSummaryQuery, invalidateOverview, relayLookupQuery } from '@client/lib/edgesApi';
   import { transportsQuery } from '@client/lib/sniApi';
   import { edgesPaths } from '../edges/lib/routes';
@@ -262,7 +263,7 @@
 
   <p class="-mt-3 mb-4 flex items-center gap-2 text-lg font-medium" role="status">
     <StatusDot dot={w.dot} class="size-3" />
-    {w.sentence}
+    <MoreText text={w.sentence} />
   </p>
 
   <SectionBar sections={NODE_SECTIONS} current={nav.section} onPick={nav.pick} />
@@ -306,7 +307,7 @@
         {#if notes.length > 0}
           <ul class="text-muted-foreground mt-1 space-y-1 text-sm" aria-label="Notes">
             {#each notes as n (n)}
-              <li>{n}</li>
+              <li><MoreText text={n} /></li>
             {/each}
           </ul>
         {/if}
@@ -366,8 +367,9 @@
         <div class="rounded-lg border p-4">
           <p class="text-sm font-medium">Members reach this node directly.</p>
           <p class="text-muted-foreground mt-1 max-w-prose text-sm">
-            A fronted node gives members a provider address instead of its own, and FCP replaces it
-            when it stops working. Members see no change until the new address is tested.
+            <MoreText
+              text="A fronted node gives members a provider address instead of its own, and FCP replaces it when it stops working. Members see no change until the new address is tested."
+            />
           </p>
           <Button class="mt-3" size="sm" onclick={openFront}>Front this node</Button>
         </div>
@@ -481,7 +483,7 @@
                   <h3 class="text-xs font-medium uppercase">
                     Your own fronts, left out of members' subscriptions
                   </h3>
-                  <p>{frontsHint(split.fronts.length, node.frontKeys)}</p>
+                  <p><MoreText text={frontsHint(split.fronts.length, node.frontKeys)} /></p>
                   <ul class="mt-1 space-y-0.5">
                     {#each split.fronts as host (host.addressUuid)}
                       {@render addressRow(inbound, host)}
@@ -628,14 +630,13 @@
         />
       {:else}
         <p class="text-muted-foreground text-sm">
-          Nothing fronts this node, so it has no edge activity. What FCP sent to the backend is
-          under Recent changes on
+          Nothing fronts this node, so it has no edge activity.
           <Link
             href={serversPaths.nodes({ backend: slug })}
-            class="text-primary underline underline-offset-4"
+            class="text-primary ms-1 underline underline-offset-4"
           >
-            Nodes
-          </Link>.
+            Backend changes
+          </Link>
         </p>
       {/if}
     </section>
@@ -654,8 +655,7 @@
         {/await}
       {:else}
         <p class="text-muted-foreground text-sm">
-          Nothing fronts this node, so it has no origin, listeners, edges or rotations. Front it
-          from Addresses.
+          Nothing fronts this node, so it has no technical details.
         </p>
       {/if}
     </DetailsFold>

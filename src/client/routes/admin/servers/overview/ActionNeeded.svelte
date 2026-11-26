@@ -1,16 +1,24 @@
 <script lang="ts">
   /**
-   * The Overview's ONE Action needed list (overviewModel.ts `mergeAttention`):
-   * most urgent first, one button per row. An edge attention row is drawn by
-   * AttentionList itself (its words, its confirm dialogs, its server calls
-   * through `onAction`); every other row says what it is about (a chip), one
-   * sentence, and its button: a link, or one of two backend calls run here
-   * (Release a hold, Seen it for an edit made on the backend).
+   * An Action needed list (the Overview's, overviewModel.ts `mergeAttention`,
+   * and each backend's on Nodes): one line per KIND of problem
+   * (overviewModel.ts `groupRows`), most urgent first. A kind with one item is
+   * that item's row with its button; a kind with several says how many and who
+   * it is about, and opens to the items, each with its own button. Every line
+   * is one IssueRow: why it matters, what to do and the raw facts wait behind
+   * its disclosure.
+   *
+   * Edge items are drawn by AttentionList (its words, its confirm dialogs, its
+   * server calls through `onAction`); every other row runs a link or one of two
+   * backend calls here (Release a hold, Seen it for an edit made on the backend).
    *
    * Props:
    *   rows: OverviewRow[]
-   *   onAction: (item: AttentionItem) => void | Promise<unknown>   edge attention calls
-   *   max?: number                     rows shown before "Show all" (default 5)
+   *   onAction?: (item: AttentionItem) => void | Promise<unknown>   edge attention calls
+   *   onSetUp?: () => void           the "Set up" row opens the setup sheet instead of linking
+   *                                    (without it an edge row's button navigates)
+   *   max?: number                     lines shown before "Show all" (default 6)
+   *   title?: string                   the heading (default "Action needed")
    *   top?: Snippet                    drawn above the rows (the endpoint test card)
    *   edgeError?: unknown              the edge attention read failed: shown inline, the
    *                                    other sources' rows still list
@@ -21,41 +29,84 @@
   import { toast } from 'svelte-sonner';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { Button } from '@client/components/ui/button';
-  import { cn } from '@client/lib/utils';
+  import { codeExplain, codeFix, codeLabel, plainWords } from '@client/lib/edgeCodes';
   import { router } from '@client/stores/router.svelte';
   import { acknowledgeForeignEdit, invalidateServers, releaseHold } from '@client/lib/serversApi';
   import AdminListState from '../../AdminListState.svelte';
   import AttentionList from '../../edges/components/AttentionList.svelte';
-  import StatusBadge from '../../edges/components/StatusBadge.svelte';
+  import IssueRow from '../../edges/components/IssueRow.svelte';
   import type { AttentionItem } from '../../edges/lib/attention';
   import { codeOf } from '../lib/run';
   import { serverErrorWords } from '../lib/words';
-  import type { OverviewRow, RowAction } from './overviewModel';
+  import {
+    groupRows,
+    groupSubjects,
+    type OverviewGroup,
+    type OverviewRow,
+    type RowAction,
+  } from './overviewModel';
 
   interface Props {
     rows: OverviewRow[];
-    onAction: (item: AttentionItem) => void | Promise<unknown>;
+    onAction?: (item: AttentionItem) => void | Promise<unknown>;
+    onSetUp?: () => void;
     max?: number;
+    title?: string;
     top?: Snippet;
     edgeError?: unknown;
     onEdgeRetry?: () => void;
   }
-  let { rows, onAction, max = 5, top, edgeError = null, onEdgeRetry }: Props = $props();
+  let {
+    rows,
+    onAction,
+    onSetUp,
+    max = 6,
+    title = 'Action needed',
+    top,
+    edgeError = null,
+    onEdgeRetry,
+  }: Props = $props();
 
+  const uid = $props.id();
   const qc = useQueryClient();
+  const groups = $derived(groupRows(rows));
   let showAll = $state(false);
-  const shown = $derived(showAll ? rows : rows.slice(0, max));
+  const shown = $derived(showAll ? groups : groups.slice(0, max));
   let busyKey = $state<string | null>(null);
 
-  const BORDER = {
-    critical: 'border-s-destructive',
-    warning: 'border-s-amber-500',
-    info: 'border-s-sky-500',
-  } as const;
+  const COUNT_WORDS = [
+    ['critical', 'critical', 'critical'],
+    ['warning', 'warning', 'warnings'],
+    ['info', 'note', 'notes'],
+  ] as const;
+  const counts = $derived(
+    COUNT_WORDS.flatMap(([sev, one, many]) => {
+      const n = groups.filter((g) => g.severity === sev).length;
+      return n > 0 ? [`${n} ${n === 1 ? one : many}`] : [];
+    }).join(' · '),
+  );
+
+  /** The kind's own words for a group of edge items (each item keeps only its own facts). */
+  function edgeKindWords(
+    g: OverviewGroup,
+  ): { explain: string; fix: string | null; shared: string | null } | null {
+    const first = g.rows[0];
+    if (!first || first.source !== 'edge') return null;
+    // A reason all items share says the fix; mixed reasons leave it to each item.
+    const codes = new Set(g.rows.map((r) => (r.source === 'edge' ? r.item.code : null)));
+    const shared = codes.size === 1 ? [...codes][0] : null;
+    const fix = (shared ? codeFix(shared) : undefined) ?? codeFix(first.item.kind);
+    return {
+      explain: plainWords(codeExplain(first.item.kind)),
+      fix: fix ? plainWords(fix) : null,
+      shared: shared ?? null,
+    };
+  }
 
   async function act(key: string, action: RowAction): Promise<void> {
     if (action.kind === 'link') {
-      router.navigate(action.href);
+      if (action.setup && onSetUp) onSetUp();
+      else router.navigate(action.href);
       return;
     }
     busyKey = key;
@@ -75,8 +126,49 @@
   }
 </script>
 
-<section aria-labelledby="action-needed">
-  <h2 id="action-needed" class="mb-3 text-base font-semibold">Action needed</h2>
+{#snippet rowButton(
+  row: Extract<OverviewRow, { source: 'servers' | 'snis' | 'country' | 'provider' }>,
+  nested: boolean,
+)}
+  {#if row.action}
+    {@const action = row.action}
+    <Button
+      size="sm"
+      variant={row.severity === 'critical' && !nested ? 'default' : 'outline'}
+      disabled={busyKey === row.key}
+      aria-label={row.chip ? `${action.label}: ${row.chip.label}` : action.label}
+      onclick={() => void act(row.key, action)}
+    >
+      {busyKey === row.key ? 'Working…' : action.label}
+      {#if action.kind === 'link'}
+        <ChevronRight class="rtl:rotate-180" aria-hidden="true" />
+      {/if}
+    </Button>
+  {/if}
+{/snippet}
+
+{#snippet otherRow(
+  row: Extract<OverviewRow, { source: 'servers' | 'snis' | 'country' | 'provider' }>,
+  nested: boolean,
+)}
+  {#snippet details()}<p>{row.detail}</p>{/snippet}
+  {#snippet action()}{@render rowButton(row, nested)}{/snippet}
+  <IssueRow
+    severity={row.severity}
+    title={nested ? (row.chip?.label ?? row.text) : row.title}
+    subject={nested ? null : (row.chip?.label ?? null)}
+    line={nested && !row.chip ? null : row.text}
+    {nested}
+    details={row.detail ? details : undefined}
+    action={row.action ? action : undefined}
+  />
+{/snippet}
+
+<section aria-labelledby={`${uid}-heading`}>
+  <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+    <h2 id={`${uid}-heading`} class="text-base font-semibold">{title}</h2>
+    {#if counts}<span class="text-muted-foreground text-sm">{counts}</span>{/if}
+  </div>
   <div class="space-y-3">
     {@render top?.()}
     {#if edgeError}
@@ -90,50 +182,63 @@
         No action needed.
       </p>
     {:else}
-      <ul class="space-y-2" aria-label="Action needed">
-        {#each shown as row (row.key)}
+      <ul class="bg-card divide-y rounded-lg border" aria-label={title}>
+        {#each shown as g (g.key)}
           <li>
-            {#if row.source === 'edge'}
-              <AttentionList items={[row.item]} {onAction} plain />
+            {#if g.rows.length === 1}
+              {@const row = g.rows[0]!}
+              {#if row.source === 'edge'}
+                <AttentionList items={[row.item]} {onAction} plain layout="bare" />
+              {:else}
+                {@render otherRow(row, false)}
+              {/if}
             {:else}
-              <div
-                class={cn(
-                  'bg-card flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border border-s-4 px-3 py-2.5',
-                  BORDER[row.severity],
-                )}
-              >
-                <div class="min-w-0 flex-1 basis-64">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <StatusBadge kind="severity" value={row.severity} />
-                    {#if row.chip}
-                      <span class="text-sm font-medium">{row.chip.label}</span>
-                    {/if}
-                  </div>
-                  <p class="text-muted-foreground mt-1 text-sm">{row.text}</p>
-                </div>
-                {#if row.action}
-                  {@const action = row.action}
-                  <Button
-                    size="sm"
-                    variant={row.severity === 'critical' ? 'default' : 'outline'}
-                    disabled={busyKey === row.key}
-                    aria-label={row.chip ? `${action.label}: ${row.chip.label}` : action.label}
-                    onclick={() => void act(row.key, action)}
-                  >
-                    {busyKey === row.key ? 'Working…' : action.label}
-                    {#if action.kind === 'link'}
-                      <ChevronRight class="rtl:rotate-180" aria-hidden="true" />
-                    {/if}
-                  </Button>
+              {@const kind = edgeKindWords(g)}
+              {#snippet groupDetails()}
+                {#if kind}
+                  <p>{kind.explain}</p>
+                  {#if kind.shared}
+                    <!-- Said once here; the nested rows leave out the reason they share. -->
+                    <p>
+                      <span class="text-foreground font-medium">Reason:</span>
+                      {plainWords(codeLabel(kind.shared))}.
+                    </p>
+                  {/if}
+                  {#if kind.fix}
+                    <p><span class="text-foreground font-medium">What to do:</span> {kind.fix}</p>
+                  {/if}
+                  <AttentionList
+                    items={g.rows.flatMap((r) => (r.source === 'edge' ? [r.item] : []))}
+                    {onAction}
+                    plain
+                    layout="nested"
+                    sharedCode={kind.shared}
+                    class="bg-background mt-2"
+                  />
+                {:else}
+                  <ul class="bg-background mt-1 divide-y rounded-md border">
+                    {#each g.rows as row (row.key)}
+                      {#if row.source !== 'edge'}
+                        <li>{@render otherRow(row, true)}</li>
+                      {/if}
+                    {/each}
+                  </ul>
                 {/if}
-              </div>
+              {/snippet}
+              <IssueRow
+                severity={g.severity}
+                title={g.title}
+                count={g.rows.length}
+                subject={groupSubjects(g)}
+                details={groupDetails}
+              />
             {/if}
           </li>
         {/each}
       </ul>
-      {#if rows.length > max && !showAll}
+      {#if groups.length > max && !showAll}
         <Button variant="ghost" size="sm" onclick={() => (showAll = true)}>
-          Show all {rows.length}
+          Show all {groups.length}
         </Button>
       {/if}
     {/if}

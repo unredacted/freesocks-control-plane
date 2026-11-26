@@ -479,6 +479,8 @@ export const offerable = (rows: readonly SniCandidateRow[]) => rows.filter(usabl
 export interface NamesAttention {
   key: string;
   text: string;
+  /** The transport's name, the prefix of `text` ("<transport>: ..."). */
+  transport: string;
   /** The node page it leads to, when it concerns one node. */
   nodeUuid?: string;
   /** The SNI list page it leads to. */
@@ -497,6 +499,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
     const nobody = reachesNobody(t) ? ` ${nobodyWords(t)}` : '';
     if (c.toSend > 0 && (!view.switches.backendChanges || !view.switches.backendSetUp))
       out.push({
+        transport: transportName(t.tag),
         key: `names-blocked:${t.transportUuid}`,
         text: `${transportName(t.tag)}: ${plural(c.toSend, 'checked SNI')} cannot reach the nodes: ${
           view.switches.backendChanges
@@ -507,6 +510,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
       });
     else if (c.toSend > 0 && t.send?.phase !== 'writing')
       out.push({
+        transport: transportName(t.tag),
         key: `names-send:${t.transportUuid}`,
         text: `${transportName(t.tag)}: ${plural(c.toSend, 'checked SNI')} to send to the node.${nobody}`,
         ...(first ? { nodeUuid: first } : {}),
@@ -515,18 +519,21 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
       for (const n of t.nodes)
         if (n.waitingTest > 0)
           out.push({
+            transport: transportName(t.tag),
             key: `names-test:${t.transportUuid}:${n.relaySlug}`,
             text: `${transportName(t.tag)} on ${n.nodeName}: ${plural(n.waitingTest, 'SNI')} ${n.waitingTest === 1 ? 'waits' : 'wait'} for a test.${n.autoTest?.state === 'testing' ? ' FCP is testing one now.' : ''}`,
             ...(n.nodeUuid ? { nodeUuid: n.nodeUuid } : {}),
           });
     if (t.list.suggestions > 0)
       out.push({
+        transport: transportName(t.tag),
         key: `names-suggest:${t.transportUuid}`,
         text: `${transportName(t.tag)}: ${plural(t.list.suggestions, 'suggested SNI')} to add.${nobody}`,
         ...(first ? { nodeUuid: first } : {}),
       });
     if (c.failing > 0)
       out.push({
+        transport: transportName(t.tag),
         key: `names-failing:${t.transportUuid}`,
         text: `${transportName(t.tag)}: ${plural(c.failing, 'SNI')} no longer served by the cover site.`,
         family: t.list.slug,

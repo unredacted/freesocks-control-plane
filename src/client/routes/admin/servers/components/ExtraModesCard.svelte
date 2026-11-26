@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MoreText from '../../edges/components/MoreText.svelte';
   /**
    * The modes a node serves beside its own (docs/servers.md "A node serving an
    * extra mode"): today a Hysteria 2 transport (UDP 443) on a direct REALITY
@@ -130,8 +131,9 @@
         </Button>
       </div>
       <p class="text-muted-foreground text-xs">
-        Its port must be open on the node first. Members get it once it is checked. The node’s own
-        mode keeps serving.
+        <MoreText
+          text="Its port must be open on the node first. Members get it once it is checked. The node’s own mode keeps serving."
+        />
       </p>
     {/if}
   </section>

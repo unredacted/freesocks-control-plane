@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MoreText from '../components/MoreText.svelte';
   /**
    * A node's addresses, by where they come from: its provider set (docs/edges.md §
    * "Provider sets"). One group per location: its name and provider (once),
@@ -254,7 +255,9 @@
     <div class="divide-y rounded-lg border">
       {#if view.picks.length === 0}
         <p class="text-muted-foreground px-3 py-2.5 text-sm">
-          No location recorded for this node yet. Automatic work may use any trusted location.
+          <MoreText
+            text="No location recorded for this node yet. Automatic work may use any trusted location."
+          />
         </p>
       {/if}
       {#each view.picks as p (p.locationId)}
