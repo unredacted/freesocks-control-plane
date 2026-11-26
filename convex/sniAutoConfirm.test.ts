@@ -39,7 +39,7 @@ import {
   CLIENT_CHECK_TIME_HEADER,
 } from './lib/edges/clientCheck/protocol';
 import { ReplayGuard, verifyRequest } from './lib/edges/clientCheck/signing';
-import { AUTO_MAX_FAILURES, AUTO_RETRY_MS } from './lib/edges/sni/autoTest';
+import { AUTO_MAX_FAILURES, AUTO_RECEIPT_TTL_MS, AUTO_RETRY_MS } from './lib/edges/sni/autoTest';
 import type { ClientCheckEngine, ClientCheckSessionCode } from '../src/shared/contracts/edgeCodes';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -543,6 +543,48 @@ describe('a test that does not pass', () => {
     ]);
     // Done: nothing stopped any more.
     await expect(again()).rejects.toThrow(/has not stopped testing/);
+  });
+
+  test('"Test again": a run that died is set aside too, an older round is deleted, this node is swept', async () => {
+    const { t, bindingId } = await seed({ auto: true, script: nodeScript({ taken: false }) });
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    const id = rolloutId as Id<'sniRollouts'>;
+    const tick = async (ms: number) => vi.setSystemTime((await t.run(async () => Date.now())) + ms);
+    /** Four tries that do not pass, the last a run that died (issued, never run). */
+    async function fourFailures() {
+      for (let i = 0; i < AUTO_MAX_FAILURES - 1; i++) {
+        await tick(AUTO_RETRY_MS);
+        await t.action(internal.edgeClientCheck.refreshHealth, {});
+        await sweepAndRun(t);
+      }
+      await tick(AUTO_RETRY_MS);
+      await t.action(internal.edgeClientCheck.refreshHealth, {});
+      expect((await t.mutation(internal.sniAutoConfirm.sweep, {})).started).toBe(1);
+      await tick(AUTO_RECEIPT_TTL_MS + 1);
+    }
+    await fourFailures();
+    const again = () =>
+      t.mutation(internal.sniAutoConfirm.testAgain, { rolloutId: id, relaySlug: 'node-one' });
+    expect(await again()).toEqual({ ok: true, setAside: AUTO_MAX_FAILURES });
+    const first = await receipts(t);
+    expect(first.every((r) => r.setAsideAt !== undefined && r.state !== 'issued')).toBe(true);
+    // The sweep it schedules is this node's.
+    const jobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    const listenerId = first[0]!.listenerId;
+    expect(
+      jobs.some(
+        (j) =>
+          j.name === 'sniAutoConfirm:sweep' &&
+          j.state.kind === 'pending' &&
+          (j.args[0] as { listenerId?: string }).listenerId === listenerId,
+      ),
+    ).toBe(true);
+    // A second round: the first one is deleted, the second kept, so history stays bounded.
+    await fourFailures();
+    expect(await again()).toEqual({ ok: true, setAside: AUTO_MAX_FAILURES });
+    const second = await receipts(t);
+    expect(second).toHaveLength(AUTO_MAX_FAILURES);
+    expect(second.some((r) => first.some((f) => f._id === r._id))).toBe(false);
   });
 
   test('"Test again" is refused with testing by FCP off, and for a node off the transport', async () => {

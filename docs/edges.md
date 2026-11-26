@@ -3502,8 +3502,9 @@ most its 90 s); a test that did not pass is tried again no sooner than 10 minute
 **4** that did not pass on one node FCP leaves that send there to a person. There, "Test again"
 on the node's SNIs step (`POST /api/v1/admin/edges/sni/rollouts/{rolloutId}/test-again`,
 `{relaySlug}`, `admin:servers:manage`, audit `edge.sni.names.test_again`) sets the tries it used
-aside (the receipts stay, marked `setAsideAt`, and no longer count) and starts a sweep of the
-send at once: 4 more tries, with every guard of the sweep. Only where FCP stopped, and only
+aside (the receipts stay, marked `setAsideAt`, and no longer count; a run that died lapses and
+is set aside too; a round set aside earlier is deleted, so one round of history is kept) and
+starts a sweep of that node's listener at once: 4 more tries, with every guard of the sweep. Only where FCP stopped, and only
 while the send is still the one the backend holds.
 
 **What it tests.** The same receipt an operator's test link makes (`receiptContextOf`, every

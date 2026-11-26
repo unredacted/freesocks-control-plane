@@ -115,11 +115,13 @@ async function testAddress(
 export const sweep = internalMutation({
   args: {
     rolloutId: v.optional(v.id('sniRollouts')),
+    // With `rolloutId`: only this node's listener ("Test again" on one node).
+    listenerId: v.optional(v.id('relayListeners')),
     // The next page of a sweep, and the tests it has started so far.
     cursor: v.optional(v.string()),
     started: v.optional(v.number()),
   },
-  handler: async (ctx, { rolloutId, cursor, started: before }) => {
+  handler: async (ctx, { rolloutId, listenerId, cursor, started: before }) => {
     const cfg = await resolveSniConfig(ctx.db);
     if (!cfg.enabled || !cfg.autoConfirm) return { started: 0, why: 'off' as const };
     if (!clientCheckService(process.env)) return { started: 0, why: 'not_configured' as const };
@@ -164,6 +166,7 @@ export const sweep = internalMutation({
       ).filter((x) => x.evidenceKind === 'client_check');
       for (const { relay, listener } of await boundListeners(ctx, b)) {
         if (started >= AUTO_PER_SWEEP) break;
+        if (listenerId && listener._id !== listenerId) continue;
         const mine = receipts.filter((x) => x.listenerId === listener._id);
         // A run that died leaves its receipt `issued`: it lapses here.
         for (const x of mine)
@@ -255,12 +258,28 @@ export const testAgain = internalMutation({
     const before = autoTestOf(rows, now);
     if (before?.state !== 'stopped')
       return no('conflict', 'FCP has not stopped testing this send on this node');
+    // History stays bounded: one earlier round kept (the one set aside now), any
+    // round set aside before it deleted (the audit row says how many it held).
+    // A run that died left its receipt `issued` past its expiry: it counted as a
+    // try, so it lapses and is set aside too. Stopped means none is running.
     let setAside = 0;
-    for (const x of rows)
-      if (x.setAsideAt === undefined && x.state !== 'issued') {
-        await ctx.db.patch(x._id, { setAsideAt: now });
-        setAside++;
+    for (const x of rows) {
+      if (x.setAsideAt !== undefined) {
+        await ctx.db.delete(x._id);
+        continue;
       }
+      if (x.state === 'issued' && now <= x.expiresAt) continue;
+      await ctx.db.patch(x._id, {
+        setAsideAt: now,
+        ...(x.state === 'issued'
+          ? {
+              state: 'expired' as const,
+              check: { at: now, verdict: null, code: 'lapsed', engines: [], control: false },
+            }
+          : {}),
+      });
+      setAside++;
+    }
     await writeAuditLog(ctx, {
       ...(actorAdminId
         ? { actorType: 'admin' as const, actorId: actorAdminId }
@@ -275,7 +294,11 @@ export const testAgain = internalMutation({
         count: setAside,
       },
     });
-    await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, { rolloutId });
+    // This node's test, not the first three due elsewhere on the send.
+    await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, {
+      rolloutId,
+      listenerId: mine.listener._id,
+    });
     return { ok: true as const, setAside };
   },
 });
