@@ -64,6 +64,7 @@
   import RecentActivity from '../../servers/overview/RecentActivity.svelte';
   import TimelineFeed from '../../servers/overview/TimelineFeed.svelte';
   import {
+    groupRows,
     mergeActivity,
     mergeAttention,
     overviewTiles,
@@ -157,7 +158,8 @@
     statusSentence({
       nodes: nodeCounts,
       fleet,
-      rows: actionRows,
+      // One per line of Action needed: a kind on three nodes is one action.
+      rows: groupRows(actionRows),
       incomplete: attention.isError,
       nodesUnread: backendReports.some((r) => r.input.readFailed),
     }),

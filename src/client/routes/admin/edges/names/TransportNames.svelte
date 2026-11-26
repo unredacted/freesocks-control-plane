@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MoreText from '../components/MoreText.svelte';
   /**
    * A REALITY transport's SNIs on a node's page (docs/edges.md "A
    * transport's names"), the way the node's edges show theirs: one status line
@@ -162,7 +163,7 @@
           {status.text}
         </p>
         <p class="text-muted-foreground">
-          {stepWords(step, transport)}
+          <MoreText text={stepWords(step, transport)} />
           {#if step.kind === 'names_off'}
             <Link href={edgesPaths.names()} class="text-primary underline underline-offset-4">
               Turn them on
@@ -185,7 +186,7 @@
           {/if}
         </p>
         {#if autoLine}
-          <p class="text-muted-foreground" aria-live="polite">{autoLine}</p>
+          <p class="text-muted-foreground" aria-live="polite"><MoreText text={autoLine} /></p>
         {/if}
         {#if transport.coverSite}
           <p class="text-muted-foreground">

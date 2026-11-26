@@ -329,6 +329,7 @@ describe('Action needed', () => {
     expect(namesNeedsYou({ switches: on, transports: [waiting] })).toEqual([
       {
         key: 'names-test:t-1:node-one',
+        transport: 'VLESS REALITY',
         text: 'VLESS REALITY on node-one: 1 SNI waits for a test.',
         nodeUuid: NODE,
       },

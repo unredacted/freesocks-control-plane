@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MoreText from '../../edges/components/MoreText.svelte';
   /**
    * A node's encrypted twin (docs/servers.md "A node serving the encrypted
    * twin"): the mode's own WebSocket transport a second time, encrypted inside
@@ -63,11 +64,9 @@
     {#each intent.staleRoutes as r (`${r.path}:${r.port}`)}
       <p class="flex items-start gap-2 rounded-md border p-3 text-sm" role="status">
         <StatusDot dot="amber" class="mt-1.5" />
-        <span>
-          The node’s front server still sends {r.path} to 127.0.0.1:{r.port} from an earlier role run,
-          and FCP no longer hands that route out. Run the node role on this node to take it away. Until
-          then no new transport can use that port or path.
-        </span>
+        <MoreText
+          text={`The node’s front server still sends ${r.path} to 127.0.0.1:${r.port} from an earlier role run, and FCP no longer hands that route out. Run the node role on this node to take it away. Until then no new transport can use that port or path.`}
+        />
       </p>
     {/each}
     {#if intent.twin && words}
@@ -110,9 +109,9 @@
         Serve the encrypted twin here
       </Button>
       <p class="text-muted-foreground text-xs">
-        The same connection, encrypted inside, so a CDN in front cannot read it. The node’s
-        connections restart once when it turns on. Members get it only through fronts a test
-        connection reached it on, and the plain connection stays for apps that cannot use it.
+        <MoreText
+          text="The same connection, encrypted inside, so a CDN in front cannot read it. The node’s connections restart once when it turns on. Members get it only through fronts a test connection reached it on, and the plain connection stays for apps that cannot use it."
+        />
       </p>
     {/if}
   </section>

@@ -1,15 +1,12 @@
 <script lang="ts">
   /**
-   * One backend's set-up-once parts on Nodes, below the table: its quiet notes
-   * (leftovers worth knowing, words.ts `quietNotes`), how it is set up (with
-   * Change setup), the encrypted twins of its CDN-fronted modes, its mode
-   * groups and its recent changes. With more than one
-   * backend, the block is headed by the backend's name.
+   * One backend's set-up-once parts on Nodes, behind its Details disclosure
+   * (BackendStatus): its quiet notes (leftovers worth knowing, words.ts
+   * `quietNotes`), how it is set up (with Change setup), the encrypted twins of
+   * its CDN-fronted modes, its mode groups and its recent changes.
    *
    * Props:
    *   slug: string
-   *   name: string
-   *   showName: boolean               more than one backend: head the block with its name
    *   canWrite: boolean               changes from here are on and the backend is set up
    *   canChangeSetup: boolean         changes from here are on and the backend can be written to
    *   onChangeSetup: () => void       opens the setup sheet for this backend
@@ -24,13 +21,11 @@
 
   interface Props {
     slug: string;
-    name: string;
-    showName: boolean;
     canWrite: boolean;
     canChangeSetup: boolean;
     onChangeSetup: () => void;
   }
-  let { slug, name, showName, canWrite, canChangeSetup, onChangeSetup }: Props = $props();
+  let { slug, canWrite, canChangeSetup, onChangeSetup }: Props = $props();
 
   const tree = serverTreeQuery(() => slug);
   const setup = setupQuery(() => slug);
@@ -38,10 +33,7 @@
 </script>
 
 {#if tree.data}
-  <section class="space-y-8" aria-label={showName ? name : 'Backend'}>
-    {#if showName}
-      <h2 class="border-t pt-6 text-lg font-semibold tracking-tight">{name}</h2>
-    {/if}
+  <section class="space-y-6" aria-label="Backend details">
     {#if notes.length > 0}
       <ul class="text-muted-foreground space-y-1 text-sm" aria-label="Notes">
         {#each notes as n (n)}

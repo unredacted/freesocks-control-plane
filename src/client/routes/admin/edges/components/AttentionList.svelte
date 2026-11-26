@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
    * Ranked attention rows (the server ranks; this keeps the order), one action
-   * button each, toned by severity. Every `AttentionAction` literal is handled
+   * button each, toned by severity. Each row is one IssueRow: title, who it is
+   * about and the brief facts; why, the reason, what to do and the full facts
+   * wait behind its disclosure. Every `AttentionAction` literal is handled
    * (lib/attention.ts, typechecked complete):
    *
    *   pure navigation, done here:
@@ -33,10 +35,17 @@
    *   plain?: boolean                       the simple screens: words through PLAIN_WORDS
    *                                         (origin -> protected node, edge -> address, ...),
    *                                         buttons from PLAIN_ATTENTION_ACTION_LABELS
+   *   layout?: 'list' | 'bare' | 'nested'   'list' (default): its own bordered list;
+   *                                         'bare': the rows only (the caller's <li> holds one);
+   *                                         'nested': the items of a group (Action needed), each
+   *                                         titled by its node, the kind's words left to the group
+   *   sharedCode?: string | null            'nested': the reason every item of the group shares
+   *                                         (the group says it and its fix once)
    *   class?: string
    */
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { Button } from '@client/components/ui/button';
+  import { transportName } from '@client/lib/transportName';
   import { cn } from '@client/lib/utils';
   import { router } from '@client/stores/router.svelte';
   import {
@@ -46,7 +55,7 @@
     plainWords,
     providerAnswerWords,
   } from '@client/lib/edgeCodes';
-  import StatusBadge from './StatusBadge.svelte';
+  import IssueRow from './IssueRow.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import {
     ATTENTION_ACTION_PLAN,
@@ -56,9 +65,9 @@
     attentionHeading,
     attentionSubject,
     attentionTarget,
+    attentionWho,
     type AttentionItem,
   } from '../lib/attention';
-  import { relativeTime } from '../lib/time';
 
   interface Props {
     items: AttentionItem[];
@@ -66,6 +75,8 @@
     max?: number;
     emptyText?: string;
     plain?: boolean;
+    layout?: 'list' | 'bare' | 'nested';
+    sharedCode?: string | null;
     class?: string;
   }
   let {
@@ -74,6 +85,8 @@
     max,
     emptyText = 'Nothing needs your attention.',
     plain = false,
+    layout = 'list',
+    sharedCode = null,
     class: className,
   }: Props = $props();
 
@@ -121,12 +134,6 @@
     // Errors of an unconfirmed call are the host page's to show (toast); never an unhandled rejection.
     run(item).catch(() => {});
   }
-
-  const BORDER = {
-    critical: 'border-s-destructive',
-    warning: 'border-s-amber-500',
-    info: 'border-s-sky-500',
-  } as const;
 </script>
 
 {#if items.length === 0}
@@ -139,64 +146,85 @@
     {emptyText}
   </div>
 {:else}
-  <ul class={cn('space-y-2', className)} aria-label="Needs attention">
-    {#each shown as item (item.id)}
-      {@const facts = w(attentionFactsLine(item))}
-      {@const subject = w(attentionSubject(item))}
-      {@const actionLabel = attentionActionLabel(item, plain)}
-      {@const heading = attentionHeading(item, plain)}
-      {@const answer = providerAnswerWords(item.facts)}
-      <li
-        class={cn(
-          'bg-card flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border border-s-4 px-3 py-2.5',
-          BORDER[item.severity],
-        )}
+  {#snippet row(item: AttentionItem)}
+    {@const subject = w(attentionSubject(item))}
+    {@const actionLabel = attentionActionLabel(item, plain)}
+    {@const heading = attentionHeading(item, plain)}
+    {@const label = heading.final ? heading.label : (w(heading.label) ?? heading.label)}
+    {@const explain = heading.final ? heading.explain : w(heading.explain)}
+    {@const brief = w(attentionFactsLine(item, { brief: true }))}
+    {@const facts = w(attentionFactsLine(item))}
+    {@const answer = providerAnswerWords(item.facts)}
+    {@const fix = item.code ? w(codeFix(item.code)) : undefined}
+    {@const nested = layout === 'nested'}
+    <!-- Nested in a group: the group says the kind (and a reason all share) once; each row
+         keeps only its own facts. -->
+    {@const showExplain = !!explain && (!nested || heading.final)}
+    {@const showCode = !!item.code && !(nested && item.code === sharedCode)}
+    {@const who = nested ? attentionWho(item) : null}
+    {@const nestedLine = [item.listenerTag ? transportName(item.listenerTag) : null, brief]
+      .filter(Boolean)
+      .join(' · ')}
+    {@const hasDetails = showExplain || showCode || !!answer || (!!facts && facts !== brief)}
+    {#snippet details()}
+      {#if showExplain}<p>{explain}</p>{/if}
+      {#if showCode && item.code}
+        <p>
+          <span class="text-foreground font-medium">Reason:</span>
+          {w(codeLabel(item.code))}.
+          {#if answer}<span class="text-foreground">{answer}</span>{/if}
+        </p>
+      {:else if answer}
+        <!-- The provider's own words, as it sent them (never rewritten). -->
+        <p class="text-foreground">{answer}</p>
+      {/if}
+      {#if fix && showCode}
+        <p><span class="text-foreground font-medium">What to do:</span> {fix}</p>
+      {/if}
+      {#if facts && facts !== brief}<p class="text-xs">{facts}</p>{/if}
+    {/snippet}
+    {#snippet button()}
+      <Button
+        size="sm"
+        variant={item.severity === 'critical' && !nested ? 'default' : 'outline'}
+        disabled={busyId === item.id}
+        aria-label={subject ? `${actionLabel}: ${subject}` : actionLabel}
+        onclick={() => act(item)}
       >
-        <div class="min-w-0 flex-1 basis-64">
-          <div class="flex flex-wrap items-center gap-2">
-            <StatusBadge kind="severity" value={item.severity} />
-            <span class="text-sm font-medium">
-              {heading.final ? heading.label : w(heading.label)}
-            </span>
-            {#if subject}<span class="text-muted-foreground text-sm">{subject}</span>{/if}
-          </div>
-          <p class="text-muted-foreground mt-1 text-sm">
-            {heading.final ? heading.explain : w(heading.explain)}
-            {#if item.code}
-              <span class="text-foreground">Reason: {w(codeLabel(item.code))}.</span>
-            {/if}
-            <!-- The provider's own words, as it sent them (never rewritten). -->
-            {#if answer}<span class="text-foreground">{answer}</span>{/if}
-          </p>
-          {#if item.code && codeFix(item.code)}
-            <p class="mt-0.5 text-sm">{w(codeFix(item.code))}</p>
-          {/if}
-          {#if facts || item.since}
-            <p class="text-muted-foreground mt-1 text-xs">
-              {facts}{#if facts && item.since}<span aria-hidden="true"> · </span>{/if}
-              {#if item.since}
-                <time datetime={item.since} title={new Date(item.since).toLocaleString()}>
-                  since {relativeTime(item.since)}
-                </time>
-              {/if}
-            </p>
-          {/if}
-        </div>
-        <Button
-          size="sm"
-          variant={item.severity === 'critical' ? 'default' : 'outline'}
-          disabled={busyId === item.id}
-          aria-label={subject ? `${actionLabel}: ${subject}` : actionLabel}
-          onclick={() => act(item)}
-        >
-          {busyId === item.id ? 'Working…' : actionLabel}
-          {#if !calls(item)}
-            <ChevronRight class="rtl:rotate-180" aria-hidden="true" />
-          {/if}
-        </Button>
-      </li>
-    {/each}
-  </ul>
+        {busyId === item.id ? 'Working…' : actionLabel}
+        {#if !calls(item)}
+          <ChevronRight class="rtl:rotate-180" aria-hidden="true" />
+        {/if}
+      </Button>
+    {/snippet}
+    <IssueRow
+      severity={item.severity}
+      title={nested ? who || subject || brief || label : label}
+      subject={nested ? null : subject}
+      line={nested ? (who ? nestedLine : null) || null : brief || null}
+      since={item.since}
+      {nested}
+      details={hasDetails ? details : undefined}
+      action={button}
+    />
+  {/snippet}
+
+  {#if layout === 'bare'}
+    {#each shown as item (item.id)}{@render row(item)}{/each}
+  {:else}
+    <ul
+      class={cn(
+        'divide-y',
+        layout === 'nested' ? 'rounded-md border' : 'bg-card rounded-lg border',
+        className,
+      )}
+      aria-label="Needs attention"
+    >
+      {#each shown as item (item.id)}
+        <li>{@render row(item)}</li>
+      {/each}
+    </ul>
+  {/if}
   {#if max !== undefined && items.length > max && !showAll}
     <Button variant="ghost" size="sm" class="mt-2" onclick={() => (showAll = true)}>
       Show all {items.length}

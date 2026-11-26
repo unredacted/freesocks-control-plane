@@ -139,6 +139,9 @@
   import PausedCard from './PausedCard.svelte';
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
+  import IssueRow from '../components/IssueRow.svelte';
+  import MoreText from '../components/MoreText.svelte';
+  import { splitLead } from '@client/lib/splitLead';
   import { endNowWords } from './drainWords';
   import { SPREAD_CARD, SPREAD_CONFIRM, spreadMovesWords } from './spreadWords';
   import LanesCard from './LanesCard.svelte';
@@ -472,7 +475,7 @@
       {#if relay && status}
         <p class="mt-1 flex flex-wrap items-center gap-x-2 text-sm font-medium" role="status">
           <StatusDot dot={status.dot} />
-          {originSentence(status, { onNode: true })}
+          <MoreText text={originSentence(status, { onNode: true })} />
           {#if runId}
             <Link
               href={runLink(runId)}
@@ -494,7 +497,9 @@
             Removing fronting: {restorePhaseWords(relay.restore.phase)}.
           </p>
           {#if skipDirectOffered(relay.restore)}
-            <p class="mt-1 max-w-prose text-sm">{skipDirectHeldWords(relay.restore.lastError)}</p>
+            <p class="mt-1 max-w-prose text-sm">
+              <MoreText text={skipDirectHeldWords(relay.restore.lastError)} />
+            </p>
             <div class="mt-2">
               <Button size="sm" variant="outline" onclick={() => (skipDirectOpen = true)}>
                 {SKIP_DIRECT.button}
@@ -595,58 +600,74 @@
       />
     {/if}
 
-    {#if relay && freshHolds.length > 0}
-      <section class="rounded-lg border p-3" aria-labelledby={`${uid}-paused`}>
-        <h3 id={`${uid}-paused`} class="text-sm font-semibold">
-          {codeLabel('fresh_name_blocked')}
-        </h3>
-        <p class="text-muted-foreground mt-1 text-sm">{codeExplain('fresh_name_blocked')}</p>
-        <ul class="mt-1 text-sm">
-          {#each pausedLines as line (line)}<li>{line}</li>{/each}
-        </ul>
-        <Button
-          class="mt-2"
-          size="sm"
-          variant="outline"
-          disabled={resumeBusy}
-          onclick={() => void resume('fresh')}
-        >
-          Resume automatic replacement now
-        </Button>
-      </section>
-    {/if}
-
-    {#if relay && refusedLines.length > 0}
-      <section class="rounded-lg border p-3" aria-labelledby={`${uid}-refused`}>
-        <h3 id={`${uid}-refused`} class="text-sm font-semibold">{codeLabel('cdn_refused')}</h3>
-        <p class="text-muted-foreground mt-1 text-sm">{codeExplain('cdn_refused')}</p>
-        <ul class="mt-1 text-sm">
-          {#each refusedLines as line (line)}<li>{line}</li>{/each}
-        </ul>
-      </section>
-    {/if}
-
-    {#if relay && wholeHolds.length > 0}
-      <section
-        class="border-destructive/40 rounded-lg border p-3"
-        role="alert"
-        aria-labelledby={`${uid}-held`}
-      >
-        <h3 id={`${uid}-held`} class="text-sm font-semibold">Automatic replacement is held</h3>
-        <p class="text-muted-foreground mt-1 text-sm">
-          {codeExplain('auto_replace_held')}
-          {#if heldNames.length > 0}Transport: {heldNames.join(', ')}.{/if}
-        </p>
-        <Button
-          class="mt-2"
-          size="sm"
-          variant="outline"
-          disabled={resumeBusy}
-          onclick={() => void resume()}
-        >
-          Resume automatic replacement
-        </Button>
-      </section>
+    {#if relay && (freshHolds.length > 0 || refusedLines.length > 0 || wholeHolds.length > 0)}
+      <!-- What holds automatic replacement here, one line each; why behind the chevron. -->
+      <ul class="bg-card divide-y rounded-lg border" aria-label="Automatic replacement">
+        {#if wholeHolds.length > 0}
+          <li role="alert">
+            {#snippet heldDetails()}<p>{codeExplain('auto_replace_held')}</p>{/snippet}
+            {#snippet heldAction()}
+              <Button size="sm" disabled={resumeBusy} onclick={() => void resume()}>Resume</Button>
+            {/snippet}
+            <IssueRow
+              severity="critical"
+              title="Automatic replacement is held"
+              subject={heldNames.join(', ') || null}
+              details={heldDetails}
+              action={heldAction}
+            />
+          </li>
+        {/if}
+        {#if freshHolds.length > 0}
+          <li>
+            {#snippet freshDetails()}
+              <p>{codeExplain('fresh_name_blocked')}</p>
+              {#if pausedLines.length > 1}
+                <ul class="list-disc ps-5">
+                  {#each pausedLines as line (line)}<li>{line}</li>{/each}
+                </ul>
+              {/if}
+            {/snippet}
+            {#snippet freshAction()}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={resumeBusy}
+                onclick={() => void resume('fresh')}
+              >
+                Resume now
+              </Button>
+            {/snippet}
+            <IssueRow
+              severity="warning"
+              title={codeLabel('fresh_name_blocked')}
+              count={pausedLines.length}
+              line={pausedLines.length === 1 ? pausedLines[0] : null}
+              details={freshDetails}
+              action={freshAction}
+            />
+          </li>
+        {/if}
+        {#if refusedLines.length > 0}
+          <li>
+            {#snippet refusedDetails()}
+              <p>{codeExplain('cdn_refused')}</p>
+              {#if refusedLines.length > 1}
+                <ul class="list-disc ps-5">
+                  {#each refusedLines as line (line)}<li>{line}</li>{/each}
+                </ul>
+              {/if}
+            {/snippet}
+            <IssueRow
+              severity="info"
+              title={codeLabel('cdn_refused')}
+              count={refusedLines.length}
+              line={refusedLines.length === 1 ? refusedLines[0] : null}
+              details={refusedDetails}
+            />
+          </li>
+        {/if}
+      </ul>
     {/if}
 
     <!-- One row per address (AddressRow), under the location it comes from on a
@@ -711,7 +732,7 @@
     {/if}
     {#if config.data?.config.clientCheck.enabled && published.length === 1}
       <p class="text-muted-foreground -mt-4 text-xs">
-        {oneAddressNote(relay.desiredPublished)}
+        <MoreText text={oneAddressNote(relay.desiredPublished)} />
       </p>
     {/if}
 
@@ -726,29 +747,31 @@
         }}
       />
     {:else}
-      <section class="rounded-lg border p-3" aria-labelledby={`${uid}-spread`}>
-        <h3 id={`${uid}-spread`} class="text-sm font-semibold">{SPREAD_CARD.title}</h3>
-        <p class="text-muted-foreground mt-1 text-sm">{SPREAD_CARD.body}</p>
-        <Button
-          class="mt-2"
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          onclick={() => (spreadOpen = true)}
-        >
+      {@const spread = splitLead(SPREAD_CARD.body)}
+      {#snippet spreadDetails()}<p>{spread.rest}</p>{/snippet}
+      {#snippet spreadAction()}
+        <Button size="sm" variant="outline" disabled={busy} onclick={() => (spreadOpen = true)}>
           {SPREAD_CARD.action}
         </Button>
-      </section>
+      {/snippet}
+      <div class="rounded-lg border">
+        <IssueRow
+          severity={null}
+          title={SPREAD_CARD.title}
+          line={spread.lead}
+          details={spread.rest ? spreadDetails : undefined}
+          action={spreadAction}
+        />
+      </div>
     {/if}
 
     <section class="flex items-start justify-between gap-4 rounded-lg border p-3">
       <div class="min-w-0">
         <Label for={`${uid}-auto`}>Replace addresses automatically on this node</Label>
         {#if autoWords}
-          <p class="text-muted-foreground text-xs">{autoWords.line}</p>
-          {#if autoWords.spares}
-            <p class="text-muted-foreground mt-1 text-xs">{autoWords.spares}</p>
-          {/if}
+          <p class="text-muted-foreground text-xs">
+            <MoreText text={[autoWords.line, autoWords.spares].filter(Boolean).join(' ')} />
+          </p>
         {/if}
       </div>
       <Switch

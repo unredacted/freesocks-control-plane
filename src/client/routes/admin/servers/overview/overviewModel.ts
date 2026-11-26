@@ -3,6 +3,8 @@
  * overviewModel.test.ts). The page loads what the other tabs already load and
  * this module merges it, so nothing new is asked of the server:
  *
+ *   groupRows(rows)           rows of one kind and severity as one line (groupSubjects
+ *                             names who it is about).
  *   mergeAttention(input)     ONE ranked Action needed list from edge attention
  *                             (the server's ranking kept), each backend's own
  *                             rows (holds, setup, key mismatches, edits made on
@@ -22,8 +24,10 @@
  * never "names" for SNIs, no dashes.
  */
 import type { AttentionItem, FleetStatus, FreedomPreview } from '@shared/contracts/edges';
-import { plainAuditActionLabel, type Tone } from '@client/lib/edgeCodes';
+import { plainAuditActionLabel, plainWords, type Tone } from '@client/lib/edgeCodes';
+import { attentionHeading, attentionSubject, attentionWho } from '../../edges/lib/attention';
 import { collapseRepeats } from '@client/lib/collapseRepeats';
+import { splitLead } from '@client/lib/splitLead';
 import { edgesPaths } from '../../edges/lib/routes';
 import { countryLabel } from '../../edges/countries/words';
 import { money } from '../../edges/lib/planWords';
@@ -66,8 +70,13 @@ export type OverviewRow =
       key: string;
       source: 'servers' | 'snis' | 'country' | 'provider';
       severity: Severity;
+      /** The kind of row in two to five words: the group's title (`groupRows`). */
+      title: string;
       chip: Chip | null;
+      /** One short sentence (the visible line). */
       text: string;
+      /** Anything longer, shown only when the row is opened. */
+      detail?: string;
       action: RowAction | null;
     };
 
@@ -137,7 +146,23 @@ export const NEAR_CAP = 0.9;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[] {
+/** The title of each kind of SNI row, by its key's prefix (namesNeedsYou). */
+const SNI_TITLES: Record<string, string> = {
+  'names-blocked': 'SNIs cannot reach the nodes',
+  'names-send': 'SNIs to send',
+  'names-test': 'SNIs waiting for a test',
+  'names-suggest': 'Suggested SNIs',
+  'names-failing': 'SNIs no longer served',
+};
+
+const capitalize = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
+
+/**
+ * One backend's Action needed rows (the Overview merges every backend's; the
+ * Nodes page lists one backend's under its row). `multi`: more than one
+ * backend, so each row names its backend.
+ */
+export function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[] {
   const chip: Chip | null = multi ? { kind: 'backend', label: b.name } : null;
   const nodesHref = serversPaths.nodes(multi ? { backend: b.slug } : {});
   const open = { kind: 'link', label: 'Open', href: nodesHref } as const;
@@ -145,16 +170,30 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
   const row = (
     key: string,
     severity: Severity,
-    text: string,
+    title: string,
+    words: string,
     action: RowAction | null,
     source: 'servers' | 'snis' = 'servers',
     rowChip: Chip | null = chip,
-  ) => out.push({ key: `${b.slug}:${key}`, source, severity, chip: rowChip, text, action });
+  ) => {
+    const { lead, rest } = splitLead(words);
+    out.push({
+      key: `${b.slug}:${key}`,
+      source,
+      severity,
+      title,
+      chip: rowChip,
+      text: lead,
+      ...(rest ? { detail: rest } : {}),
+      action,
+    });
+  };
 
   if (b.readFailed)
     row(
       'read-failed',
       'critical',
+      'Panel not read',
       'The panel could not be read, so its node status may be out of date.',
       { ...open },
     );
@@ -162,14 +201,17 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
     row(
       `hold:${h.id}`,
       'warning',
+      h.heldNodeNames.length === 1 ? 'Node held closed' : 'Nodes held closed',
       `${h.heldNodeNames.join(', ')} ${h.heldNodeNames.length === 1 ? 'is' : 'are'} held closed since a profile change ${ago(now - Date.parse(h.since))}. Check ${h.heldNodeNames.length === 1 ? 'it' : 'them'} yourself, then release the hold.`,
       b.canWrite ? { kind: 'release', label: 'Release', slug: b.slug, holdId: h.id } : { ...open },
     );
-  if (b.manageOn && b.setupRow) row('setup', 'warning', b.setupRow, { ...open, label: 'Set up' });
+  if (b.manageOn && b.setupRow)
+    row('setup', 'warning', 'Backend not set up', b.setupRow, { ...open, label: 'Set up' });
   else if (b.manageOn && !b.setUp)
     row(
       'not-set-up',
       'warning',
+      'Backend not set up',
       'Changes are on but refused until this backend is set up. Set it up first.',
       { ...open, label: 'Set up' },
     );
@@ -178,6 +220,7 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
       row(
         n.key,
         'warning',
+        'Profile edited on the panel',
         n.text,
         b.canWrite
           ? { kind: 'seen', label: 'Seen it', slug: b.slug, profileUuid: n.key.slice(5) }
@@ -187,6 +230,7 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
       row(
         n.key,
         n.key.startsWith('key:') ? 'critical' : 'warning',
+        n.key.startsWith('key:') ? 'Key does not match' : 'Address with no node',
         n.text,
         n.nodeUuid
           ? {
@@ -199,16 +243,23 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
   }
   for (const op of b.ops)
     if (op.state === 'outcome_unknown')
-      row(`op:${op.id}`, 'critical', `${opTitle(op)}: ${opWords(op).sentence}`, {
-        ...open,
-        label: 'Settle it',
-      });
+      row(
+        `op:${op.id}`,
+        'critical',
+        'Change with unknown result',
+        `${opTitle(op)}: ${opWords(op).sentence}`,
+        {
+          ...open,
+          label: 'Settle it',
+        },
+      );
   for (const c of b.portChanges) {
     const forYou = c.nodes.filter((n) => n.state === 'waiting' && n.confirmedBy === 'operator');
     if (c.state === 'waiting' && forYou.length > 0)
       row(
         `port:${c.id}`,
         'warning',
+        'Port to open',
         `${portChangeTitle(c)}: open the port on ${plural(forYou.length, 'node')} no role reports for, then confirm it.`,
         { ...open },
       );
@@ -219,6 +270,7 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
       row(
         `port:${c.id}`,
         c.state === 'recovered' ? 'warning' : 'info',
+        c.state === 'recovered' ? 'Port change undone' : 'Port change refused',
         `${portChangeTitle(c)}. ${portChangeWords(c).sentence}`,
         { ...open },
       );
@@ -227,6 +279,7 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
     row(
       'unadopted',
       'info',
+      'Nodes not enrolled',
       `${plural(b.unadopted, 'node serves', 'nodes serve')} members without being enrolled. Adopt ${b.unadopted === 1 ? 'it' : 'them'} so FCP can look after ${b.unadopted === 1 ? 'it' : 'them'}.`,
       { ...open },
     );
@@ -240,13 +293,24 @@ function backendRows(b: BackendInput, multi: boolean, now: number): OverviewRow[
       : n.family
         ? { kind: 'link', label: 'Open the SNI list', href: edgesPaths.family(n.family) }
         : null;
+    const prefix = `${n.transport}: `;
     row(
       n.key,
       n.key.startsWith('names-failing:') || n.key.startsWith('names-blocked:') ? 'warning' : 'info',
-      n.text,
+      SNI_TITLES[n.key.slice(0, n.key.indexOf(':'))] ?? 'SNIs',
+      n.text.startsWith(prefix) ? capitalize(n.text.slice(prefix.length)) : n.text,
       action,
       'snis',
-      { kind: 'sni', label: 'SNIs' },
+      {
+        kind: 'sni',
+        label: n.text.startsWith(prefix)
+          ? multi
+            ? `${n.transport} on ${b.name}`
+            : n.transport
+          : multi
+            ? b.name
+            : 'SNIs',
+      },
     );
   }
   return out;
@@ -267,6 +331,7 @@ function countryRows(countries: readonly CountryInput[]): OverviewRow[] {
         key: `country:${c.country}:at-risk`,
         source: 'country',
         severity: 'critical',
+        title: 'No working address in a country',
         chip,
         text:
           atRisk === 1
@@ -279,6 +344,7 @@ function countryRows(countries: readonly CountryInput[]): OverviewRow[] {
         key: `country:${c.country}:location`,
         source: 'country',
         severity: 'warning',
+        title: 'Location blocked in a country',
         chip,
         text:
           c.meantFor.blocked === 1
@@ -307,8 +373,10 @@ function providerRows(providers: readonly ProviderInput[]): OverviewRow[] {
         key: `provider:${p.id}:cap`,
         source: 'provider',
         severity: 'warning',
+        title: 'Provider at its cost cap',
         chip,
-        text: `At its cost cap (${of}). It makes no new address until the cap is raised.`,
+        text: `No new address until the cap is raised.`,
+        detail: `It spends ${of}.`,
         action,
       });
     else if (c.spend.monthly >= c.monthlyCap * NEAR_CAP)
@@ -316,8 +384,9 @@ function providerRows(providers: readonly ProviderInput[]): OverviewRow[] {
         key: `provider:${p.id}:near-cap`,
         source: 'provider',
         severity: 'info',
+        title: 'Provider near its cost cap',
         chip,
-        text: `Close to its cost cap: ${of}.`,
+        text: `It spends ${of}.`,
         action,
       });
   }
@@ -346,6 +415,57 @@ export function mergeAttention(input: AttentionInput): OverviewRow[] {
     .map((row, i) => ({ row, i }))
     .sort((a, b) => RANK[a.row.severity] - RANK[b.row.severity] || a.i - b.i)
     .map(({ row }) => row);
+}
+
+// --- groups ---------------------------------------------------------------------------------------
+
+/** Rows of one kind and severity, drawn as one line that opens to list them (ActionNeeded). */
+export interface OverviewGroup {
+  key: string;
+  title: string;
+  severity: Severity;
+  rows: OverviewRow[];
+}
+
+/** A row's title: an edge item's kind in the simple screens' words, else its own. */
+export function rowTitle(row: OverviewRow): string {
+  if (row.source !== 'edge') return row.title;
+  const h = attentionHeading(row.item, true);
+  return h.final ? h.label : plainWords(h.label);
+}
+
+/**
+ * Rows of the same kind and severity as one group, in the order their first
+ * row comes (the ranking is kept: groups of one severity keep source order).
+ * Three nodes with the same held replacement read as one line, not three.
+ */
+export function groupRows(rows: readonly OverviewRow[]): OverviewGroup[] {
+  const groups = new Map<string, OverviewGroup>();
+  for (const row of rows) {
+    const title = rowTitle(row);
+    const key = `${row.source === 'edge' ? 'edge' : 'other'}:${row.severity}:${title}`;
+    const g = groups.get(key);
+    if (g) g.rows.push(row);
+    else groups.set(key, { key, title, severity: row.severity, rows: [row] });
+  }
+  return [...groups.values()];
+}
+
+/**
+ * Who a group is about, in one line: each node (or country, account, backend)
+ * once, the first `max` named and the rest counted.
+ */
+export function groupSubjects(group: Pick<OverviewGroup, 'rows'>, max = 3): string {
+  const names: string[] = [];
+  for (const row of group.rows) {
+    const name =
+      row.source === 'edge'
+        ? attentionWho(row.item) || plainWords(attentionSubject(row.item))
+        : (row.chip?.label ?? '');
+    if (name && !names.includes(name)) names.push(name);
+  }
+  if (names.length <= max) return names.join(', ');
+  return `${names.slice(0, max).join(', ')} and ${names.length - max} more`;
 }
 
 // --- status sentence --------------------------------------------------------------------------------

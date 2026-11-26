@@ -405,6 +405,31 @@ describe('country view words', () => {
     );
   });
 
+  it('says what a member is handed in one line, with the shares worth a look', () => {
+    expect(W.handedSummary(handed())).toEqual({
+      line: '2 addresses not chosen by country, SNIs not chosen by country.',
+      alerts: ['50% start on an address blocked here.'],
+    });
+    expect(
+      W.handedSummary(
+        handed({ steered: true, namesByCountry: true, onBlockedAddress: 0, none: 0.25 }),
+      ),
+    ).toEqual({
+      line: '2 addresses chosen for this country, SNIs chosen for it.',
+      alerts: ['25% get no address.'],
+    });
+    expect(W.handedSummary(handed({ onBlockedFirst: 0 })).alerts).toEqual([
+      '100% hold a blocked address as backup.',
+    ]);
+    expect(W.handedSummary(handed({ computed: false, reason: 'render_off' })).alerts).toEqual([]);
+  });
+
+  it('says an address share short', () => {
+    expect(W.handedShort({ primary: 0.49, backup: 0.25 })).toBe('49% first, 25% backup');
+    expect(W.handedShort({ primary: 0, backup: 0.25 })).toBe('25% backup');
+    expect(W.handedShort({ primary: 0, backup: 0 })).toBeNull();
+  });
+
   it('has words for every real-host reading, and reads a name and an address', () => {
     for (const r of REAL_HOST_READINGS) expect(W.REAL_HOST_WORDS[r].sentence).toMatch(/\.$/);
     const n = name({

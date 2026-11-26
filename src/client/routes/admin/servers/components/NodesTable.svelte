@@ -10,7 +10,8 @@
    * Props:
    *   rows: NodeRow[]
    *   technical: boolean                        the origin columns
-   *   showBackend: boolean                      more than one backend: name each row's
+   *   showBackend: boolean                      more than one backend: a heading row before
+   *                                             each backend's nodes (rows come grouped)
    *   canAdopt: (row: NodeRow) => boolean       offer "Adopt" on a row without an enrolled node
    *   onAdopt: (row: NodeRow) => void
    *   onOpenRun: (runId: string) => void        a live (or stopped) fronting run's progress
@@ -26,6 +27,7 @@
   import OriginCells from '../../edges/overview/OriginCells.svelte';
   import OriginHeads from '../../edges/overview/OriginHeads.svelte';
   import type { OriginRow } from '../../edges/overview/derive';
+  import { splitLead } from '@client/lib/splitLead';
   import { addressesWords, rowHref, type NodeRow } from '../lib/nodesTable';
   import { countryLabel } from '../lib/words';
 
@@ -52,6 +54,11 @@
     onProbe,
   }: Props = $props();
 
+  /** OriginHeads' columns (Origin through the actions column). */
+  const TECHNICAL_COLUMNS = 8;
+  /** Six columns, and the origin ones with Technical columns on. */
+  const columns = $derived(technical ? 6 + TECHNICAL_COLUMNS : 6);
+
   // The whole row is a shortcut to the node; its controls keep their own clicks.
   function openRow(e: MouseEvent, href: string | null) {
     if (!href) return;
@@ -74,8 +81,17 @@
     </Table.Row>
   </Table.Header>
   <Table.Body>
-    {#each rows as row (row.key)}
+    {#each rows as row, i (row.key)}
       {@const href = rowHref(row)}
+      {@const sentence = splitLead(row.sentence)}
+      {#if showBackend && (i === 0 || rows[i - 1]?.backend?.slug !== row.backend?.slug)}
+        <!-- More than one backend: its nodes under one heading row, not a badge on each. -->
+        <Table.Row class="bg-muted/40 hover:bg-muted/40">
+          <Table.Cell colspan={columns} class="text-muted-foreground py-1.5 text-xs font-medium">
+            {row.backend?.name ?? 'Added by hand'}
+          </Table.Cell>
+        </Table.Row>
+      {/if}
       {@const country = countryLabel(row.countryCode)}
       <Table.Row class={href ? 'cursor-pointer' : undefined} onclick={(e) => openRow(e, href)}>
         <Table.Cell>
@@ -85,24 +101,21 @@
               {#if href}
                 <Link
                   {href}
-                  class="focus-visible:ring-ring/50 rounded-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3"
+                  class="focus-visible:ring-ring/50 rounded-sm font-medium whitespace-nowrap underline-offset-4 outline-none hover:underline focus-visible:ring-3"
                 >
                   {row.name}
                 </Link>
               {:else}
-                <span class="font-medium">{row.name}</span>
+                <span class="font-medium whitespace-nowrap">{row.name}</span>
               {/if}
               {#if row.machine}
                 <div class="text-muted-foreground font-mono text-xs" title="Machine name">
                   {row.machine}
                 </div>
               {/if}
-              <div class="mt-0.5 flex flex-wrap gap-1">
-                {#if row.byHand}<Badge variant="muted">Added by hand</Badge>{/if}
-                {#if showBackend && row.backend}
-                  <Badge variant="muted">{row.backend.name}</Badge>
-                {/if}
-              </div>
+              {#if row.byHand}
+                <div class="mt-0.5"><Badge variant="muted">Added by hand</Badge></div>
+              {/if}
             </div>
           </div>
         </Table.Cell>
@@ -115,7 +128,10 @@
           {#if row.usersOnline !== null}{row.usersOnline}{/if}
         </Table.Cell>
         <Table.Cell class="min-w-56 text-sm">
-          <span class="text-muted-foreground">{row.sentence}</span>
+          <!-- One sentence; the node page says the rest. -->
+          <span class="text-muted-foreground" title={sentence.rest ? row.sentence : undefined}>
+            {sentence.lead}
+          </span>
           {#if row.runId || (row.adoptable && canAdopt(row))}
             <div class="mt-1 flex flex-wrap gap-2">
               {#if row.runId}

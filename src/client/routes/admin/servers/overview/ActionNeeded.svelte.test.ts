@@ -36,6 +36,7 @@ const rows: OverviewRow[] = [
     key: 'main:hold:h1',
     source: 'servers',
     severity: 'warning',
+    title: 'Node held closed',
     chip: null,
     text: 'node-b is held closed.',
     action: { kind: 'release', label: 'Release', slug: 'main', holdId: 'h1' },
@@ -44,14 +45,17 @@ const rows: OverviewRow[] = [
     key: 'main:edit:p1',
     source: 'servers',
     severity: 'warning',
+    title: 'Profile edited on the panel',
     chip: { kind: 'backend', label: 'Main panel' },
     text: 'Profile was edited on the backend.',
+    detail: 'Check it, then press Seen it.',
     action: { kind: 'seen', label: 'Seen it', slug: 'main', profileUuid: 'p1' },
   },
   {
     key: 'country:XA:at-risk',
     source: 'country',
     severity: 'info',
+    title: 'No working address in a country',
     chip: { kind: 'country', label: 'Country A' },
     text: 'One node has no working address there.',
     action: { kind: 'link', label: 'Open country', href: '/admin/servers/countries/XA' },
@@ -86,8 +90,10 @@ describe('The merged Action needed list', () => {
     mount();
     const items = [...document.querySelectorAll('ul[aria-label="Action needed"] > li')];
     expect(items).toHaveLength(4);
-    // The edge row is AttentionList's own (it lists the item under "Needs attention").
-    expect(items[0]?.querySelector('ul[aria-label="Needs attention"]')).not.toBeNull();
+    // The edge row is AttentionList's own: its title, who it is about, its button.
+    expect(items[0]?.textContent).toMatch(/Block suspected/);
+    expect(items[0]?.textContent).toMatch(/node-a/);
+    expect(items[1]?.textContent).toMatch(/Node held closed/);
     expect(items[1]?.textContent).toMatch(/node-b is held closed/);
     expect(items[2]?.textContent).toMatch(/Main panel/);
     expect(items[3]?.textContent).toMatch(/Country A/);
@@ -126,6 +132,41 @@ describe('The merged Action needed list', () => {
     });
     flushSync();
     expect(document.body.textContent).not.toMatch(/No action needed/);
+  });
+
+  test('the longer words wait behind the row toggle', () => {
+    mount();
+    expect(document.body.textContent).not.toMatch(/Check it, then press Seen it/);
+    const toggle = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')].find(
+      (b) => b.getAttribute('aria-label')?.includes('Profile edited on the panel'),
+    )!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    toggle.click();
+    flushSync();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(document.body.textContent).toMatch(/Check it, then press Seen it/);
+  });
+
+  test('rows of one kind are one line that opens to list them', () => {
+    client = new QueryClient();
+    const second = { ...item, id: 'block:e2', relaySlug: 'node-c', edgeId: 'e2' };
+    app = mountWithQuery(client, ActionNeeded, {
+      rows: [
+        rows[0]!,
+        { key: 'edge:block:e2', source: 'edge', severity: 'critical', item: second } as OverviewRow,
+      ],
+      onAction: vi.fn(),
+    });
+    flushSync();
+    const items = [...document.querySelectorAll('ul[aria-label="Action needed"] > li')];
+    expect(items).toHaveLength(1);
+    expect(items[0]?.textContent).toMatch(/Block suspected/);
+    expect(items[0]?.textContent).toMatch(/node-a, node-c/);
+    expect(document.querySelector('ul[aria-label="Needs attention"]')).toBeNull();
+    items[0]!.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click();
+    flushSync();
+    expect(document.querySelectorAll('ul[aria-label="Needs attention"] > li')).toHaveLength(2);
+    expect(document.body.textContent).toMatch(/1 critical/);
   });
 
   test('beyond max, the rest wait behind Show all', () => {

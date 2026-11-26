@@ -8,6 +8,8 @@ import {
   unadoptedCount,
   freedomSummary,
   mergeActivity,
+  groupRows,
+  groupSubjects,
   mergeAttention,
   overviewTiles,
   statusSentence,
@@ -124,9 +126,11 @@ describe('mergeAttention', () => {
       severity: 'warning',
       action: { kind: 'release', slug: 'main', holdId: 'h1' },
     });
-    expect(row?.source !== 'edge' && row?.text).toBe(
-      'node-a is held closed since a profile change 1 hour ago. Check it yourself, then release the hold.',
-    );
+    expect(row).toMatchObject({
+      title: 'Node held closed',
+      text: 'node-a is held closed since a profile change 1 hour ago.',
+      detail: 'Check it yourself, then release the hold.',
+    });
     const [readOnly] = merge({ backends: [backend({ holds: [hold], canWrite: false })] });
     expect(readOnly).toMatchObject({ action: { kind: 'link', href: '/admin/servers/nodes' } });
   });
@@ -224,8 +228,18 @@ describe('mergeAttention', () => {
       backends: [
         backend({
           names: [
-            { key: 'names-suggest:t1', text: 'T: 2 suggested SNIs to add.', nodeUuid: 'n1' },
-            { key: 'names-failing:t1', text: 'T: 1 SNI no longer served.', family: 'list-a' },
+            {
+              key: 'names-suggest:t1',
+              transport: 'T',
+              text: 'T: 2 suggested SNIs to add.',
+              nodeUuid: 'n1',
+            },
+            {
+              key: 'names-failing:t1',
+              transport: 'T',
+              text: 'T: 1 SNI no longer served.',
+              family: 'list-a',
+            },
           ],
         }),
       ],
@@ -235,12 +249,16 @@ describe('mergeAttention', () => {
         key: 'main:names-failing:t1',
         source: 'snis',
         severity: 'warning',
-        chip: { kind: 'sni', label: 'SNIs' },
+        title: 'SNIs no longer served',
+        chip: { kind: 'sni', label: 'T' },
+        text: '1 SNI no longer served.',
         action: { label: 'Open the SNI list', href: '/admin/servers/snis/lists/list-a' },
       },
       {
         key: 'main:names-suggest:t1',
         severity: 'info',
+        title: 'Suggested SNIs',
+        text: '2 suggested SNIs to add.',
         action: { label: 'Open node', href: '/admin/servers/nodes/n1?backend=main' },
       },
     ]);
@@ -249,9 +267,11 @@ describe('mergeAttention', () => {
   test('a backend chip shows only with more than one backend', () => {
     const one = merge({ backends: [backend({ unadopted: 2 })] });
     expect(one[0]).toMatchObject({ chip: null, action: { href: '/admin/servers/nodes' } });
-    expect(one[0]?.source !== 'edge' && one[0]?.text).toBe(
-      '2 nodes serve members without being enrolled. Adopt them so FCP can look after them.',
-    );
+    expect(one[0]).toMatchObject({
+      title: 'Nodes not enrolled',
+      text: '2 nodes serve members without being enrolled.',
+      detail: 'Adopt them so FCP can look after them.',
+    });
     const two = merge({
       backends: [backend({ unadopted: 1 }), backend({ slug: 'second', name: 'Second' })],
     });
@@ -292,14 +312,77 @@ describe('mergeAttention', () => {
       {
         key: 'provider:acc1:cap',
         severity: 'warning',
+        title: 'Provider at its cost cap',
         chip: { kind: 'provider', label: 'Account B' },
-        text: 'At its cost cap (about €90.00 a month of its €90.00 cap). It makes no new address until the cap is raised.',
+        text: 'No new address until the cap is raised.',
+        detail: 'It spends about €90.00 a month of its €90.00 cap.',
         action: { label: 'Open account', href: '/admin/servers/providers/acc1' },
       },
     ]);
     expect(merge({ providers: [provider({}, 81)] })).toMatchObject([
-      { severity: 'info', text: 'Close to its cost cap: about €81.00 a month of its €90.00 cap.' },
+      {
+        severity: 'info',
+        title: 'Provider near its cost cap',
+        text: 'It spends about €81.00 a month of its €90.00 cap.',
+      },
     ]);
+  });
+});
+
+describe('groupRows', () => {
+  const edgeItem = (id: string, slug: string, kind = 'block_suspected') => ({
+    id,
+    kind,
+    severity: 'warning' as const,
+    relaySlug: slug,
+    relayId: `r-${slug}`,
+    edgeId: null,
+    listenerKey: null,
+    listenerTag: null,
+    accountId: null,
+    rotationId: null,
+    code: null,
+    facts: {},
+    action: 'open_relay' as const,
+    since: null,
+  });
+
+  test('rows of one kind and severity are one group, in first-row order', () => {
+    const rows = merge({
+      edge: [
+        edgeItem('a', 'node-a'),
+        edgeItem('b', 'node-b'),
+        edgeItem('c', 'node-a', 'address_unreachable'),
+      ] as never,
+      backends: [backend({ unadopted: 2 })],
+    });
+    const groups = groupRows(rows);
+    expect(groups.map((g) => [g.title, g.rows.length])).toEqual([
+      ['Block suspected', 2],
+      ['Address unreachable', 1],
+      ['Nodes not enrolled', 1],
+    ]);
+    expect(groupSubjects(groups[0]!)).toBe('node-a, node-b');
+  });
+
+  test('a kind in two severities stays two groups', () => {
+    const rows = merge({
+      countries: [country('XA', { originsAtRisk: 1 }, 1), country('XB', { originsAtRisk: 2 }, 0)],
+    });
+    const groups = groupRows(rows);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      severity: 'critical',
+      title: 'No working address in a country',
+    });
+    expect(groups[0]!.rows).toHaveLength(2);
+  });
+
+  test('names the first few subjects and counts the rest', () => {
+    const rows = merge({
+      edge: ['a', 'b', 'c', 'd', 'e'].map((n) => edgeItem(n, `node-${n}`)) as never,
+    });
+    expect(groupSubjects(groupRows(rows)[0]!)).toBe('node-a, node-b, node-c and 2 more');
   });
 });
 

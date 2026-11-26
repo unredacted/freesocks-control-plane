@@ -13,10 +13,10 @@
    * hand, Add an origin by hand). Adopting a node that already serves members
    * is on its row.
    *
-   * Above the table each backend says its status and the action needed
-   * (components/BackendStatus.svelte); below it come its set-up-once parts
-   * (components/BackendDetails.svelte: Backend setup, Mode groups, Recent
-   * changes), then the two panel switches in the footer.
+   * Above the table, the Backends list: one line per backend with its status,
+   * and two disclosures, its Action needed and its Details
+   * (components/BackendStatus.svelte, components/BackendDetails.svelte: Backend
+   * setup, Mode groups, Recent changes). The two panel switches are in the footer.
    *
    * URL state (lib/nodesTable.ts and lib/routes.ts `NodesParams`): `?backend=`,
    * `?show=`, `?layer=`, `?columns=technical`, `?add=origin` (Add an origin by
@@ -70,7 +70,6 @@
   import ProtectSheet from '../edges/simple/ProtectSheet.svelte';
   import AddNodeDialog from './components/AddNodeDialog.svelte';
   import AdoptNodeDialog from './components/AdoptNodeDialog.svelte';
-  import BackendDetails from './components/BackendDetails.svelte';
   import BackendStatus from './components/BackendStatus.svelte';
   import NodesTable from './components/NodesTable.svelte';
   import SetupSheet from './components/SetupSheet.svelte';
@@ -119,6 +118,9 @@
   const instances = $derived(summary.data?.instances ?? []);
   const multi = $derived(instances.length > 1);
   const backend = $derived(backendOf(router.search, instances));
+  const unobservable = $derived(
+    instances.filter((i) => !i.observable && (!backend || i.slug === backend)),
+  );
   const observable = $derived(instances.filter((i) => i.observable));
   // The backends the page shows (the Backend chip keeps one): only they are read.
   const shownBackends = $derived(
@@ -350,23 +352,36 @@
     </div>
   {/if}
 
-  {#each shownBackends as i (i.slug)}
-    <BackendStatus
-      slug={i.slug}
-      name={i.name}
-      showName={multi}
-      canWrite={canWriteOn(i.slug)}
-      {manageOn}
-      setUp={i.setUp}
-      {observeOn}
-      onSetUp={() => openSetup(i.slug)}
-    />
-  {/each}
-  {#each instances.filter((i) => !i.observable && (!backend || i.slug === backend)) as i (i.slug)}
-    <p class="text-muted-foreground text-sm">
-      {i.name}: this kind of server has nothing to show here.
-    </p>
-  {/each}
+  {#if shownBackends.length > 0 || unobservable.length > 0}
+    <section aria-labelledby="backends-heading">
+      <h2 id="backends-heading" class="mb-3 text-base font-semibold">
+        {shownBackends.length + unobservable.length === 1 ? 'Backend' : 'Backends'}
+      </h2>
+      <ul class="bg-card divide-y rounded-lg border">
+        {#each shownBackends as i (i.slug)}
+          <li>
+            <BackendStatus
+              slug={i.slug}
+              name={i.name}
+              canWrite={canWriteOn(i.slug)}
+              {manageOn}
+              setUp={i.setUp}
+              active={i.isActive}
+              {observeOn}
+              canChangeSetup={manageOn && i.writable}
+              onSetUp={() => openSetup(i.slug)}
+            />
+          </li>
+        {/each}
+        {#each unobservable as i (i.slug)}
+          <li class="text-muted-foreground px-3 py-3 text-sm sm:px-4">
+            <span class="text-foreground font-medium">{i.name}</span>: this kind of server has
+            nothing to show here.
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
 
   {#if technical}
     <OriginsTechnical part="top" activeFilter={show} onFilter={(f) => (showParam.value = f)} />
@@ -483,17 +498,6 @@
   {#if technical}
     <OriginsTechnical part="bottom" activeFilter={show} onFilter={(f) => (showParam.value = f)} />
   {/if}
-
-  {#each shownBackends as i (i.slug)}
-    <BackendDetails
-      slug={i.slug}
-      name={i.name}
-      showName={multi}
-      canWrite={canWriteOn(i.slug)}
-      canChangeSetup={manageOn && i.writable}
-      onChangeSetup={() => openSetup(i.slug)}
-    />
-  {/each}
 
   {#if observable.length > 0}
     <footer

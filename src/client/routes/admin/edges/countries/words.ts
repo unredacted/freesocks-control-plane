@@ -457,6 +457,41 @@ export function handedWords(m: CountryViewHanded): string[] {
 }
 
 /**
+ * What a member there is handed on one transport, short: one line for the
+ * transport's header, and the shares worth a look (a blocked address or SNI
+ * held, members with nothing) as `alerts`. `handedWords` says it in full.
+ */
+export function handedSummary(m: CountryViewHanded): { line: string; alerts: string[] } {
+  if (!m.computed)
+    return {
+      line: m.reason ? HANDED_REASON_WORDS[m.reason] : 'Nothing is handed out.',
+      alerts: [],
+    };
+  const addresses = plural(m.primary.length, 'address', 'addresses');
+  const line = `${addresses} ${m.steered ? 'chosen for this country' : 'not chosen by country'}, SNIs ${
+    m.namesByCountry ? 'chosen for it' : 'not chosen by country'
+  }.`;
+  const alerts: string[] = [];
+  if (m.onBlockedAddress > 0)
+    alerts.push(
+      m.onBlockedFirst > 0
+        ? `${percent(m.onBlockedFirst)} start on an address blocked here.`
+        : `${percent(m.onBlockedAddress)} hold a blocked address as backup.`,
+    );
+  if (m.none > 0) alerts.push(`${percent(m.none)} get no address.`);
+  if (m.onBlockedName > 0) alerts.push(`${percent(m.onBlockedName)} hold an SNI blocked here.`);
+  return { line, alerts };
+}
+
+/** An address's share of members here, short: "49% first, 25% backup" (null: none). */
+export function handedShort(h: { primary: number; backup: number }): string | null {
+  const parts: string[] = [];
+  if (h.primary > 0) parts.push(`${percent(h.primary)} first`);
+  if (h.backup > 0) parts.push(`${percent(h.backup)} backup`);
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+/**
  * One location meant for this country (docs/edges.md "Locations meant for a
  * country"): its state here and its addresses in use, per node.
  */
