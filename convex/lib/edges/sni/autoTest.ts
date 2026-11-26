@@ -34,6 +34,8 @@ export interface AutoReceipt {
   sni: string;
   issuedAt: number;
   expiresAt: number;
+  /** A person asked FCP to test again: this one no longer counts toward its tries. */
+  setAsideAt?: number;
   check?: {
     at: number;
     verdict: ClientCheckVerdict | null;
@@ -57,9 +59,12 @@ export interface AutoTestView {
 
 const running = (r: AutoReceipt, now: number) => r.state === 'issued' && now <= r.expiresAt;
 
+/** The tests that count toward FCP's tries: all but those a person set aside ("Test again"). */
+const counted = (rows: readonly AutoReceipt[]) => rows.filter((r) => r.setAsideAt === undefined);
+
 /** Tests that did not pass: a verdict against, nothing learned, or a run that died. */
 export function autoFailures(rows: readonly AutoReceipt[], now: number): number {
-  return rows.filter(
+  return counted(rows).filter(
     (r) =>
       r.state === 'failed' || r.state === 'expired' || (r.state === 'issued' && now > r.expiresAt),
   ).length;
@@ -92,12 +97,14 @@ export function autoTestOf(rows: readonly AutoReceipt[], now: number): AutoTestV
  * Whether the sweep may start a test of this send on this node now: none is
  * running, it has not used up its tries, and the last one that did not pass
  * is old enough. After a pass it may go straight on (the next name, when names
- * prove only themselves).
+ * prove only themselves), and so may the first test after "Test again".
  */
 export function autoTestDue(rows: readonly AutoReceipt[], now: number): boolean {
   if (rows.some((r) => running(r, now))) return false;
   if (autoFailures(rows, now) >= AUTO_MAX_FAILURES) return false;
-  if (rows.length === 0) return true;
-  const newest = rows.reduce((a, b) => (b.issuedAt > a.issuedAt ? b : a));
+  // Set aside by "Test again": nothing counts, so the next test may start now.
+  const live = counted(rows);
+  if (live.length === 0) return true;
+  const newest = live.reduce((a, b) => (b.issuedAt > a.issuedAt ? b : a));
   return newest.state === 'confirmed' || now - newest.issuedAt >= AUTO_RETRY_MS;
 }

@@ -3792,6 +3792,9 @@ export default defineSchema({
     actorAdminId: v.optional(v.id('adminUsers')),
     // `client_check` only: what FCP's test found (codes and versions only).
     check: v.optional(sniAutoTestCheckV),
+    // `client_check` only: a person asked FCP to test again after it stopped;
+    // this receipt no longer counts toward its tries (it stays as history).
+    setAsideAt: v.optional(v.number()),
   })
     .index('by_rollout', ['rolloutId'])
     .index('by_listener', ['listenerId']),

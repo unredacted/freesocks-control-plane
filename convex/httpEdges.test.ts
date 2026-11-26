@@ -459,6 +459,8 @@ describe('origin admin routes', () => {
     expect(throttlePolicyForGet(['relays', 'inbound-candidates'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'test-link'])).toBe(P);
     expect(throttlePolicyForGet(['edges', 'e1', 'test-link'])).toBeNull();
+    // "Test again" starts FCP's client check through an address.
+    expect(throttlePolicyFor(['sni', 'rollouts', 'r1', 'test-again'])).toBe(P);
     for (const p of [
       ['relays'],
       ['relays', 'node-candidates'],

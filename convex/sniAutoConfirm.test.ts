@@ -39,7 +39,7 @@ import {
   CLIENT_CHECK_TIME_HEADER,
 } from './lib/edges/clientCheck/protocol';
 import { ReplayGuard, verifyRequest } from './lib/edges/clientCheck/signing';
-import { AUTO_MAX_FAILURES, AUTO_RETRY_MS } from './lib/edges/sni/autoTest';
+import { AUTO_MAX_FAILURES, AUTO_RECEIPT_TTL_MS, AUTO_RETRY_MS } from './lib/edges/sni/autoTest';
 import type { ClientCheckEngine, ClientCheckSessionCode } from '../src/shared/contracts/edgeCodes';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -500,6 +500,104 @@ describe('a test that does not pass', () => {
     expect(node.autoTest).toMatchObject({ state: 'stopped', failures: AUTO_MAX_FAILURES });
     // A person's test still works.
     expect(node.testable).toHaveLength(1);
+  });
+
+  test('"Test again" after FCP stopped: its tries set aside, a test starts now, a pass hands out', async () => {
+    const node = { taken: false };
+    const { t, bindingId, listenerId } = await seed({ auto: true, script: nodeScript(node) });
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    const again = () =>
+      t.mutation(internal.sniAutoConfirm.testAgain, {
+        rolloutId: rolloutId as Id<'sniRollouts'>,
+        relaySlug: 'node-one',
+      });
+    // Not stopped yet: nothing to give more tries to.
+    await sweepAndRun(t);
+    await expect(again()).rejects.toThrow(/has not stopped testing/);
+    for (let i = 1; i < AUTO_MAX_FAILURES; i++) {
+      vi.setSystemTime((await t.run(async () => Date.now())) + AUTO_RETRY_MS);
+      await t.action(internal.edgeClientCheck.refreshHealth, {});
+      await sweepAndRun(t);
+    }
+    const nodeView = async () =>
+      (await t.query(internal.sniTransports.status, { backendSlug: 'panel-a' })).transports[0]!
+        .nodes[0]!;
+    expect((await nodeView()).autoTest).toMatchObject({ state: 'stopped' });
+    // The node takes the names now; without "Test again" FCP would never look.
+    node.taken = true;
+    expect(await again()).toEqual({ ok: true, setAside: AUTO_MAX_FAILURES });
+    expect((await receipts(t)).every((r) => r.setAsideAt !== undefined)).toBe(true);
+    expect(await scheduled(t)).toContain('sniAutoConfirm:sweep');
+    expect((await nodeView()).autoTest).toMatchObject({ state: 'failed', failures: 0 });
+    // No wait: the first test after "Test again" starts at once (a second on, so the
+    // fake service's replay guard takes the health check's fresh signature).
+    vi.setSystemTime((await t.run(async () => Date.now())) + 1000);
+    await t.action(internal.edgeClientCheck.refreshHealth, {});
+    const { swept } = await sweepAndRun(t);
+    expect(swept).toEqual({ started: 1, why: null });
+    expect(await activeNames(t, listenerId)).toContain('fresh-1.example');
+    expect((await nodeView()).autoTest).toMatchObject({ state: 'passed' });
+    const audit = await audits(t, 'edge.sni.names.test_again');
+    expect(audit.map((a) => a.payload)).toEqual([
+      expect.objectContaining({ relaySlug: 'node-one', count: AUTO_MAX_FAILURES }),
+    ]);
+    // Done: nothing stopped any more.
+    await expect(again()).rejects.toThrow(/has not stopped testing/);
+  });
+
+  test('"Test again": a run that died is set aside too, an older round is deleted, this node is swept', async () => {
+    const { t, bindingId } = await seed({ auto: true, script: nodeScript({ taken: false }) });
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    const id = rolloutId as Id<'sniRollouts'>;
+    const tick = async (ms: number) => vi.setSystemTime((await t.run(async () => Date.now())) + ms);
+    /** Four tries that do not pass, the last a run that died (issued, never run). */
+    async function fourFailures() {
+      for (let i = 0; i < AUTO_MAX_FAILURES - 1; i++) {
+        await tick(AUTO_RETRY_MS);
+        await t.action(internal.edgeClientCheck.refreshHealth, {});
+        await sweepAndRun(t);
+      }
+      await tick(AUTO_RETRY_MS);
+      await t.action(internal.edgeClientCheck.refreshHealth, {});
+      expect((await t.mutation(internal.sniAutoConfirm.sweep, {})).started).toBe(1);
+      await tick(AUTO_RECEIPT_TTL_MS + 1);
+    }
+    await fourFailures();
+    const again = () =>
+      t.mutation(internal.sniAutoConfirm.testAgain, { rolloutId: id, relaySlug: 'node-one' });
+    expect(await again()).toEqual({ ok: true, setAside: AUTO_MAX_FAILURES });
+    const first = await receipts(t);
+    expect(first.every((r) => r.setAsideAt !== undefined && r.state !== 'issued')).toBe(true);
+    // The sweep it schedules is this node's.
+    const jobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    const listenerId = first[0]!.listenerId;
+    expect(
+      jobs.some(
+        (j) =>
+          j.name === 'sniAutoConfirm:sweep' &&
+          j.state.kind === 'pending' &&
+          (j.args[0] as { listenerId?: string }).listenerId === listenerId,
+      ),
+    ).toBe(true);
+    // A second round: the first one is deleted, the second kept, so history stays bounded.
+    await fourFailures();
+    expect(await again()).toEqual({ ok: true, setAside: AUTO_MAX_FAILURES });
+    const second = await receipts(t);
+    expect(second).toHaveLength(AUTO_MAX_FAILURES);
+    expect(second.some((r) => first.some((f) => f._id === r._id))).toBe(false);
+  });
+
+  test('"Test again" is refused with testing by FCP off, and for a node off the transport', async () => {
+    const { t, bindingId } = await seed({ auto: true, script: nodeScript({ taken: false }) });
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    const id = rolloutId as Id<'sniRollouts'>;
+    await expect(
+      t.mutation(internal.sniAutoConfirm.testAgain, { rolloutId: id, relaySlug: 'nobody' }),
+    ).rejects.toThrow(/does not serve/);
+    await t.mutation(internal.sniFamilies.patchConfig, { patch: { autoConfirm: false } });
+    await expect(
+      t.mutation(internal.sniAutoConfirm.testAgain, { rolloutId: id, relaySlug: 'node-one' }),
+    ).rejects.toThrow(/switched off/);
   });
 
   test('the service not answering: could not check, nothing handed out', async () => {
