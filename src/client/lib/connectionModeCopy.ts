@@ -119,6 +119,24 @@ export function adminModeName(m: ModeLike): string {
 }
 
 /**
+ * The admin name of a mode shown OUTSIDE its family's section (a picker or a
+ * list mixing families): "Freedom · REALITY", never a bare "REALITY", since two
+ * families can each have a REALITY mode. A name that already starts with the
+ * family's is kept as it is.
+ */
+export function adminModeFullName(m: ModeLike, families: readonly FamilyLike[]): string {
+  const leaf = adminModeName(m);
+  if (!m.family) return leaf;
+  const f = families.find((x) => x.id === m.family);
+  const parent = f
+    ? adminFamilyName(f)
+    : FAMILY_COPY[m.family]
+      ? tEn(FAMILY_COPY[m.family]!.titleKey)
+      : humanizeSlug(m.family);
+  return leaf.toLowerCase().startsWith(parent.toLowerCase()) ? leaf : `${parent} · ${leaf}`;
+}
+
+/**
  * The name to show when a mode is referenced OUTSIDE the picker (confirm dialog,
  * toasts, audit-facing copy). Qualified with its family so "REALITY" alone is
  * never ambiguous — two families can each have a REALITY transport.

@@ -17,9 +17,12 @@
     queryKeys,
   } from '../../lib/queries';
   import { AppSettingsRecord } from '../../../shared/contracts/admin';
-  import type { AdminConnectionMode } from '../../../shared/contracts/connectionModes';
+  import type {
+    AdminConnectionMode,
+    AdminConnectionModeFamily,
+  } from '../../../shared/contracts/connectionModes';
   import { COUNTRY_CODES, countryName } from '../../lib/countries';
-  import { adminModeName } from '../../lib/connectionModeCopy';
+  import { adminModeFullName } from '../../lib/connectionModeCopy';
   import {
     LOCATION_SLOTS,
     MAX_PREFERENCE_COUNTRIES,
@@ -39,7 +42,8 @@
    * by country) and saved together in one PATCH. The country is the member's
    * sign-up answer, else the one their request comes from.
    */
-  let { modes }: { modes: AdminConnectionMode[] } = $props();
+  let { modes, families }: { modes: AdminConnectionMode[]; families: AdminConnectionModeFamily[] } =
+    $props();
 
   const settings = appSettingsQuery();
   const censored = adminCensoredCountriesQuery();
@@ -58,7 +62,7 @@
   const locationLabel = (code: string) => locations.find((l) => l.code === code)?.label ?? code;
   const modeName = (slug: string) => {
     const m = modes.find((x) => x.id === slug);
-    return m ? adminModeName(m) : `${slug} (gone)`;
+    return m ? adminModeFullName(m, families) : `${slug} (gone)`;
   };
   const name = (code: string) => countryName(code, 'en');
 
@@ -264,7 +268,9 @@
               >
                 <option value="">Add a mode…</option>
                 {#each modeChoices as m (m.id)}
-                  <option value={m.id}>{adminModeName(m)}{m.enabled ? '' : ' (disabled)'}</option>
+                  <option value={m.id}>
+                    {adminModeFullName(m, families)}{m.enabled ? '' : ' (disabled)'}
+                  </option>
                 {/each}
               </select>
             {/if}

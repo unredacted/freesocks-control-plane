@@ -18,7 +18,7 @@
     AdminConnectionModeFamily,
   } from '../../../shared/contracts/connectionModes';
   import { resolveModeIcon } from '../../lib/connectionModeIcons';
-  import { adminFamilyName, adminModeName } from '../../lib/connectionModeCopy';
+  import { adminFamilyName, adminModeFullName, adminModeName } from '../../lib/connectionModeCopy';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import Link from '../../components/Link.svelte';
   import { toast } from 'svelte-sonner';
@@ -140,8 +140,9 @@
           class="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-sm"
           role="status"
         >
-          The default, {adminModeName(strandedDefault)}, has no node in its pool, so new members get
-          {adminModeName(effectiveDefault)} until a node joins it.
+          The default, {adminModeFullName(strandedDefault, families)}, has no node in its pool, so
+          new members get
+          {adminModeFullName(effectiveDefault, families)} until a node joins it.
         </p>
       {/if}
     </div>
@@ -386,7 +387,7 @@
   </AlertDialog.Root>
   {#if catalog.data}
     <div class="mt-6">
-      <CountryPreferencesCard {modes} />
+      <CountryPreferencesCard {modes} {families} />
     </div>
   {/if}
 </AdminLayout>
